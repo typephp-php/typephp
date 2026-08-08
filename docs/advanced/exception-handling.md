@@ -1,6 +1,6 @@
 # Exception Handling
 
-If you run TypePHP in live production applications—especially for validating external HTTP API payloads, webhooks, or dynamic database records—catching `TypePHP\Exception\TypeError` gives you a clean way to intercept data validation failures gracefully without letting exceptions crash your application.
+If you run TypePHP in live production applications especially for validating external HTTP API payloads, webhooks, or dynamic database records and catching `TypePHP\Exception\TypeError` gives you a clean way to intercept data validation failures gracefully without letting exceptions crash your application.
 
 TypePHP provides a custom exception class, `TypePHP\Exception\TypeError`, designed for both polymorphic compatibility with PHP's native type system and surgical error handling at application boundaries.
 
