@@ -368,6 +368,13 @@ final class TemplateManager
                 $classTokens = new TokenIterator($lexer->tokenize($classDoc));
                 $classPhpDocNode = $phpDocParser->parse($classTokens);
 
+                $declaredTemplateNames = [];
+                foreach ($classPhpDocNode->getTags() as $tag) {
+                    if ($tag->value instanceof TemplateTagValueNode) {
+                        $declaredTemplateNames[$tag->value->name] = true;
+                    }
+                }
+
                 $inheritedTags = array_merge(
                     $classPhpDocNode->getExtendsTagValues(),
                     $classPhpDocNode->getImplementsTagValues()
@@ -378,7 +385,6 @@ final class TemplateManager
                     if ($genericTypeNode instanceof GenericTypeNode) {
                         $parentName = SpecialTypeResolver::resolveFqcn($genericTypeNode->type->name, $ref);
 
-                        // Fixed inverted is_a check: Checks if actual class extends/implements parentName!
                         if (ClassNameValidator::isValid($parentName) && is_a($actualClassName, $parentName, true)) {
                             if (! class_exists($parentName) && ! interface_exists($parentName)) {
                                 continue;
@@ -401,7 +407,14 @@ final class TemplateManager
                                 $bindings = self::$instanceTemplateBindings[$instance] ?? [];
                                 foreach ($parentTemplateNames as $idx => $templateName) {
                                     if (isset($genericTypeNode->genericTypes[$idx])) {
-                                        $bindings[$templateName] = self::resolveTypeNodeAst($genericTypeNode->genericTypes[$idx], $ref);
+                                        $resolved = self::resolveTypeNodeAst($genericTypeNode->genericTypes[$idx], $ref);
+
+                                        // Skip binding if it's just an inherited placeholder pointing to our own declared templates
+                                        if ($resolved instanceof IdentifierTypeNode && isset($declaredTemplateNames[$resolved->name])) {
+                                            continue;
+                                        }
+
+                                        $bindings[$templateName] = $resolved;
                                     }
                                 }
 

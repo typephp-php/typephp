@@ -6,6 +6,7 @@ namespace TypePHP\Internal\Checker;
 
 use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Contract\ContractParser;
@@ -74,7 +75,17 @@ final class ReturnChecker
         }
 
         if ($value instanceof \Traversable) {
-            return $wrapIterableCallback($effectiveFunction, 'return', $value);
+            $baseName = '';
+            if ($returnTypeNode instanceof IdentifierTypeNode) {
+                $baseName = strtolower($returnTypeNode->name);
+            } elseif ($returnTypeNode instanceof GenericTypeNode) {
+                $baseName = strtolower($returnTypeNode->type->name);
+            }
+
+            $standardIterables = ['iterable', 'traversable', 'iterator', 'generator', 'iteratoraggregate', 'array'];
+            if ($baseName === '' || \in_array($baseName, $standardIterables, true)) {
+                return $wrapIterableCallback($effectiveFunction, 'return', $value);
+            }
         }
 
         return $value;

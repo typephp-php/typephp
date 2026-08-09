@@ -6,8 +6,12 @@ namespace TypePHP\Contract;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Config;
 use TypePHP\Resolver\SpecialTypeResolver;
 
@@ -130,10 +134,7 @@ final class ContractParser
             $aliases = [];
             DocblockExtractor::extractAliases($phpDocNode, $aliases, $declaringClass);
 
-            if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
-                $typeNode = $aliases[$typeNode->name];
-            }
-
+            $typeNode = self::substituteAliases($typeNode, $aliases);
             $resolvedNode = SpecialTypeResolver::resolve($typeNode, $declaringClass);
 
             return self::$propertyCache[$cacheKey] = $resolvedNode;
@@ -211,12 +212,14 @@ final class ContractParser
             if ($isVariadic) {
                 $type = new ArrayTypeNode($type);
             }
-            $types[$paramName] = SpecialTypeResolver::resolve($type, $ref);
+            $resolvedType = SpecialTypeResolver::resolve($type, $ref);
+            $types[$paramName] = self::substituteAliases($resolvedType, $aliases);
         }
 
         $returnTags = $phpDocNode->getReturnTagValues();
         if (\count($returnTags) > 0) {
-            $returnType = SpecialTypeResolver::resolve($returnTags[0]->type, $ref);
+            $resolvedReturn = SpecialTypeResolver::resolve($returnTags[0]->type, $ref);
+            $returnType = self::substituteAliases($resolvedReturn, $aliases);
         }
 
         return [
@@ -323,7 +326,8 @@ final class ContractParser
                         if ($isVariadic) {
                             $type = new ArrayTypeNode($type);
                         }
-                        $types[$baseParamName] = SpecialTypeResolver::resolve($type, $hierRef);
+                        $resolvedType = SpecialTypeResolver::resolve($type, $hierRef);
+                        $types[$baseParamName] = self::substituteAliases($resolvedType, $aliases);
                     }
                 }
             }
@@ -331,7 +335,8 @@ final class ContractParser
             if ($returnType === null) {
                 $returnTags = $phpDocNode->getReturnTagValues();
                 if (\count($returnTags) > 0) {
-                    $returnType = SpecialTypeResolver::resolve($returnTags[0]->type, $hierRef);
+                    $resolvedReturn = SpecialTypeResolver::resolve($returnTags[0]->type, $hierRef);
+                    $returnType = self::substituteAliases($resolvedReturn, $aliases);
                 }
             }
         }
@@ -360,10 +365,64 @@ final class ContractParser
                         if ($isVariadic) {
                             $propType = new ArrayTypeNode($propType);
                         }
-                        $types[$paramName] = SpecialTypeResolver::resolve($propType, $ref);
+                        $types[$paramName] = self::substituteAliases($propType, []);
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Recursively substitutes all type aliases inside a TypeNode AST.
+     *
+     * @param array<string, TypeNode> $aliases
+     */
+    private static function substituteAliases(TypeNode $node, array $aliases): TypeNode
+    {
+        if ($node instanceof IdentifierTypeNode) {
+            if (isset($aliases[$node->name])) {
+                return self::substituteAliases($aliases[$node->name], $aliases);
+            }
+
+            return $node;
+        }
+
+        if ($node instanceof ArrayTypeNode) {
+            return new ArrayTypeNode(self::substituteAliases($node->type, $aliases));
+        }
+
+        if ($node instanceof GenericTypeNode) {
+            $genericType = self::substituteAliases($node->type, $aliases);
+            $genericTypes = array_map(
+                fn ($t) => self::substituteAliases($t, $aliases),
+                $node->genericTypes
+            );
+
+            return new GenericTypeNode(
+                $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
+                $genericTypes,
+                $node->variances
+            );
+        }
+
+        if ($node instanceof NullableTypeNode) {
+            return new NullableTypeNode(self::substituteAliases($node->type, $aliases));
+        }
+
+        if ($node instanceof UnionTypeNode) {
+            return new UnionTypeNode(array_map(
+                fn ($t) => self::substituteAliases($t, $aliases),
+                $node->types
+            ));
+        }
+
+        if ($node instanceof IntersectionTypeNode) {
+            return new IntersectionTypeNode(array_map(
+                fn ($t) => self::substituteAliases($t, $aliases),
+                $node->types
+            ));
+        }
+
+        return $node;
     }
 }

@@ -36,6 +36,20 @@ final class IterableWrapper
         $typeNode = ($paramName === 'return') ? ($contract['return'] ?? null) : ($contract['types'][$paramName] ?? null);
         $aliases = $contract['aliases'] ?? [];
 
+        if ($typeNode !== null) {
+            $baseName = '';
+            if ($typeNode instanceof IdentifierTypeNode) {
+                $baseName = strtolower($typeNode->name);
+            } elseif ($typeNode instanceof GenericTypeNode) {
+                $baseName = strtolower($typeNode->type->name);
+            }
+
+            $standardIterables = ['iterable', 'traversable', 'iterator', 'generator', 'iteratoraggregate', 'array'];
+            if ($baseName !== '' && ! \in_array($baseName, $standardIterables, true)) {
+                return $iterable;
+            }
+        }
+
         [$keyTypeNode, $itemTypeNode] = self::extractKeyAndItemTypeNodes($typeNode, $aliases);
 
         $prefix = ($paramName === 'return') ? "$function(): Return iterator" : "$function(): Iterator \$$paramName";
