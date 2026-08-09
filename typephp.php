@@ -95,7 +95,8 @@ return [
     | More specific patterns take precedence over broader rules.
     | You can specify directory globs (e.g. 'src/**'), single vendor packages
     | (e.g. 'vendor/my-org/my-package/**'), or single specific files
-    | (e.g. 'vendor/monolog/monolog/src/Monolog/Logger.php').
+    | (vendor/monologvendor/monolog/monolog/src/Monolog/Logger.php').
+    | You can use "*" glob to match any file.
     */
     'include' => [
         'src/**',
