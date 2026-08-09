@@ -63,4 +63,6 @@ interface StreamWrapperInterface
      * @return resource|false
      */
     public function stream_cast(int $cast_as);
+
+    public function stream_tell(): int;
 }

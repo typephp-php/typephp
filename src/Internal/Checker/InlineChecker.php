@@ -67,6 +67,25 @@ final class InlineChecker
                 $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
             }
 
+            // Resolve local class-level aliases for the executing context by traversing back the call stack
+            $className = null;
+            $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
+            foreach ($trace as $frame) {
+                $classCandidate = $frame['class'] ?? null;
+                if ($classCandidate !== null && ! str_starts_with($classCandidate, 'TypePHP\\Internal\\') && ! str_starts_with($classCandidate, 'TypePHP\\Wrapper\\')) {
+                    $className = $classCandidate;
+
+                    break;
+                }
+            }
+
+            if ($className !== null) {
+                $classAliases = ContractParser::parseClassAliases($className);
+                if (\count($classAliases) > 0) {
+                    $typeNode = TemplateSubstitutor::substitute($typeNode, $classAliases);
+                }
+            }
+
             if (! self::shouldValidateType($typeNode, $config)) {
                 return $value;
             }

@@ -48,8 +48,23 @@ final class ContractParser
         try {
             if (str_contains($function, '::')) {
                 [$className, $methodName] = explode('::', $function, 2);
-                $ref = new \ReflectionMethod($className, $methodName);
-                $contract = self::parseMethod($ref);
+
+                /** @var class-string<object> $className */
+                $refClass = new \ReflectionClass($className);
+                if ($refClass->hasMethod($methodName)) {
+                    $ref = $refClass->getMethod($methodName);
+                    $contract = self::parseMethod($ref);
+                } else {
+                    $templates = [];
+                    $aliases = [];
+                    self::parseClassLevelDocs($refClass, $templates, $aliases);
+                    $contract = [
+                        'types' => [],
+                        'templates' => $templates,
+                        'return' => null,
+                        'aliases' => $aliases,
+                    ];
+                }
             } else {
                 $ref = new \ReflectionFunction($function);
                 $contract = self::parseFunction($ref);
@@ -81,7 +96,7 @@ final class ContractParser
             $doc = false;
             $declaringClass = null;
 
-            // 1. Search Class and Parent Class Hierarchy
+            // Search Class and Parent Class Hierarchy
             $current = $refClass;
             while ($current !== false) {
                 if ($current->hasProperty($propertyName)) {
@@ -97,7 +112,7 @@ final class ContractParser
                 $current = $current->getParentClass();
             }
 
-            // 2. Search Implemented Interfaces (PHP 8.4 Interface Properties)
+            //  Search Implemented Interfaces (PHP 8.4 Interface Properties)
             if ($doc === false) {
                 foreach ($refClass->getInterfaces() as $interface) {
                     if ($interface->hasProperty($propertyName)) {
@@ -140,6 +155,34 @@ final class ContractParser
             return self::$propertyCache[$cacheKey] = $resolvedNode;
         } catch (\Throwable $e) {
             return self::$propertyCache[$cacheKey] = null;
+        }
+    }
+
+    /**
+     * Extracts and returns all class-level type aliases for a given class.
+     *
+     * @return array<string, TypeNode>
+     */
+    public static function parseClassAliases(string $className): array
+    {
+        if (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className)) {
+            return [];
+        }
+
+        try {
+            $refClass = new \ReflectionClass($className);
+            $doc = $refClass->getDocComment();
+            if ($doc === false) {
+                return [];
+            }
+
+            $phpDocNode = DocblockExtractor::parseDocString($doc);
+            $aliases = [];
+            DocblockExtractor::extractAliases($phpDocNode, $aliases, $refClass);
+
+            return $aliases;
+        } catch (\Throwable $e) {
+            return [];
         }
     }
 
@@ -264,8 +307,10 @@ final class ContractParser
     /**
      * Resolves method-level docblocks (@param, @return, @template, aliases) up the method hierarchy.
      *
+     * @param \ReflectionMethod $ref
      * @param array<string, TypeNode> $types
      * @param array<string, TemplateTagValueNode> $templates
+     * @param TypeNode|null $returnType
      * @param array<string, TypeNode> $aliases
      */
     private static function parseMethodHierarchyDocs(

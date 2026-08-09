@@ -239,6 +239,17 @@ final class StreamWrapper implements StreamWrapperInterface
         return @flock($this->handle, $operation);
     }
 
+    public function stream_tell(): int
+    {
+        if ($this->handle === null) {
+            return 0;
+        }
+
+        $res = ftell($this->handle);
+
+        return $res !== false ? $res : 0;
+    }
+
     public function stream_flush(): bool
     {
         if ($this->handle === null) {
