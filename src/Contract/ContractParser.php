@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace TypePHP\Contract;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Config;
@@ -49,21 +51,25 @@ final class ContractParser
             if (str_contains($function, '::')) {
                 [$className, $methodName] = explode('::', $function, 2);
 
-                /** @var class-string<object> $className */
-                $refClass = new \ReflectionClass($className);
-                if ($refClass->hasMethod($methodName)) {
-                    $ref = $refClass->getMethod($methodName);
-                    $contract = self::parseMethod($ref);
+                if (class_exists($className) || interface_exists($className) || trait_exists($className)) {
+                    /** @var class-string<object> $className */
+                    $refClass = new \ReflectionClass($className);
+                    if ($refClass->hasMethod($methodName)) {
+                        $ref = $refClass->getMethod($methodName);
+                        $contract = self::parseMethod($ref);
+                    } else {
+                        $templates = [];
+                        $aliases = [];
+                        self::parseClassLevelDocs($refClass, $templates, $aliases);
+                        $contract = [
+                            'types' => [],
+                            'templates' => $templates,
+                            'return' => null,
+                            'aliases' => $aliases,
+                        ];
+                    }
                 } else {
-                    $templates = [];
-                    $aliases = [];
-                    self::parseClassLevelDocs($refClass, $templates, $aliases);
-                    $contract = [
-                        'types' => [],
-                        'templates' => $templates,
-                        'return' => null,
-                        'aliases' => $aliases,
-                    ];
+                    $contract = ['types' => [], 'templates' => [], 'return' => null, 'aliases' => []];
                 }
             } else {
                 $ref = new \ReflectionFunction($function);
@@ -91,6 +97,7 @@ final class ContractParser
         }
 
         try {
+            /** @var class-string<object> $className */
             $refClass = new \ReflectionClass($className);
 
             $doc = false;
@@ -112,7 +119,7 @@ final class ContractParser
                 $current = $current->getParentClass();
             }
 
-            //  Search Implemented Interfaces (PHP 8.4 Interface Properties)
+            // Search Implemented Interfaces (PHP 8.4 Interface Properties)
             if ($doc === false) {
                 foreach ($refClass->getInterfaces() as $interface) {
                     if ($interface->hasProperty($propertyName)) {
@@ -170,6 +177,7 @@ final class ContractParser
         }
 
         try {
+            /** @var class-string<object> $className */
             $refClass = new \ReflectionClass($className);
             $doc = $refClass->getDocComment();
             if ($doc === false) {
@@ -390,6 +398,7 @@ final class ContractParser
     /**
      * Falls back to property @var docblocks for constructor promoted parameters if un-annotated.
      *
+     * @param \ReflectionMethod $ref
      * @param array<string, TypeNode> $types
      */
     private static function applyConstructorPromotionFallback(\ReflectionMethod $ref, array &$types): void
@@ -466,6 +475,28 @@ final class ContractParser
                 fn ($t) => self::substituteAliases($t, $aliases),
                 $node->types
             ));
+        }
+
+        if ($node instanceof ArrayShapeNode) {
+            foreach ($node->items as $item) {
+                $item->valueType = self::substituteAliases($item->valueType, $aliases);
+            }
+            if ($node->unsealedType !== null) {
+                if ($node->unsealedType->keyType !== null) {
+                    $node->unsealedType->keyType = self::substituteAliases($node->unsealedType->keyType, $aliases);
+                }
+                $node->unsealedType->valueType = self::substituteAliases($node->unsealedType->valueType, $aliases);
+            }
+
+            return $node;
+        }
+
+        if ($node instanceof ObjectShapeNode) {
+            foreach ($node->items as $item) {
+                $item->valueType = self::substituteAliases($item->valueType, $aliases);
+            }
+
+            return $node;
         }
 
         return $node;
