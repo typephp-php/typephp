@@ -26,10 +26,16 @@ final class ErrorFactory
      * For parameter and callback argument errors, it filters out internal library frames
      * and sets the file and line to accurately blame the caller site.
      */
-    public static function prepareException(\TypeError $e): \TypeError
+    public static function prepareException(\TypeError $e, ?int $line = null): \TypeError
     {
-        $message = $e->getMessage();
+        $ref = new \ReflectionObject($e);
 
+        if ($line !== null && $ref->hasProperty('line')) {
+            $propLine = $ref->getProperty('line');
+            $propLine->setValue($e, $line);
+        }
+
+        $message = $e->getMessage();
         $isCallSiteError = str_contains($message, 'Argument $')
             || str_contains($message, 'argument #')
             || str_contains($message, 'Callback argument');
@@ -42,14 +48,12 @@ final class ErrorFactory
                     $file = str_replace('\\', '/', $frame['file']);
 
                     if (! str_contains($file, 'Internal/ErrorFactory.php') && ! str_contains($file, 'Wrapper/CallableWrapper.php')) {
-                        $ref = new \ReflectionObject($e);
-
                         if ($ref->hasProperty('file')) {
                             $propFile = $ref->getProperty('file');
                             $propFile->setValue($e, $frame['file']);
                         }
 
-                        if ($ref->hasProperty('line')) {
+                        if ($line === null && $ref->hasProperty('line')) {
                             $propLine = $ref->getProperty('line');
                             $propLine->setValue($e, $frame['line']);
                         }

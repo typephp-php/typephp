@@ -37,8 +37,28 @@ final class NodeBuilder
         );
     }
 
-    public static function createTernaryThrowExpr(Node\Expr\FuncCall $checkCall): Node\Expr\Ternary
+    public static function createTernaryThrowExpr(Node\Expr\FuncCall $checkCall, int $startLine = -1): Node\Expr\Ternary
     {
+        $args = [
+            new Node\Arg(
+                new Node\Expr\New_(
+                    new Node\Name('\TypePHP\Exception\TypeError'),
+                    [
+                        new Node\Arg(
+                            new Node\Expr\MethodCall(
+                                new Node\Expr\Variable('__typephpVal'),
+                                'getMessage'
+                            )
+                        ),
+                    ]
+                )
+            ),
+        ];
+
+        if ($startLine !== -1) {
+            $args[] = new Node\Arg(new Node\Scalar\LNumber($startLine));
+        }
+
         return new Node\Expr\Ternary(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(
@@ -51,21 +71,7 @@ final class NodeBuilder
                 new Node\Expr\StaticCall(
                     new Node\Name('\TypePHP\Internal\ErrorFactory'),
                     'prepareException',
-                    [
-                        new Node\Arg(
-                            new Node\Expr\New_(
-                                new Node\Name('\TypePHP\Exception\TypeError'),
-                                [
-                                    new Node\Arg(
-                                        new Node\Expr\MethodCall(
-                                            new Node\Expr\Variable('__typephpVal'),
-                                            'getMessage'
-                                        )
-                                    ),
-                                ]
-                            )
-                        ),
-                    ]
+                    $args
                 )
             ),
             new Node\Expr\Variable('__typephpVal')

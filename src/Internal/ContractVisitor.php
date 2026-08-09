@@ -79,7 +79,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                             $checkStmt = new Node\Stmt\Expression(
                                 new Node\Expr\Assign(
                                     $dVar['expr'],
-                                    NodeBuilder::createTernaryThrowExpr($checkCall)
+                                    NodeBuilder::createTernaryThrowExpr($checkCall, $dVar['expr']->getStartLine())
                                 )
                             );
                             $checkStmt->setAttribute('typephp_injected', true);
@@ -108,14 +108,14 @@ final class ContractVisitor extends NodeVisitorAbstract
 
                 if ($typeString !== null) {
                     $checkCall = NodeBuilder::createVariableCheckCall($node->expr, $typeString, $varName);
-                    $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall);
+                    $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall, $node->var->getStartLine());
                 }
             } elseif ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
                 $propName = $node->var->name->toString();
                 $objExpr = $node->var->var;
 
                 $checkCall = NodeBuilder::createPropertyCheckCall($node->expr, $objExpr, $propName);
-                $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall);
+                $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall, $node->var->getStartLine());
             } elseif ($node->var instanceof Node\Expr\StaticPropertyFetch && $node->var->name instanceof Node\VarLikeIdentifier) {
                 $propName = $node->var->name->toString();
                 $classExpr = $node->var->class;
@@ -125,7 +125,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                     : $classExpr;
 
                 $checkCall = NodeBuilder::createPropertyCheckCall($node->expr, $classArg, $propName);
-                $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall);
+                $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall, $node->var->getStartLine());
             }
         }
 
