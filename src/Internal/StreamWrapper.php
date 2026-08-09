@@ -278,6 +278,16 @@ final class StreamWrapper implements StreamWrapperInterface
         return fstat($this->handle);
     }
 
+    /**
+     * Extracts the underlying native file descriptor for C-level functions like proc_open() or stream_select().
+     *
+     * @return resource|false
+     */
+    public function stream_cast(int $cast_as)
+    {
+        return $this->handle !== null ? $this->handle : false;
+    }
+
     public function stream_seek(int $offset, int $whence = SEEK_SET): bool
     {
         if ($this->handle === null) {

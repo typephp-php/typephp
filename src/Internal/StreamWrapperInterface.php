@@ -58,4 +58,9 @@ interface StreamWrapperInterface
     public function rename(string $pathFrom, string $pathTo): bool;
 
     public function stream_metadata(string $path, int $option, mixed $value): bool;
+
+    /**
+     * @return resource|false
+     */
+    public function stream_cast(int $cast_as);
 }
