@@ -15,6 +15,8 @@ use PHPStan\PhpDocParser\Ast\Type\ArrayShapeUnsealedTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
+use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode;
+use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
@@ -144,6 +146,26 @@ final class SpecialTypeResolver
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
                 $innerTypes,
                 $node->variances
+            );
+        }
+
+        if ($node instanceof ConditionalTypeNode) {
+            return new ConditionalTypeNode(
+                self::resolve($node->subjectType, $context, $thisObj),
+                self::resolve($node->targetType, $context, $thisObj),
+                self::resolve($node->if, $context, $thisObj),
+                self::resolve($node->else, $context, $thisObj),
+                $node->negated
+            );
+        }
+
+        if ($node instanceof ConditionalTypeForParameterNode) {
+            return new ConditionalTypeForParameterNode(
+                $node->parameterName,
+                self::resolve($node->targetType, $context, $thisObj),
+                self::resolve($node->if, $context, $thisObj),
+                self::resolve($node->else, $context, $thisObj),
+                $node->negated
             );
         }
 
@@ -339,6 +361,26 @@ final class SpecialTypeResolver
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
                 $innerTypes,
                 $node->variances
+            );
+        }
+
+        if ($node instanceof ConditionalTypeNode) {
+            return new ConditionalTypeNode(
+                self::resolveForFile($node->subjectType, $file),
+                self::resolveForFile($node->targetType, $file),
+                self::resolveForFile($node->if, $file),
+                self::resolveForFile($node->else, $file),
+                $node->negated
+            );
+        }
+
+        if ($node instanceof ConditionalTypeForParameterNode) {
+            return new ConditionalTypeForParameterNode(
+                $node->parameterName,
+                self::resolveForFile($node->targetType, $file),
+                self::resolveForFile($node->if, $file),
+                self::resolveForFile($node->else, $file),
+                $node->negated
             );
         }
 
