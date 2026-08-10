@@ -12,6 +12,7 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Config;
@@ -263,14 +264,14 @@ final class ContractParser
             if ($isVariadic) {
                 $type = new ArrayTypeNode($type);
             }
-            $resolvedType = SpecialTypeResolver::resolve($type, $ref);
-            $types[$paramName] = self::substituteAliases($resolvedType, $aliases);
+            $substitutedType = self::substituteAliases($type, $aliases);
+            $types[$paramName] = SpecialTypeResolver::resolve($substitutedType, $ref);
         }
 
         $returnTags = $phpDocNode->getReturnTagValues();
         if (\count($returnTags) > 0) {
-            $resolvedReturn = SpecialTypeResolver::resolve($returnTags[0]->type, $ref);
-            $returnType = self::substituteAliases($resolvedReturn, $aliases);
+            $substitutedReturn = self::substituteAliases($returnTags[0]->type, $aliases);
+            $returnType = SpecialTypeResolver::resolve($substitutedReturn, $ref);
         }
 
         return [
@@ -379,8 +380,8 @@ final class ContractParser
                         if ($isVariadic) {
                             $type = new ArrayTypeNode($type);
                         }
-                        $resolvedType = SpecialTypeResolver::resolve($type, $hierRef);
-                        $types[$baseParamName] = self::substituteAliases($resolvedType, $aliases);
+                        $substitutedType = self::substituteAliases($type, $aliases);
+                        $types[$baseParamName] = SpecialTypeResolver::resolve($substitutedType, $hierRef);
                     }
                 }
             }
@@ -388,8 +389,8 @@ final class ContractParser
             if ($returnType === null) {
                 $returnTags = $phpDocNode->getReturnTagValues();
                 if (\count($returnTags) > 0) {
-                    $resolvedReturn = SpecialTypeResolver::resolve($returnTags[0]->type, $hierRef);
-                    $returnType = self::substituteAliases($resolvedReturn, $aliases);
+                    $substitutedReturn = self::substituteAliases($returnTags[0]->type, $aliases);
+                    $returnType = SpecialTypeResolver::resolve($substitutedReturn, $hierRef);
                 }
             }
         }
@@ -439,6 +440,13 @@ final class ContractParser
             }
 
             return $node;
+        }
+
+        if ($node instanceof OffsetAccessTypeNode) {
+            return new OffsetAccessTypeNode(
+                self::substituteAliases($node->type, $aliases),
+                self::substituteAliases($node->offset, $aliases)
+            );
         }
 
         if ($node instanceof ArrayTypeNode) {
