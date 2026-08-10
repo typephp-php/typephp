@@ -6,6 +6,7 @@ namespace TypePHP\Validator;
 
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use TypePHP\Internal\ClassNameValidator;
 use TypePHP\Internal\ErrorFactory;
 use TypePHP\Internal\ErrorMessage;
 use TypePHP\Internal\TypeFormatter;
@@ -71,7 +72,7 @@ final class IdentifierValidator implements TypeValidatorInterface
             'open-resource' => \is_resource($value),
             'closed-resource' => ! \is_resource($value) && get_debug_type($value) === 'resource (closed)',
 
-            default => \is_object($value) && is_a($value, $identifierNode->name),
+            default => $this->validateClassOrIgnore($value, $identifierNode->name),
         };
 
         if (! $ok) {
@@ -79,5 +80,18 @@ final class IdentifierValidator implements TypeValidatorInterface
         }
 
         return null;
+    }
+
+    /**
+     * Enforces strict object/class checks for valid PHP class identifiers (e.g. User, NonExistentClass),
+     * but gracefully ignores invalid class syntax (e.g. madeup-type, custom-tag-name).
+     */
+    private function validateClassOrIgnore(mixed $value, string $name): bool
+    {
+        if (! ClassNameValidator::isValid($name)) {
+            return true;
+        }
+
+        return \is_object($value) && is_a($value, $name);
     }
 }
