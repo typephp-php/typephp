@@ -124,6 +124,26 @@ describe('IdentifierValidator', function () {
         $neverNode = parseType('never', $this->lexer, $this->typeParser);
         expect($this->registry->validate('returned_value', $neverNode, 'arg'))->toBeInstanceOf(ErrorMessage::class);
     });
+
+    test('validates array-key pseudo-type (int|string)', function () {
+        $arrayKeyNode = parseType('array-key', $this->lexer, $this->typeParser);
+
+        expect($this->registry->validate(123, $arrayKeyNode, 'arg'))->toBeNull();
+        expect($this->registry->validate('custom_key', $arrayKeyNode, 'arg'))->toBeNull();
+        expect($this->registry->validate(true, $arrayKeyNode, 'arg'))->toBeInstanceOf(ErrorMessage::class);
+        expect($this->registry->validate([], $arrayKeyNode, 'arg'))->toBeInstanceOf(ErrorMessage::class);
+    });
+
+    test('validates uppercase-string and non-empty-uppercase-string', function () {
+        $uppercase = parseType('uppercase-string', $this->lexer, $this->typeParser);
+        expect($this->registry->validate('USD', $uppercase, 'arg'))->toBeNull();
+        expect($this->registry->validate('hello', $uppercase, 'arg'))->toBeInstanceOf(ErrorMessage::class);
+
+        $nonEmptyUppercase = parseType('non-empty-uppercase-string', $this->lexer, $this->typeParser);
+        expect($this->registry->validate('EUR', $nonEmptyUppercase, 'arg'))->toBeNull();
+        expect($this->registry->validate('', $nonEmptyUppercase, 'arg'))->toBeInstanceOf(ErrorMessage::class);
+        expect($this->registry->validate('eur', $nonEmptyUppercase, 'arg'))->toBeInstanceOf(ErrorMessage::class);
+    });
 });
 
 describe('ConstValidator', function () {
@@ -281,7 +301,7 @@ describe('IntersectionValidator', function () {
     test('edge case: object failing one interface in intersection', function () {
         $intersection = parseType('Countable&ArrayAccess', $this->lexer, $this->typeParser);
 
-        $countableOnly = new class () implements Countable {
+        $countableOnly = new class() implements Countable {
             public function count(): int
             {
                 return 0;

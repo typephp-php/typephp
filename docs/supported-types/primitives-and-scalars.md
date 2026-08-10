@@ -122,6 +122,9 @@ Validate string lengths, formatting, character casing, and truthiness at runtime
 | **`numeric-string`** | `is_numeric($val) === true` | `'123'`, `'45.67'`, `'-10'` | `'abc'`, `''` |
 | **`lowercase-string`** | `strtolower($val) === $val` | `'hello'`, `'user_100'` | `'Hello'`, `'ADMIN'` |
 | **`non-empty-lowercase-string`** | Non-empty & lowercase | `'hello'`, `'abc'` | `''`, `'Hello'` |
+| **`uppercase-string`** | `strtoupper($val) === $val` | `'USD'`, `'HELLO_100'` | `'Hello'`, `'admin'` |
+| **`non-empty-uppercase-string`** | Non-empty & uppercase | `'EUR'`, `'ABC'` | `''`, `'Eur'` |
+| **`array-key`** | `is_int($val) \|\| is_string($val)` | `100`, `'user_100'` | `true`, `[]`, `null` |
 | **`literal-string`** | String scalar | `'active'`, `'user'` | Non-strings |
 | **`truthy-string`**, **`non-falsy-string`** | Evaluates to `true` in boolean context | `'hello'`, `'1'` | `''`, `'0'` |
 

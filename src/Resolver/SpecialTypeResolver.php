@@ -528,7 +528,9 @@ final class SpecialTypeResolver
             'positive-int', 'negative-int', 'non-positive-int', 'non-negative-int', 'non-zero-int', 'unsigned-int',
             'positive-float', 'negative-float', 'non-positive-float', 'non-negative-float', 'non-zero-float',
             'class-string', 'interface-string', 'trait-string', 'enum-string', 'callable-string', 'numeric-string',
-            'non-empty-string', 'lowercase-string', 'non-empty-lowercase-string', 'literal-string', 'truthy-string',
+            'non-empty-string', 'lowercase-string', 'non-empty-lowercase-string',
+            'uppercase-string', 'non-empty-uppercase-string', 'array-key',
+            'literal-string', 'truthy-string',
             'non-empty-array', 'non-empty-list', 'number', 'numeric', 'truthy', 'falsy', 'falsey', 'min', 'max', '*',
             'never', 'never-return', 'never-returns', 'no-return', 'open-resource', 'closed-resource',
         ], true);
