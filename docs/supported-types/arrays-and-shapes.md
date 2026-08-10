@@ -239,6 +239,146 @@ processTuple([-5, 'success']);
 // Throws: TypeError: processTuple(): Argument $tuple['0'] must be of type positive-int
 ```
 
+Here is the updated documentation with a special, dedicated section for **`key-of<T>`** and **`value-of<T>`** inside `docs/supported-types/arrays-and-shapes.md`.
+
+---
+## Key & Value Extraction (`key-of<T>` & `value-of<T>`)
+
+TypePHP supports dynamically restricting function parameters, return types, property writes, or array shape fields to the keys or values of an array constant, an array shape, or a PHP 8.1 Backed Enum using `key-of<T>` and `value-of<T>` type operators.
+
+> **Performance & Visibility:** TypePHP caches array and enum extractions in static memory, guaranteeing **$O(1)$ constant lookup times** during execution. Furthermore, it uses Reflection to safely bypass PHP visibility restrictions, allowing you to reference `private` or `protected` class constants (e.g., `key-of<self::PRIVATE_MAP>`) in docblocks without throwing runtime errors.
+
+| Annotation | Supported Targets `T` | Validation Rule |
+| :--- | :--- | :--- |
+| **`key-of<T>`** | Array Constant, Array Shape, Enum | Validates that the value matches a valid **array key** or **Enum case name** (e.g., `'Active'`). |
+| **`value-of<T>`** | Array Constant, Backed Enum | Validates that the value matches a valid **array value** or **Enum backing value** (e.g., `'active'`). |
+
+---
+
+### 1. Extracting from Class Constants
+
+Extract allowed keys or values directly from `public`, `protected`, or `private` class constant arrays:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Database;
+
+class DriverManager
+{
+    /**
+     * Private constant array
+     */
+    private const DRIVER_MAP = [
+        'pdo_mysql'  => 'PDO\MySQL\Driver',
+        'pdo_sqlite' => 'PDO\SQLite\Driver',
+    ];
+
+    /**
+     * @param key-of<self::DRIVER_MAP> $driverKey
+     * @param value-of<self::DRIVER_MAP> $driverClass
+     */
+    public function connect(string $driverKey, string $driverClass): void
+    {
+        // ...
+    }
+}
+
+$manager = new DriverManager();
+
+// Valid Call
+$manager->connect('pdo_mysql', 'PDO\MySQL\Driver');
+
+// Invalid Driver Key
+$manager->connect('pdo_pgsql', 'PDO\MySQL\Driver');
+// Throws: TypeError: Argument $driverKey must be a key of App\Database\DriverManager::DRIVER_MAP, string 'pdo_pgsql' given
+
+// Invalid Driver Class Value
+$manager->connect('pdo_mysql', 'PDO\PgSQL\Driver');
+// Throws: TypeError: Argument $driverClass must be a value of App\Database\DriverManager::DRIVER_MAP
+```
+
+---
+
+### 2. Extracting from Enums
+
+For Enums, `key-of<T>` strictly validates case **names**, while `value-of<T>` strictly validates **backing values**:
+
+```php
+enum StatusEnum: string
+{
+    case Active = 'active';
+    case Pending = 'pending';
+}
+
+/**
+ * @param key-of<StatusEnum> $caseName    // Expects: 'Active' | 'Pending'
+ * @param value-of<StatusEnum> $caseValue // Expects: 'active' | 'pending'
+ */
+function setStatus(string $caseName, string $caseValue): void
+{
+    // ...
+}
+
+// Valid Call
+setStatus('Active', 'active');
+
+// Invalid Case Name (Passing backing value 'active' where case name 'Active' was expected)
+setStatus('active', 'active');
+// Throws: TypeError: Argument $caseName must be a key of enum StatusEnum
+
+// Invalid Backing Value
+setStatus('Active', 'archived');
+// Throws: TypeError: Argument $caseValue must be a value of enum StatusEnum
+```
+
+---
+
+### 3. Inline Array Shapes & Type Aliases (`@phpstan-type`)
+
+`key-of<T>` and `value-of<T>` can be used directly on inline array shapes or nested deeply inside `@phpstan-type` / `@psalm-type` aliases:
+
+```php
+namespace App\Services;
+
+use App\Database\DriverManager;
+
+/**
+ * Type alias extracting keys and values from external class constants
+ *
+ * @phpstan-type ConnectionParams array{
+ *     driver: key-of<DriverManager::DRIVER_MAP>,
+ *     driverClass?: value-of<DriverManager::DRIVER_MAP>
+ * }
+ */
+class ConnectionService
+{
+    /**
+     * @param ConnectionParams $params
+     * @param key-of<array{id: int, name: string}> $shapeKey
+     */
+    public function configure(array $params, string $shapeKey): void
+    {
+        // ...
+    }
+}
+
+$service = new ConnectionService();
+
+// Valid Call
+$service->configure(['driver' => 'pdo_mysql'], 'id');
+
+// Invalid Nested Driver Key inside Type Alias
+$service->configure(['driver' => 'pdo_pgsql'], 'id');
+// Throws: TypeError: Argument $params['driver'] must be a key of App\Database\DriverManager::DRIVER_MAP
+
+// Invalid Direct Shape Key ('invalid' is neither 'id' nor 'name')
+$service->configure(['driver' => 'pdo_mysql'], 'invalid');
+// Throws: TypeError: Argument $shapeKey must be a key of the specified array shape
+```
+
 ---
 
 ## Object Shapes (`object{prop: type}` & `stdClass{prop: type}`)
