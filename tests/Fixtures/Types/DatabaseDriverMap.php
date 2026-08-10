@@ -7,12 +7,12 @@ namespace TypePHP\Tests\Fixtures\Types;
 class DatabaseDriverMap
 {
     private const DRIVER_MAP = [
-        'pdo_mysql'  => 'PDO\MySQL\Driver',
+        'pdo_mysql' => 'PDO\MySQL\Driver',
         'pdo_sqlite' => 'PDO\SQLite\Driver',
     ];
 
     public const PUBLIC_MAP = [
-        'read'  => 1,
+        'read' => 1,
         'write' => 2,
     ];
 

@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace TypePHP\Validator;
 
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
-use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
-use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
 use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
@@ -29,7 +29,7 @@ final class GenericValidator implements TypeValidatorInterface
     private static array $constantCache = [];
 
     /**
-     * @var array<string, array<int, string>> 
+     * @var array<string, array<int, string>>
      */
     private static array $enumKeyCache = [];
 
@@ -78,7 +78,7 @@ final class GenericValidator implements TypeValidatorInterface
             $constName = $constExpr->name;
             $cacheKey = $fqcn !== '' ? "$fqcn::$constName" : $constName;
 
-            if (!\array_key_exists($cacheKey, self::$constantCache)) {
+            if (! \array_key_exists($cacheKey, self::$constantCache)) {
                 $constValue = false;
                 if ($fqcn !== '') {
                     if (class_exists($fqcn) || interface_exists($fqcn)) {
@@ -101,21 +101,23 @@ final class GenericValidator implements TypeValidatorInterface
             $constValue = self::$constantCache[$cacheKey];
 
             if (\is_array($constValue)) {
-                if ((!\is_int($value) && !\is_string($value)) || !\array_key_exists($value, $constValue)) {
+                if ((! \is_int($value) && ! \is_string($value)) || ! \array_key_exists($value, $constValue)) {
                     return ErrorFactory::createError($context . " must be a key of $cacheKey, " . TypeFormatter::formatGivenValue($value) . ' given');
                 }
+
                 return null;
             }
         } elseif ($targetType instanceof IdentifierTypeNode) {
             $enumClass = $targetType->name;
             if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass)) {
-                if (!isset(self::$enumKeyCache[$enumClass])) {
-                    self::$enumKeyCache[$enumClass] = array_map(fn($case) => $case->name, $enumClass::cases());
+                if (! isset(self::$enumKeyCache[$enumClass])) {
+                    self::$enumKeyCache[$enumClass] = array_map(fn ($case) => $case->name, $enumClass::cases());
                 }
 
-                if (!\in_array($value, self::$enumKeyCache[$enumClass], true)) {
+                if (! \in_array($value, self::$enumKeyCache[$enumClass], true)) {
                     return ErrorFactory::createError($context . " must be a key of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
                 }
+
                 return null;
             }
         } elseif ($targetType instanceof ArrayShapeNode) {
@@ -130,9 +132,10 @@ final class GenericValidator implements TypeValidatorInterface
                 }
             }
 
-            if (!\in_array($value, $validKeys, true)) {
+            if (! \in_array($value, $validKeys, true)) {
                 return ErrorFactory::createError($context . ' must be a key of the specified array shape, ' . TypeFormatter::formatGivenValue($value) . ' given');
             }
+
             return null;
         }
 
@@ -146,7 +149,7 @@ final class GenericValidator implements TypeValidatorInterface
      * 1. Array Constants: If T is a class constant (e.g., self::DRIVER_MAP), it safely reflects the
      *    target class to bypass visibility restrictions (private/protected), caches the array in memory,
      *    and verifies that the provided value exists as a value in that array.
-     * 2. Enums: If T is a Backed Enum identifier, it extracts and caches the enum case backing values, 
+     * 2. Enums: If T is a Backed Enum identifier, it extracts and caches the enum case backing values,
      *    then verifies that the provided value matches a valid case value.
      * 3. Fallback: Returns null gracefully for unresolvable or unsupported structures.
      */
@@ -160,7 +163,7 @@ final class GenericValidator implements TypeValidatorInterface
             $constName = $constExpr->name;
             $cacheKey = $fqcn !== '' ? "$fqcn::$constName" : $constName;
 
-            if (!\array_key_exists($cacheKey, self::$constantCache)) {
+            if (! \array_key_exists($cacheKey, self::$constantCache)) {
                 $constValue = false;
                 if ($fqcn !== '') {
                     if (class_exists($fqcn) || interface_exists($fqcn)) {
@@ -183,27 +186,30 @@ final class GenericValidator implements TypeValidatorInterface
             $constValue = self::$constantCache[$cacheKey];
 
             if (\is_array($constValue)) {
-                if (!\in_array($value, $constValue, true)) {
+                if (! \in_array($value, $constValue, true)) {
                     return ErrorFactory::createError($context . " must be a value of $cacheKey, " . TypeFormatter::formatGivenValue($value) . ' given');
                 }
+
                 return null;
             }
         } elseif ($targetType instanceof IdentifierTypeNode) {
             $enumClass = $targetType->name;
             if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass) && is_subclass_of($enumClass, \BackedEnum::class)) {
-                if (!isset(self::$enumValueCache[$enumClass])) {
-                    self::$enumValueCache[$enumClass] = array_map(fn($case) => $case->value, $enumClass::cases());
+                if (! isset(self::$enumValueCache[$enumClass])) {
+                    self::$enumValueCache[$enumClass] = array_map(fn ($case) => $case->value, $enumClass::cases());
                 }
 
-                if (!\in_array($value, self::$enumValueCache[$enumClass], true)) {
+                if (! \in_array($value, self::$enumValueCache[$enumClass], true)) {
                     return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
                 }
+
                 return null;
             }
         }
 
         return null;
     }
+
     /**
      * Validates integer ranges (e.g. int<1, 100> or int<min, max>).
      */
