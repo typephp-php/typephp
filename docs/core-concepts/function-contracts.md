@@ -36,6 +36,33 @@ registerUser(-5, 'Alice', 'admin');
 > **Execution Order Note:** Native PHP type hints (e.g., `int $id`, `string $username`) are evaluated by PHP's C-engine *before* function execution begins. TypePHP's extended PHPDoc contracts (e.g., `positive-int`, `non-empty-string`) execute at the very start of the function/method body. If a native type hint fails, PHP throws its native `TypeError` before TypePHP's guard rails run.
 
 ---
+## PHP 8.0+ Named Arguments
+
+TypePHP natively supports PHP 8.0+ Named Arguments. Because parameter contracts are mapped by parameter name rather than argument position index, you can pass named arguments in any order, and TypePHP will accurately validate each parameter:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * @param positive-int $id
+ * @param non-empty-string $username
+ * @param int<1, 100> $age
+ */
+function registerUser(int $id, string $username, int $age): void
+{
+    // ...
+}
+
+// Valid Call: Arguments passed in completely reversed/swapped order
+registerUser(age: 25, username: 'Alice', id: 42);
+
+// Invalid Call: $id (-5) passed as 3rd named argument
+registerUser(age: 25, username: 'Alice', id: -5);
+// Throws: TypeError: registerUser(): Argument $id must be of type positive-int, negative int (-5) given
+```
+---
 
 ## Class Methods (Instance & Static)
 

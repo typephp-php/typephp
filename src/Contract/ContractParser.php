@@ -332,10 +332,12 @@ final class ContractParser
         $hierarchy = HierarchyResolver::getMethodHierarchy($ref);
         $baseParams = $ref->getParameters();
         $baseParamNames = [];
+        $baseParamSet = [];
         $baseParamVariadic = [];
 
         foreach ($baseParams as $idx => $p) {
             $baseParamNames[$idx] = $p->getName();
+            $baseParamSet[$p->getName()] = $idx;
             $baseParamVariadic[$p->getName()] = $p->isVariadic();
         }
 
@@ -369,20 +371,24 @@ final class ContractParser
 
             foreach ($phpDocNode->getParamTagValues() as $paramTag) {
                 $paramName = ltrim($paramTag->parameterName, '$');
-                $paramIndex = $hierNameToIndex[$paramName] ?? null;
 
-                if ($paramIndex !== null && isset($baseParamNames[$paramIndex])) {
-                    $baseParamName = $baseParamNames[$paramIndex];
+                if (isset($baseParamSet[$paramName])) {
+                    $targetParamName = $paramName;
+                } else {
+                    $paramIndex = $hierNameToIndex[$paramName] ?? null;
+                    $targetParamName = ($paramIndex !== null && isset($baseParamNames[$paramIndex]))
+                        ? $baseParamNames[$paramIndex]
+                        : null;
+                }
 
-                    if (! isset($types[$baseParamName])) {
-                        $type = $paramTag->type;
-                        $isVariadic = $paramTag->isVariadic || $baseParamVariadic[$baseParamName];
-                        if ($isVariadic) {
-                            $type = new ArrayTypeNode($type);
-                        }
-                        $substitutedType = self::substituteAliases($type, $aliases);
-                        $types[$baseParamName] = SpecialTypeResolver::resolve($substitutedType, $hierRef);
+                if ($targetParamName !== null && ! isset($types[$targetParamName])) {
+                    $type = $paramTag->type;
+                    $isVariadic = $paramTag->isVariadic || ($baseParamVariadic[$targetParamName] ?? false);
+                    if ($isVariadic) {
+                        $type = new ArrayTypeNode($type);
                     }
+                    $substitutedType = self::substituteAliases($type, $aliases);
+                    $types[$targetParamName] = SpecialTypeResolver::resolve($substitutedType, $hierRef);
                 }
             }
 
