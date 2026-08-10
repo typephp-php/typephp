@@ -111,7 +111,7 @@ final class GenericValidator implements TypeValidatorInterface
             $enumClass = $targetType->name;
             if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass)) {
                 if (! isset(self::$enumKeyCache[$enumClass])) {
-                    self::$enumKeyCache[$enumClass] = array_map(fn ($case) => $case->name, $enumClass::cases());
+                    self::$enumKeyCache[$enumClass] = array_map(fn($case) => $case->name, $enumClass::cases());
                 }
 
                 if (! \in_array($value, self::$enumKeyCache[$enumClass], true)) {
@@ -196,7 +196,7 @@ final class GenericValidator implements TypeValidatorInterface
             $enumClass = $targetType->name;
             if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass) && is_subclass_of($enumClass, \BackedEnum::class)) {
                 if (! isset(self::$enumValueCache[$enumClass])) {
-                    self::$enumValueCache[$enumClass] = array_map(fn ($case) => $case->value, $enumClass::cases());
+                    self::$enumValueCache[$enumClass] = array_map(fn($case) => $case->value, $enumClass::cases());
                 }
 
                 if (! \in_array($value, self::$enumValueCache[$enumClass], true)) {
@@ -365,9 +365,14 @@ final class GenericValidator implements TypeValidatorInterface
 
     /**
      * Validates object generic instances and binds template parameters.
+     * Gracefully ignores generic annotations with invalid class syntax (e.g. custom-generic<T>).
      */
     private function validateObjectGeneric(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
     {
+        if (! ClassNameValidator::isValid($node->type->name)) {
+            return null;
+        }
+
         if (! \is_object($value)) {
             return ErrorFactory::createError($context . ' must be an object of type ' . $node->type->name . ', ' . TypeFormatter::formatGivenValue($value) . ' given');
         }
