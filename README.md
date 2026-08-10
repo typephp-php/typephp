@@ -41,7 +41,7 @@ TypePHP is conceptually inspired by Python's [Beartype](https://github.com/beart
 
 ## Sponsors
 
-Want to support the open-source development and maintenance of TypePHP? [Sponsor TypePHP me on GitHub »](https://github.com/sponsors/rcalicdan)
+Want to support the open-source development and maintenance of TypePHP? [Sponsor me on GitHub »](https://github.com/sponsors/rcalicdan)
 
 ## Contributing
 
