@@ -39,10 +39,12 @@ describe('array-key, uppercase-string, and non-empty-uppercase-string Annotation
 
         test('throws TypeError when array-key is a boolean or array', function () {
             expect(fn () => testArrayKeyParam(true))
-                ->toThrow(TypeError::class, 'must be of type array-key');
+                ->toThrow(TypeError::class, 'must be of type array-key')
+            ;
 
             expect(fn () => testArrayKeyParam([]))
-                ->toThrow(TypeError::class, 'must be of type array-key');
+                ->toThrow(TypeError::class, 'must be of type array-key')
+            ;
         });
 
     });
@@ -51,21 +53,24 @@ describe('array-key, uppercase-string, and non-empty-uppercase-string Annotation
 
         test('accepts valid uppercase strings', function () {
             expect(testUppercaseStringParam('USD'))->toBe('USD');
-            expect(testUppercaseStringParam(''))->toBe(''); 
+            expect(testUppercaseStringParam(''))->toBe('');
             expect(testNonEmptyUppercaseStringParam('EUR'))->toBe('EUR');
         });
 
         test('throws TypeError on lowercase or mixed-case string for uppercase-string', function () {
             expect(fn () => testUppercaseStringParam('Usd'))
-                ->toThrow(TypeError::class, 'must be of type uppercase-string');
+                ->toThrow(TypeError::class, 'must be of type uppercase-string')
+            ;
 
             expect(fn () => testUppercaseStringParam('usd'))
-                ->toThrow(TypeError::class, 'must be of type uppercase-string');
+                ->toThrow(TypeError::class, 'must be of type uppercase-string')
+            ;
         });
 
         test('throws TypeError on empty string for non-empty-uppercase-string', function () {
             expect(fn () => testNonEmptyUppercaseStringParam(''))
-                ->toThrow(TypeError::class, 'must be of type non-empty-uppercase-string');
+                ->toThrow(TypeError::class, 'must be of type non-empty-uppercase-string')
+            ;
         });
 
     });
@@ -79,10 +84,12 @@ describe('array-key, uppercase-string, and non-empty-uppercase-string Annotation
             expect($formatter->formatAccount('GBP', 'acc_202'))->toBe('GBP_acc_202');
 
             expect(fn () => $formatter->formatAccount('usd', 101))
-                ->toThrow(TypeError::class, 'must be of type non-empty-uppercase-string');
+                ->toThrow(TypeError::class, 'must be of type non-empty-uppercase-string')
+            ;
 
             expect(fn () => $formatter->formatAccount('USD', true))
-                ->toThrow(TypeError::class, 'must be of type array-key');
+                ->toThrow(TypeError::class, 'must be of type array-key')
+            ;
         });
 
         test('validates static method returns on CurrencyFormatter', function () {

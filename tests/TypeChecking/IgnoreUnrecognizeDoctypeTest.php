@@ -39,8 +39,10 @@ test('ignores custom unsupported type syntax with hyphens gracefully', function 
 
 test('strictly validates valid class syntax even if class does not exist at runtime', function () {
     expect(fn () => testNonExistentClassType('hello'))
-        ->toThrow(TypeError::class, 'must be of type NonExistentClass, string \'hello\' given');
+        ->toThrow(TypeError::class, 'must be of type NonExistentClass, string \'hello\' given')
+    ;
 
     expect(fn () => testNonExistentClassType(new stdClass()))
-        ->toThrow(TypeError::class, 'must be of type NonExistentClass, stdClass given');
+        ->toThrow(TypeError::class, 'must be of type NonExistentClass, stdClass given')
+    ;
 });

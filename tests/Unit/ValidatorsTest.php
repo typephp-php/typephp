@@ -301,7 +301,7 @@ describe('IntersectionValidator', function () {
     test('edge case: object failing one interface in intersection', function () {
         $intersection = parseType('Countable&ArrayAccess', $this->lexer, $this->typeParser);
 
-        $countableOnly = new class() implements Countable {
+        $countableOnly = new class () implements Countable {
             public function count(): int
             {
                 return 0;

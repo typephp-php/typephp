@@ -233,3 +233,50 @@ describe('Inline @var Initial Assignment vs Reassignment', function () {
         expect($token)->toBe('valid_token');
     });
 });
+
+describe('Inline @var Validation for New Features', function () {
+
+    test('enforces array-key on inline local variables', function () {
+        /** @var array-key $key */
+        $key = 'user_123';
+        expect($key)->toBe('user_123');
+
+        $key = 456;
+        expect($key)->toBe(456);
+
+        expect(fn () => $key = false)
+            ->toThrow(TypeError::class, 'Variable $key must be of type array-key')
+        ;
+    });
+
+    test('enforces uppercase-string on inline local variables', function () {
+        /** @var non-empty-uppercase-string $code */
+        $code = 'USD';
+        expect($code)->toBe('USD');
+
+        expect(fn () => $code = 'usd')
+            ->toThrow(TypeError::class, 'Variable $code must be of type non-empty-uppercase-string')
+        ;
+    });
+
+    test('enforces key-of on inline local variables', function () {
+        /** @var key-of<TypePHP\Tests\Fixtures\Types\DatabaseDriverMap::DRIVER_MAP> $driver */
+        $driver = 'pdo_mysql';
+        expect($driver)->toBe('pdo_mysql');
+
+        expect(fn () => $driver = 'pdo_invalid')
+            ->toThrow(TypeError::class, 'Variable $driver')
+        ;
+    });
+
+    test('enforces int-mask on inline local variables', function () {
+        /** @var int-mask<1, 2, 4> $mask */
+        $mask = 3; // 1 | 2
+        expect($mask)->toBe(3);
+
+        expect(fn () => $mask = 8)
+            ->toThrow(TypeError::class, 'Variable $mask')
+        ;
+    });
+
+});
