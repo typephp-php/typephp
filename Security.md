@@ -24,6 +24,6 @@ Reports should be sent via e-mail to **Reymart A. Calicdan** at **reymart.calicd
 1. **Acknowledgment**: A response acknowledging the report will be sent within 48 hours.
 2. **Investigation**: The vulnerability will be investigated and confirmed in a private environment.
 3. **Resolution**: Once a fix is developed, it will be review and tested before being tagged in a new release.
-4. **Disclosure**: After the fix is public, credit will be given to the reporter for their contribution to the security of the Hibla ecosystem (unless anonymity is requested).
+4. **Disclosure**: After the fix is public, credit will be given to the reporter for their contribution to the security of the library (unless anonymity is requested).
 
 Thank you for helping this library secure for everyone.
