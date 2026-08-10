@@ -7,6 +7,9 @@ namespace TypePHP\Resolver;
 use PhpParser\Node\Stmt;
 use PhpParser\ParserFactory;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeUnsealedTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
@@ -15,6 +18,8 @@ use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ObjectShapeItemNode;
+use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ThisTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
@@ -107,7 +112,17 @@ final class SpecialTypeResolver
 
         if ($node instanceof ConstTypeNode) {
             if ($node->constExpr instanceof ConstFetchNode && $node->constExpr->className !== '') {
-                $resolvedClass = self::resolveFqcn($node->constExpr->className, $ref);
+                $className = $node->constExpr->className;
+                $lowerClassName = strtolower($className);
+
+                if ($lowerClassName === 'self' && $declaringClass !== null) {
+                    $resolvedClass = $declaringClass;
+                } elseif ($lowerClassName === 'parent' && $declaringClass !== null) {
+                    $parentClass = get_parent_class($declaringClass);
+                    $resolvedClass = $parentClass !== false ? $parentClass : $className;
+                } else {
+                    $resolvedClass = self::resolveFqcn($className, $ref);
+                }
 
                 return new ConstTypeNode(new ConstFetchNode($resolvedClass, $node->constExpr->name));
             }
@@ -127,6 +142,41 @@ final class SpecialTypeResolver
                 $innerTypes,
                 $node->variances
             );
+        }
+
+        if ($node instanceof ArrayShapeNode) {
+            $items = array_map(function ($item) use ($context, $thisObj) {
+                return new ArrayShapeItemNode(
+                    $item->keyName,
+                    $item->optional,
+                    self::resolve($item->valueType, $context, $thisObj)
+                );
+            }, $node->items);
+
+            if ($node->sealed) {
+                return ArrayShapeNode::createSealed($items, $node->kind);
+            } else {
+                $unsealedType = null;
+                if ($node->unsealedType !== null) {
+                    $unsealedKey = $node->unsealedType->keyType !== null ? self::resolve($node->unsealedType->keyType, $context, $thisObj) : null;
+                    $unsealedValue = self::resolve($node->unsealedType->valueType, $context, $thisObj);
+                    $unsealedType = new ArrayShapeUnsealedTypeNode($unsealedValue, $unsealedKey);
+                }
+
+                return ArrayShapeNode::createUnsealed($items, $unsealedType, $node->kind);
+            }
+        }
+
+        if ($node instanceof ObjectShapeNode) {
+            $items = array_map(function ($item) use ($context, $thisObj) {
+                return new ObjectShapeItemNode(
+                    $item->keyName,
+                    $item->optional,
+                    self::resolve($item->valueType, $context, $thisObj)
+                );
+            }, $node->items);
+
+            return new ObjectShapeNode($items);
         }
 
         if ($node instanceof CallableTypeNode) {
@@ -198,7 +248,14 @@ final class SpecialTypeResolver
 
         if ($node instanceof ConstTypeNode) {
             if ($node->constExpr instanceof ConstFetchNode && $node->constExpr->className !== '') {
-                $resolvedClass = self::resolveFqcnForFile($node->constExpr->className, $file);
+                $className = $node->constExpr->className;
+                $lowerClassName = strtolower($className);
+
+                if ($lowerClassName === 'self' || $lowerClassName === 'parent') {
+                    $resolvedClass = $className;
+                } else {
+                    $resolvedClass = self::resolveFqcnForFile($className, $file);
+                }
 
                 return new ConstTypeNode(new ConstFetchNode($resolvedClass, $node->constExpr->name));
             }
@@ -218,6 +275,41 @@ final class SpecialTypeResolver
                 $innerTypes,
                 $node->variances
             );
+        }
+
+        if ($node instanceof ArrayShapeNode) {
+            $items = array_map(function ($item) use ($file) {
+                return new ArrayShapeItemNode(
+                    $item->keyName,
+                    $item->optional,
+                    self::resolveForFile($item->valueType, $file)
+                );
+            }, $node->items);
+
+            if ($node->sealed) {
+                return ArrayShapeNode::createSealed($items, $node->kind);
+            } else {
+                $unsealedType = null;
+                if ($node->unsealedType !== null) {
+                    $unsealedKey = $node->unsealedType->keyType !== null ? self::resolveForFile($node->unsealedType->keyType, $file) : null;
+                    $unsealedValue = self::resolveForFile($node->unsealedType->valueType, $file);
+                    $unsealedType = new ArrayShapeUnsealedTypeNode($unsealedValue, $unsealedKey);
+                }
+
+                return ArrayShapeNode::createUnsealed($items, $unsealedType, $node->kind);
+            }
+        }
+
+        if ($node instanceof ObjectShapeNode) {
+            $items = array_map(function ($item) use ($file) {
+                return new ObjectShapeItemNode(
+                    $item->keyName,
+                    $item->optional,
+                    self::resolveForFile($item->valueType, $file)
+                );
+            }, $node->items);
+
+            return new ObjectShapeNode($items);
         }
 
         if ($node instanceof CallableTypeNode) {

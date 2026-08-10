@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace TypePHP\Validator;
 
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
+use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
@@ -19,8 +24,20 @@ use TypePHP\Internal\TypeFormatter;
 final class GenericValidator implements TypeValidatorInterface
 {
     /**
-     * Validates a value against a GenericTypeNode AST.
+     * @var array<string, mixed>
      */
+    private static array $constantCache = [];
+
+    /**
+     * @var array<string, array<int, string>> 
+     */
+    private static array $enumKeyCache = [];
+
+    /**
+     * @var array<string, array<int, string|int>>
+     */
+    private static array $enumValueCache = [];
+
     public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
     {
         /** @var GenericTypeNode $genericNode */
@@ -32,10 +49,161 @@ final class GenericValidator implements TypeValidatorInterface
             'class-string' => $this->validateClassString($value, $genericNode, $context),
             'list', 'non-empty-list', 'non-empty-array-list' => $this->validateList($value, $genericNode, $context, $registry),
             'array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator' => $this->validateArray($value, $genericNode, $context, $registry),
+            'key-of' => $this->validateKeyOf($value, $genericNode, $context),
+            'value-of' => $this->validateValueOf($value, $genericNode, $context),
             default => $this->validateObjectGeneric($value, $genericNode, $context),
         };
     }
 
+    /**
+     * Validates key-of<T> generic structures with O(1) in-memory caching.
+     *
+     * Execution Flow:
+     * 1. Array Constants: If T is a class constant (e.g., self::DRIVER_MAP), it safely reflects the
+     *    target class to bypass visibility restrictions (private/protected), caches the array in memory,
+     *    and verifies that the provided value exists as a key in that array.
+     * 2. Enums: If T is an Enum identifier, it extracts and caches the enum case names, then verifies
+     *    that the provided value matches a valid case name.
+     * 3. Array Shapes: If T is an inline array shape (e.g., array{id: int, name: string}), it verifies
+     *    that the provided value exists as one of the key names in the shape.
+     * 4. Fallback: Returns null gracefully for unresolvable or unsupported structures.
+     */
+    private function validateKeyOf(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    {
+        $targetType = $node->genericTypes[0] ?? null;
+
+        if ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstFetchNode) {
+            $constExpr = $targetType->constExpr;
+            $fqcn = $constExpr->className;
+            $constName = $constExpr->name;
+            $cacheKey = $fqcn !== '' ? "$fqcn::$constName" : $constName;
+
+            if (!\array_key_exists($cacheKey, self::$constantCache)) {
+                $constValue = false;
+                if ($fqcn !== '') {
+                    if (class_exists($fqcn) || interface_exists($fqcn)) {
+                        try {
+                            $refClass = new \ReflectionClass($fqcn);
+                            if ($refClass->hasConstant($constName)) {
+                                $constValue = $refClass->getConstant($constName);
+                            }
+                        } catch (\ReflectionException $e) {
+                        }
+                    }
+                } else {
+                    if (\defined($constName)) {
+                        $constValue = \constant($constName);
+                    }
+                }
+                self::$constantCache[$cacheKey] = $constValue;
+            }
+
+            $constValue = self::$constantCache[$cacheKey];
+
+            if (\is_array($constValue)) {
+                if ((!\is_int($value) && !\is_string($value)) || !\array_key_exists($value, $constValue)) {
+                    return ErrorFactory::createError($context . " must be a key of $cacheKey, " . TypeFormatter::formatGivenValue($value) . ' given');
+                }
+                return null;
+            }
+        } elseif ($targetType instanceof IdentifierTypeNode) {
+            $enumClass = $targetType->name;
+            if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass)) {
+                if (!isset(self::$enumKeyCache[$enumClass])) {
+                    self::$enumKeyCache[$enumClass] = array_map(fn($case) => $case->name, $enumClass::cases());
+                }
+
+                if (!\in_array($value, self::$enumKeyCache[$enumClass], true)) {
+                    return ErrorFactory::createError($context . " must be a key of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
+                }
+                return null;
+            }
+        } elseif ($targetType instanceof ArrayShapeNode) {
+            $validKeys = [];
+            foreach ($targetType->items as $item) {
+                if ($item->keyName instanceof ConstExprStringNode) {
+                    $validKeys[] = $item->keyName->value;
+                } elseif ($item->keyName instanceof IdentifierTypeNode) {
+                    $validKeys[] = $item->keyName->name;
+                } elseif ($item->keyName instanceof ConstExprIntegerNode) {
+                    $validKeys[] = (int) $item->keyName->value;
+                }
+            }
+
+            if (!\in_array($value, $validKeys, true)) {
+                return ErrorFactory::createError($context . ' must be a key of the specified array shape, ' . TypeFormatter::formatGivenValue($value) . ' given');
+            }
+            return null;
+        }
+
+        return null;
+    }
+
+    /**
+     * Validates value-of<T> generic structures with O(1) in-memory caching.
+     *
+     * Execution Flow:
+     * 1. Array Constants: If T is a class constant (e.g., self::DRIVER_MAP), it safely reflects the
+     *    target class to bypass visibility restrictions (private/protected), caches the array in memory,
+     *    and verifies that the provided value exists as a value in that array.
+     * 2. Enums: If T is a Backed Enum identifier, it extracts and caches the enum case backing values, 
+     *    then verifies that the provided value matches a valid case value.
+     * 3. Fallback: Returns null gracefully for unresolvable or unsupported structures.
+     */
+    private function validateValueOf(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    {
+        $targetType = $node->genericTypes[0] ?? null;
+
+        if ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstFetchNode) {
+            $constExpr = $targetType->constExpr;
+            $fqcn = $constExpr->className;
+            $constName = $constExpr->name;
+            $cacheKey = $fqcn !== '' ? "$fqcn::$constName" : $constName;
+
+            if (!\array_key_exists($cacheKey, self::$constantCache)) {
+                $constValue = false;
+                if ($fqcn !== '') {
+                    if (class_exists($fqcn) || interface_exists($fqcn)) {
+                        try {
+                            $refClass = new \ReflectionClass($fqcn);
+                            if ($refClass->hasConstant($constName)) {
+                                $constValue = $refClass->getConstant($constName);
+                            }
+                        } catch (\ReflectionException $e) {
+                        }
+                    }
+                } else {
+                    if (\defined($constName)) {
+                        $constValue = \constant($constName);
+                    }
+                }
+                self::$constantCache[$cacheKey] = $constValue;
+            }
+
+            $constValue = self::$constantCache[$cacheKey];
+
+            if (\is_array($constValue)) {
+                if (!\in_array($value, $constValue, true)) {
+                    return ErrorFactory::createError($context . " must be a value of $cacheKey, " . TypeFormatter::formatGivenValue($value) . ' given');
+                }
+                return null;
+            }
+        } elseif ($targetType instanceof IdentifierTypeNode) {
+            $enumClass = $targetType->name;
+            if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass) && is_subclass_of($enumClass, \BackedEnum::class)) {
+                if (!isset(self::$enumValueCache[$enumClass])) {
+                    self::$enumValueCache[$enumClass] = array_map(fn($case) => $case->value, $enumClass::cases());
+                }
+
+                if (!\in_array($value, self::$enumValueCache[$enumClass], true)) {
+                    return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
+                }
+                return null;
+            }
+        }
+
+        return null;
+    }
     /**
      * Validates integer ranges (e.g. int<1, 100> or int<min, max>).
      */
