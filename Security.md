@@ -1,6 +1,6 @@
 # Security Policy
 
-This Hibla library takes the security of its users and their data seriously. 
+This library takes the security of its users and their data seriously. 
 
 ## Supported Versions
 
@@ -26,4 +26,4 @@ Reports should be sent via e-mail to **Reymart A. Calicdan** at **reymart.calicd
 3. **Resolution**: Once a fix is developed, it will be review and tested before being tagged in a new release.
 4. **Disclosure**: After the fix is public, credit will be given to the reporter for their contribution to the security of the Hibla ecosystem (unless anonymity is requested).
 
-Thank you for helping keep Hibla secure for everyone.
+Thank you for helping this library secure for everyone.
