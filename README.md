@@ -1,6 +1,11 @@
 <h1 align="center">TypePHP</h1>
 
 <p align="center">
+  <b>No transpilation. No build steps. No C-extensions.<br>
+  Drop TypePHP into your existing codebase and let your DocBlocks scream when types fail.</b>
+</p>
+
+<p align="center">
 	<a href="https://github.com/typephp-php/typephp/actions"><img src="https://github.com/typephp-php/typephp/actions/workflows/ci.yml/badge.svg" alt="Build Status"></a>
 	<a href="https://packagist.org/packages/typephp/typephp"><img src="https://img.shields.io/packagist/v/typephp/typephp.svg?style=flat&color=blue" alt="Latest Stable Version"></a>
 	<a href="https://packagist.org/packages/typephp/typephp"><img src="https://img.shields.io/packagist/dt/typephp/typephp.svg?style=flat&color=green" alt="Total Downloads"></a>
@@ -11,7 +16,7 @@
 
 ------
 
-TypePHP is the first pure-PHP library that transparently enforces extended PHPDoc type contracts (generics, array shapes, scalar refinements, and callables) at runtime during execution, without introducing any new syntax or requiring C-extensions.
+TypePHP is a transparent, pure-PHP runtime type checker. You don't have to refactor a single line of your codebase, setup complex build toolchains, or compile C-extensions and simply run your existing code, and TypePHP will enforce your extended PHPDoc contracts (generics, array shapes, `key-of`/`value-of` extractions, and scalar refinements) dynamically at runtime.
 
 
 **[Read the full TypePHP documentation »](https://typephp-php.github.io/typephp/)**

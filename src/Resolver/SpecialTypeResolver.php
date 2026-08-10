@@ -6,6 +6,8 @@ namespace TypePHP\Resolver;
 
 use PhpParser\Node\Stmt;
 use PhpParser\ParserFactory;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
@@ -20,6 +22,7 @@ use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ThisTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
@@ -142,6 +145,68 @@ final class SpecialTypeResolver
                 $innerTypes,
                 $node->variances
             );
+        }
+
+        if ($node instanceof OffsetAccessTypeNode) {
+            $baseType = self::resolve($node->type, $context, $thisObj);
+            $offsetType = self::resolve($node->offset, $context, $thisObj);
+
+            $offsetKey = null;
+            if ($offsetType instanceof ConstTypeNode) {
+                $expr = $offsetType->constExpr;
+                if ($expr instanceof ConstExprStringNode) {
+                    $offsetKey = $expr->value;
+                } elseif ($expr instanceof ConstExprIntegerNode) {
+                    $offsetKey = (int) $expr->value;
+                }
+            } elseif ($offsetType instanceof IdentifierTypeNode) {
+                $offsetKey = $offsetType->name;
+            }
+
+            if ($offsetKey !== null) {
+                if ($baseType instanceof ArrayShapeNode) {
+                    foreach ($baseType->items as $item) {
+                        $itemKey = null;
+                        if ($item->keyName instanceof ConstExprStringNode) {
+                            $itemKey = $item->keyName->value;
+                        } elseif ($item->keyName instanceof IdentifierTypeNode) {
+                            $itemKey = $item->keyName->name;
+                        } elseif ($item->keyName instanceof ConstExprIntegerNode) {
+                            $itemKey = (int) $item->keyName->value;
+                        }
+
+                        if ((string) $itemKey === (string) $offsetKey) {
+                            return $item->valueType;
+                        }
+                    }
+                }
+
+                if ($baseType instanceof ConstTypeNode && $baseType->constExpr instanceof ConstFetchNode) {
+                    $constExpr = $baseType->constExpr;
+                    $fqcn = $constExpr->className;
+                    $constName = $constExpr->name;
+
+                    if ($fqcn !== '' && (class_exists($fqcn) || interface_exists($fqcn))) {
+                        try {
+                            $refClass = new \ReflectionClass($fqcn);
+                            if ($refClass->hasConstant($constName)) {
+                                $constValue = $refClass->getConstant($constName);
+                                if (\is_array($constValue) && \array_key_exists($offsetKey, $constValue)) {
+                                    $val = $constValue[$offsetKey];
+                                    if (\is_string($val)) {
+                                        return new ConstTypeNode(new ConstExprStringNode($val, ConstExprStringNode::SINGLE_QUOTED));
+                                    } elseif (\is_int($val)) {
+                                        return new ConstTypeNode(new ConstExprIntegerNode((string) $val));
+                                    }
+                                }
+                            }
+                        } catch (\ReflectionException $e) {
+                        }
+                    }
+                }
+            }
+
+            return new OffsetAccessTypeNode($baseType, $offsetType);
         }
 
         if ($node instanceof ArrayShapeNode) {
@@ -275,6 +340,68 @@ final class SpecialTypeResolver
                 $innerTypes,
                 $node->variances
             );
+        }
+
+        if ($node instanceof OffsetAccessTypeNode) {
+            $baseType = self::resolveForFile($node->type, $file);
+            $offsetType = self::resolveForFile($node->offset, $file);
+
+            $offsetKey = null;
+            if ($offsetType instanceof ConstTypeNode) {
+                $expr = $offsetType->constExpr;
+                if ($expr instanceof ConstExprStringNode) {
+                    $offsetKey = $expr->value;
+                } elseif ($expr instanceof ConstExprIntegerNode) {
+                    $offsetKey = (int) $expr->value;
+                }
+            } elseif ($offsetType instanceof IdentifierTypeNode) {
+                $offsetKey = $offsetType->name;
+            }
+
+            if ($offsetKey !== null) {
+                if ($baseType instanceof ArrayShapeNode) {
+                    foreach ($baseType->items as $item) {
+                        $itemKey = null;
+                        if ($item->keyName instanceof ConstExprStringNode) {
+                            $itemKey = $item->keyName->value;
+                        } elseif ($item->keyName instanceof IdentifierTypeNode) {
+                            $itemKey = $item->keyName->name;
+                        } elseif ($item->keyName instanceof ConstExprIntegerNode) {
+                            $itemKey = (int) $item->keyName->value;
+                        }
+
+                        if ((string) $itemKey === (string) $offsetKey) {
+                            return $item->valueType;
+                        }
+                    }
+                }
+
+                if ($baseType instanceof ConstTypeNode && $baseType->constExpr instanceof ConstFetchNode) {
+                    $constExpr = $baseType->constExpr;
+                    $fqcn = $constExpr->className;
+                    $constName = $constExpr->name;
+
+                    if ($fqcn !== '' && (class_exists($fqcn) || interface_exists($fqcn))) {
+                        try {
+                            $refClass = new \ReflectionClass($fqcn);
+                            if ($refClass->hasConstant($constName)) {
+                                $constValue = $refClass->getConstant($constName);
+                                if (\is_array($constValue) && \array_key_exists($offsetKey, $constValue)) {
+                                    $val = $constValue[$offsetKey];
+                                    if (\is_string($val)) {
+                                        return new ConstTypeNode(new ConstExprStringNode($val, ConstExprStringNode::SINGLE_QUOTED));
+                                    } elseif (\is_int($val)) {
+                                        return new ConstTypeNode(new ConstExprIntegerNode((string) $val));
+                                    }
+                                }
+                            }
+                        } catch (\ReflectionException $e) {
+                        }
+                    }
+                }
+            }
+
+            return new OffsetAccessTypeNode($baseType, $offsetType);
         }
 
         if ($node instanceof ArrayShapeNode) {
@@ -523,14 +650,70 @@ final class SpecialTypeResolver
     private static function isBuiltInTypeKeyword(string $name): bool
     {
         return \in_array(strtolower($name), [
-            'int', 'integer', 'string', 'float', 'double', 'bool', 'boolean', 'array', 'list', 'object', 'callable',
-            'iterable', 'resource', 'null', 'true', 'false', 'mixed', 'scalar', 'void', 'self', 'static', 'parent', '$this',
-            'positive-int', 'negative-int', 'non-positive-int', 'non-negative-int', 'non-zero-int', 'unsigned-int',
-            'positive-float', 'negative-float', 'non-positive-float', 'non-negative-float', 'non-zero-float',
-            'class-string', 'interface-string', 'trait-string', 'enum-string', 'callable-string', 'numeric-string',
-            'non-empty-string', 'lowercase-string', 'non-empty-lowercase-string', 'literal-string', 'truthy-string',
-            'non-empty-array', 'non-empty-list', 'number', 'numeric', 'truthy', 'falsy', 'falsey', 'min', 'max', '*',
-            'never', 'never-return', 'never-returns', 'no-return', 'open-resource', 'closed-resource',
+            'int',
+            'integer',
+            'string',
+            'float',
+            'double',
+            'bool',
+            'boolean',
+            'array',
+            'list',
+            'object',
+            'callable',
+            'iterable',
+            'resource',
+            'null',
+            'true',
+            'false',
+            'mixed',
+            'scalar',
+            'void',
+            'self',
+            'static',
+            'parent',
+            '$this',
+            'positive-int',
+            'negative-int',
+            'non-positive-int',
+            'non-negative-int',
+            'non-zero-int',
+            'unsigned-int',
+            'positive-float',
+            'negative-float',
+            'non-positive-float',
+            'non-negative-float',
+            'non-zero-float',
+            'class-string',
+            'interface-string',
+            'trait-string',
+            'enum-string',
+            'callable-string',
+            'numeric-string',
+            'non-empty-string',
+            'lowercase-string',
+            'non-empty-lowercase-string',
+            'uppercase-string',
+            'non-empty-uppercase-string',
+            'array-key',
+            'literal-string',
+            'truthy-string',
+            'non-empty-array',
+            'non-empty-list',
+            'number',
+            'numeric',
+            'truthy',
+            'falsy',
+            'falsey',
+            'min',
+            'max',
+            '*',
+            'never',
+            'never-return',
+            'never-returns',
+            'no-return',
+            'open-resource',
+            'closed-resource',
         ], true);
     }
 

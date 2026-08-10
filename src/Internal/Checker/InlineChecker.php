@@ -80,9 +80,17 @@ final class InlineChecker
             }
 
             if ($className !== null) {
-                $classAliases = ContractParser::parseClassAliases($className);
-                if (\count($classAliases) > 0) {
-                    $typeNode = TemplateSubstitutor::substitute($typeNode, $classAliases);
+                if (class_exists($className) || interface_exists($className) || trait_exists($className)) {
+                    try {
+                        $refClass = new \ReflectionClass($className);
+                        $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
+
+                        $classAliases = ContractParser::parseClassAliases($className);
+                        if (\count($classAliases) > 0) {
+                            $typeNode = TemplateSubstitutor::substitute($typeNode, $classAliases);
+                        }
+                    } catch (\ReflectionException $e) {
+                    }
                 }
             }
 
@@ -239,7 +247,29 @@ final class InlineChecker
                 return $checkArrays;
             }
 
-            if (\in_array($lower, ['int', 'integer', 'string', 'bool', 'boolean', 'float', 'double', 'null', 'true', 'false', 'scalar', 'numeric', 'positive-int', 'negative-int', 'non-empty-string', 'numeric-string', 'truthy', 'falsy'], true)) {
+            if (\in_array($lower, [
+                'int',
+                'integer',
+                'string',
+                'bool',
+                'boolean',
+                'float',
+                'double',
+                'null',
+                'true',
+                'false',
+                'scalar',
+                'numeric',
+                'positive-int',
+                'negative-int',
+                'non-empty-string',
+                'numeric-string',
+                'truthy',
+                'falsy',
+                'uppercase-string',
+                'non-empty-uppercase-string',
+                'array-key',
+            ], true)) {
                 return (bool) ($config['scalars'] ?? false);
             }
 

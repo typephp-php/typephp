@@ -292,35 +292,42 @@ $service->update(10, 'Charlie');
 
 ---
 
-## Parameter Renaming ($id $\rightarrow$ $userId$)
+## Parameter Renaming ($id → $userId) & Position Shifts
 
-PHP permits child classes to rename parameters when implementing an interface or extending a class. TypePHP maps inherited parameter contracts by **index position** (0, 1, 2...) rather than parameter name:
+When a child class or attribute constructor overrides a parent method, parameter positions or parameter names may shift. TypePHP resolves parameter contract inheritance using **Name-First Resolution**:
+
+1. **Name Matching:** If a parameter name in the child method matches a parameter name in the parent class (e.g. `$api`), the parent's contract is inherited by that parameter regardless of its position index in the child.
+2. **Position Fallback:** If a parameter is renamed in the child class (e.g., `$id` $\rightarrow$ `$userId`), TypePHP falls back to matching by position index.
 
 ```php
-interface UserApiInterface
+class BaseField
 {
     /**
-     * Interface uses parameter name $id
+     * Parent constructor has $api at position #1
      *
-     * @param positive-int $id
+     * @param string $type
+     * @param bool|array{admin-api: bool} $api
      */
-    public function find(int $id): bool;
+    public function __construct(string $type, bool|array $api = false) {}
 }
 
-class UserApi implements UserApiInterface
+class OneToManyRelation extends BaseField
 {
-    // Child renames parameter $id to $userId
-    public function find(int $userId): bool
-    {
-        return true;
+    /**
+     * Child inserts $entity, $ref, $onDelete BEFORE $api (position shift!)
+     */
+    public function __construct(
+        string $entity,
+        string $ref,
+        OnDeleteOption $onDelete = OnDeleteOption::NO_ACTION,
+        bool|array $api = false
+    ) {
+        parent::__construct('one-to-many', $api);
     }
 }
 
-$api = new UserApi();
-
-// $userId = -50 is checked at index 0 against interface's @param positive-int $id!
-$api->find(-50);
-// Throws: TypeError: UserApi::find(): Argument $userId must be of type positive-int
+// $onDelete (position #2 in child) is NOT overwritten by $api's type (position #1 in parent)!
+$attr = new OneToManyRelation('unit', 'unit_id', OnDeleteOption::CASCADE, true);
 ```
 
 ---

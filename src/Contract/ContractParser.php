@@ -12,6 +12,7 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Config;
@@ -263,14 +264,14 @@ final class ContractParser
             if ($isVariadic) {
                 $type = new ArrayTypeNode($type);
             }
-            $resolvedType = SpecialTypeResolver::resolve($type, $ref);
-            $types[$paramName] = self::substituteAliases($resolvedType, $aliases);
+            $substitutedType = self::substituteAliases($type, $aliases);
+            $types[$paramName] = SpecialTypeResolver::resolve($substitutedType, $ref);
         }
 
         $returnTags = $phpDocNode->getReturnTagValues();
         if (\count($returnTags) > 0) {
-            $resolvedReturn = SpecialTypeResolver::resolve($returnTags[0]->type, $ref);
-            $returnType = self::substituteAliases($resolvedReturn, $aliases);
+            $substitutedReturn = self::substituteAliases($returnTags[0]->type, $aliases);
+            $returnType = SpecialTypeResolver::resolve($substitutedReturn, $ref);
         }
 
         return [
@@ -331,10 +332,12 @@ final class ContractParser
         $hierarchy = HierarchyResolver::getMethodHierarchy($ref);
         $baseParams = $ref->getParameters();
         $baseParamNames = [];
+        $baseParamSet = [];
         $baseParamVariadic = [];
 
         foreach ($baseParams as $idx => $p) {
             $baseParamNames[$idx] = $p->getName();
+            $baseParamSet[$p->getName()] = $idx;
             $baseParamVariadic[$p->getName()] = $p->isVariadic();
         }
 
@@ -368,28 +371,32 @@ final class ContractParser
 
             foreach ($phpDocNode->getParamTagValues() as $paramTag) {
                 $paramName = ltrim($paramTag->parameterName, '$');
-                $paramIndex = $hierNameToIndex[$paramName] ?? null;
 
-                if ($paramIndex !== null && isset($baseParamNames[$paramIndex])) {
-                    $baseParamName = $baseParamNames[$paramIndex];
+                if (isset($baseParamSet[$paramName])) {
+                    $targetParamName = $paramName;
+                } else {
+                    $paramIndex = $hierNameToIndex[$paramName] ?? null;
+                    $targetParamName = ($paramIndex !== null && isset($baseParamNames[$paramIndex]))
+                        ? $baseParamNames[$paramIndex]
+                        : null;
+                }
 
-                    if (! isset($types[$baseParamName])) {
-                        $type = $paramTag->type;
-                        $isVariadic = $paramTag->isVariadic || $baseParamVariadic[$baseParamName];
-                        if ($isVariadic) {
-                            $type = new ArrayTypeNode($type);
-                        }
-                        $resolvedType = SpecialTypeResolver::resolve($type, $hierRef);
-                        $types[$baseParamName] = self::substituteAliases($resolvedType, $aliases);
+                if ($targetParamName !== null && ! isset($types[$targetParamName])) {
+                    $type = $paramTag->type;
+                    $isVariadic = $paramTag->isVariadic || ($baseParamVariadic[$targetParamName] ?? false);
+                    if ($isVariadic) {
+                        $type = new ArrayTypeNode($type);
                     }
+                    $substitutedType = self::substituteAliases($type, $aliases);
+                    $types[$targetParamName] = SpecialTypeResolver::resolve($substitutedType, $hierRef);
                 }
             }
 
             if ($returnType === null) {
                 $returnTags = $phpDocNode->getReturnTagValues();
                 if (\count($returnTags) > 0) {
-                    $resolvedReturn = SpecialTypeResolver::resolve($returnTags[0]->type, $hierRef);
-                    $returnType = self::substituteAliases($resolvedReturn, $aliases);
+                    $substitutedReturn = self::substituteAliases($returnTags[0]->type, $aliases);
+                    $returnType = SpecialTypeResolver::resolve($substitutedReturn, $hierRef);
                 }
             }
         }
@@ -439,6 +446,13 @@ final class ContractParser
             }
 
             return $node;
+        }
+
+        if ($node instanceof OffsetAccessTypeNode) {
+            return new OffsetAccessTypeNode(
+                self::substituteAliases($node->type, $aliases),
+                self::substituteAliases($node->offset, $aliases)
+            );
         }
 
         if ($node instanceof ArrayTypeNode) {
