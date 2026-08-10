@@ -5,11 +5,15 @@ declare(strict_types=1);
 namespace TypePHP\Resolver;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode;
+use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 
@@ -42,6 +46,26 @@ final class TemplateSubstitutor
             }
 
             return $node;
+        }
+
+        if ($node instanceof ConditionalTypeNode) {
+            return new ConditionalTypeNode(
+                self::substitute($node->subjectType, $boundTemplates, $declaredTemplates),
+                self::substitute($node->targetType, $boundTemplates, $declaredTemplates),
+                self::substitute($node->if, $boundTemplates, $declaredTemplates),
+                self::substitute($node->else, $boundTemplates, $declaredTemplates),
+                $node->negated
+            );
+        }
+
+        if ($node instanceof ConditionalTypeForParameterNode) {
+            return new ConditionalTypeForParameterNode(
+                $node->parameterName,
+                self::substitute($node->targetType, $boundTemplates, $declaredTemplates),
+                self::substitute($node->if, $boundTemplates, $declaredTemplates),
+                self::substitute($node->else, $boundTemplates, $declaredTemplates),
+                $node->negated
+            );
         }
 
         if ($node instanceof ArrayTypeNode) {
@@ -78,6 +102,28 @@ final class TemplateSubstitutor
                 fn ($t) => self::substitute($t, $boundTemplates, $declaredTemplates),
                 $node->types
             ));
+        }
+
+        if ($node instanceof ArrayShapeNode) {
+            foreach ($node->items as $item) {
+                $item->valueType = self::substitute($item->valueType, $boundTemplates, $declaredTemplates);
+            }
+            if ($node->unsealedType !== null) {
+                if ($node->unsealedType->keyType !== null) {
+                    $node->unsealedType->keyType = self::substitute($node->unsealedType->keyType, $boundTemplates, $declaredTemplates);
+                }
+                $node->unsealedType->valueType = self::substitute($node->unsealedType->valueType, $boundTemplates, $declaredTemplates);
+            }
+
+            return $node;
+        }
+
+        if ($node instanceof ObjectShapeNode) {
+            foreach ($node->items as $item) {
+                $item->valueType = self::substitute($item->valueType, $boundTemplates, $declaredTemplates);
+            }
+
+            return $node;
         }
 
         return $node;

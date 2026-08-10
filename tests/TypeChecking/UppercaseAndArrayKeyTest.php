@@ -96,7 +96,8 @@ describe('array-key, uppercase-string, and non-empty-uppercase-string Annotation
             expect(CurrencyFormatter::sanitizeCode('CAD'))->toBe('CAD');
 
             expect(fn () => CurrencyFormatter::sanitizeCode('cad'))
-                ->toThrow(TypeError::class, 'Return value');
+                ->toThrow(TypeError::class, 'Return value')
+            ;
         });
 
     });
