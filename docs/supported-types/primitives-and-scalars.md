@@ -112,6 +112,42 @@ setRange(150, 0, 5);
 
 ---
 
+## Integer Bitmasks (`int-mask<...>` & `int-mask-of<...>`)
+
+TypePHP enforces bitwise flag combinations created by bitwise `OR` (`|`) operations on integers using `int-mask` and `int-mask-of`:
+
+| Refinement Keyword | Constraint Rule | Valid Examples | Invalid Examples |
+| :--- | :--- | :--- | :--- |
+| **`int-mask<1, 2, 4>`** | Value must be a valid bitwise combination of the allowed integer flags (or `0`). | `0`, `1`, `3` (`1\|2`), `7` (`1\|2\|4`) | `8`, `10`, `-1` |
+| **`int-mask-of<self::FLAG_*>`** | Value must be a valid bitwise combination of class constants matching the wildcard pattern. | `1`, `3`, `7` | `16` |
+
+```php
+class BitmaskFlags
+{
+    public const FLAG_READ = 1;    // 0001
+    public const FLAG_WRITE = 2;   // 0010
+    public const FLAG_EXECUTE = 4; // 0100
+
+    /**
+     * @param int-mask<1, 2, 4> $mask
+     * @param int-mask-of<self::FLAG_*> $wildcardMask
+     */
+    public static function setPermissions(int $mask, int $wildcardMask): void
+    {
+        // ...
+    }
+}
+
+// Valid Call
+BitmaskFlags::setPermissions(3, 7); // 3 = READ | WRITE, 7 = READ | WRITE | EXECUTE
+
+// Invalid (8 contains bits outside allowed mask 1|2|4 = 7)
+BitmaskFlags::setPermissions(8, 7);
+// Throws: TypeError: Argument $mask must be a valid bitmask combination of the allowed flags
+```
+
+---
+
 ## String Refinements
 
 Validate string lengths, formatting, character casing, and truthiness at runtime:

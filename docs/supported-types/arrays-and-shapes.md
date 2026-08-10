@@ -378,7 +378,50 @@ $service->configure(['driver' => 'pdo_pgsql'], 'id');
 $service->configure(['driver' => 'pdo_mysql'], 'invalid');
 // Throws: TypeError: Argument $shapeKey must be a key of the specified array shape
 ```
+---
+## Offset Access Types (`T[K]`)
 
+TypePHP supports evaluating offset access lookups on array shapes, constant arrays, and `@phpstan-type` aliases at runtime using `T[K]` syntax.
+
+> **AST Reduction:** TypePHP evaluates and reduces offset access lookups (e.g. `UserShape['id']` $\rightarrow$ `positive-int`) at the AST level before validation runs, executing type checks at **$O(1)$ constant speed**.
+
+```php
+namespace App\Services;
+
+/**
+ * @phpstan-type UserShape array{id: positive-int, username: non-empty-string}
+ */
+class UserService
+{
+    public const CONFIG_MAP = [
+        'mysql' => 'PDO\MySQL\Driver',
+    ];
+
+    /**
+     * Resolves UserShape['id'] directly to positive-int
+     *
+     * @param UserShape['id'] $userId
+     * @param self::CONFIG_MAP['mysql'] $driverClass
+     */
+    public function findUser(int $userId, string $driverClass): void
+    {
+        // ...
+    }
+}
+
+$service = new UserService();
+
+// Valid
+$service->findUser(42, 'PDO\MySQL\Driver');
+
+// Invalid $userId (-5 violates positive-int extracted from UserShape['id'])
+$service->findUser(-5, 'PDO\MySQL\Driver');
+// Throws: TypeError: Argument $userId must be of type positive-int
+
+// Invalid $driverClass ('PDO\PgSQL\Driver' violates literal 'PDO\MySQL\Driver')
+$service->findUser(42, 'PDO\PgSQL\Driver');
+// Throws: TypeError: Argument $driverClass must be literal 'PDO\MySQL\Driver'
+```
 ---
 
 ## Object Shapes (`object{prop: type}` & `stdClass{prop: type}`)
