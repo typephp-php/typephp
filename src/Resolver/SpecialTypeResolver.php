@@ -356,25 +356,29 @@ final class SpecialTypeResolver
             /** @var ConstExprIntegerNode|ConstExprStringNode|ConstFetchNode|IdentifierTypeNode|null $keyName */
             $keyName = $item->keyName;
 
-            // --- CRASH AND DUMP AST NODE CLASS ON PHP 8.2 ---
-            if ($keyName !== null) {
-                $classStr = get_class($keyName);
-                $valStr = method_exists($keyName, '__toString') ? (string) $keyName : 'unknown';
-
-                if (str_contains($valStr, 'self::')) {
-                    throw new \RuntimeException("[DEBUG PHP 8.2] AST Class: {$classStr} | Value: {$valStr}");
-                }
-            }
-            // -------------------------------------------------
-
             $className = null;
             $constName = null;
+
+            $debugClass = $keyName !== null ? get_class($keyName) : 'null';
+            $debugVal = $keyName !== null && method_exists($keyName, '__toString') ? (string) $keyName : 'unknown';
+            fwrite(STDERR, "\n[DEBUG] ArrayShapeItem KeyType: {$debugClass} | Value: {$debugVal}\n");
+
+            if ($keyName instanceof IdentifierTypeNode) {
+                fwrite(STDERR, "[DEBUG] IdentifierName: {$keyName->name}\n");
+            }
 
             if ($keyName instanceof ConstFetchNode && $keyName->className !== '') {
                 $className = $keyName->className;
                 $constName = $keyName->name;
             } elseif ($keyName instanceof IdentifierTypeNode && str_contains($keyName->name, '::')) {
+                // Fallback for phpstan/phpdoc-parser v1.x/v2.0 which parses constants as Identifiers
                 [$className, $constName] = explode('::', $keyName->name, 2);
+            }
+
+            if ($className !== null && $constName !== null) {
+                fwrite(STDERR, "[DEBUG] Split into Class: {$className} | Const: {$constName}\n");
+            } else {
+                fwrite(STDERR, "[DEBUG] Did NOT split into Class and Const.\n");    
             }
 
             if ($className !== null && $constName !== null) {
@@ -390,9 +394,14 @@ final class SpecialTypeResolver
                     $resolvedClass = self::resolveFqcn($className, $ref);
                 }
 
+                fwrite(STDERR, "[DEBUG] Resolved Target Class for Reflection: {$resolvedClass}\n");
+
                 $resolvedKeyNode = self::resolveConstantKeyValue($resolvedClass, $constName);
                 if ($resolvedKeyNode !== null) {
+                    fwrite(STDERR, "[DEBUG] Successfully Reflected Constant! New Value: {$resolvedKeyNode->value}\n");
                     $keyName = $resolvedKeyNode;
+                } else {
+                    fwrite(STDERR, "[DEBUG] FAILED to Reflect Constant!\n");
                 }
             }
 

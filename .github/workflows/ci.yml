@@ -36,4 +36,4 @@ jobs:
         run: php bin/typephp cache:clear
 
       - name: Run Test Suite (Pest) with Live Debug
-        run: ./vendor/bin/pest tests/TypeChecking/ArraysAndShapes/ClassConstKeyShapeTest.php --ci
+        run: ./vendor/bin/pest tests/TypeChecking/ArraysAndShapes/ClassConstKeyShapeTest.php 
