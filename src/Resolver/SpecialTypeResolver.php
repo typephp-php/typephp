@@ -245,6 +245,8 @@ final class SpecialTypeResolver
         return clone $node;
     }
 
+    // --- Private Helper Extractions for Reflection Context ---
+
     /**
      * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod|string $context
      *
@@ -356,8 +358,17 @@ final class SpecialTypeResolver
             /** @var ConstExprIntegerNode|ConstExprStringNode|ConstFetchNode|IdentifierTypeNode|null $keyName */
             $keyName = $item->keyName;
 
+            $className = null;
+            $constName = null;
+
             if ($keyName instanceof ConstFetchNode && $keyName->className !== '') {
                 $className = $keyName->className;
+                $constName = $keyName->name;
+            } elseif ($keyName instanceof IdentifierTypeNode && str_contains($keyName->name, '::')) {
+                [$className, $constName] = explode('::', $keyName->name, 2);
+            }
+
+            if ($className !== null && $constName !== null) {
                 $lowerClassName = strtolower($className);
                 $declaringClass = $ref instanceof \ReflectionMethod ? $ref->getDeclaringClass()->getName() : null;
 
@@ -370,7 +381,7 @@ final class SpecialTypeResolver
                     $resolvedClass = self::resolveFqcn($className, $ref);
                 }
 
-                $resolvedKeyNode = self::resolveConstantKeyValue($resolvedClass, $keyName->name);
+                $resolvedKeyNode = self::resolveConstantKeyValue($resolvedClass, $constName);
                 if ($resolvedKeyNode !== null) {
                     $keyName = $resolvedKeyNode;
                 }
@@ -433,6 +444,8 @@ final class SpecialTypeResolver
         return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $node->templateTypes);
     }
 
+    // --- Private Helper Extractions for File Context ---
+
     private static function resolveConstTypeForFile(ConstTypeNode $node, string $file): ConstTypeNode
     {
         if ($node->constExpr instanceof ConstFetchNode && $node->constExpr->className !== '') {
@@ -485,13 +498,22 @@ final class SpecialTypeResolver
             /** @var ConstExprIntegerNode|ConstExprStringNode|ConstFetchNode|IdentifierTypeNode|null $keyName */
             $keyName = $item->keyName;
 
+            $className = null;
+            $constName = null;
+
             if ($keyName instanceof ConstFetchNode && $keyName->className !== '') {
                 $className = $keyName->className;
+                $constName = $keyName->name;
+            } elseif ($keyName instanceof IdentifierTypeNode && str_contains($keyName->name, '::')) {
+                [$className, $constName] = explode('::', $keyName->name, 2);
+            }
+
+            if ($className !== null && $constName !== null) {
                 $lowerClassName = strtolower($className);
 
                 if ($lowerClassName !== 'self' && $lowerClassName !== 'parent') {
                     $resolvedClass = self::resolveFqcnForFile($className, $file);
-                    $resolvedKeyNode = self::resolveConstantKeyValue($resolvedClass, $keyName->name);
+                    $resolvedKeyNode = self::resolveConstantKeyValue($resolvedClass, $constName);
                     if ($resolvedKeyNode !== null) {
                         $keyName = $resolvedKeyNode;
                     }
