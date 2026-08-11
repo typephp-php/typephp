@@ -20,10 +20,32 @@ final class UnionValidator implements TypeValidatorInterface
         /** @var UnionTypeNode $unionNode */
         $unionNode = $node;
 
+        $deepErrors = [];
+
         foreach ($unionNode->types as $type) {
-            if ($registry->validate($value, $type, $context) === null) {
+            $err = $registry->validate($value, $type, $context);
+            if ($err === null) {
                 return null;
             }
+
+            $msg = $err->getMessage();
+            
+            if (
+                str_starts_with($msg, $context . '[') ||
+                str_starts_with($msg, $context . '->') ||
+                str_starts_with($msg, $context . ' is missing required') ||
+                str_starts_with($msg, $context . ' contains unsealed') ||
+                str_starts_with($msg, $context . ' property') ||
+                str_starts_with($msg, $context . ' key') ||
+                str_starts_with($msg, $context . ' value') ||
+                str_starts_with($msg, $context . ' extra key')
+            ) {
+                $deepErrors[] = $err;
+            }
+        }
+
+        if (\count($deepErrors) > 0) {
+            return $deepErrors[0];
         }
 
         return ErrorFactory::createError($context . ' must be of type ' . $unionNode . ', ' . TypeFormatter::formatGivenValue($value) . ' given');
