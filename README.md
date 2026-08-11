@@ -14,9 +14,9 @@
 	<a href="https://phpstan.org/"><img src="https://img.shields.io/badge/PHPStan-Level%20MAX-brightgreen.svg?style=flat" alt="PHPStan Level MAX"></a>
 </p>
 
-------
+---
 
-TypePHP is a transparent, pure-PHP runtime type checker. You don't have to refactor a single line of your codebase, setup complex build toolchains, or compile C-extensions and simply run your existing code, and TypePHP will enforce your extended PHPDoc contracts (generics, array shapes, `key-of`/`value-of` extractions, and scalar refinements) dynamically at runtime.
+TypePHP is a transparent, pure-PHP runtime type checker. You don't have to refactor a single line of your codebase, set up complex build toolchains, or compile C-extensions. Simply run your existing code, and TypePHP will enforce your extended PHPDoc contracts (generics, array shapes, `key-of`/`value-of` extractions, and scalar refinements) dynamically at runtime.
 
 
 **[Read the full TypePHP documentation »](https://typephp-php.github.io/typephp/)**
@@ -29,15 +29,17 @@ All the documentation lives on the [typephp-php.github.io/typephp website](https
 
 * [Getting Started & Installation Guide](https://typephp-php.github.io/typephp/getting-started/installation)
 * [Quick Start Guide](https://typephp-php.github.io/typephp/getting-started/quick-start)
-* [Architecture: How It Works](https://typephp-php.github.io/typephp/architecture/how-it-works)
-* [Core Concepts: Function Contracts](https://typephp-php.github.io/typephp/core-concepts/function-contracts)
-* [Core Concepts: Generics & Bounds](https://typephp-php.github.io/typephp/core-concepts/generics-and-bounds)
+* [Configuration Guide](https://typephp-php.github.io/typephp/getting-started/configuration)
+* [CLI Commands Reference](https://typephp-php.github.io/typephp/getting-started/cli-commands)
+* [Enforcement Boundaries: Function Contracts](https://typephp-php.github.io/typephp/core-concepts/function-contracts)
+* [Runtime Generics & Bounds](https://typephp-php.github.io/typephp/generics/generics-and-bounds)
 * [Supported Types: Arrays & Shapes](https://typephp-php.github.io/typephp/supported-types/arrays-and-shapes)
-* [Troubleshooting & FAQ](https://typephp-php.github.io/typephp/advanced/troubleshooting)
+* [Architecture: How It Works](https://typephp-php.github.io/typephp/advanced/how-it-works)
+* [Troubleshooting & FAQ](https://typephp-php.github.io/typephp/troubleshooting)
 
 ## Inspiration
 
-TypePHP is conceptually inspired by Python's [Beartype](https://github.com/beartype/beartype), but bringing transparent runtime type enforcement for type annotations to the PHP ecosystem without any decorators or attributes.
+TypePHP is conceptually inspired by Python's [Beartype](https://github.com/beartype/beartype), bringing transparent runtime type enforcement for type annotations to the PHP ecosystem without any decorators or attributes.
 
 ## Sponsors
 

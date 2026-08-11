@@ -6,6 +6,14 @@ namespace TypePHP\Command;
 
 final class CommandRunner
 {
+    private const KNOWN_COMMANDS = [
+        'config:init',
+        'cache:clear',
+        'cache:warm',
+        'cache:rebuild',
+        'help',
+    ];
+
     /**
      * Parses CLI arguments and routes execution to the corresponding command class.
      *
@@ -15,26 +23,49 @@ final class CommandRunner
      */
     public static function run(array $args, $outputStream = STDOUT, $errorStream = STDERR): int
     {
-        $showHelp = \in_array('help', $args, true) || \in_array('typephp:help', $args, true) || \in_array('--help', $args, true) || \in_array('-h', $args, true);
+        $c = [CliFormatter::class, 'color'];
 
-        if ($showHelp || $args === []) {
+        $showHelp = \in_array('help', $args, true)
+            || \in_array('typephp:help', $args, true)
+            || \in_array('--help', $args, true)
+            || \in_array('-h', $args, true)
+            || $args === [];
+
+        if ($showHelp) {
             return (new HelpCommand())->execute($args, $outputStream, $errorStream);
         }
 
-        if (\in_array('config:init', $args, true) || \in_array('init', $args, true)) {
+        $firstArg = $args[0] ?? '';
+
+        if ($firstArg === 'config:init' || $firstArg === 'init') {
             return (new ConfigInitCommand())->execute($args, $outputStream, $errorStream);
         }
 
-        if (\in_array('cache:rebuild', $args, true)) {
+        if ($firstArg === 'cache:rebuild') {
             return (new CacheRebuildCommand())->execute($args, $outputStream, $errorStream);
         }
 
-        if (\in_array('cache:clear', $args, true)) {
+        if ($firstArg === 'cache:clear') {
             return (new CacheClearCommand())->execute($args, $outputStream, $errorStream);
         }
 
-        if (\in_array('cache:warm', $args, true)) {
+        if ($firstArg === 'cache:warm') {
             return (new CacheWarmCommand())->execute($args, $outputStream, $errorStream);
+        }
+
+        $hasFileExtension = str_contains(basename($firstArg), '.');
+        $isFileTarget = file_exists($firstArg) || $hasFileExtension;
+
+        if (! $isFileTarget) {
+            fwrite($errorStream, "\n  " . $c(' TYPEPHP ', 'badge_red') . ' ' . $c('Error', 'bold') . "\n\n");
+            fwrite($errorStream, '  ' . $c('✗', 'red') . ' Command ' . $c('"' . $firstArg . '"', 'bold') . " is not defined.\n\n");
+            fwrite($errorStream, '  ' . $c('Did you mean one of these?', 'yellow') . "\n");
+            foreach (self::KNOWN_COMMANDS as $cmd) {
+                fwrite($errorStream, '    ' . $c('•', 'cyan') . ' ' . $cmd . "\n");
+            }
+            fwrite($errorStream, "\n");
+
+            return 1;
         }
 
         return (new RunCommand())->execute($args, $outputStream, $errorStream);

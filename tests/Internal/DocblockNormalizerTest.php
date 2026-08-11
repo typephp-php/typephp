@@ -86,4 +86,12 @@ describe('DocblockNormalizer', function () {
 
         expect(DocblockNormalizer::normalize($doc))->toBe($expected);
     });
+
+    test('wraps class constant array shape keys in quotes for legacy phpdoc-parser compatibility', function () {
+        $doc = '/** @param array{self::KEY_ID: int, App\Constants::ROLE: string} $payload */';
+
+        $expected = '/** @param array{"self::KEY_ID": int, "App\Constants::ROLE": string} $payload */';
+
+        expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+    });
 });

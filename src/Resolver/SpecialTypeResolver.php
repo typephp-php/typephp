@@ -68,23 +68,13 @@ final class SpecialTypeResolver
     }
 
     /**
-     * Recursively resolves special type identifiers (self, static, parent, FQCNs, ConstFetch class names) in a TypeNode AST using Reflection context.
+     * Recursively resolves special type identifiers in a TypeNode AST using Reflection context.
      *
      * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod|string $context
      */
     public static function resolve(TypeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context, ?object $thisObj = null): TypeNode
     {
-        if (\is_string($context)) {
-            if (str_contains($context, '::')) {
-                [$className, $methodName] = explode('::', $context, 2);
-                $ref = new \ReflectionMethod($className, $methodName);
-            } else {
-                $ref = new \ReflectionFunction($context);
-            }
-        } else {
-            $ref = $context;
-        }
-
+        $ref = self::getReflectionContext($context);
         $declaringClass = $ref instanceof \ReflectionMethod ? $ref->getDeclaringClass()->getName() : ($ref instanceof \ReflectionClass ? $ref->getName() : null);
 
         if ($node instanceof ThisTypeNode) {
@@ -92,55 +82,16 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof IdentifierTypeNode) {
-            $lower = strtolower($node->name);
-
-            if ($lower === '$this' || $lower === 'static') {
-                return $node;
-            }
-
-            if ($lower === 'self' && $declaringClass !== null) {
-                return new IdentifierTypeNode($declaringClass);
-            }
-
-            if ($lower === 'parent' && $declaringClass !== null) {
-                $parentClass = get_parent_class($declaringClass);
-                if ($parentClass !== false) {
-                    return new IdentifierTypeNode($parentClass);
-                }
-            }
-
-            $fqcn = self::resolveFqcn($node->name, $ref);
-            if ($fqcn !== $node->name) {
-                return new IdentifierTypeNode($fqcn);
-            }
+            return self::resolveIdentifier($node, $declaringClass, $ref);
         }
 
         if ($node instanceof ConstTypeNode) {
-            if ($node->constExpr instanceof ConstFetchNode && $node->constExpr->className !== '') {
-                $className = $node->constExpr->className;
-                $lowerClassName = strtolower($className);
-
-                if ($lowerClassName === 'self' && $declaringClass !== null) {
-                    $resolvedClass = $declaringClass;
-                } elseif ($lowerClassName === 'parent' && $declaringClass !== null) {
-                    $parentClass = get_parent_class($declaringClass);
-                    $resolvedClass = $parentClass !== false ? $parentClass : $className;
-                } else {
-                    $resolvedClass = self::resolveFqcn($className, $ref);
-                }
-
-                return new ConstTypeNode(new ConstFetchNode($resolvedClass, $node->constExpr->name));
-            }
-
-            return $node;
+            return self::resolveConstType($node, $declaringClass, $ref);
         }
 
         if ($node instanceof GenericTypeNode) {
-            $genericType = self::resolve($node->type, $context, $thisObj);
-            $innerTypes = array_map(
-                fn ($t) => self::resolve($t, $context, $thisObj),
-                $node->genericTypes
-            );
+            $genericType = self::resolve($node->type, $ref, $thisObj);
+            $innerTypes = array_map(fn ($t) => self::resolve($t, $ref, $thisObj), $node->genericTypes);
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
@@ -149,12 +100,28 @@ final class SpecialTypeResolver
             );
         }
 
+        if ($node instanceof OffsetAccessTypeNode) {
+            return self::resolveOffsetAccess($node, $ref, $thisObj);
+        }
+
+        if ($node instanceof ArrayShapeNode) {
+            return self::resolveArrayShape($node, $ref, $thisObj);
+        }
+
+        if ($node instanceof ObjectShapeNode) {
+            return self::resolveObjectShape($node, $ref, $thisObj);
+        }
+
+        if ($node instanceof CallableTypeNode) {
+            return self::resolveCallable($node, $ref, $thisObj);
+        }
+
         if ($node instanceof ConditionalTypeNode) {
             return new ConditionalTypeNode(
-                self::resolve($node->subjectType, $context, $thisObj),
-                self::resolve($node->targetType, $context, $thisObj),
-                self::resolve($node->if, $context, $thisObj),
-                self::resolve($node->else, $context, $thisObj),
+                self::resolve($node->subjectType, $ref, $thisObj),
+                self::resolve($node->targetType, $ref, $thisObj),
+                self::resolve($node->if, $ref, $thisObj),
+                self::resolve($node->else, $ref, $thisObj),
                 $node->negated
             );
         }
@@ -162,151 +129,27 @@ final class SpecialTypeResolver
         if ($node instanceof ConditionalTypeForParameterNode) {
             return new ConditionalTypeForParameterNode(
                 $node->parameterName,
-                self::resolve($node->targetType, $context, $thisObj),
-                self::resolve($node->if, $context, $thisObj),
-                self::resolve($node->else, $context, $thisObj),
+                self::resolve($node->targetType, $ref, $thisObj),
+                self::resolve($node->if, $ref, $thisObj),
+                self::resolve($node->else, $ref, $thisObj),
                 $node->negated
             );
         }
 
-        if ($node instanceof OffsetAccessTypeNode) {
-            $baseType = self::resolve($node->type, $context, $thisObj);
-            $offsetType = self::resolve($node->offset, $context, $thisObj);
-
-            $offsetKey = null;
-            if ($offsetType instanceof ConstTypeNode) {
-                $expr = $offsetType->constExpr;
-                if ($expr instanceof ConstExprStringNode) {
-                    $offsetKey = $expr->value;
-                } elseif ($expr instanceof ConstExprIntegerNode) {
-                    $offsetKey = (int) $expr->value;
-                }
-            } elseif ($offsetType instanceof IdentifierTypeNode) {
-                $offsetKey = $offsetType->name;
-            }
-
-            if ($offsetKey !== null) {
-                if ($baseType instanceof ArrayShapeNode) {
-                    foreach ($baseType->items as $item) {
-                        $itemKey = null;
-                        if ($item->keyName instanceof ConstExprStringNode) {
-                            $itemKey = $item->keyName->value;
-                        } elseif ($item->keyName instanceof IdentifierTypeNode) {
-                            $itemKey = $item->keyName->name;
-                        } elseif ($item->keyName instanceof ConstExprIntegerNode) {
-                            $itemKey = (int) $item->keyName->value;
-                        }
-
-                        if ((string) $itemKey === (string) $offsetKey) {
-                            return $item->valueType;
-                        }
-                    }
-                }
-
-                if ($baseType instanceof ConstTypeNode && $baseType->constExpr instanceof ConstFetchNode) {
-                    $constExpr = $baseType->constExpr;
-                    $fqcn = $constExpr->className;
-                    $constName = $constExpr->name;
-
-                    if ($fqcn !== '' && (class_exists($fqcn) || interface_exists($fqcn))) {
-                        try {
-                            $refClass = new \ReflectionClass($fqcn);
-                            if ($refClass->hasConstant($constName)) {
-                                $constValue = $refClass->getConstant($constName);
-                                if (\is_array($constValue) && \array_key_exists($offsetKey, $constValue)) {
-                                    $val = $constValue[$offsetKey];
-                                    if (\is_string($val)) {
-                                        return new ConstTypeNode(new ConstExprStringNode($val, ConstExprStringNode::SINGLE_QUOTED));
-                                    } elseif (\is_int($val)) {
-                                        return new ConstTypeNode(new ConstExprIntegerNode((string) $val));
-                                    }
-                                }
-                            }
-                        } catch (\ReflectionException $e) {
-                        }
-                    }
-                }
-            }
-
-            return new OffsetAccessTypeNode($baseType, $offsetType);
-        }
-
-        if ($node instanceof ArrayShapeNode) {
-            $items = array_map(function ($item) use ($context, $thisObj) {
-                return new ArrayShapeItemNode(
-                    $item->keyName,
-                    $item->optional,
-                    self::resolve($item->valueType, $context, $thisObj)
-                );
-            }, $node->items);
-
-            if ($node->sealed) {
-                return ArrayShapeNode::createSealed($items, $node->kind);
-            } else {
-                $unsealedType = null;
-                if ($node->unsealedType !== null) {
-                    $unsealedKey = $node->unsealedType->keyType !== null ? self::resolve($node->unsealedType->keyType, $context, $thisObj) : null;
-                    $unsealedValue = self::resolve($node->unsealedType->valueType, $context, $thisObj);
-                    $unsealedType = new ArrayShapeUnsealedTypeNode($unsealedValue, $unsealedKey);
-                }
-
-                return ArrayShapeNode::createUnsealed($items, $unsealedType, $node->kind);
-            }
-        }
-
-        if ($node instanceof ObjectShapeNode) {
-            $items = array_map(function ($item) use ($context, $thisObj) {
-                return new ObjectShapeItemNode(
-                    $item->keyName,
-                    $item->optional,
-                    self::resolve($item->valueType, $context, $thisObj)
-                );
-            }, $node->items);
-
-            return new ObjectShapeNode($items);
-        }
-
-        if ($node instanceof CallableTypeNode) {
-            $resolvedParameters = array_map(function (CallableTypeParameterNode $param) use ($context, $thisObj) {
-                return new CallableTypeParameterNode(
-                    self::resolve($param->type, $context, $thisObj),
-                    $param->isReference,
-                    $param->isVariadic,
-                    $param->parameterName,
-                    $param->isOptional
-                );
-            }, $node->parameters);
-
-            $resolvedReturnType = self::resolve($node->returnType, $context, $thisObj);
-
-            return new CallableTypeNode(
-                $node->identifier,
-                $resolvedParameters,
-                $resolvedReturnType,
-                $node->templateTypes
-            );
-        }
-
         if ($node instanceof NullableTypeNode) {
-            return new NullableTypeNode(self::resolve($node->type, $context, $thisObj));
+            return new NullableTypeNode(self::resolve($node->type, $ref, $thisObj));
         }
 
         if ($node instanceof ArrayTypeNode) {
-            return new ArrayTypeNode(self::resolve($node->type, $context, $thisObj));
+            return new ArrayTypeNode(self::resolve($node->type, $ref, $thisObj));
         }
 
         if ($node instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(
-                fn ($t) => self::resolve($t, $context, $thisObj),
-                $node->types
-            ));
+            return new UnionTypeNode(array_map(fn ($t) => self::resolve($t, $ref, $thisObj), $node->types));
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(
-                fn ($t) => self::resolve($t, $context, $thisObj),
-                $node->types
-            ));
+            return new IntersectionTypeNode(array_map(fn ($t) => self::resolve($t, $ref, $thisObj), $node->types));
         }
 
         return $node;
@@ -328,40 +171,39 @@ final class SpecialTypeResolver
             }
 
             $fqcn = self::resolveFqcnForFile($node->name, $file);
-            if ($fqcn !== $node->name) {
-                return new IdentifierTypeNode($fqcn);
-            }
+
+            return $fqcn !== $node->name ? new IdentifierTypeNode($fqcn) : clone $node;
         }
 
         if ($node instanceof ConstTypeNode) {
-            if ($node->constExpr instanceof ConstFetchNode && $node->constExpr->className !== '') {
-                $className = $node->constExpr->className;
-                $lowerClassName = strtolower($className);
-
-                if ($lowerClassName === 'self' || $lowerClassName === 'parent') {
-                    $resolvedClass = $className;
-                } else {
-                    $resolvedClass = self::resolveFqcnForFile($className, $file);
-                }
-
-                return new ConstTypeNode(new ConstFetchNode($resolvedClass, $node->constExpr->name));
-            }
-
-            return clone $node;
+            return self::resolveConstTypeForFile($node, $file);
         }
 
         if ($node instanceof GenericTypeNode) {
             $genericType = self::resolveForFile($node->type, $file);
-            $innerTypes = array_map(
-                fn ($t) => self::resolveForFile($t, $file),
-                $node->genericTypes
-            );
+            $innerTypes = array_map(fn ($t) => self::resolveForFile($t, $file), $node->genericTypes);
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
                 $innerTypes,
                 $node->variances
             );
+        }
+
+        if ($node instanceof OffsetAccessTypeNode) {
+            return self::resolveOffsetAccessForFile($node, $file);
+        }
+
+        if ($node instanceof ArrayShapeNode) {
+            return self::resolveArrayShapeForFile($node, $file);
+        }
+
+        if ($node instanceof ObjectShapeNode) {
+            return self::resolveObjectShapeForFile($node, $file);
+        }
+
+        if ($node instanceof CallableTypeNode) {
+            return self::resolveCallableForFile($node, $file);
         }
 
         if ($node instanceof ConditionalTypeNode) {
@@ -384,124 +226,6 @@ final class SpecialTypeResolver
             );
         }
 
-        if ($node instanceof OffsetAccessTypeNode) {
-            $baseType = self::resolveForFile($node->type, $file);
-            $offsetType = self::resolveForFile($node->offset, $file);
-
-            $offsetKey = null;
-            if ($offsetType instanceof ConstTypeNode) {
-                $expr = $offsetType->constExpr;
-                if ($expr instanceof ConstExprStringNode) {
-                    $offsetKey = $expr->value;
-                } elseif ($expr instanceof ConstExprIntegerNode) {
-                    $offsetKey = (int) $expr->value;
-                }
-            } elseif ($offsetType instanceof IdentifierTypeNode) {
-                $offsetKey = $offsetType->name;
-            }
-
-            if ($offsetKey !== null) {
-                if ($baseType instanceof ArrayShapeNode) {
-                    foreach ($baseType->items as $item) {
-                        $itemKey = null;
-                        if ($item->keyName instanceof ConstExprStringNode) {
-                            $itemKey = $item->keyName->value;
-                        } elseif ($item->keyName instanceof IdentifierTypeNode) {
-                            $itemKey = $item->keyName->name;
-                        } elseif ($item->keyName instanceof ConstExprIntegerNode) {
-                            $itemKey = (int) $item->keyName->value;
-                        }
-
-                        if ((string) $itemKey === (string) $offsetKey) {
-                            return $item->valueType;
-                        }
-                    }
-                }
-
-                if ($baseType instanceof ConstTypeNode && $baseType->constExpr instanceof ConstFetchNode) {
-                    $constExpr = $baseType->constExpr;
-                    $fqcn = $constExpr->className;
-                    $constName = $constExpr->name;
-
-                    if ($fqcn !== '' && (class_exists($fqcn) || interface_exists($fqcn))) {
-                        try {
-                            $refClass = new \ReflectionClass($fqcn);
-                            if ($refClass->hasConstant($constName)) {
-                                $constValue = $refClass->getConstant($constName);
-                                if (\is_array($constValue) && \array_key_exists($offsetKey, $constValue)) {
-                                    $val = $constValue[$offsetKey];
-                                    if (\is_string($val)) {
-                                        return new ConstTypeNode(new ConstExprStringNode($val, ConstExprStringNode::SINGLE_QUOTED));
-                                    } elseif (\is_int($val)) {
-                                        return new ConstTypeNode(new ConstExprIntegerNode((string) $val));
-                                    }
-                                }
-                            }
-                        } catch (\ReflectionException $e) {
-                        }
-                    }
-                }
-            }
-
-            return new OffsetAccessTypeNode($baseType, $offsetType);
-        }
-
-        if ($node instanceof ArrayShapeNode) {
-            $items = array_map(function ($item) use ($file) {
-                return new ArrayShapeItemNode(
-                    $item->keyName,
-                    $item->optional,
-                    self::resolveForFile($item->valueType, $file)
-                );
-            }, $node->items);
-
-            if ($node->sealed) {
-                return ArrayShapeNode::createSealed($items, $node->kind);
-            } else {
-                $unsealedType = null;
-                if ($node->unsealedType !== null) {
-                    $unsealedKey = $node->unsealedType->keyType !== null ? self::resolveForFile($node->unsealedType->keyType, $file) : null;
-                    $unsealedValue = self::resolveForFile($node->unsealedType->valueType, $file);
-                    $unsealedType = new ArrayShapeUnsealedTypeNode($unsealedValue, $unsealedKey);
-                }
-
-                return ArrayShapeNode::createUnsealed($items, $unsealedType, $node->kind);
-            }
-        }
-
-        if ($node instanceof ObjectShapeNode) {
-            $items = array_map(function ($item) use ($file) {
-                return new ObjectShapeItemNode(
-                    $item->keyName,
-                    $item->optional,
-                    self::resolveForFile($item->valueType, $file)
-                );
-            }, $node->items);
-
-            return new ObjectShapeNode($items);
-        }
-
-        if ($node instanceof CallableTypeNode) {
-            $resolvedParameters = array_map(function (CallableTypeParameterNode $param) use ($file) {
-                return new CallableTypeParameterNode(
-                    self::resolveForFile($param->type, $file),
-                    $param->isReference,
-                    $param->isVariadic,
-                    $param->parameterName,
-                    $param->isOptional
-                );
-            }, $node->parameters);
-
-            $resolvedReturnType = self::resolveForFile($node->returnType, $file);
-
-            return new CallableTypeNode(
-                $node->identifier,
-                $resolvedParameters,
-                $resolvedReturnType,
-                $node->templateTypes
-            );
-        }
-
         if ($node instanceof NullableTypeNode) {
             return new NullableTypeNode(self::resolveForFile($node->type, $file));
         }
@@ -511,20 +235,420 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(
-                fn ($t) => self::resolveForFile($t, $file),
-                $node->types
-            ));
+            return new UnionTypeNode(array_map(fn ($t) => self::resolveForFile($t, $file), $node->types));
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(
-                fn ($t) => self::resolveForFile($t, $file),
-                $node->types
-            ));
+            return new IntersectionTypeNode(array_map(fn ($t) => self::resolveForFile($t, $file), $node->types));
         }
 
         return clone $node;
+    }
+
+    /**
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod|string $context
+     *
+     * @return \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod
+     */
+    private static function getReflectionContext(\ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context): \ReflectionClass|\ReflectionFunction|\ReflectionMethod
+    {
+        if (\is_string($context)) {
+            if (str_contains($context, '::')) {
+                [$className, $methodName] = explode('::', $context, 2);
+
+                return new \ReflectionMethod($className, $methodName);
+            }
+
+            return new \ReflectionFunction($context);
+        }
+
+        return $context;
+    }
+
+    /**
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     */
+    private static function resolveIdentifier(IdentifierTypeNode $node, ?string $declaringClass, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref): IdentifierTypeNode
+    {
+        $lower = strtolower($node->name);
+
+        if ($lower === '$this' || $lower === 'static') {
+            return $node;
+        }
+
+        if ($lower === 'self' && $declaringClass !== null) {
+            return new IdentifierTypeNode($declaringClass);
+        }
+
+        if ($lower === 'parent' && $declaringClass !== null) {
+            $parentClass = get_parent_class($declaringClass);
+            if ($parentClass !== false) {
+                return new IdentifierTypeNode($parentClass);
+            }
+        }
+
+        $fqcn = self::resolveFqcn($node->name, $ref);
+
+        return $fqcn !== $node->name ? new IdentifierTypeNode($fqcn) : $node;
+    }
+
+    /**
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     */
+    private static function resolveConstType(ConstTypeNode $node, ?string $declaringClass, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref): ConstTypeNode
+    {
+        if ($node->constExpr instanceof ConstFetchNode && $node->constExpr->className !== '') {
+            $className = $node->constExpr->className;
+            $lowerClassName = strtolower($className);
+
+            if ($lowerClassName === 'self' && $declaringClass !== null) {
+                $resolvedClass = $declaringClass;
+            } elseif ($lowerClassName === 'parent' && $declaringClass !== null) {
+                $parentClass = get_parent_class($declaringClass);
+                $resolvedClass = $parentClass !== false ? $parentClass : $className;
+            } else {
+                $resolvedClass = self::resolveFqcn($className, $ref);
+            }
+
+            return new ConstTypeNode(new ConstFetchNode($resolvedClass, $node->constExpr->name));
+        }
+
+        return $node;
+    }
+
+    /**
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     */
+    private static function resolveOffsetAccess(OffsetAccessTypeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref, ?object $thisObj): TypeNode
+    {
+        $baseType = self::resolve($node->type, $ref, $thisObj);
+        $offsetType = self::resolve($node->offset, $ref, $thisObj);
+
+        $offsetKey = self::extractOffsetKey($offsetType);
+
+        if ($offsetKey !== null) {
+            if ($baseType instanceof ArrayShapeNode) {
+                foreach ($baseType->items as $item) {
+                    $itemKey = self::extractItemKey($item->keyName);
+                    if ((string) $itemKey === (string) $offsetKey) {
+                        return $item->valueType;
+                    }
+                }
+            }
+
+            if ($baseType instanceof ConstTypeNode && $baseType->constExpr instanceof ConstFetchNode) {
+                $resolvedNode = self::resolveConstantOffsetValue($baseType->constExpr->className, $baseType->constExpr->name, $offsetKey);
+                if ($resolvedNode !== null) {
+                    return $resolvedNode;
+                }
+            }
+        }
+
+        return new OffsetAccessTypeNode($baseType, $offsetType);
+    }
+
+    /**
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     */
+    private static function resolveArrayShape(ArrayShapeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref, ?object $thisObj): ArrayShapeNode
+    {
+        $items = array_map(function ($item) use ($ref, $thisObj) {
+            /** @var ConstExprIntegerNode|ConstExprStringNode|ConstFetchNode|IdentifierTypeNode|null $keyName */
+            $keyName = $item->keyName;
+
+            $className = null;
+            $constName = null;
+
+            if ($keyName instanceof ConstFetchNode && $keyName->className !== '') {
+                $className = $keyName->className;
+                $constName = $keyName->name;
+            } elseif ($keyName instanceof IdentifierTypeNode && str_contains($keyName->name, '::')) {
+                [$className, $constName] = explode('::', $keyName->name, 2);
+            } elseif ($keyName instanceof ConstExprStringNode && str_contains($keyName->value, '::')) {
+                [$className, $constName] = explode('::', $keyName->value, 2);
+            }
+
+            if ($className !== null && $constName !== null) {
+                $lowerClassName = strtolower($className);
+                $declaringClass = $ref instanceof \ReflectionMethod ? $ref->getDeclaringClass()->getName() : null;
+
+                if ($lowerClassName === 'self' && $declaringClass !== null) {
+                    $resolvedClass = $declaringClass;
+                } elseif ($lowerClassName === 'parent' && $declaringClass !== null) {
+                    $parentClass = get_parent_class($declaringClass);
+                    $resolvedClass = $parentClass !== false ? $parentClass : $className;
+                } else {
+                    $resolvedClass = self::resolveFqcn($className, $ref);
+                }
+
+                $resolvedKeyNode = self::resolveConstantKeyValue($resolvedClass, $constName);
+                if ($resolvedKeyNode !== null) {
+                    $keyName = $resolvedKeyNode;
+                }
+            }
+
+            return new ArrayShapeItemNode(
+                $keyName,
+                $item->optional,
+                self::resolve($item->valueType, $ref, $thisObj)
+            );
+        }, $node->items);
+
+        if ($node->sealed) {
+            return ArrayShapeNode::createSealed($items, $node->kind);
+        }
+
+        $unsealedType = null;
+        if ($node->unsealedType !== null) {
+            $unsealedKey = $node->unsealedType->keyType !== null ? self::resolve($node->unsealedType->keyType, $ref, $thisObj) : null;
+            $unsealedValue = self::resolve($node->unsealedType->valueType, $ref, $thisObj);
+            $unsealedType = new ArrayShapeUnsealedTypeNode($unsealedValue, $unsealedKey);
+        }
+
+        return ArrayShapeNode::createUnsealed($items, $unsealedType, $node->kind);
+    }
+
+    /**
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     */
+    private static function resolveObjectShape(ObjectShapeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref, ?object $thisObj): ObjectShapeNode
+    {
+        $items = array_map(function ($item) use ($ref, $thisObj) {
+            return new ObjectShapeItemNode(
+                $item->keyName,
+                $item->optional,
+                self::resolve($item->valueType, $ref, $thisObj)
+            );
+        }, $node->items);
+
+        return new ObjectShapeNode($items);
+    }
+
+    /**
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     */
+    private static function resolveCallable(CallableTypeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref, ?object $thisObj): CallableTypeNode
+    {
+        $resolvedParameters = array_map(function (CallableTypeParameterNode $param) use ($ref, $thisObj) {
+            return new CallableTypeParameterNode(
+                self::resolve($param->type, $ref, $thisObj),
+                $param->isReference,
+                $param->isVariadic,
+                $param->parameterName,
+                $param->isOptional
+            );
+        }, $node->parameters);
+
+        $resolvedReturnType = self::resolve($node->returnType, $ref, $thisObj);
+
+        return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $node->templateTypes);
+    }
+
+    private static function resolveConstTypeForFile(ConstTypeNode $node, string $file): ConstTypeNode
+    {
+        if ($node->constExpr instanceof ConstFetchNode && $node->constExpr->className !== '') {
+            $className = $node->constExpr->className;
+            $lowerClassName = strtolower($className);
+
+            if ($lowerClassName === 'self' || $lowerClassName === 'parent') {
+                $resolvedClass = $className;
+            } else {
+                $resolvedClass = self::resolveFqcnForFile($className, $file);
+            }
+
+            return new ConstTypeNode(new ConstFetchNode($resolvedClass, $node->constExpr->name));
+        }
+
+        return clone $node;
+    }
+
+    private static function resolveOffsetAccessForFile(OffsetAccessTypeNode $node, string $file): TypeNode
+    {
+        $baseType = self::resolveForFile($node->type, $file);
+        $offsetType = self::resolveForFile($node->offset, $file);
+
+        $offsetKey = self::extractOffsetKey($offsetType);
+
+        if ($offsetKey !== null) {
+            if ($baseType instanceof ArrayShapeNode) {
+                foreach ($baseType->items as $item) {
+                    $itemKey = self::extractItemKey($item->keyName);
+                    if ((string) $itemKey === (string) $offsetKey) {
+                        return $item->valueType;
+                    }
+                }
+            }
+
+            if ($baseType instanceof ConstTypeNode && $baseType->constExpr instanceof ConstFetchNode) {
+                $resolvedNode = self::resolveConstantOffsetValue($baseType->constExpr->className, $baseType->constExpr->name, $offsetKey);
+                if ($resolvedNode !== null) {
+                    return $resolvedNode;
+                }
+            }
+        }
+
+        return new OffsetAccessTypeNode($baseType, $offsetType);
+    }
+
+    private static function resolveArrayShapeForFile(ArrayShapeNode $node, string $file): ArrayShapeNode
+    {
+        $items = array_map(function ($item) use ($file) {
+            /** @var ConstExprIntegerNode|ConstExprStringNode|ConstFetchNode|IdentifierTypeNode|null $keyName */
+            $keyName = $item->keyName;
+
+            $className = null;
+            $constName = null;
+
+            if ($keyName instanceof ConstFetchNode && $keyName->className !== '') {
+                $className = $keyName->className;
+                $constName = $keyName->name;
+            } elseif ($keyName instanceof IdentifierTypeNode && str_contains($keyName->name, '::')) {
+                [$className, $constName] = explode('::', $keyName->name, 2);
+            } elseif ($keyName instanceof ConstExprStringNode && str_contains($keyName->value, '::')) {
+                [$className, $constName] = explode('::', $keyName->value, 2);
+            }
+
+            if ($className !== null && $constName !== null) {
+                $lowerClassName = strtolower($className);
+
+                if ($lowerClassName !== 'self' && $lowerClassName !== 'parent') {
+                    $resolvedClass = self::resolveFqcnForFile($className, $file);
+                    $resolvedKeyNode = self::resolveConstantKeyValue($resolvedClass, $constName);
+                    if ($resolvedKeyNode !== null) {
+                        $keyName = $resolvedKeyNode;
+                    }
+                }
+            }
+
+            return new ArrayShapeItemNode(
+                $keyName,
+                $item->optional,
+                self::resolveForFile($item->valueType, $file)
+            );
+        }, $node->items);
+
+        if ($node->sealed) {
+            return ArrayShapeNode::createSealed($items, $node->kind);
+        }
+
+        $unsealedType = null;
+        if ($node->unsealedType !== null) {
+            $unsealedKey = $node->unsealedType->keyType !== null ? self::resolveForFile($node->unsealedType->keyType, $file) : null;
+            $unsealedValue = self::resolveForFile($node->unsealedType->valueType, $file);
+            $unsealedType = new ArrayShapeUnsealedTypeNode($unsealedValue, $unsealedKey);
+        }
+
+        return ArrayShapeNode::createUnsealed($items, $unsealedType, $node->kind);
+    }
+
+    private static function resolveObjectShapeForFile(ObjectShapeNode $node, string $file): ObjectShapeNode
+    {
+        $items = array_map(function ($item) use ($file) {
+            return new ObjectShapeItemNode(
+                $item->keyName,
+                $item->optional,
+                self::resolveForFile($item->valueType, $file)
+            );
+        }, $node->items);
+
+        return new ObjectShapeNode($items);
+    }
+
+    private static function resolveCallableForFile(CallableTypeNode $node, string $file): CallableTypeNode
+    {
+        $resolvedParameters = array_map(function (CallableTypeParameterNode $param) use ($file) {
+            return new CallableTypeParameterNode(
+                self::resolveForFile($param->type, $file),
+                $param->isReference,
+                $param->isVariadic,
+                $param->parameterName,
+                $param->isOptional
+            );
+        }, $node->parameters);
+
+        $resolvedReturnType = self::resolveForFile($node->returnType, $file);
+
+        return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $node->templateTypes);
+    }
+
+    // --- Shared Utilities ---
+
+    private static function extractOffsetKey(TypeNode $offsetType): string|int|null
+    {
+        if ($offsetType instanceof ConstTypeNode) {
+            $expr = $offsetType->constExpr;
+            if ($expr instanceof ConstExprStringNode) {
+                return $expr->value;
+            }
+            if ($expr instanceof ConstExprIntegerNode) {
+                return (int) $expr->value;
+            }
+        }
+        if ($offsetType instanceof IdentifierTypeNode) {
+            return $offsetType->name;
+        }
+
+        return null;
+    }
+
+    private static function extractItemKey(mixed $keyName): string|int|null
+    {
+        if ($keyName instanceof ConstExprStringNode) {
+            return $keyName->value;
+        }
+        if ($keyName instanceof IdentifierTypeNode) {
+            return $keyName->name;
+        }
+        if ($keyName instanceof ConstExprIntegerNode) {
+            return (int) $keyName->value;
+        }
+
+        return null;
+    }
+
+    private static function resolveConstantOffsetValue(string $fqcn, string $constName, string|int $offsetKey): ?TypeNode
+    {
+        if ($fqcn !== '' && (class_exists($fqcn) || interface_exists($fqcn))) {
+            try {
+                $refClass = new \ReflectionClass($fqcn);
+                if ($refClass->hasConstant($constName)) {
+                    $constValue = $refClass->getConstant($constName);
+                    if (\is_array($constValue) && \array_key_exists($offsetKey, $constValue)) {
+                        $val = $constValue[$offsetKey];
+                        if (\is_string($val)) {
+                            return new ConstTypeNode(new ConstExprStringNode($val, ConstExprStringNode::SINGLE_QUOTED));
+                        }
+                        if (\is_int($val)) {
+                            return new ConstTypeNode(new ConstExprIntegerNode((string) $val));
+                        }
+                    }
+                }
+            } catch (\ReflectionException $e) {
+            }
+        }
+
+        return null;
+    }
+
+    private static function resolveConstantKeyValue(string $fqcn, string $constName): ConstExprStringNode|ConstExprIntegerNode|null
+    {
+        if (class_exists($fqcn) || interface_exists($fqcn)) {
+            try {
+                $refClass = new \ReflectionClass($fqcn);
+                if ($refClass->hasConstant($constName)) {
+                    $val = $refClass->getConstant($constName);
+                    if (\is_string($val)) {
+                        return new ConstExprStringNode($val, ConstExprStringNode::SINGLE_QUOTED);
+                    }
+                    if (\is_int($val)) {
+                        return new ConstExprIntegerNode((string) $val);
+                    }
+                }
+            } catch (\ReflectionException $e) {
+            }
+        }
+
+        return null;
     }
 
     /**

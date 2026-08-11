@@ -16,7 +16,7 @@ final class PropertyHookInjector
 {
     public static function process(Node\Stmt\Property $node): void
     {
-        if ($node->hooks === []) {
+        if (! isset($node->hooks) || ! \is_array($node->hooks) || $node->hooks === []) {
             return;
         }
 
@@ -76,15 +76,15 @@ final class PropertyHookInjector
             {
             }
 
-            public function enterNode(Node $n): int|null
+            public function enterNode(Node $node): int|null
             {
-                if ($n instanceof Node\Expr\Closure || $n instanceof Node\Expr\ArrowFunction || $n instanceof Node\Stmt\Function_ || $n instanceof Node\Stmt\ClassMethod) {
+                if ($node instanceof Node\Expr\Closure || $node instanceof Node\Expr\ArrowFunction || $node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
                     return NodeTraverser::DONT_TRAVERSE_CHILDREN;
                 }
 
-                if ($n instanceof Node\Stmt\Return_ && $n->expr !== null) {
-                    $checkCall = NodeBuilder::createPropertyCheckCall($n->expr, new Node\Expr\Variable('this'), $this->propertyName);
-                    $n->expr = NodeBuilder::createTernaryThrowExpr($checkCall);
+                if ($node instanceof Node\Stmt\Return_ && $node->expr !== null) {
+                    $checkCall = NodeBuilder::createPropertyCheckCall($node->expr, new Node\Expr\Variable('this'), $this->propertyName);
+                    $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall);
                 }
 
                 return null;
