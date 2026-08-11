@@ -30,6 +30,22 @@ function testDeepObjectShapeUnion(mixed $user): bool
 }
 
 /**
+ * @param object{id: int, role: string}|null $data
+ */
+function testMissingObjectPropertyUnion(mixed $data): bool
+{
+    return true;
+}
+
+/**
+ * @param object{name: string}|null $data
+ */
+function testUninitializedObjectPropertyUnion(mixed $data): bool
+{
+    return true;
+}
+
+/**
  * @param (array{type: 'A', data: array{score: positive-int}} | array{type: 'B', data: array{code: non-empty-string}})|null $discriminated
  */
 function testDiscriminatedUnionDeepError(mixed $discriminated): bool
@@ -61,20 +77,44 @@ describe('Union Deep Error Bubbling', function () {
             ->toThrow(\TypeError::class, "Argument \$payload is missing required key 'tags'");
     });
 
-    test('surfaces deep object shape error inside union', function () {
-        $user = new \stdClass();
-        $user->id = 10;
-        $user->profile = new \stdClass();
-        $user->profile->name = ''; 
+    test('surfaces deep object shape error inside union using anonymous class', function () {
+        $user = new class {
+            public int $id = 10;
+            public object $profile;
+
+            public function __construct() {
+                $this->profile = new class {
+                    public string $name = ''; 
+                };
+            }
+        };
 
         expect(fn() => testDeepObjectShapeUnion($user))
             ->toThrow(\TypeError::class, "Argument \$user->profile->name must be of type non-empty-string");
     });
 
+    test('surfaces missing property error on object shape inside union using anonymous class', function () {
+        $obj = new class {
+            public int $id = 10; 
+        };
+
+        expect(fn() => testMissingObjectPropertyUnion($obj))
+            ->toThrow(\TypeError::class, "Argument \$data is missing required property 'role'");
+    });
+
+    test('surfaces uninitialized property error on object shape inside union using anonymous class', function () {
+        $obj = new class {
+            public string $name; 
+        };
+
+        expect(fn() => testUninitializedObjectPropertyUnion($obj))
+            ->toThrow(\TypeError::class, "Argument \$data property 'name' is uninitialized");
+    });
+
     test('surfaces deep error in nested discriminated union shape', function () {
         $payload = [
             'type' => 'A',
-            'data' => ['score' => -5],
+            'data' => ['score' => -5], 
         ];
 
         expect(fn() => testDiscriminatedUnionDeepError($payload))
