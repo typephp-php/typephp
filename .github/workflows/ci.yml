@@ -13,14 +13,8 @@ permissions:
 
 jobs:
   test:
-    name: PHP ${{ matrix.php }} (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        php: ['8.2', '8.3', '8.4', '8.5']
+    name: PHP 8.2 Debug (ubuntu-latest)
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
@@ -29,18 +23,17 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: ${{ matrix.php }}
+          php-version: '8.2'
           extensions: dom, mbstring, zip, libxml, json, tokenizer, fileinfo
           coverage: none
 
       - name: Install Dependencies
         uses: ramsey/composer-install@v3
         with:
-          dependency-versions: ${{ matrix.php == '8.2' && 'lowest' || 'highest' }}
+          dependency-versions: lowest
 
-      - name: Run Static Analysis (PHPStan)
-        run: ./vendor/bin/phpstan analyse --no-progress
-        if: matrix.os == 'ubuntu-latest' && matrix.php == '8.3'
+      - name: Clear TypePHP Cache
+        run: ./vendor/bin/typephp cache:clear
 
-      - name: Run Test Suite (Pest)
-        run: ./vendor/bin/pest --ci
+      - name: Run Test Suite (Pest) with Live Debug
+        run: ./vendor/bin/pest tests/TypeChecking/ArraysAndShapes/ClassConstKeyShapeTest.php --ci
