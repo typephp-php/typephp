@@ -33,7 +33,7 @@ jobs:
           dependency-versions: lowest
 
       - name: Clear TypePHP Cache
-        run: ./vendor/bin/typephp cache:clear
+        run: php bin/typephp cache:clear
 
       - name: Run Test Suite (Pest) with Live Debug
         run: ./vendor/bin/pest tests/TypeChecking/ArraysAndShapes/ClassConstKeyShapeTest.php --ci
