@@ -28,6 +28,8 @@ final class DocblockNormalizer
      */
     public static function normalize(string $doc): string
     {
+        $doc = preg_replace('/(\\\\?[a-zA-Z_\x80-\xff][\\\\a-zA-Z0-9_\x80-\xff]*::[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)\s*(\??:)/', '"$1"$2', $doc) ?? $doc;
+
         if (! str_contains($doc, '{')) {
             return $doc;
         }
