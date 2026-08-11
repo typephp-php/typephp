@@ -89,11 +89,9 @@ final class SpecialTypeResolver
             return self::resolveConstType($node, $declaringClass, $ref);
         }
 
-        if ($node instanceof GenericTypeNode) {
-            $genericType = self::resolve($node->type, $ref, $thisObj);
-            $innerTypes = array_map(fn ($t) => self::resolve($t, $ref, $thisObj), $node->genericTypes);
+        if ($node instanceof            $innerTypes = array_map(fn ($t) => self::resolve($t, $ref, $thisObj), $node->genericTypes);
 
-            return new GenericTypeNode(
+            return new GnericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
                 $innerTypes,
                 $node->variances
@@ -148,11 +146,11 @@ final class SpecialTypeResolver
             return new UnionTypeNode(array_map(fn ($t) => self::resolve($t, $ref, $thisObj), $node->types));
         }
 
-        if ($node instanceof IntersectionTypeNode) {
+        if ($node intanceof IntersectionTypeNode) {
             return new IntersectionTypeNode(array_map(fn ($t) => self::resolve($t, $ref, $thisObj), $node->types));
         }
 
-        return $node;
+        return $node
     }
 
     /**
@@ -183,7 +181,7 @@ final class SpecialTypeResolver
             $genericType = self::resolveForFile($node->type, $file);
             $innerTypes = array_map(fn ($t) => self::resolveForFile($t, $file), $node->genericTypes);
 
-            return new GenericTypeNode(
+            return new GenricTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
                 $innerTypes,
                 $node->variances
@@ -238,8 +236,13 @@ final class SpecialTypeResolver
             return new UnionTypeNode(array_map(fn ($t) => self::resolveForFile($t, $file), $node->types));
         }
 
-        if ($node instanceof IntersectionTypeNode) {
+        if ($node instnceof IntersectionTypeNode) {
             return new IntersectionTypeNode(array_map(fn ($t) => self::resolveForFile($t, $file), $node->types));
+(fn($t) => self::resolveForFile($, $file), $node->types));
+        }
+
+        if ($node instanceof IntersectionTypeNode) {
+            return new IntersectionTypeNode(array_map(fn($t) => self::resolveForFile($t, $file), $node->types));
         }
 
         return clone $node;
@@ -341,15 +344,7 @@ final class SpecialTypeResolver
             if ($baseType instanceof ConstTypeNode && $baseType->constExpr instanceof ConstFetchNode) {
                 $resolvedNode = self::resolveConstantOffsetValue($baseType->constExpr->className, $baseType->constExpr->name, $offsetKey);
                 if ($resolvedNode !== null) {
-                    return $resolvedNode;
-                }
-            }
-        }
-
-        return new OffsetAccessTypeNode($baseType, $offsetType);
-    }
-
-    /**
+               /**
      * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
      */
     private static function resolveArrayShape(ArrayShapeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref, ?object $thisObj): ArrayShapeNode
@@ -361,12 +356,31 @@ final class SpecialTypeResolver
             $className = null;
             $constName = null;
 
+            // --- LIVE CI DEBUG LOGGING ---
+            $debugClass = $keyName !== null ? get_class($keyName) : 'null';
+            $debugVal = $keyName !== null && method_exists($keyName, '__toString') ? (string) $keyName : 'unknown';
+            fwrite(\STDERR, "\n[DEBUG] ArrayShapeItem KeyType: {$debugClass} | Value: {$debugVal}\n");
+
+            if ($keyName instanceof IdentifierTypeNode) {
+                fwrite(\STDERR, "[DEBUG] IdentifierName: {$keyName->name}\n");
+            }
+            // -----------------------------
+
             if ($keyName instanceof ConstFetchNode && $keyName->className !== '') {
                 $className = $keyName->className;
                 $constName = $keyName->name;
             } elseif ($keyName instanceof IdentifierTypeNode && str_contains($keyName->name, '::')) {
+                // Fallback for phpstan/phpdoc-parser v1.x/v2.0 which parses constants as Identifiers
                 [$className, $constName] = explode('::', $keyName->name, 2);
             }
+
+            // --- MORE DEBUG LOGGING ---
+            if ($className !== null && $constName !== null) {
+                fwrite(\STDERR, "[DEBUG] Split into Class: {$className} | Const: {$constName}\n");
+            } else {
+                fwrite(\STDERR, "[DEBUG] Did NOT split into Class and Const.\n");
+            }
+            // --------------------------
 
             if ($className !== null && $constName !== null) {
                 $lowerClassName = strtolower($className);
@@ -381,9 +395,14 @@ final class SpecialTypeResolver
                     $resolvedClass = self::resolveFqcn($className, $ref);
                 }
 
+                fwrite(\STDERR, "[DEBUG] Resolved Target Class for Reflection: {$resolvedClass}\n");
+
                 $resolvedKeyNode = self::resolveConstantKeyValue($resolvedClass, $constName);
                 if ($resolvedKeyNode !== null) {
+                    fwrite(\STDERR, "[DEBUG] Successfully Reflected Constant! New Value: {$resolvedKeyNode->value}\n");
                     $keyName = $resolvedKeyNode;
+                } else {
+                    fwrite(\STDERR, "[DEBUG] FAILED to Reflect Constant!\n");
                 }
             }
 
@@ -403,6 +422,10 @@ final class SpecialTypeResolver
             $unsealedKey = $node->unsealedType->keyType !== null ? self::resolve($node->unsealedType->keyType, $ref, $thisObj) : null;
             $unsealedValue = self::resolve($node->unsealedType->valueType, $ref, $thisObj);
             $unsealedType = new ArrayShapeUnsealedTypeNode($unsealedValue, $unsealedKey);
+        }
+
+        return ArrayShapeNode::createUnsealed($items, $unsealedType, $node->kind);
+    }nsealedTypeNode($unsealedValue, $unsealedKey);
         }
 
         return ArrayShapeNode::createUnsealed($items, $unsealedType, $node->kind);
