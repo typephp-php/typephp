@@ -1,0 +1,36 @@
+<?php
+
+declare(strict_types=1);
+
+use TypePHP\Tests\Fixtures\Types\ConstKeyContainer;
+use TypePHP\Tests\Fixtures\Types\MissingConstKeyContainer;
+
+describe('Class Constant Keys in Array Shapes (array{self::CONST_KEY: T})', function () {
+
+    test('resolves self::CONST_KEY inside array shape to string key user_id', function () {
+        $container = new ConstKeyContainer();
+
+        expect($container->process([
+            'user_id' => 42,
+            'user_role' => 'admin',
+        ]))->toBeTrue();
+    });
+
+    test('throws TypeError when array shape item with class constant key violates type contract', function () {
+        $container = new ConstKeyContainer();
+
+        expect(fn () => $container->process([
+            'user_id' => -5,
+            'user_role' => 'admin',
+        ]))->toThrow(TypeError::class, "['user_id'] must be of type positive-int");
+    });
+
+    test('throws TypeError when array shape references a non-existent class constant key', function () {
+        $container = new MissingConstKeyContainer();
+
+        expect(fn () => $container->process(['user_id' => 42]))
+            ->toThrow(TypeError::class, "is missing required key 'self::NON_EXISTENT_KEY'")
+        ;
+    });
+
+});
