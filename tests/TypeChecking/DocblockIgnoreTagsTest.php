@@ -28,9 +28,8 @@ describe('DocBlock Ignore Tags (@typephp-ignore & @typephp-ignore-file)', functi
     test('skips type-checking on method marked with @typephp-ignore while enforcing normal methods in same class', function () {
         $fixture = new IgnoredMethod();
 
-        expect(fn () => $fixture->normalMethod(-5))
-            ->toThrow(TypeError::class, 'positive-int')
-        ;
+        expect(fn() => $fixture->normalMethod(-5))
+            ->toThrow(TypeError::class, 'positive-int');
 
         expect($fixture->ignoredMethod(-100))->toBe(-100);
     });
@@ -38,9 +37,8 @@ describe('DocBlock Ignore Tags (@typephp-ignore & @typephp-ignore-file)', functi
     test('skips type-checking on class property marked with @typephp-ignore', function () {
         $fixture = new IgnoredMethod();
 
-        expect(fn () => $fixture->setNormalProperty(-5))
-            ->toThrow(TypeError::class, 'Property')
-        ;
+        expect(fn() => $fixture->setNormalProperty(-5))
+            ->toThrow(TypeError::class, 'Property');
 
         $fixture->setIgnoredProperty(-5);
         expect($fixture->ignoredProperty)->toBe(-5);
@@ -51,5 +49,23 @@ describe('DocBlock Ignore Tags (@typephp-ignore & @typephp-ignore-file)', functi
 
         $result = $fileFixture->process(-500);
         expect($result)->toBe(-500);
+    });
+
+    test('skips inline variable validation inside methods marked with @typephp-ignore', function () {
+        $fixture = new class() {
+            /**
+             * @typephp-ignore
+             * @param positive-int $id
+             */
+            public function ignoredMethodWithInlineVar(int $id): bool
+            {
+                /** @var string */
+                $string = 1; // Invalid type assignment, but skipped because of @typephp-ignore above!
+
+                return true;
+            }
+        };
+
+        expect($fixture->ignoredMethodWithInlineVar(-500))->toBeTrue();
     });
 });
