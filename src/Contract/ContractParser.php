@@ -154,7 +154,11 @@ final class ContractParser
             }
 
             $typeNode = $varTags[0]->type;
+
             $aliases = [];
+            $templates = [];
+            self::parseClassLevelDocs($declaringClass, $templates, $aliases);
+
             DocblockExtractor::extractAliases($phpDocNode, $aliases, $declaringClass);
 
             $typeNode = self::substituteAliases($typeNode, $aliases);
@@ -180,14 +184,9 @@ final class ContractParser
         try {
             /** @var class-string<object> $className */
             $refClass = new \ReflectionClass($className);
-            $doc = $refClass->getDocComment();
-            if ($doc === false) {
-                return [];
-            }
-
-            $phpDocNode = DocblockExtractor::parseDocString($doc);
             $aliases = [];
-            DocblockExtractor::extractAliases($phpDocNode, $aliases, $refClass);
+            $templates = [];
+            self::parseClassLevelDocs($refClass, $templates, $aliases);
 
             return $aliases;
         } catch (\Throwable $e) {
@@ -462,7 +461,7 @@ final class ContractParser
         if ($node instanceof GenericTypeNode) {
             $genericType = self::substituteAliases($node->type, $aliases);
             $genericTypes = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->genericTypes
             );
 
@@ -479,14 +478,14 @@ final class ContractParser
 
         if ($node instanceof UnionTypeNode) {
             return new UnionTypeNode(array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->types
             ));
         }
 
         if ($node instanceof IntersectionTypeNode) {
             return new IntersectionTypeNode(array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->types
             ));
         }
