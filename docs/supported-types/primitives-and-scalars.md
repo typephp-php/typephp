@@ -74,6 +74,42 @@ To prevent rounding artifacts from causing unexpected type failures, TypePHP eva
 
 ---
 
+## Wildcard Class Constant Patterns (`Class::PREFIX_*`)
+
+TypePHP supports validating parameters, return types, properties, and `@var` local assignments against wildcard class constant patterns (`Class::PREFIX_*` or `self::PREFIX_*`). 
+
+TypePHP uses Reflection to safely inspect all matching constants—including `public`, `protected`, and `private` class constants—and validates that the incoming value matches one of the declared constant values:
+
+```php
+class MigrationCollectionLoader
+{
+    public const VERSION_SELECTION_ALL = 'all';
+    public const VERSION_SELECTION_BLUE_GREEN = 'blue-green';
+    private const VERSION_SELECTION_INTERNAL = 'internal-mode';
+
+    /**
+     * @param self::VERSION_SELECTION_* $mode
+     */
+    public function collectAllForVersion(string $mode): string
+    {
+        return $mode;
+    }
+}
+
+$loader = new MigrationCollectionLoader();
+
+// Valid Calls (Matches public and private VERSION_SELECTION_* constant values)
+$loader->collectAllForVersion('all');
+$loader->collectAllForVersion('blue-green');
+$loader->collectAllForVersion('internal-mode');
+
+// Invalid Call ('invalid_mode' does not match any VERSION_SELECTION_* constant)
+$loader->collectAllForVersion('invalid_mode');
+// Throws: TypeError: Argument $mode must be a valid constant matching MigrationCollectionLoader::VERSION_SELECTION_*
+```
+
+---
+
 ## Integer Refinements and Ranges
 
 TypePHP enforces exact value constraints and bounds on integer parameters:
