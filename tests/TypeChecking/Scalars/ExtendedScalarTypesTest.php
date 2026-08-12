@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use TypePHP\Tests\Fixtures\Types\WildcardConstantFixture;
+
 /**
  * 1. Integer Extended Types
  *
@@ -137,6 +139,20 @@ describe('Literal Value Enums (\'active\'|\'pending\', 200|404|500)', function (
     test('throws TypeError when integer literal is not in union options', function () {
         expect(fn () => testLiteralUnionsParam('active', 301))
             ->toThrow(TypeError::class)
+        ;
+    });
+});
+
+describe('Wildcard Constant Pattern Validation (self::PREFIX_*)', function () {
+    test('accepts values matching wildcard constant patterns (including private constants)', function () {
+        expect(WildcardConstantFixture::setVersionMode('all'))->toBe('all');
+        expect(WildcardConstantFixture::setVersionMode('blue-green'))->toBe('blue-green');
+        expect(WildcardConstantFixture::setVersionMode('internal-mode'))->toBe('internal-mode');
+    });
+
+    test('throws TypeError on value not matching wildcard constant pattern', function () {
+        expect(fn () => WildcardConstantFixture::setVersionMode('invalid_mode'))
+            ->toThrow(TypeError::class, "must be a valid constant matching TypePHP\\Tests\\Fixtures\\Types\\WildcardConstantFixture::VERSION_SELECTION_*")
         ;
     });
 });
