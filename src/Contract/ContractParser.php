@@ -162,6 +162,11 @@ final class ContractParser
             if ($doc === false && (bool) (Config::get()['magic_properties'] ?? true)) {
                 $classHierarchy = HierarchyResolver::getClassHierarchy($refClass);
                 foreach ($classHierarchy as $hierClass) {
+                    $fileName = $hierClass->getFileName();
+                    if ($hierClass !== $refClass && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
+                        continue;
+                    }
+
                     $classDoc = $hierClass->getDocComment();
                     if ($classDoc !== false) {
                         $extractedType = DocblockExtractor::extractTypeFromClassPropertyDoc($classDoc, $propertyName);
