@@ -55,6 +55,28 @@ TypePHP injects guard rails at the call site where assignments happen.
 
 ---
 
+### Why is my `@method` annotation with quoted literals like `'active'|'pending'` not being enforced?
+
+`phpdoc-parser`'s grammar engine for `@method` parameter lists can encounter ambiguity when parsing unparenthesized single or double quotes directly inside parameter type signatures (such as `@method bool updateStatus('active'|'pending' $status)`). When `phpdoc-parser` encounters this grammar ambiguity, it drops that specific `@method` tag during DocBlock parsing.
+
+**Solution:** Use a local `@phpstan-type` alias to define the union string literal or shape, and reference the alias in your `@method` annotation:
+
+```php
+/**
+ * Best Practice: Clean & Grammar-Safe via @phpstan-type
+ *
+ * @phpstan-type StatusUnion 'active'|'pending'
+ *
+ * @method bool updateStatus(StatusUnion $status)
+ */
+class OrderService
+{
+    public function __call(string $name, array $arguments) { ... }
+}
+```
+
+---
+
 ### Why is my Pest or PHPUnit test suite running slower with JIT enabled?
 
 During CLI test execution, a single short-lived PHP process runs your tests. 

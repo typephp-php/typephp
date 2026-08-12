@@ -36,6 +36,16 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Magic Annotations (@property & @method)
+    |--------------------------------------------------------------------------
+    | Enforces class-level annotations for dynamic properties and magic methods
+    | routed through __get, __set, __call, and __callStatic.
+    */
+    'magic_properties' => true,
+    'magic_methods'    => true,
+
+    /*
+    |--------------------------------------------------------------------------
     | Respect Ignore Docblock Tags
     |--------------------------------------------------------------------------
     | Set to false in CI/CD runs to force type-checking on @typephp-ignore methods.
@@ -107,6 +117,22 @@ return [
 
 ---
 
+## Configuration Reference
+
+Key options explained:
+
+| Configuration Option | Default | Description |
+| :--- | :--- | :--- |
+| **`'enabled'`** | `true` | Global master switch for runtime type enforcement. |
+| **`'params'`** | `true` | Enforces parameter `@param` contracts on physical functions and methods. |
+| **`'returns'`** | `true` | Enforces return `@return` contracts on physical functions and methods. |
+| **`'magic_properties'`** | `true` | Enforces class-level `@property`, `@property-read`, and `@property-write` annotations on dynamic assignments (`__set`). |
+| **`'magic_methods'`** | `true` | Enforces class-level `@method` annotations on dynamic method calls (`__call` / `__callStatic`). |
+| **`'respect_ignore_tags'`** | `true` | Respects `@typephp-ignore` and `@typephp-ignore-file` tags. Set to `false` in CI/CD to force audit checks. |
+| **`'cache'`** | `true` | Pre-transforms and caches PHP files on disk (`typephp-cache/`) for OPcache optimization. |
+
+---
+
 ## Inline Variable Categories Reference (`inline_vars`)
 
 How each `inline_vars` toggle maps to PHPDoc type annotations:
@@ -116,7 +142,7 @@ How each `inline_vars` toggle maps to PHPDoc type annotations:
 | **`'scalars'`** | Primitive & Refined Scalars | `int`, `string`, `bool`, `positive-int`, `non-empty-string`, `truthy` |
 | **`'objects'`** | Class Instances & Bare Class References | `User`, `stdClass`, `class-string`, `interface-string`, `enum-string` |
 | **`'generics'`** | Template & Bound Types | `Collection<User>`, `Producer<T>`, `class-string<T>` |
-| **` illegible 'arrays'`** | All Arrays, Shapes, & Lists | `array{id: int}`, `int[]`, `User[]`, `list<string>`, `array<string, int>` |
+| **`'arrays'`** | All Arrays, Shapes, & Lists | `array{id: int}`, `int[]`, `User[]`, `list<string>`, `array<string, int>` |
 | **`'callables'`** | Callables & Closures | `callable`, `Closure`, `callable(int): string`, `static-closure` |
 | **`'properties'`** | Class Property Writes | `$this->id = 1`, `UserProfile::$username = 'Alice'` |
 
