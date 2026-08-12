@@ -129,7 +129,13 @@ final class ParamChecker
             if ($templateNode->bound !== null) {
                 $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
                 $boundName = $resolvedBound instanceof IdentifierTypeNode ? $resolvedBound->name : (string) $resolvedBound;
-                if (! is_a($val, $boundName, true)) {
+                $lowerBound = strtolower($boundName);
+
+                if ($lowerBound === 'object' || $lowerBound === 'mixed') {
+                    if (! ClassNameValidator::isValid($val) || (! class_exists($val) && ! interface_exists($val) && ! trait_exists($val) && ! enum_exists($val))) {
+                        return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a valid class-string, ' . TypeFormatter::formatGivenValue($val) . ' given');
+                    }
+                } elseif (! is_a($val, $boundName, true)) {
                     return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a class-string of ' . $boundName . ", '" . $val . "' given");
                 }
             }
