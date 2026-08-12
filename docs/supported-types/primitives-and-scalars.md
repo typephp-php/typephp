@@ -74,11 +74,12 @@ To prevent rounding artifacts from causing unexpected type failures, TypePHP eva
 
 ---
 
-## Wildcard Class Constant Patterns (`Class::PREFIX_*`)
+## Wildcard Constant Patterns (`Class::PREFIX_*` & `StatusEnum::*`)
 
-TypePHP supports validating parameters, return types, properties, and `@var` local assignments against wildcard class constant patterns (`Class::PREFIX_*` or `self::PREFIX_*`). 
+TypePHP supports validating parameters, return types, properties, and `@var` local assignments against wildcard constant patterns (`Class::PREFIX_*` or `StatusEnum::*`). 
 
-TypePHP uses Reflection to safely inspect all matching constants—including `public`, `protected`, and `private` class constants—and validates that the incoming value matches one of the declared constant values:
+* **Class Constants (`Class::PREFIX_*`):** TypePHP uses Reflection to safely inspect all matching constants—including `public`, `protected`, and `private` class constants—and validates that the incoming value matches one of the declared constant scalar values.
+* **Enums (`StatusEnum::*` or `StatusEnum::ACT*`):** Matches incoming **Enum case objects** against the wildcard case pattern.
 
 ```php
 class MigrationCollectionLoader
@@ -96,16 +97,36 @@ class MigrationCollectionLoader
     }
 }
 
+enum StatusEnum: string
+{
+    case Active = 'active';
+    case Inactive = 'inactive';
+    case Pending = 'pending';
+}
+
+class EnumProcessor
+{
+    /**
+     * @param StatusEnum::ACT* $status
+     */
+    public static function processActive(StatusEnum $status): StatusEnum
+    {
+        return $status;
+    }
+}
+
 $loader = new MigrationCollectionLoader();
 
-// Valid Calls (Matches public and private VERSION_SELECTION_* constant values)
+// Valid Class Constant Calls (Matches public and private VERSION_SELECTION_* constant values)
 $loader->collectAllForVersion('all');
-$loader->collectAllForVersion('blue-green');
 $loader->collectAllForVersion('internal-mode');
 
-// Invalid Call ('invalid_mode' does not match any VERSION_SELECTION_* constant)
-$loader->collectAllForVersion('invalid_mode');
-// Throws: TypeError: Argument $mode must be a valid constant matching MigrationCollectionLoader::VERSION_SELECTION_*
+// Valid Enum Wildcard Call (Matches StatusEnum::ACT* -> StatusEnum::Active)
+EnumProcessor::processActive(StatusEnum::Active);
+
+// Invalid Enum Wildcard Call (StatusEnum::Pending does not match StatusEnum::ACT*)
+EnumProcessor::processActive(StatusEnum::Pending);
+// Throws: TypeError: Argument $status must be a valid constant matching StatusEnum::ACT*
 ```
 
 ---

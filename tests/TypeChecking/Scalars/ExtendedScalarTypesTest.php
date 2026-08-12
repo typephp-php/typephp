@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use TypePHP\Tests\Fixtures\Types\EnumWildcard;
+use TypePHP\Tests\Fixtures\Types\StatusEnum;
 use TypePHP\Tests\Fixtures\Types\WildcardConstantFixture;
 
 /**
@@ -152,7 +154,22 @@ describe('Wildcard Constant Pattern Validation (self::PREFIX_*)', function () {
 
     test('throws TypeError on value not matching wildcard constant pattern', function () {
         expect(fn () => WildcardConstantFixture::setVersionMode('invalid_mode'))
-            ->toThrow(TypeError::class, "must be a valid constant matching TypePHP\\Tests\\Fixtures\\Types\\WildcardConstantFixture::VERSION_SELECTION_*")
+            ->toThrow(TypeError::class, 'must be a valid constant matching TypePHP\\Tests\\Fixtures\\Types\\WildcardConstantFixture::VERSION_SELECTION_*')
+        ;
+    });
+});
+
+describe('Enum Wildcard Pattern Validation (StatusEnum::*)', function () {
+    test('accepts Enum case objects matching wildcard patterns (StatusEnum::* & StatusEnum::ACT*)', function () {
+        expect(EnumWildcard::processEnumCase(StatusEnum::Active))->toBe(StatusEnum::Active);
+        expect(EnumWildcard::processEnumCase(StatusEnum::Pending))->toBe(StatusEnum::Pending);
+
+        expect(EnumWildcard::processPrefixEnumCase(StatusEnum::Active))->toBe(StatusEnum::Active);
+    });
+
+    test('throws TypeError when Enum case object does not match prefix wildcard (e.g. Pending for StatusEnum::ACT*)', function () {
+        expect(fn () => EnumWildcard::processPrefixEnumCase(StatusEnum::Pending))
+            ->toThrow(TypeError::class, 'must be a valid constant matching TypePHP\\Tests\\Fixtures\\Types\\StatusEnum::ACT*')
         ;
     });
 });
