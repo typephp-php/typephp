@@ -106,6 +106,54 @@ function testComplexNestedShapeParam(array $data): bool
     return true;
 }
 
+/**
+ * Test function for Issue #20: Implicit keyless tuple array shapes
+ *
+ * @param array{list<positive-int>, list<non-empty-string>} $tuple
+ */
+function testKeylessImplicitTupleShape(array $tuple): bool
+{
+    return true;
+}
+
+/**
+ * Helpers for Issue #20 Edge Cases
+ *
+ * @phpstan-type LocalTupleAlias array{list<positive-int>, list<non-empty-string>}
+ * @phpstan-type MixedTupleShape array{non-empty-string, code: positive-int, list<int>}
+ * @phpstan-import-type SharedTupleShape from \TypePHP\Tests\Fixtures\Types\GlobalTypes as ImportedTuple
+ *
+ * @param LocalTupleAlias $payload
+ * @param MixedTupleShape $mixedPayload
+ */
+function testLocalTupleAliasParam(array $payload, array $mixedPayload): bool
+{
+    return true;
+}
+
+/**
+ * @phpstan-import-type SharedTupleShape from \TypePHP\Tests\Fixtures\Types\GlobalTypes as ImportedTuple
+ *
+ * @param ImportedTuple $tuple
+ */
+function testImportedTupleAliasParam(array $tuple): bool
+{
+    return true;
+}
+
+/**
+ * @return array{list<positive-int>, non-empty-string}
+ */
+function testReturnKeylessTuple(bool $valid): array
+{
+    if (! $valid) {
+        return [[10, -5], 'bundle'];
+    }
+
+    return [[10, 20], 'bundle'];
+}
+
+
 describe('Class Object Arrays (Dog[])', function () {
     test('accepts array of matching class instances', function () {
         expect(testDogArrayParam([new Dog(), new Dog()]))->toBe(2);
@@ -294,6 +342,41 @@ describe('Complex Shapes with Generic Lists & Unions', function () {
 
         expect(fn () => testComplexNestedShapeParam($payload))
             ->toThrow(TypeError::class)
+        ;
+    });
+});
+
+describe('Issue #20 Edge Cases: Keyless Tuples in Type Aliases, Returns, and Mixed Keys', function () {
+    test('resolves keyless tuple shapes defined inside local @phpstan-type aliases', function () {
+        expect(testLocalTupleAliasParam(
+            [[10, 20], ['a', 'b']],
+            ['status_ok', 'code' => 200, [1, 2, 3]]
+        ))->toBeTrue();
+
+        expect(fn () => testLocalTupleAliasParam(
+            [[10, -5], ['a', 'b']],
+            ['status_ok', 'code' => 200, [1, 2, 3]]
+        ))->toThrow(TypeError::class, "Argument \$payload['0'][1] must be of type positive-int");
+
+        expect(fn () => testLocalTupleAliasParam(
+            [[10, 20], ['a', 'b']],
+            ['status_ok', 'code' => -100, [1, 2, 3]]
+        ))->toThrow(TypeError::class, "Argument \$mixedPayload['code'] must be of type positive-int");
+    });
+
+    test('resolves keyless tuple shapes imported via @phpstan-import-type', function () {
+        expect(testImportedTupleAliasParam([[100, 200], 'valid_string']))->toBeTrue();
+
+        expect(fn () => testImportedTupleAliasParam([[100, 200], '']))
+            ->toThrow(TypeError::class, "Argument \$tuple['1'] must be of type non-empty-string")
+        ;
+    });
+
+    test('validates keyless tuple shapes returned from functions', function () {
+        expect(testReturnKeylessTuple(true))->toBe([[10, 20], 'bundle']);
+
+        expect(fn () => testReturnKeylessTuple(false))
+            ->toThrow(TypeError::class, "Return value['0'][1] must be of type positive-int")
         ;
     });
 });

@@ -4,15 +4,17 @@ declare(strict_types=1);
 
 namespace TypePHP\Validator;
 
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Internal\ErrorFactory;
 use TypePHP\Internal\ErrorMessage;
 use TypePHP\Internal\TypeFormatter;
 
 /**
- * @internal Class for validating array shapes like array<1:string,2:int>.
+ * @internal Class for validating array shapes and tuple shapes like array{0: string, 1: int} or array{string, int}.
  */
 final class ArrayShapeValidator implements TypeValidatorInterface
 {
@@ -24,30 +26,38 @@ final class ArrayShapeValidator implements TypeValidatorInterface
 
         /** @var ArrayShapeNode $node */
         $knownKeys = [];
+        $nextAutoIndex = 0;
 
         foreach ($node->items as $item) {
             $key = null;
+
             if ($item->keyName instanceof ConstExprStringNode) {
                 $key = $item->keyName->value;
+            } elseif ($item->keyName instanceof ConstExprIntegerNode) {
+                $key = (int) $item->keyName->value;
+                $nextAutoIndex = max($nextAutoIndex, $key + 1);
+            } elseif ($item->keyName instanceof IdentifierTypeNode) {
+                $key = $item->keyName->name;
             } elseif ($item->keyName !== null) {
                 $key = (string) $item->keyName;
+            } else {
+                $key = $nextAutoIndex;
+                $nextAutoIndex++;
             }
 
-            if ($key !== null) {
-                $knownKeys[$key] = true;
+            $knownKeys[$key] = true;
 
-                if (! \array_key_exists($key, $value)) {
-                    if (! $item->optional) {
-                        return ErrorFactory::createError($context . " is missing required key '$key'");
-                    }
-
-                    continue;
+            if (! \array_key_exists($key, $value)) {
+                if (! $item->optional) {
+                    return ErrorFactory::createError($context . " is missing required key '$key'");
                 }
 
-                $err = $registry->validate($value[$key], $item->valueType, $context . "['" . $key . "']");
-                if ($err !== null) {
-                    return $err;
-                }
+                continue;
+            }
+
+            $err = $registry->validate($value[$key], $item->valueType, $context . "['" . $key . "']");
+            if ($err !== null) {
+                return $err;
             }
         }
 
