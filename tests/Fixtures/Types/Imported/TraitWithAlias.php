@@ -9,6 +9,8 @@ namespace TypePHP\Tests\Fixtures\Types\Imported;
  */
 trait TraitWithAlias
 {
-    /** @var TraitShape */
+    /**
+     * @var TraitShape
+     */
     public array $coordinates = ['x' => 0, 'y' => 0];
 }

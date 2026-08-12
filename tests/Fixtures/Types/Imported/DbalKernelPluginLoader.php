@@ -6,15 +6,16 @@ namespace TypePHP\Tests\Fixtures\Types\Imported;
 
 /**
  * @phpstan-import-type PluginInfo from KernelPluginLoader
+ *
  * @phpstan-type SharedConfig array{retries: positive-int, strict: bool}
  */
 class DbalKernelPluginLoader extends KernelPluginLoader
 {
-    /** 
-     * Tests child overriding a parent's type alias 
+    /**
+     * Tests child overriding a parent's type alias
      * (SharedConfig in parent was just array{retries: int})
-     * 
-     * @var SharedConfig 
+     *
+     * @var SharedConfig
      */
     public array $config = ['retries' => 3, 'strict' => true];
 

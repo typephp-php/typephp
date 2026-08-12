@@ -66,6 +66,16 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Magic Annotations (@property & @method)
+    |--------------------------------------------------------------------------
+    | Enforces class-level annotations for dynamic properties and magic methods
+    | routed through __get, __set, __call, and __callStatic.
+    */
+    'magic_properties' => true,
+    'magic_methods' => true,
+
+    /*
+    |--------------------------------------------------------------------------
     | Respect Ignore Docblock Tags
     |--------------------------------------------------------------------------
     | When true (default), @typephp-ignore and @typephp-ignore-file docblock tags

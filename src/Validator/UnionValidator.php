@@ -29,7 +29,7 @@ final class UnionValidator implements TypeValidatorInterface
             }
 
             $msg = $err->getMessage();
-            
+
             if (
                 str_starts_with($msg, $context . '[') ||
                 str_starts_with($msg, $context . '->') ||

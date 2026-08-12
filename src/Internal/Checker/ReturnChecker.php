@@ -40,6 +40,49 @@ final class ReturnChecker
             }
         }
 
+        $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
+        if ($isMagicCall && (bool) (Config::get()['magic_methods'] ?? true)) {
+            $magicMethodName = array_values($vars)[0] ?? null;
+            $magicArgs = array_values($vars)[1] ?? [];
+
+            if (\is_string($magicMethodName)) {
+                $className = explode('::', $effectiveFunction, 2)[0];
+                $magicContract = ContractParser::parseMagicMethod($className, $magicMethodName);
+
+                if ($magicContract !== null && $magicContract['return'] !== null) {
+                    $returnTypeNode = $magicContract['return'];
+                    $magicFunction = $className . '::' . $magicMethodName;
+
+                    $err = SpecialTypeResolver::checkThisIdentity($returnTypeNode, $value, $thisObj, $magicFunction);
+                    if ($err !== null) {
+                        return $err;
+                    }
+
+                    $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $magicFunction, $thisObj);
+
+                    $aliases = $magicContract['aliases'] ?? [];
+                    if ($returnTypeNode instanceof IdentifierTypeNode && isset($aliases[$returnTypeNode->name])) {
+                        $returnTypeNode = $aliases[$returnTypeNode->name];
+                    }
+
+                    $boundTemplates = TemplateManager::getBoundTemplates($magicFunction, $thisObj, $magicContract['templates']);
+                    $declaredTemplates = $magicContract['templates'];
+
+                    if (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0) {
+                        $returnTypeNode = TemplateSubstitutor::substitute($returnTypeNode, $boundTemplates, $declaredTemplates);
+                        $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $magicFunction, $thisObj);
+                    }
+
+                    $returnTypeNode = self::resolveConditionalReturnType($returnTypeNode, \is_array($magicArgs) ? $magicArgs : [], $boundTemplates, $registry);
+
+                    $err = $registry->validate($value, $returnTypeNode, $magicFunction . '(): Return value');
+                    if ($err !== null) {
+                        return $err;
+                    }
+                }
+            }
+        }
+
         $contract = ContractParser::parse($effectiveFunction);
         $returnTypeNode = $contract['return'] ?? null;
 

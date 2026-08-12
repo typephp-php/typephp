@@ -26,7 +26,7 @@ describe('Class-Level Magic Methods (@method) with Complex Types', function () {
             expect($fixture->processId(42, 'Alice'))->toBe(42);
 
             expect(fn () => $fixture->processId(-5, 'Alice'))
-                ->toThrow(TypeError::class, "TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::processId(): Argument \$id must be of type positive-int, negative int (-5) given")
+                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::processId(): Argument $id must be of type positive-int, negative int (-5) given')
             ;
 
             expect(fn () => $fixture->processId(42, ''))
@@ -51,7 +51,7 @@ describe('Class-Level Magic Methods (@method) with Complex Types', function () {
             expect($result)->toBe(['id' => 10, 'tags' => ['php', 'typephp']]);
 
             expect(fn () => $fixture->buildPayload([10, -5], 'active'))
-                ->toThrow(TypeError::class, "TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::buildPayload(): Argument \$ids[1] must be of type positive-int")
+                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::buildPayload(): Argument $ids[1] must be of type positive-int')
             ;
 
             expect(fn () => $fixture->buildPayload([10, 20], 'archived'))
@@ -69,7 +69,7 @@ describe('Class-Level Magic Methods (@method) with Complex Types', function () {
 
             $carProducer = new Producer(new Car());
             expect(fn () => $fixture->getProducer($carProducer))
-                ->toThrow(TypeError::class, "TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::getProducer(): Argument \$producer expects TypePHP\\Tests\\Fixtures\\Generics\\Producer<covariant TypePHP\\Tests\\Fixtures\\Domain\\Dog>")
+                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::getProducer(): Argument $producer expects TypePHP\\Tests\\Fixtures\\Generics\\Producer<covariant TypePHP\\Tests\\Fixtures\\Domain\\Dog>')
             ;
         });
     });
@@ -81,7 +81,7 @@ describe('Class-Level Magic Methods (@method) with Complex Types', function () {
             expect($fixture->checkCollection(null))->toBeTrue();
             expect($fixture->checkCollection(new CountableArrayAccess()))->toBeTrue();
             expect(fn () => $fixture->checkCollection(new CountableOnly()))
-                ->toThrow(TypeError::class, "TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::checkCollection(): Argument \$collection must be of type ((Countable & ArrayAccess) | null)")
+                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::checkCollection(): Argument $collection must be of type ((Countable & ArrayAccess) | null)')
             ;
         });
     });

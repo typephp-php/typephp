@@ -115,14 +115,14 @@ final class DocblockExtractor
         \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref
     ): void {
         foreach ($phpDocNode->getTypeAliasTagValues() as $aliasTag) {
-            if (!isset($aliases[$aliasTag->alias])) {
+            if (! isset($aliases[$aliasTag->alias])) {
                 $aliases[$aliasTag->alias] = $aliasTag->type;
             }
         }
 
         foreach ($phpDocNode->getTypeAliasImportTagValues() as $importTag) {
             $localName = $importTag->importedAs ?? $importTag->importedAlias;
-            if (!isset($aliases[$localName])) {
+            if (! isset($aliases[$localName])) {
                 $fqcnSource = SpecialTypeResolver::resolveFqcn($importTag->importedFrom->name, $ref);
                 $resolvedType = self::resolveImportedTypeAlias($fqcnSource, $importTag->importedAlias);
                 if ($resolvedType !== null) {

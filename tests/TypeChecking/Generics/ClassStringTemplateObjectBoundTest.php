@@ -49,12 +49,14 @@ describe('class-string<T> Template Bounds', function () {
     });
 
     test('rejects non-existent class-string when template T is bounded by object', function () {
-        expect(fn() => resolveObjectAttributeSim(stdClass::class, 'NonExistentClass12345'))
-            ->toThrow(\TypeError::class, 'must be a valid class-string');
+        expect(fn () => resolveObjectAttributeSim(stdClass::class, 'NonExistentClass12345'))
+            ->toThrow(TypeError::class, 'must be a valid class-string')
+        ;
     });
 
     test('rejects class-string that does not implement specific interface bound', function () {
-        expect(fn() => resolveBoundedClassStringSim(stdClass::class))
-            ->toThrow(\TypeError::class, 'must be a class-string of DateTimeInterface');
+        expect(fn () => resolveBoundedClassStringSim(stdClass::class))
+            ->toThrow(TypeError::class, 'must be a class-string of DateTimeInterface')
+        ;
     });
 });

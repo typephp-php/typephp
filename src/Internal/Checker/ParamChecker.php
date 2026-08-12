@@ -42,6 +42,25 @@ final class ParamChecker
             }
         }
 
+        $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
+        if ($isMagicCall && (bool) (Config::get()['magic_methods'] ?? true)) {
+            $magicMethodName = array_values($vars)[0] ?? null;
+            $magicArgs = array_values($vars)[1] ?? [];
+
+            if (\is_string($magicMethodName) && \is_array($magicArgs)) {
+                $className = explode('::', $effectiveFunction, 2)[0];
+                $magicContract = ContractParser::parseMagicMethod($className, $magicMethodName);
+
+                if ($magicContract !== null) {
+                    $magicFunction = $className . '::' . $magicMethodName;
+                    $err = self::validateMagicArguments($magicContract, $magicArgs, $magicFunction, $thisObj, $registry);
+                    if ($err !== null) {
+                        return $err;
+                    }
+                }
+            }
+        }
+
         $contract = ContractParser::parse($effectiveFunction);
         if (\count($contract['types']) === 0) {
             return null;
@@ -92,6 +111,102 @@ final class ParamChecker
             }
 
             $err = $registry->validate($val, $typeNode, $effectiveFunction . '(): Argument $' . $paramName);
+            if ($err !== null) {
+                return $err;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array{return: ?TypeNode, parameters: array<int, array{name: string, type: ?TypeNode, isVariadic: bool, isOptional: bool}>, aliases: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>} $magicContract
+     * @param array<int|string, mixed> $args
+     */
+    private static function validateMagicArguments(array $magicContract, array $args, string $function, ?object $thisObj, TypeValidatorRegistry $registry): ?ErrorMessage
+    {
+        $templates = $magicContract['templates'];
+        $aliases = $magicContract['aliases'];
+        $parameters = $magicContract['parameters'];
+
+        if ($thisObj !== null) {
+            $declaringClass = explode('::', $function, 2)[0];
+            TemplateManager::resolveInheritedTemplates($thisObj, $declaringClass);
+        } else {
+            TemplateManager::clearCallBindings($function, $templates);
+        }
+
+        $argValues = array_values($args);
+        $argKeys = array_keys($args);
+
+        foreach ($parameters as $index => $p) {
+            $paramName = $p['name'];
+            $typeNode = $p['type'];
+            $isVariadic = $p['isVariadic'];
+
+            if ($typeNode === null) {
+                continue;
+            }
+
+            $val = null;
+            $hasVal = false;
+
+            if ($isVariadic) {
+                if (\array_key_exists($paramName, $args)) {
+                    $val = [$args[$paramName]];
+                    $hasVal = true;
+                } else {
+                    $val = [];
+                    for ($i = $index; $i < \count($argValues); $i++) {
+                        if (\is_int($argKeys[$i])) {
+                            $val[] = $argValues[$i];
+                            $hasVal = true;
+                        }
+                    }
+                }
+                $typeNode = new ArrayTypeNode($typeNode);
+            } else {
+                if (\array_key_exists($paramName, $args)) {
+                    $val = $args[$paramName];
+                    $hasVal = true;
+                } elseif (\array_key_exists($index, $argValues)) {
+                    $val = $argValues[$index];
+                    $hasVal = true;
+                }
+            }
+
+            if (! $hasVal) {
+                continue;
+            }
+
+            if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
+                $typeNode = $aliases[$typeNode->name];
+            }
+            $typeNode = SpecialTypeResolver::resolve($typeNode, $function, $thisObj);
+            if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
+                $typeNode = $aliases[$typeNode->name];
+            }
+
+            if ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates)) {
+                $sampleVal = $isVariadic && \is_array($val) ? ($val[0] ?? null) : $val;
+                $err = self::resolveClassStringTemplate($typeNode, $sampleVal, $paramName, $function, $thisObj, $templates);
+                if ($err !== null) {
+                    return $err;
+                }
+
+                continue;
+            }
+
+            if (self::getTemplateName($typeNode, $templates) !== null) {
+                $err = self::resolveTemplateParam($typeNode, $val, $paramName, $function, $thisObj, $templates, $registry);
+                if ($err !== null) {
+                    return $err;
+                }
+
+                continue;
+            }
+
+            $err = $registry->validate($val, $typeNode, $function . '(): Argument $' . $paramName);
             if ($err !== null) {
                 return $err;
             }
