@@ -101,10 +101,13 @@ final class ContractParser
     }
 
     /**
-     * Parses and resolves the @var docblock for a given class property (including PHP 8.4 interface properties).
-     */
-    /**
      * Parses and resolves the @var or @property docblock for a given class property.
+     *
+     * Resolution Steps:
+     * 1. Search class and parent class hierarchy for physical properties.
+     * 2. Search implemented interfaces (PHP 8.4 interface properties).
+     * 3. Fall back to class-level magic @property tags if enabled and physical property is not found.
+     * 4. Parse physical @var tags if not already resolved as a magic property.
      */
     public static function parseProperty(string $className, string $propertyName): ?TypeNode
     {
@@ -126,7 +129,6 @@ final class ContractParser
             $typeNode = null;
             $isMagicProperty = false;
 
-            // 1. Search Class and Parent Class Hierarchy for physical properties
             $current = $refClass;
             while ($current !== false) {
                 if ($current->hasProperty($propertyName)) {
@@ -142,7 +144,6 @@ final class ContractParser
                 $current = $current->getParentClass();
             }
 
-            // 2. Search Implemented Interfaces (PHP 8.4 Interface Properties)
             if ($doc === false) {
                 foreach ($refClass->getInterfaces() as $interface) {
                     if ($interface->hasProperty($propertyName)) {
@@ -158,7 +159,6 @@ final class ContractParser
                 }
             }
 
-            // 3. NEW: Fallback to class-level magic @property tags if enabled and physical property not found
             if ($doc === false && (bool) (Config::get()['magic_properties'] ?? true)) {
                 $classHierarchy = HierarchyResolver::getClassHierarchy($refClass);
                 foreach ($classHierarchy as $hierClass) {
@@ -181,13 +181,11 @@ final class ContractParser
                 return self::$propertyCache[$cacheKey] = null;
             }
 
-            // Skip property type checks if docblock contains @typephp-ignore
             $shouldRespectIgnore = (bool) (Config::get()['respect_ignore_tags'] ?? true);
             if ($shouldRespectIgnore && (str_contains($doc, '@typephp-ignore') || str_contains($doc, '@typephp-disable'))) {
                 return self::$propertyCache[$cacheKey] = null;
             }
 
-            // 4. Parse physical @var tags if not already resolved as a magic property
             if (! $isMagicProperty) {
                 $phpDocNode = DocblockExtractor::parseDocString($doc);
                 $varTags = $phpDocNode->getVarTagValues();
@@ -223,6 +221,12 @@ final class ContractParser
 
     /**
      * Parses and resolves a class-level @method docblock for __call / __callStatic.
+     *
+     * Resolution Steps:
+     * 1. Search class, parent, interface, and trait hierarchy for @method tags (excluding vendor files).
+     * 2. Substitute type aliases and resolve FQCNs for parameters and return types.
+     *
+     * @return array{return: ?TypeNode, parameters: array<int, array{name: string, type: ?TypeNode, isVariadic: bool, isOptional: bool}>, aliases: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>}|null
      */
     public static function parseMagicMethod(string $className, string $methodName): ?array
     {
@@ -262,7 +266,7 @@ final class ContractParser
                 }
             }
 
-            if ($methodTag === null || $declaringClass === null) {
+            if ($methodTag === null || $declaringClass === null || $doc === false) {
                 return self::$magicMethodCache[$cacheKey] = null;
             }
 
@@ -312,12 +316,13 @@ final class ContractParser
                 }
 
                 $pName = ltrim($rawParamName, '$');
+                $isOptional = (isset($pVars['isOptional']) && (bool) $pVars['isOptional']) || (($p->defaultValue ?? null) !== null);
 
                 $resolvedParams[] = [
                     'name' => $pName,
                     'type' => $pType,
-                    'isVariadic' => $p->isVariadic ?? false,
-                    'isOptional' => (isset($p->isOptional) ? (bool) $p->isOptional : false) || (($p->defaultValue ?? null) !== null),
+                    'isVariadic' => $p->isVariadic,
+                    'isOptional' => $isOptional,
                 ];
             }
 

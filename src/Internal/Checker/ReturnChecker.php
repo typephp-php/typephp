@@ -18,7 +18,7 @@ use TypePHP\Resolver\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**
- * @internal Evaluates function and method return contract validations.
+ * @internal Evaluates function and method return contract validations (including dynamic @method calls via __call / __callStatic).
  */
 final class ReturnChecker
 {
@@ -43,7 +43,9 @@ final class ReturnChecker
         $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
         if ($isMagicCall && (bool) (Config::get()['magic_methods'] ?? true)) {
             $magicMethodName = array_values($vars)[0] ?? null;
-            $magicArgs = array_values($vars)[1] ?? [];
+            $rawMagicArgs = array_values($vars)[1] ?? [];
+            /** @var array<int|string, mixed> $magicArgs */
+            $magicArgs = \is_array($rawMagicArgs) ? $rawMagicArgs : [];
 
             if (\is_string($magicMethodName)) {
                 $className = explode('::', $effectiveFunction, 2)[0];
@@ -73,7 +75,7 @@ final class ReturnChecker
                         $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $magicFunction, $thisObj);
                     }
 
-                    $returnTypeNode = self::resolveConditionalReturnType($returnTypeNode, \is_array($magicArgs) ? $magicArgs : [], $boundTemplates, $registry);
+                    $returnTypeNode = self::resolveConditionalReturnType($returnTypeNode, $magicArgs, $boundTemplates, $registry);
 
                     $err = $registry->validate($value, $returnTypeNode, $magicFunction . '(): Return value');
                     if ($err !== null) {
@@ -135,7 +137,7 @@ final class ReturnChecker
     }
 
     /**
-     * @param array<string, mixed> $vars
+     * @param array<int|string, mixed> $vars
      * @param array<string, TypeNode> $boundTemplates
      */
     private static function resolveConditionalReturnType(

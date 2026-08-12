@@ -20,7 +20,7 @@ use TypePHP\Resolver\TemplateManager;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**
- * @internal Evaluates function and method parameter contract validations.
+ * @internal Evaluates function and method parameter contract validations (including dynamic @method calls via __call / __callStatic).
  */
 final class ParamChecker
 {
@@ -246,11 +246,7 @@ final class ParamChecker
                 $boundName = $resolvedBound instanceof IdentifierTypeNode ? $resolvedBound->name : (string) $resolvedBound;
                 $lowerBound = strtolower($boundName);
 
-                if ($lowerBound === 'object' || $lowerBound === 'mixed') {
-                    if (! ClassNameValidator::isValid($val) || (! class_exists($val) && ! interface_exists($val) && ! trait_exists($val) && ! enum_exists($val))) {
-                        return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a valid class-string, ' . TypeFormatter::formatGivenValue($val) . ' given');
-                    }
-                } elseif (! is_a($val, $boundName, true)) {
+                if ($lowerBound !== 'object' && $lowerBound !== 'mixed' && ! is_a($val, $boundName, true)) {
                     return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a class-string of ' . $boundName . ", '" . $val . "' given");
                 }
             }
