@@ -38,6 +38,23 @@ final class ContractParser
     private static array $propertyCache = [];
 
     /**
+     * Cache for resolved magic method contracts.
+     *
+     * @var array<string, ?array{return: ?TypeNode, parameters: array<int, array{name: string, type: ?TypeNode, isVariadic: bool, isOptional: bool}>, aliases: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>}>
+     */
+    private static array $magicMethodCache = [];
+
+    /**
+     * Resets the contract and property caches. Useful for test isolation or config changes.
+     */
+    public static function reset(): void
+    {
+        self::$cache = [];
+        self::$propertyCache = [];
+        self::$magicMethodCache = [];
+    }
+
+    /**
      * Parses PHPDoc contracts for a function or class method.
      *
      * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>}
@@ -84,7 +101,13 @@ final class ContractParser
     }
 
     /**
-     * Parses and resolves the @var docblock for a given class property (including PHP 8.4 interface properties).
+     * Parses and resolves the @var or @property docblock for a given class property.
+     *
+     * Resolution Steps:
+     * 1. Search class and parent class hierarchy for physical properties.
+     * 2. Search implemented interfaces (PHP 8.4 interface properties).
+     * 3. Fall back to class-level magic @property tags if enabled and physical property is not found.
+     * 4. Parse physical @var tags if not already resolved as a magic property.
      */
     public static function parseProperty(string $className, string $propertyName): ?TypeNode
     {
@@ -103,8 +126,9 @@ final class ContractParser
 
             $doc = false;
             $declaringClass = null;
+            $typeNode = null;
+            $isMagicProperty = false;
 
-            // Search Class and Parent Class Hierarchy
             $current = $refClass;
             while ($current !== false) {
                 if ($current->hasProperty($propertyName)) {
@@ -120,7 +144,6 @@ final class ContractParser
                 $current = $current->getParentClass();
             }
 
-            // Search Implemented Interfaces (PHP 8.4 Interface Properties)
             if ($doc === false) {
                 foreach ($refClass->getInterfaces() as $interface) {
                     if ($interface->hasProperty($propertyName)) {
@@ -136,30 +159,61 @@ final class ContractParser
                 }
             }
 
+            if ($doc === false && (bool) (Config::get()['magic_properties'] ?? true)) {
+                $classHierarchy = HierarchyResolver::getClassHierarchy($refClass);
+                foreach ($classHierarchy as $hierClass) {
+                    $fileName = $hierClass->getFileName();
+                    if ($hierClass !== $refClass && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
+                        continue;
+                    }
+
+                    $classDoc = $hierClass->getDocComment();
+                    if ($classDoc !== false) {
+                        $extractedType = DocblockExtractor::extractTypeFromClassPropertyDoc($classDoc, $propertyName);
+                        if ($extractedType !== null) {
+                            $doc = $classDoc;
+                            $declaringClass = $hierClass;
+                            $typeNode = $extractedType;
+                            $isMagicProperty = true;
+
+                            break;
+                        }
+                    }
+                }
+            }
+
             if ($doc === false || $declaringClass === null) {
                 return self::$propertyCache[$cacheKey] = null;
             }
 
-            // Skip property type checks if docblock contains @typephp-ignore
             $shouldRespectIgnore = (bool) (Config::get()['respect_ignore_tags'] ?? true);
             if ($shouldRespectIgnore && (str_contains($doc, '@typephp-ignore') || str_contains($doc, '@typephp-disable'))) {
                 return self::$propertyCache[$cacheKey] = null;
             }
 
-            $phpDocNode = DocblockExtractor::parseDocString($doc);
-            $varTags = $phpDocNode->getVarTagValues();
+            if (! $isMagicProperty) {
+                $phpDocNode = DocblockExtractor::parseDocString($doc);
+                $varTags = $phpDocNode->getVarTagValues();
 
-            if (\count($varTags) === 0) {
-                return self::$propertyCache[$cacheKey] = null;
+                if (\count($varTags) === 0) {
+                    return self::$propertyCache[$cacheKey] = null;
+                }
+
+                $typeNode = $varTags[0]->type;
             }
 
-            $typeNode = $varTags[0]->type;
+            if ($typeNode === null) {
+                return self::$propertyCache[$cacheKey] = null;
+            }
 
             $aliases = [];
             $templates = [];
             self::parseClassLevelDocs($declaringClass, $templates, $aliases);
 
-            DocblockExtractor::extractAliases($phpDocNode, $aliases, $declaringClass);
+            if (! $isMagicProperty) {
+                $phpDocNode = DocblockExtractor::parseDocString($doc);
+                DocblockExtractor::extractAliases($phpDocNode, $aliases, $declaringClass);
+            }
 
             $typeNode = self::substituteAliases($typeNode, $aliases);
             $resolvedNode = SpecialTypeResolver::resolve($typeNode, $declaringClass);
@@ -167,6 +221,124 @@ final class ContractParser
             return self::$propertyCache[$cacheKey] = $resolvedNode;
         } catch (\Throwable $e) {
             return self::$propertyCache[$cacheKey] = null;
+        }
+    }
+
+    /**
+     * Parses and resolves a class-level @method docblock for __call / __callStatic.
+     *
+     * Resolution Steps:
+     * 1. Search class, parent, interface, and trait hierarchy for @method tags (excluding vendor files).
+     * 2. Substitute type aliases and resolve FQCNs for parameters and return types.
+     *
+     * @return array{return: ?TypeNode, parameters: array<int, array{name: string, type: ?TypeNode, isVariadic: bool, isOptional: bool}>, aliases: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>}|null
+     */
+    public static function parseMagicMethod(string $className, string $methodName): ?array
+    {
+        $cacheKey = $className . '::' . $methodName;
+        if (\array_key_exists($cacheKey, self::$magicMethodCache)) {
+            return self::$magicMethodCache[$cacheKey];
+        }
+
+        if (! class_exists($className) && ! trait_exists($className) && ! interface_exists($className)) {
+            return self::$magicMethodCache[$cacheKey] = null;
+        }
+
+        try {
+            /** @var class-string<object> $className */
+            $refClass = new \ReflectionClass($className);
+            $doc = false;
+            $declaringClass = null;
+            $methodTag = null;
+
+            $classHierarchy = HierarchyResolver::getClassHierarchy($refClass);
+            foreach ($classHierarchy as $hierClass) {
+                $fileName = $hierClass->getFileName();
+                if ($hierClass !== $refClass && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
+                    continue;
+                }
+
+                $classDoc = $hierClass->getDocComment();
+                if ($classDoc !== false) {
+                    $tag = DocblockExtractor::extractMagicMethodContract($classDoc, $methodName);
+                    if ($tag !== null) {
+                        $doc = $classDoc;
+                        $declaringClass = $hierClass;
+                        $methodTag = $tag;
+
+                        break;
+                    }
+                }
+            }
+
+            if ($methodTag === null || $declaringClass === null || $doc === false) {
+                return self::$magicMethodCache[$cacheKey] = null;
+            }
+
+            $shouldRespectIgnore = (bool) (Config::get()['respect_ignore_tags'] ?? true);
+            if ($shouldRespectIgnore && (str_contains($doc, '@typephp-ignore') || str_contains($doc, '@typephp-disable'))) {
+                return self::$magicMethodCache[$cacheKey] = null;
+            }
+
+            $aliases = [];
+            $templates = [];
+            self::parseClassLevelDocs($declaringClass, $templates, $aliases);
+
+            $phpDocNode = DocblockExtractor::parseDocString($doc);
+            DocblockExtractor::extractAliases($phpDocNode, $aliases, $declaringClass);
+
+            $resolvedReturn = null;
+            if ($methodTag->returnType !== null) {
+                $subReturn = self::substituteAliases($methodTag->returnType, $aliases);
+                $resolvedReturn = SpecialTypeResolver::resolve($subReturn, $declaringClass);
+            }
+
+            $resolvedParams = [];
+            foreach ($methodTag->parameters as $p) {
+                $pType = $p->type ?? null;
+                if ($pType !== null) {
+                    $subType = self::substituteAliases($pType, $aliases);
+                    $pType = SpecialTypeResolver::resolve($subType, $declaringClass);
+                }
+
+                $rawParamName = '';
+                $pVars = get_object_vars($p);
+                foreach ($pVars as $key => $val) {
+                    if (\is_string($val) && str_starts_with($val, '$')) {
+                        $rawParamName = $val;
+
+                        break;
+                    }
+                }
+                if ($rawParamName === '') {
+                    foreach (['parameterName', 'name', 'paramName', 'varName'] as $key) {
+                        if (isset($pVars[$key]) && \is_string($pVars[$key])) {
+                            $rawParamName = $pVars[$key];
+
+                            break;
+                        }
+                    }
+                }
+
+                $pName = ltrim($rawParamName, '$');
+                $isOptional = (isset($pVars['isOptional']) && (bool) $pVars['isOptional']) || (($p->defaultValue ?? null) !== null);
+
+                $resolvedParams[] = [
+                    'name' => $pName,
+                    'type' => $pType,
+                    'isVariadic' => $p->isVariadic,
+                    'isOptional' => $isOptional,
+                ];
+            }
+
+            return self::$magicMethodCache[$cacheKey] = [
+                'return' => $resolvedReturn,
+                'parameters' => $resolvedParams,
+                'aliases' => $aliases,
+                'templates' => $templates,
+            ];
+        } catch (\Throwable $e) {
+            return self::$magicMethodCache[$cacheKey] = null;
         }
     }
 
@@ -461,7 +633,7 @@ final class ContractParser
         if ($node instanceof GenericTypeNode) {
             $genericType = self::substituteAliases($node->type, $aliases);
             $genericTypes = array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->genericTypes
             );
 
@@ -478,14 +650,14 @@ final class ContractParser
 
         if ($node instanceof UnionTypeNode) {
             return new UnionTypeNode(array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->types
             ));
         }
 
         if ($node instanceof IntersectionTypeNode) {
             return new IntersectionTypeNode(array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->types
             ));
         }

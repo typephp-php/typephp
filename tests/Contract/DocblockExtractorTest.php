@@ -56,4 +56,20 @@ describe('DocblockExtractor Unit Tests', function () {
 
         expect($aliases)->toHaveKey('LocalUserShape');
     });
+
+    test('extracts type from class-level @property, @property-read, and @property-write docblocks', function () {
+        $doc = "/**\n * @property positive-int \$score\n * @property-read non-empty-string \$title\n * @property-write list<string> \$tags\n */";
+
+        $scoreType = DocblockExtractor::extractTypeFromClassPropertyDoc($doc, 'score');
+        expect((string) $scoreType)->toBe('positive-int');
+
+        $titleType = DocblockExtractor::extractTypeFromClassPropertyDoc($doc, 'title');
+        expect((string) $titleType)->toBe('non-empty-string');
+
+        $tagsType = DocblockExtractor::extractTypeFromClassPropertyDoc($doc, 'tags');
+        expect((string) $tagsType)->toBe('list<string>');
+
+        $missingType = DocblockExtractor::extractTypeFromClassPropertyDoc($doc, 'missing');
+        expect($missingType)->toBeNull();
+    });
 });

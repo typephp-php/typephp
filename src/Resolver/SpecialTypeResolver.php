@@ -256,7 +256,19 @@ final class SpecialTypeResolver
             if (str_contains($context, '::')) {
                 [$className, $methodName] = explode('::', $context, 2);
 
-                return new \ReflectionMethod($className, $methodName);
+                if (class_exists($className) || interface_exists($className) || trait_exists($className)) {
+                    /** @var class-string<object> $className */
+                    try {
+                        return new \ReflectionMethod($className, $methodName);
+                    } catch (\ReflectionException $e) {
+                        return new \ReflectionClass($className);
+                    }
+                }
+
+                /** @var class-string<object> $fallbackClass */
+                $fallbackClass = \stdClass::class;
+
+                return new \ReflectionClass($fallbackClass);
             }
 
             return new \ReflectionFunction($context);

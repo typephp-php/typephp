@@ -10,6 +10,8 @@ namespace TypePHP\Tests\Fixtures\Types\Imported;
  */
 abstract class KernelPluginLoader
 {
-    /** @var list<PluginInfo> */
+    /**
+     * @var list<PluginInfo>
+     */
     public array $pluginInfos = [];
 }

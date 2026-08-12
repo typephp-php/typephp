@@ -18,7 +18,7 @@ use TypePHP\Resolver\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**
- * @internal Evaluates function and method return contract validations.
+ * @internal Evaluates function and method return contract validations (including dynamic @method calls via __call / __callStatic).
  */
 final class ReturnChecker
 {
@@ -37,6 +37,51 @@ final class ReturnChecker
             $actualClassName = \get_class($thisObj);
             if ($actualClassName !== $classOrTrait) {
                 $effectiveFunction = $actualClassName . '::' . $methodName;
+            }
+        }
+
+        $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
+        if ($isMagicCall && (bool) (Config::get()['magic_methods'] ?? true)) {
+            $magicMethodName = array_values($vars)[0] ?? null;
+            $rawMagicArgs = array_values($vars)[1] ?? [];
+            /** @var array<int|string, mixed> $magicArgs */
+            $magicArgs = \is_array($rawMagicArgs) ? $rawMagicArgs : [];
+
+            if (\is_string($magicMethodName)) {
+                $className = explode('::', $effectiveFunction, 2)[0];
+                $magicContract = ContractParser::parseMagicMethod($className, $magicMethodName);
+
+                if ($magicContract !== null && $magicContract['return'] !== null) {
+                    $returnTypeNode = $magicContract['return'];
+                    $magicFunction = $className . '::' . $magicMethodName;
+
+                    $err = SpecialTypeResolver::checkThisIdentity($returnTypeNode, $value, $thisObj, $magicFunction);
+                    if ($err !== null) {
+                        return $err;
+                    }
+
+                    $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $magicFunction, $thisObj);
+
+                    $aliases = $magicContract['aliases'] ?? [];
+                    if ($returnTypeNode instanceof IdentifierTypeNode && isset($aliases[$returnTypeNode->name])) {
+                        $returnTypeNode = $aliases[$returnTypeNode->name];
+                    }
+
+                    $boundTemplates = TemplateManager::getBoundTemplates($magicFunction, $thisObj, $magicContract['templates']);
+                    $declaredTemplates = $magicContract['templates'];
+
+                    if (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0) {
+                        $returnTypeNode = TemplateSubstitutor::substitute($returnTypeNode, $boundTemplates, $declaredTemplates);
+                        $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $magicFunction, $thisObj);
+                    }
+
+                    $returnTypeNode = self::resolveConditionalReturnType($returnTypeNode, $magicArgs, $boundTemplates, $registry);
+
+                    $err = $registry->validate($value, $returnTypeNode, $magicFunction . '(): Return value');
+                    if ($err !== null) {
+                        return $err;
+                    }
+                }
             }
         }
 
@@ -92,7 +137,7 @@ final class ReturnChecker
     }
 
     /**
-     * @param array<string, mixed> $vars
+     * @param array<int|string, mixed> $vars
      * @param array<string, TypeNode> $boundTemplates
      */
     private static function resolveConditionalReturnType(

@@ -30,6 +30,7 @@ export default defineConfig({
           { text: 'Function Contracts', link: '/core-concepts/function-contracts' },
           { text: 'Property Validation', link: '/core-concepts/property-validation' },
           { text: 'Inline Variables', link: '/core-concepts/inline-variables' },
+          { text: 'Magic Annotations', link: '/core-concepts/magic-annotations' },
         ]
       },
       {

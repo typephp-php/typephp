@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Contract;
 
+use PHPStan\PhpDocParser\Ast\PhpDoc\MethodTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\PhpDocNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
@@ -114,14 +115,14 @@ final class DocblockExtractor
         \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref
     ): void {
         foreach ($phpDocNode->getTypeAliasTagValues() as $aliasTag) {
-            if (!isset($aliases[$aliasTag->alias])) {
+            if (! isset($aliases[$aliasTag->alias])) {
                 $aliases[$aliasTag->alias] = $aliasTag->type;
             }
         }
 
         foreach ($phpDocNode->getTypeAliasImportTagValues() as $importTag) {
             $localName = $importTag->importedAs ?? $importTag->importedAlias;
-            if (!isset($aliases[$localName])) {
+            if (! isset($aliases[$localName])) {
                 $fqcnSource = SpecialTypeResolver::resolveFqcn($importTag->importedFrom->name, $ref);
                 $resolvedType = self::resolveImportedTypeAlias($fqcnSource, $importTag->importedAlias);
                 if ($resolvedType !== null) {
@@ -164,6 +165,57 @@ final class DocblockExtractor
             }
         } catch (\Throwable $e) {
             // Silently ignore unresolvable types
+        }
+
+        return null;
+    }
+
+    /**
+     * Extracts a TypeNode from a class-level @property, @property-read, or @property-write docblock.
+     */
+    public static function extractTypeFromClassPropertyDoc(string $doc, string $propName): ?TypeNode
+    {
+        try {
+            $phpDocNode = self::parseDocString($doc);
+
+            foreach ($phpDocNode->getPropertyTagValues() as $tag) {
+                if (ltrim($tag->propertyName, '$') === $propName) {
+                    return $tag->type;
+                }
+            }
+
+            foreach ($phpDocNode->getPropertyWriteTagValues() as $tag) {
+                if (ltrim($tag->propertyName, '$') === $propName) {
+                    return $tag->type;
+                }
+            }
+
+            foreach ($phpDocNode->getPropertyReadTagValues() as $tag) {
+                if (ltrim($tag->propertyName, '$') === $propName) {
+                    return $tag->type;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore malformed class docblocks
+        }
+
+        return null;
+    }
+
+    /**
+     * Extracts a MethodTagValueNode from a class-level @method docblock.
+     */
+    public static function extractMagicMethodContract(string $doc, string $methodName): ?MethodTagValueNode
+    {
+        try {
+            $phpDocNode = self::parseDocString($doc);
+            foreach ($phpDocNode->getMethodTagValues() as $tag) {
+                if ($tag->methodName === $methodName) {
+                    return $tag;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore malformed class docblocks
         }
 
         return null;

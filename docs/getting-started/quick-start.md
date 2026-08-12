@@ -6,7 +6,7 @@ TypePHP enforces PHPDoc type contracts at runtime during execution. Below is an 
 
 ## What is TypePHP?
 
-TypePHP is a transparent, pure-PHP runtime type checker that enforces extended PHPDoc type contracts (`@param`, `@return`, `@var`, `@template`, array shapes, integer ranges, and scalar refinements) during actual execution. 
+TypePHP is a transparent, pure-PHP runtime type checker that enforces extended PHPDoc type contracts (`@param`, `@return`, `@var`, `@template`, `@property`, `@method`, array shapes, integer ranges, and scalar refinements) during actual execution. 
 
 Unlike traditional assertion libraries that force you to write repetitive manual check calls inside every function, or validation frameworks that require custom PHP attributes and base classes, TypePHP requires **zero manual checks** and **zero new syntax**. It works transparently using your existing PHPDoc annotations.
 
@@ -29,7 +29,7 @@ TypePHP does not force you into an "all-or-nothing" paradigm. You do not have to
 
 1. **Path-Level Whitelisting:** Use `include` patterns in `typephp.php` to target specific mission-critical domain modules (such as `app/Domain/Billing/**`) while completely bypassing legacy directories.
 2. **Method-Level Suppression:** Add `@typephp-ignore` to specific legacy methods or un-refactored functions without removing their PHPDoc annotations.
-3. **Category-Level Feature Toggles:** Granularly enable or disable specific check categories (`inline_vars.scalars`, `inline_vars.arrays`, `params`, `returns`) in `typephp.php` depending on performance or migration needs.
+3. **Category-Level Feature Toggles:** Granularly enable or disable specific check categories (`inline_vars.scalars`, `inline_vars.arrays`, `params`, `returns`, `magic_properties`, `magic_methods`) in `typephp.php` depending on performance or migration needs.
 
 ---
 
@@ -188,6 +188,45 @@ $users->add(new User('Alice')); // Valid
 
 $users->add(new Product('SKU-100')); 
 // Throws: TypeError: Argument $item (template T = User) must be of type User, Product given
+```
+
+---
+
+## Class-Level Magic Annotations (`@property` & `@method`)
+
+TypePHP validates dynamic property writes (`__set`) and dynamic method calls (`__call`) against class-level `@property` and `@method` annotations:
+
+```php
+/**
+ * @phpstan-type StatusUnion 'active'|'pending'
+ *
+ * @property positive-int $score
+ * @method bool updateStatus(StatusUnion $status)
+ */
+class DynamicModel
+{
+    private array $storage = [];
+
+    public function __set(string $name, mixed $value): void
+    {
+        $this->storage[$name] = $value;
+    }
+
+    public function __call(string $name, array $arguments): mixed
+    {
+        return true;
+    }
+}
+
+$model = new DynamicModel();
+
+// Invalid Dynamic Property Assignment ($score = -50 violates positive-int)
+$model->score = -50;
+// Throws: TypeError: Property DynamicModel::$score must be of type positive-int
+
+// Invalid Dynamic Method Argument ($status = 'archived' violates StatusUnion)
+$model->updateStatus('archived');
+// Throws: TypeError: DynamicModel::updateStatus(): Argument $status must be of type ('active' | 'pending')
 ```
 
 ---

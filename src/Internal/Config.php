@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal;
 
+use TypePHP\Contract\ContractParser;
 use TypePHP\Extension\ExtensionInterface;
 use TypePHP\Extension\ExtensionManager;
 
@@ -34,6 +35,8 @@ final class Config
             'enabled' => true,
             'params' => true,
             'returns' => true,
+            'magic_properties' => true,
+            'magic_methods' => true,
             'respect_ignore_tags' => true,
             'cache' => true,
             'inline_vars' => [
@@ -83,6 +86,8 @@ final class Config
         $mergedConfig = array_replace_recursive(self::get(), $config);
 
         self::$cachedConfig = $mergedConfig;
+
+        ContractParser::reset();
     }
 
     /**
@@ -91,5 +96,7 @@ final class Config
     public static function reset(): void
     {
         self::$cachedConfig = null;
+
+        ContractParser::reset();
     }
 }
