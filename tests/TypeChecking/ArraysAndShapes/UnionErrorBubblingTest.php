@@ -140,6 +140,7 @@ describe('Union Deep Error Bubbling', function () {
 
     test('falls back gracefully to generic union error when no deep branch matches structure', function () {
         expect(fn () => testDeepUnionError('string_instead_of_array'))
-            ->toThrow(TypeError::class, 'must be of type (array{id: int, tags: list<(string | int)>} | null)');
+            ->toThrow(TypeError::class, 'must be of type (array{id: int, tags: list<(string | int)>} | null)')
+        ;
     });
 });

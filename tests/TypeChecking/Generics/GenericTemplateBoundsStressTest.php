@@ -226,6 +226,7 @@ describe('Generic Template Bounds Stress Test', function () {
         expect(testInferredOverridesDefault($dt, $dt))->toBe($dt);
 
         expect(fn () => testInferredOverridesDefault($dt, new stdClass()))
-            ->toThrow(TypeError::class, 'Return value');
+            ->toThrow(TypeError::class, 'Return value')
+        ;
     });
 });

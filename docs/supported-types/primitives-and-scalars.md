@@ -74,6 +74,63 @@ To prevent rounding artifacts from causing unexpected type failures, TypePHP eva
 
 ---
 
+## Wildcard Constant Patterns (`Class::PREFIX_*` & `StatusEnum::*`)
+
+TypePHP supports validating parameters, return types, properties, and `@var` local assignments against wildcard constant patterns (`Class::PREFIX_*` or `StatusEnum::*`). 
+
+* **Class Constants (`Class::PREFIX_*`):** TypePHP uses Reflection to safely inspect all matching constants—including `public`, `protected`, and `private` class constants—and validates that the incoming value matches one of the declared constant scalar values.
+* **Enums (`StatusEnum::*` or `StatusEnum::ACT*`):** Matches incoming **Enum case objects** against the wildcard case pattern.
+
+```php
+class MigrationCollectionLoader
+{
+    public const VERSION_SELECTION_ALL = 'all';
+    public const VERSION_SELECTION_BLUE_GREEN = 'blue-green';
+    private const VERSION_SELECTION_INTERNAL = 'internal-mode';
+
+    /**
+     * @param self::VERSION_SELECTION_* $mode
+     */
+    public function collectAllForVersion(string $mode): string
+    {
+        return $mode;
+    }
+}
+
+enum StatusEnum: string
+{
+    case Active = 'active';
+    case Inactive = 'inactive';
+    case Pending = 'pending';
+}
+
+class EnumProcessor
+{
+    /**
+     * @param StatusEnum::ACT* $status
+     */
+    public static function processActive(StatusEnum $status): StatusEnum
+    {
+        return $status;
+    }
+}
+
+$loader = new MigrationCollectionLoader();
+
+// Valid Class Constant Calls (Matches public and private VERSION_SELECTION_* constant values)
+$loader->collectAllForVersion('all');
+$loader->collectAllForVersion('internal-mode');
+
+// Valid Enum Wildcard Call (Matches StatusEnum::ACT* -> StatusEnum::Active)
+EnumProcessor::processActive(StatusEnum::Active);
+
+// Invalid Enum Wildcard Call (StatusEnum::Pending does not match StatusEnum::ACT*)
+EnumProcessor::processActive(StatusEnum::Pending);
+// Throws: TypeError: Argument $status must be a valid constant matching StatusEnum::ACT*
+```
+
+---
+
 ## Integer Refinements and Ranges
 
 TypePHP enforces exact value constraints and bounds on integer parameters:

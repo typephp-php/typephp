@@ -121,6 +121,7 @@ function testKeylessImplicitTupleShape(array $tuple): bool
  *
  * @phpstan-type LocalTupleAlias array{list<positive-int>, list<non-empty-string>}
  * @phpstan-type MixedTupleShape array{non-empty-string, code: positive-int, list<int>}
+ *
  * @phpstan-import-type SharedTupleShape from \TypePHP\Tests\Fixtures\Types\GlobalTypes as ImportedTuple
  *
  * @param LocalTupleAlias $payload
@@ -152,7 +153,6 @@ function testReturnKeylessTuple(bool $valid): array
 
     return [[10, 20], 'bundle'];
 }
-
 
 describe('Class Object Arrays (Dog[])', function () {
     test('accepts array of matching class instances', function () {
