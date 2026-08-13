@@ -43,21 +43,49 @@ final class PropertyHookInjector
                     : 'value';
 
                 $checkCall = NodeBuilder::createPropertyCheckCall(new Node\Expr\Variable($paramName), new Node\Expr\Variable('this'), $propertyName);
-                $paramCheckStmt = new Node\Stmt\Expression(
-                    new Node\Expr\Assign(
-                        new Node\Expr\Variable($paramName),
-                        NodeBuilder::createTernaryThrowExpr($checkCall)
-                    )
-                );
-                $paramCheckStmt->setAttribute('typephp_injected', true);
 
                 if (\is_array($hook->body)) {
+                    $paramCheckStmt = new Node\Stmt\Expression(
+                        new Node\Expr\Assign(
+                            new Node\Expr\Variable($paramName),
+                            NodeBuilder::createTernaryThrowExpr($checkCall)
+                        )
+                    );
+                    $paramCheckStmt->setAttribute('typephp_injected', true);
                     array_unshift($hook->body, $paramCheckStmt);
                 } elseif ($hook->body instanceof Node\Expr) {
-                    $hook->body = [
-                        $paramCheckStmt,
-                        new Node\Stmt\Expression($hook->body),
-                    ];
+                    // Bypass php-parser formatting bugs by keeping short hooks as Expressions
+                    $hook->body = new Node\Expr\Ternary(
+                        new Node\Expr\Instanceof_(
+                            new Node\Expr\Assign(
+                                new Node\Expr\Variable('__typephpVal'),
+                                $checkCall
+                            ),
+                            new Node\Name('\TypePHP\Internal\ErrorMessage')
+                        ),
+                        new Node\Expr\Throw_(
+                            new Node\Expr\StaticCall(
+                                new Node\Name('\TypePHP\Internal\ErrorFactory'),
+                                'prepareException',
+                                [
+                                    new Node\Arg(
+                                        new Node\Expr\New_(
+                                            new Node\Name('\TypePHP\Exception\TypeError'),
+                                            [
+                                                new Node\Arg(
+                                                    new Node\Expr\MethodCall(
+                                                        new Node\Expr\Variable('__typephpVal'),
+                                                        'getMessage'
+                                                    )
+                                                ),
+                                            ]
+                                        )
+                                    ),
+                                ]
+                            )
+                        ),
+                        $hook->body // False branch evaluates the original assignment
+                    );
                 }
             }
         }

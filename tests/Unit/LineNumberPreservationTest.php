@@ -22,7 +22,7 @@ function number(int $number): int
 number(-5);
 PHP;
 
-        $transformed = StreamWrapper::transformSource($source, 'test4.php');
+        $transformed = StreamWrapper::transformSource($source, 'test_params.php');
 
         $origLines = explode("\n", str_replace("\r\n", "\n", $source));
         $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
@@ -56,7 +56,7 @@ class Numbers
 new Numbers(['a', 'b', 'c', 1]);
 PHP;
 
-        $transformed = StreamWrapper::transformSource($source, 'test8.php');
+        $transformed = StreamWrapper::transformSource($source, 'test_cpm.php');
 
         $origLines = explode("\n", str_replace("\r\n", "\n", $source));
         $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
@@ -65,6 +65,71 @@ PHP;
 
         $origCallLine = array_search("new Numbers(['a', 'b', 'c', 1]);", array_map('trim', $origLines), true);
         $transCallLine = array_search("new Numbers(['a', 'b', 'c', 1]);", array_map('trim', $transLines), true);
+
+        expect($transCallLine)->toBe($origCallLine);
+    });
+
+    test('transforms single-line empty methods and constructors without shifting line numbers', function () {
+        $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+class SingleLineBlocks
+{
+    public function __construct() {}
+
+    public function emptyMethod(): void {}
+    
+    /** @param string $val */
+    public function doNothing(string $val) {}
+}
+
+$obj = new SingleLineBlocks();
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_single_line.php');
+
+        $origLines = explode("\n", str_replace("\r\n", "\n", $source));
+        $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
+
+        expect(\count($transLines))->toBe(\count($origLines));
+
+        $origCallLine = array_search('$obj = new SingleLineBlocks();', array_map('trim', $origLines), true);
+        $transCallLine = array_search('$obj = new SingleLineBlocks();', array_map('trim', $transLines), true);
+
+        expect($transCallLine)->toBe($origCallLine);
+    });
+
+    test('transforms generic single-line constructors perfectly (Edge Case Reproduction)', function () {
+        $source = <<<'PHP'
+<?php
+
+namespace App;
+
+/**
+ * Covariant Producer Wrapper with single-line constructor
+ * 
+ * @template-covariant T
+ */
+class Producer
+{
+    /** @param T $item */
+    public function __construct(public mixed $item) {} 
+}
+
+$p = new Producer('test');
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_producer.php');
+
+        $origLines = explode("\n", str_replace("\r\n", "\n", $source));
+        $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
+
+        expect(\count($transLines))->toBe(\count($origLines));
+
+        $origCallLine = array_search("\$p = new Producer('test');", array_map('trim', $origLines), true);
+        $transCallLine = array_search("\$p = new Producer('test');", array_map('trim', $transLines), true);
 
         expect($transCallLine)->toBe($origCallLine);
     });
