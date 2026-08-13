@@ -68,7 +68,7 @@ final class FileFilter
         // Equal specificity tie-breaker: Exclude wins!
         return $longestExcludeMatch >= $longestIncludeMatch;
     }
-    
+
     /**
      * Converts a glob pattern into an absolute regex pattern.
      */

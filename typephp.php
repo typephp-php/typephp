@@ -49,7 +49,7 @@ return [
     | When enabled, transformed PHP files are cached on disk for speed.
     | Set to false to run AST transformations purely in RAM (php://memory).
     |
-    | 'cache_dir' determines where these files are stored. By default (null), 
+    | 'cache_dir' determines where these files are stored. By default (null),
     | it uses your system's temp directory. You can change this to a path
     | inside your project, e.g., __DIR__ . '/storage/framework/typephp'.
     | TypePHP will automatically protect this directory from being re-transformed.

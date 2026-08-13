@@ -153,7 +153,8 @@ describe('FileFilter Unit Tests', function () {
         $normalFilePath = str_replace('\\', '/', getcwd() . '/app/Models/User.php');
 
         expect(FileFilter::isFileExcluded($cachedFilePath))->toBeTrue()
-            ->and(FileFilter::isFileExcluded($normalFilePath))->toBeFalse();
+            ->and(FileFilter::isFileExcluded($normalFilePath))->toBeFalse()
+        ;
 
         Config::reset();
     });

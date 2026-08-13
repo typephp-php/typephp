@@ -504,9 +504,9 @@ final class StreamWrapper implements StreamWrapperInterface
         return \in_array($callerFunc, ['file_get_contents', 'file', 'readfile', 'highlight_file', 'show_source', 'token_get_all'], true);
     }
 
-   /**
-     * Determines whether a target PHP file path should be intercepted using Pattern Specificity.
-     */
+    /**
+      * Determines whether a target PHP file path should be intercepted using Pattern Specificity.
+      */
     private static function isApplicationFile(string $path, string|false $resolvedPath): bool
     {
         if (! (bool) (Config::get()['enabled'] ?? true)) {
