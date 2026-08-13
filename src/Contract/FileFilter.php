@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Contract;
 
+use TypePHP\Internal\CacheManager;
 use TypePHP\Internal\Config;
 
 /**
@@ -25,6 +26,11 @@ final class FileFilter
 
         // Non-PHP files are always excluded from PHPDoc contract processing
         if (! str_ends_with(strtolower($normalizedPath), '.php')) {
+            return true;
+        }
+
+        $normalizedCacheDir = rtrim(str_replace('\\', '/', CacheManager::getCacheDir()), '/') . '/';
+        if (str_starts_with($normalizedPath, $normalizedCacheDir)) {
             return true;
         }
 

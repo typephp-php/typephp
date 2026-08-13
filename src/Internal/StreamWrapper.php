@@ -117,6 +117,8 @@ final class StreamWrapper implements StreamWrapperInterface
             return $source;
         }
 
+        $originalLineCount = substr_count($source, "\n");
+
         $parser = (new ParserFactory())->createForNewestSupportedVersion();
 
         try {
@@ -150,9 +152,26 @@ final class StreamWrapper implements StreamWrapperInterface
         $printer = new TypePHPPrinter();
         $transformed = $printer->printFormatPreserving($newStmts, $oldStmts, $oldTokens);
 
-        // Critical: Remove the newline and indentation preceding any injected statement.
-        $transformed = preg_replace('/[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_INJECTED__\*\//', ' /*__TYPEPHP_INJECTED__*/', $transformed) ?? $transformed;
-        $transformed = str_replace('/*__TYPEPHP_INJECTED__*/', '', $transformed);
+        $transformed = preg_replace('/[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\//', ' /*__TYPEPHP_INJECTED_START__*/', $transformed) ?? $transformed;
+
+        $transformedLineCount = substr_count($transformed, "\n");
+        $drift = $transformedLineCount - $originalLineCount;
+
+        if ($drift > 0) {
+            $transformed = preg_replace('/[ \t]*\r?\n[ \t]*\{[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\//', ' { /*__TYPEPHP_INJECTED_START__*/', $transformed, $drift, $count1) ?? $transformed;
+            $drift -= $count1;
+        }
+
+        if ($drift > 0) {
+            $transformed = preg_replace('/\/\*__TYPEPHP_INJECTED_END__\*\/[ \t]*\r?\n[ \t]*\}/', '/*__TYPEPHP_INJECTED_END__*/ }', $transformed, $drift, $count2) ?? $transformed;
+            $drift -= $count2;
+        }
+
+        if ($drift > 0) {
+            $transformed = preg_replace('/\/\*__TYPEPHP_INJECTED_END__\*\/[ \t]*\r?\n[ \t]*/', '/*__TYPEPHP_INJECTED_END__*/ ', $transformed, $drift) ?? $transformed;
+        }
+
+        $transformed = str_replace(['/*__TYPEPHP_INJECTED_START__*/', '/*__TYPEPHP_INJECTED_END__*/'], '', $transformed);
 
         return $transformed;
     }
@@ -486,8 +505,8 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Determines whether a target PHP file path should be intercepted using Pattern Specificity.
-     */
+      * Determines whether a target PHP file path should be intercepted using Pattern Specificity.
+      */
     private static function isApplicationFile(string $path, string|false $resolvedPath): bool
     {
         if (! (bool) (Config::get()['enabled'] ?? true)) {
@@ -500,10 +519,17 @@ final class StreamWrapper implements StreamWrapperInterface
 
         $normalizedPath = str_replace('\\', '/', $resolvedPath);
 
+        // Prevent parsing TypePHP's own source code
         $parentDir = realpath(__DIR__ . '/..');
         $libSrcDir = $parentDir !== false ? str_replace('\\', '/', $parentDir) : '';
 
         if ($libSrcDir !== '' && str_starts_with($normalizedPath, $libSrcDir)) {
+            return false;
+        }
+
+        // Unconditionally prevent double-parsing cached files!
+        $normalizedCacheDir = rtrim(str_replace('\\', '/', self::$cacheDir), '/') . '/';
+        if (str_starts_with($normalizedPath, $normalizedCacheDir)) {
             return false;
         }
 

@@ -137,4 +137,25 @@ describe('FileFilter Unit Tests', function () {
 
         Config::reset();
     });
+
+    test('unconditionally excludes the configured cache directory even if include pattern is **', function () {
+        $customCacheDir = getcwd() . '/storage/typephp-cache';
+
+        Config::set([
+            'cache_dir' => $customCacheDir,
+            'include' => [
+                '**',
+            ],
+            'exclude' => [],
+        ]);
+
+        $cachedFilePath = str_replace('\\', '/', $customCacheDir . '/v0.1_hash123.php');
+        $normalFilePath = str_replace('\\', '/', getcwd() . '/app/Models/User.php');
+
+        expect(FileFilter::isFileExcluded($cachedFilePath))->toBeTrue()
+            ->and(FileFilter::isFileExcluded($normalFilePath))->toBeFalse()
+        ;
+
+        Config::reset();
+    });
 });

@@ -93,10 +93,12 @@ TypePHP solves this using `TypePHPPrinter` and regex post-processing. Injected g
 
 ### Disk Caching
 
-Once transformed, TypePHP saves the resulting code to disk in `sys_get_temp_dir() . '/typephp-cache/'`. On all subsequent requests:
+Once transformed, TypePHP saves the resulting code to disk in your configured `cache_dir` (which defaults to `sys_get_temp_dir() . '/typephp-cache/'`). On all subsequent requests:
 * AST parsing runs **0 times**.
 * PHP's **OPCache** compiles the cached file once into bytecode in RAM.
 * Stream file reads execute natively at C-level speed inside Zend Engine.
+
+*(TypePHP's stream wrapper automatically detects and skips intercepting files inside your configured `cache_dir` to prevent infinite loops and double-transformation overhead).*
 
 ---
 
@@ -179,10 +181,6 @@ Because `WeakMap` uses weak references, when the object instance is garbage-coll
 ### Call Stack Scope Tracking (`ScopeCleaner`)
 
 For function-level templates (`@template T`), TypePHP pushes a temporary call frame when entering the function and returns a `ScopeCleaner` object. When the function exits or throws an exception, `ScopeCleaner::__destruct()` automatically pops the call frame, keeping generic state clean across recursive calls.
-
----
-
-Here is the updated, brief **Validation Error Messages and Trace Attribution** section for `docs/architecture/how-it-works.md`:
 
 ---
 

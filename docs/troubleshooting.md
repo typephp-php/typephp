@@ -22,7 +22,15 @@ If TypePHP is not enforcing contracts on a specific file or method, check the fo
 You can verify that a file is being intercepted and transformed in two ways:
 
 1. **Intentionally Trigger an Error:** Pass an invalid argument (such as a negative integer to a `positive-int` parameter). If a `TypePHP\Exception\TypeError` is thrown, TypePHP is active.
-2. **Inspect the Cache Directory:** Look inside your system temporary directory (`sys_get_temp_dir() . '/typephp-cache/'`). You will see transformed PHP files containing injected `RuntimeTypeChecker` calls.
+2. **Inspect the Cache Directory:** Look inside your configured `cache_dir` (if undefined, this defaults to your system temporary directory: `sys_get_temp_dir() . '/typephp-cache/'`). You will see transformed PHP files containing injected `RuntimeTypeChecker` calls.
+
+---
+
+### Why are files inside my custom `cache_dir` not being intercepted?
+
+If you configured a custom `cache_dir` inside your project directory (e.g., `__DIR__ . '/storage/typephp'`) and set your include paths to `['**']`, you might wonder why the cache files aren't being transformed.
+
+**This is a built-in safety mechanism.** TypePHP automatically detects your `cache_dir` and unconditionally excludes it from its internal `StreamWrapper` and `FileFilter`. This prevents catastrophic infinite loops and double-parsing overhead that would occur if TypePHP tried to intercept and transform its own cached files.
 
 ---
 

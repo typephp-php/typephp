@@ -18,7 +18,7 @@ final class TypePHPPrinter extends Standard
 {
     /**
      * Overrides base node printing to intercept injected statements, squash their
-     * formatting, and tag them with a unique marker for post-processing.
+     * formatting, and tag them with unique markers for post-processing.
      */
     protected function p(
         Node $node,
@@ -31,7 +31,7 @@ final class TypePHPPrinter extends Standard
         if ($node instanceof Node\Stmt && $node->getAttribute('typephp_injected') === true) {
             $output = preg_replace('/\s+/', ' ', trim($output)) ?? $output;
 
-            return '/*__TYPEPHP_INJECTED__*/' . $output;
+            return '/*__TYPEPHP_INJECTED_START__*/' . $output . '/*__TYPEPHP_INJECTED_END__*/';
         }
 
         return $output;
