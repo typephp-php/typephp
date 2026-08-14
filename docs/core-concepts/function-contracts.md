@@ -36,6 +36,7 @@ registerUser(-5, 'Alice', 'admin');
 > **Execution Order Note:** Native PHP type hints (e.g., `int $id`, `string $username`) are evaluated by PHP's C-engine *before* function execution begins. TypePHP's extended PHPDoc contracts (e.g., `positive-int`, `non-empty-string`) execute at the very start of the function/method body. If a native type hint fails, PHP throws its native `TypeError` before TypePHP's guard rails run.
 
 ---
+
 ## PHP 8.0+ Named Arguments
 
 TypePHP natively supports PHP 8.0+ Named Arguments. Because parameter contracts are mapped by parameter name rather than argument position index, you can pass named arguments in any order, and TypePHP will accurately validate each parameter:
@@ -62,6 +63,7 @@ registerUser(age: 25, username: 'Alice', id: 42);
 registerUser(age: 25, username: 'Alice', id: -5);
 // Throws: TypeError: registerUser(): Argument $id must be of type positive-int, negative int (-5) given
 ```
+
 ---
 
 ## Class Methods (Instance & Static)
@@ -189,29 +191,6 @@ getUserStatus(-10);
 
 ---
 
-## Variadic Parameter Contracts
-
-When a function or method accepts variadic arguments (`...$items`), TypePHP validates every element passed in the variadic argument list:
-
-```php
-/**
- * @param positive-int ...$ids
- */
-function deleteUsers(int ...$ids): void
-{
-    // ...
-}
-
-// Valid Call
-deleteUsers(10, 20, 30);
-
-// Invalid Call (3rd variadic item violates positive-int)
-deleteUsers(10, 20, -5);
-// Throws: TypeError: deleteUsers(): Argument $ids[2] must be of type positive-int
-```
-
----
-
 ## Fluent `$this` Identity Returns
 
 For fluent builder or service classes annotated with `@return $this`, TypePHP verifies strict object identity (`$result === $this`), preventing accidental instantiation of new instances:
@@ -247,6 +226,96 @@ $builder->cloneSelf();
 
 ---
 
+## Late Static Binding Return Contracts (`@return static`)
+
+When a parent class method (static factory method or fluent instance method) is annotated with `@return static`, TypePHP enforces **Late Static Binding** at runtime. 
+
+It dynamically verifies that the returned object is an instance of the **actual calling class** (`UserEntityFactory`), strictly rejecting parent instances (`BaseEntityFactory`), sibling instances (`AdminEntityFactory`), or generic objects (`stdClass`):
+
+```php
+abstract class BaseEntityFactory
+{
+    /**
+     * @return static
+     */
+    public static function create(): static
+    {
+        return new static();
+    }
+
+    /**
+     * @return static
+     */
+    public static function createSibling(): object
+    {
+        return new AdminEntityFactory(); // Invalid: Returns sibling instead of calling class!
+    }
+}
+
+class UserEntityFactory extends BaseEntityFactory {}
+class AdminEntityFactory extends BaseEntityFactory {}
+
+// Valid: Returns UserEntityFactory instance matching the late-static calling class
+$user = UserEntityFactory::create();
+
+// Invalid: UserEntityFactory called, but AdminEntityFactory was returned!
+UserEntityFactory::createSibling();
+// Throws: TypeError: UserEntityFactory::createSibling(): Return value must be of type App\UserEntityFactory, App\AdminEntityFactory returned
+```
+
+### Late Static Binding with Generics (`static<T>`)
+
+Late static binding seamlessly integrates with TypePHP's Reified Generics engine. A static factory can return a specialized generic instance of the late-static-bound calling class:
+
+```php
+/**
+ * @template T
+ */
+abstract class BaseGenericFactory
+{
+    /**
+     * @template TValue
+     * @param TValue $value
+     * @return static<TValue>
+     */
+    public static function of(mixed $value): static
+    {
+        return new static($value);
+    }
+}
+
+class UserGenericFactory extends BaseGenericFactory {}
+
+// 1. Returns UserGenericFactory instance
+// 2. Binds generic template T = Dog in WeakMap memory!
+$factory = UserGenericFactory::of(new Dog());
+```
+
+---
+
+## Variadic Parameter Contracts
+
+When a function or method accepts variadic arguments (`...$items`), TypePHP validates every element passed in the variadic argument list:
+
+```php
+/**
+ * @param positive-int ...$ids
+ */
+function deleteUsers(int ...$ids): void
+{
+    // ...
+}
+
+// Valid Call
+deleteUsers(10, 20, 30);
+
+// Invalid Call (3rd variadic item violates positive-int)
+deleteUsers(10, 20, -5);
+// Throws: TypeError: deleteUsers(): Argument $ids[2] must be of type positive-int
+```
+
+---
+
 ## Conditional Return Types
 
 TypePHP supports parameter-based conditional return types (`@return ($param is true ? TypeA : TypeB)`):
@@ -270,13 +339,14 @@ formatValue(false, 'hello'); // Evaluates return type as non-empty-string
 formatValue(true, 'not_an_int');
 // Throws: TypeError: formatValue(): Return value must be of type positive-int
 ```
+
 ---
 
 ## PHP 8.0+ Attributes Coexistence
 
 TypePHP seamlessly coexists with native PHP 8.0+ Attributes (`#[Route]`, `#[Inject]`, `#[Validate]`). 
 
-You can place your PHPDoc annotations **either above or below** native PHP attributes on properties, methods/functions. TypePHP's AST engine and PHP's Reflection API process both metadata channels independently without any syntax conflicts:
+You can place your PHPDoc annotations **either above or below** native PHP attributes on properties, methods, or functions. TypePHP's AST engine and PHP's Reflection API process both metadata channels independently without any syntax conflicts:
 
 ```php
 // Option A: DocBlock ABOVE Attribute (Supported)
