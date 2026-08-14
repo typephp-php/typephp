@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace TypePHP\Wrapper;
 
+use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Contract\ContractParser;
+use TypePHP\Exception\TypeError as TypePHPTypeError;
 use TypePHP\Internal\ErrorFactory;
 use TypePHP\Internal\TypeFormatter;
 use TypePHP\Validator\TypeValidatorRegistry;
@@ -22,10 +25,6 @@ final class CallableWrapper
      */
     public static function wrap(string $function, string $paramName, mixed $callable, TypeValidatorRegistry $registry): mixed
     {
-        if (! \is_callable($callable)) {
-            return $callable;
-        }
-
         $contract = ContractParser::parse($function);
         $typeNode = ($paramName === 'return') ? ($contract['return'] ?? null) : ($contract['types'][$paramName] ?? null);
         $aliases = $contract['aliases'] ?? [];
@@ -36,16 +35,39 @@ final class CallableWrapper
 
         $prefix = ($paramName === 'return') ? "$function(): Return value" : "$function(): Callback \$$paramName";
 
-        return self::wrapTypeNode($typeNode, $callable, $prefix, $registry);
+        if (\is_callable($callable)) {
+            return self::wrapTypeNode($typeNode, $callable, $prefix, $registry);
+        }
+
+        if (\is_array($callable) && $typeNode !== null) {
+            $innerCallableTypeNode = null;
+
+            if ($typeNode instanceof GenericTypeNode && \in_array(strtolower($typeNode->type->name), ['list', 'array', 'iterable'], true)) {
+                $innerCallableTypeNode = $typeNode->genericTypes[1] ?? $typeNode->genericTypes[0] ?? null;
+            } elseif ($typeNode instanceof ArrayTypeNode) {
+                $innerCallableTypeNode = $typeNode->type;
+            }
+
+            if ($innerCallableTypeNode instanceof CallableTypeNode) {
+                $wrappedArray = [];
+                foreach ($callable as $k => $item) {
+                    if (\is_callable($item)) {
+                        $itemPrefix = $prefix . (\is_int($k) ? "[$k]" : "['$k']");
+                        $wrappedArray[$k] = self::wrapTypeNode($innerCallableTypeNode, $item, $itemPrefix, $registry);
+                    } else {
+                        $wrappedArray[$k] = $item;
+                    }
+                }
+
+                return $wrappedArray;
+            }
+        }
+
+        return $callable;
     }
 
     /**
      * Wraps a callable with runtime argument and return value type validation based on a CallableTypeNode AST.
-     *
-     * Performs the following steps:
-     * 1. Validates Closure type restrictions (Closure vs static-closure).
-     * 2. Returns an interceptor closure that validates arguments before invocation.
-     * 3. Validates return value after invocation and recursively wraps returned callbacks.
      */
     public static function wrapTypeNode(?TypeNode $typeNode, mixed $callable, string $prefix, TypeValidatorRegistry $registry): mixed
     {
@@ -63,7 +85,7 @@ final class CallableWrapper
 
             $err = $registry->validate($result, $typeNode->returnType, "$prefix return value");
             if ($err !== null) {
-                throw ErrorFactory::prepareException(new \TypeError($err->getMessage()));
+                throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
             }
 
             if ($typeNode->returnType instanceof CallableTypeNode && \is_callable($result)) {
@@ -80,42 +102,57 @@ final class CallableWrapper
     private static function enforceClosureConstraints(string $identifierName, mixed $callable, string $prefix): void
     {
         if (str_contains($identifierName, 'closure') && ! ($callable instanceof \Closure)) {
-            throw ErrorFactory::prepareException(new \TypeError($prefix . ' must be of type Closure, ' . TypeFormatter::formatGivenValue($callable) . ' given'));
+            throw ErrorFactory::prepareException(new TypePHPTypeError($prefix . ' must be of type Closure, ' . TypeFormatter::formatGivenValue($callable) . ' given'));
         }
 
         if (str_contains($identifierName, 'static') && $callable instanceof \Closure) {
             $refFunc = new \ReflectionFunction($callable);
             if ($refFunc->getClosureThis() !== null) {
-                throw ErrorFactory::prepareException(new \TypeError($prefix . ' must be a static Closure (not bound to $this)'));
+                throw ErrorFactory::prepareException(new TypePHPTypeError($prefix . ' must be a static Closure (not bound to $this)'));
             }
         }
     }
 
     /**
-     * Validates variadic and positional arguments passed into an intercepted callback.
+     * Validates variadic, positional, and named arguments passed into an intercepted callback.
      *
      * @param array<int|string, mixed> $args
      */
     private static function validateCallbackArguments(CallableTypeNode $typeNode, array $args, string $prefix, TypeValidatorRegistry $registry): void
     {
-        $argCount = \count($args);
+        $argValues = array_values($args);
+        $argCount = \count($argValues);
 
         foreach ($typeNode->parameters as $index => $paramNode) {
+            $rawParamName = ltrim($paramNode->parameterName ?? '', '$');
+
             if ($paramNode->isVariadic) {
                 for ($vIdx = $index; $vIdx < $argCount; $vIdx++) {
-                    $err = $registry->validate($args[$vIdx], $paramNode->type, "$prefix variadic argument #" . ($vIdx + 1));
+                    $err = $registry->validate($argValues[$vIdx], $paramNode->type, "$prefix variadic argument #" . ($vIdx + 1));
                     if ($err !== null) {
-                        throw ErrorFactory::prepareException(new \TypeError($err->getMessage()));
+                        throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
                     }
                 }
 
                 break;
             }
 
-            if (\array_key_exists($index, $args)) {
-                $err = $registry->validate($args[$index], $paramNode->type, "$prefix argument #" . ($index + 1));
+            $val = null;
+            $hasVal = false;
+
+            if ($rawParamName !== '' && \array_key_exists($rawParamName, $args)) {
+                $val = $args[$rawParamName];
+                $hasVal = true;
+            } elseif (\array_key_exists($index, $argValues)) {
+                $val = $argValues[$index];
+                $hasVal = true;
+            }
+
+            if ($hasVal) {
+                $argLabel = $rawParamName !== '' ? "\$$rawParamName" : ('argument #' . ($index + 1));
+                $err = $registry->validate($val, $paramNode->type, "$prefix $argLabel");
                 if ($err !== null) {
-                    throw ErrorFactory::prepareException(new \TypeError($err->getMessage()));
+                    throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
                 }
             }
         }

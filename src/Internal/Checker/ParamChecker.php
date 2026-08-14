@@ -17,6 +17,7 @@ use TypePHP\Internal\ErrorMessage;
 use TypePHP\Internal\TypeFormatter;
 use TypePHP\Resolver\SpecialTypeResolver;
 use TypePHP\Resolver\TemplateManager;
+use TypePHP\Resolver\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**
@@ -27,17 +28,19 @@ final class ParamChecker
     /**
      * @param array<string, mixed> $vars
      */
-    public static function checkParams(string $function, array $vars, ?object $thisObj, TypeValidatorRegistry $registry): ?ErrorMessage
+    public static function checkParams(string $function, array $vars, object|string|null $thisOrClass, TypeValidatorRegistry $registry): ?ErrorMessage
     {
         if (! (bool) (Config::get()['params'] ?? true)) {
             return null;
         }
 
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = $function;
-        if ($thisObj !== null && str_contains($function, '::')) {
+
+        if (str_contains($function, '::')) {
             [$classOrTrait, $methodName] = explode('::', $function, 2);
-            $actualClassName = \get_class($thisObj);
-            if ($actualClassName !== $classOrTrait) {
+            $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : null);
+            if ($actualClassName !== null && $actualClassName !== $classOrTrait) {
                 $effectiveFunction = $actualClassName . '::' . $methodName;
             }
         }
@@ -76,6 +79,9 @@ final class ParamChecker
             TemplateManager::resolveInheritedTemplates($thisObj, $declaringClass);
         }
 
+        $boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $templates);
+        $declaredTemplates = $templates;
+
         foreach ($contract['types'] as $paramName => $typeNode) {
             if (! \array_key_exists($paramName, $vars)) {
                 continue;
@@ -90,6 +96,18 @@ final class ParamChecker
 
             if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
                 $typeNode = $aliases[$typeNode->name];
+            }
+
+            $isClassStringT = ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates));
+
+            $isBareTemplate = ($typeNode instanceof IdentifierTypeNode && isset($templates[$typeNode->name]))
+                || ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof IdentifierTypeNode && isset($templates[$typeNode->type->name]));
+
+            $shouldSkipTemplateSub = $isBareTemplate || $isClassStringT;
+
+            if (! $shouldSkipTemplateSub && (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0)) {
+                $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
+                $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
             }
 
             if ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates)) {

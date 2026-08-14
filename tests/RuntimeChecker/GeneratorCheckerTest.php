@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use TypePHP\Internal\Checker\GeneratorChecker;
+use TypePHP\Internal\ErrorMessage;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**
@@ -22,11 +23,13 @@ describe('GeneratorChecker Unit Tests', function () {
         expect($result)->toBe(10);
     });
 
-    test('checkYield throws TypeError on invalid yielded value', function () {
+    test('checkYield returns ErrorMessage on invalid yielded value', function () {
         $registry = new TypeValidatorRegistry();
 
-        expect(fn () => GeneratorChecker::checkYield('sampleGeneratorFixture', 'a', -50, $registry))
-            ->toThrow(TypeError::class, 'Return iterator value')
+        $result = GeneratorChecker::checkYield('sampleGeneratorFixture', 'a', -50, $registry);
+
+        expect($result)->toBeInstanceOf(ErrorMessage::class)
+            ->and($result->getMessage())->toContain('Return iterator value')
         ;
     });
 
@@ -38,11 +41,13 @@ describe('GeneratorChecker Unit Tests', function () {
         expect($result)->toBe(100);
     });
 
-    test('checkSend throws TypeError on invalid TSend input value', function () {
+    test('checkSend returns ErrorMessage on invalid TSend input value', function () {
         $registry = new TypeValidatorRegistry();
 
-        expect(fn () => GeneratorChecker::checkSend('sampleGeneratorFixture', -500, $registry))
-            ->toThrow(TypeError::class, 'Generator sent value (TSend)')
+        $result = GeneratorChecker::checkSend('sampleGeneratorFixture', -500, $registry);
+
+        expect($result)->toBeInstanceOf(ErrorMessage::class)
+            ->and($result->getMessage())->toContain('Generator sent value (TSend)')
         ;
     });
 });

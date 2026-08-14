@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+use TypePHP\Exception\TypeError;
+use TypePHP\Tests\Fixtures\Services\NestedAggregateService;
+
 /**
  * 1. Generator Parameter Contracts (@param Generator<string, positive-int>)
  *
@@ -65,7 +68,7 @@ function testCountableTraversableParam(Traversable $items): int
 }
 
 /**
- * 5. Generator Return Contracts (@return Generator<non-empty-string, positive-int, positive-int, void>)
+ * 5. Generator Return Contracts
  *
  * @return Generator<non-empty-string, positive-int, positive-int, void>
  */
@@ -73,9 +76,9 @@ function testGeneratorReturnContract(bool $yieldBadValue = false, bool $yieldBad
 {
     if ($yieldBadValue) {
         yield 'a' => 10;
-        yield 'b' => -99; // Invalid value (-99 is not positive-int)
+        yield 'b' => -99; // Invalid value
     } elseif ($yieldBadKey) {
-        yield '' => 10; // Invalid key (empty string)
+        yield '' => 10; // Invalid key
     } else {
         $receivedValue = yield 'a' => 10;
         yield 'b' => 20;
@@ -83,7 +86,45 @@ function testGeneratorReturnContract(bool $yieldBadValue = false, bool $yieldBad
 }
 
 /**
- * 6. Traversable / Iterator Return Contracts (@return Traversable<non-empty-string, positive-int>)
+ * 6. Delegated yield from with Array
+ *
+ * @return Generator<string, positive-int>
+ */
+function testYieldFromArrayGenerator(bool $bad = false): Generator
+{
+    yield 'start' => 1;
+    yield from ($bad ? ['a' => 10, 'b' => -50] : ['a' => 10, 'b' => 20]);
+    yield 'end' => 99;
+}
+
+/**
+ * 7. Delegated yield from with Nested Generator
+ *
+ * @return Generator<non-empty-string, positive-int>
+ */
+function testYieldFromChildGenerator(bool $bad = false): Generator
+{
+    $child = function () use ($bad): Generator {
+        yield 'child_1' => 100;
+        yield ($bad ? '' : 'child_2') => 200; // Empty string violates non-empty-string key!
+    };
+
+    yield from $child();
+}
+
+/**
+ * 8. Complex Array Shapes in $gen->send() (TSend)
+ *
+ * @return Generator<int, array{id: positive-int, name: non-empty-string}, array{action: 'approve'|'reject'}, void>
+ */
+function testComplexShapeGenerator(): Generator
+{
+    $input = yield 1 => ['id' => 10, 'name' => 'Alice'];
+    yield 2 => ['id' => 20, 'name' => 'Bob']; // Valid TValue array shape!
+}
+
+/**
+ * 9. Traversable Return Contracts
  *
  * @return Traversable<non-empty-string, positive-int>
  */
@@ -105,7 +146,7 @@ describe('Lazy Generator Parameter Contracts (@param Generator<K, V>)', function
     test('throws TypeError lazily during iteration when generator yields bad value', function () {
         $badValueGen = function (): Generator {
             yield 'x' => 100;
-            yield 'y' => -50; // Invalid positive-int
+            yield 'y' => -50;
         };
 
         $gen = $badValueGen();
@@ -117,7 +158,7 @@ describe('Lazy Generator Parameter Contracts (@param Generator<K, V>)', function
 
     test('throws TypeError lazily during iteration when generator yields bad key', function () {
         $badKeyGen = function (): Generator {
-            yield 123 => 100; // Int key instead of string
+            yield 123 => 100;
         };
 
         $gen = $badKeyGen();
@@ -128,88 +169,64 @@ describe('Lazy Generator Parameter Contracts (@param Generator<K, V>)', function
     });
 });
 
-describe('Lazy Non-Array Traversable Parameter Contracts (@param Traversable<K, V>)', function () {
-    test('iterates valid ArrayIterator with non-empty-string keys and positive-int values', function () {
-        $iterator = new ArrayIterator([
-            'item1' => 10,
-            'item2' => 20,
-        ]);
-
-        expect(testTraversableParamContract($iterator))->toBe(['item1' => 10, 'item2' => 20]);
-    });
-
-    test('throws TypeError lazily during iteration when ArrayIterator has bad value', function () {
-        $badIterator = new ArrayIterator([
-            'item1' => 10,
-            'item2' => -50, // -50 is not positive-int
-        ]);
-
-        expect(fn () => testTraversableParamContract($badIterator))
-            ->toThrow(TypeError::class, 'Iterator $items value')
-        ;
-    });
-
-    test('throws TypeError lazily during iteration when ArrayIterator has bad key', function () {
-        $badKeyIterator = new ArrayIterator([
-            '' => 10, // Empty string key
-        ]);
-
-        expect(fn () => testTraversableParamContract($badKeyIterator))
-            ->toThrow(TypeError::class, 'Iterator $items key')
-        ;
-    });
-});
-
-describe('Traversable Rewindability & Method Forwarding (IteratorProxy)', function () {
-    test('allows multiple foreach iterations over wrapped Traversable parameter', function () {
-        $iterator = new ArrayIterator(['a' => 10, 'b' => 20]);
-        expect(testMultipleIterationTraversableParam($iterator))->toBe(4);
-    });
-
-    test('forwards Countable interface and custom method calls to inner iterator', function () {
-        $arrayIterator = new ArrayIterator(['a' => 10, 'b' => 20]);
-        expect(testCountableTraversableParam($arrayIterator))->toBe(2);
-    });
-});
-
-describe('Lazy Generator & Traversable Return Contracts', function () {
-    test('iterates valid generator return cleanly', function () {
-        $result = [];
-        foreach (testGeneratorReturnContract(false, false) as $k => $v) {
-            $result[$k] = $v;
-        }
-
-        expect($result)->toBe(['a' => 10, 'b' => 20]);
-    });
-
-    test('throws TypeError lazily when returned generator yields invalid value', function () {
-        $gen = testGeneratorReturnContract(true, false);
+describe('Delegated Generators (yield from)', function () {
+    test('lazily validates items yielded from delegated array', function () {
+        $gen = testYieldFromArrayGenerator(true);
 
         expect(function () use ($gen) {
             foreach ($gen as $k => $v) {
-                // Iteration throws when yielding 'b' => -99
+                // Iteration throws on delegated 'b' => -50
             }
         })->toThrow(TypeError::class, 'Return iterator value');
     });
 
-    test('throws TypeError lazily when returned generator yields invalid key', function () {
-        $gen = testGeneratorReturnContract(false, true);
+    test('lazily validates items yielded from delegated child generator', function () {
+        $gen = testYieldFromChildGenerator(true);
 
         expect(function () use ($gen) {
             foreach ($gen as $k => $v) {
-                // Iteration throws when yielding '' => 10
+                // Iteration throws on child empty string key
             }
         })->toThrow(TypeError::class, 'Return iterator key');
     });
+});
 
-    test('iterates valid ArrayIterator return cleanly', function () {
-        $iterator = testTraversableReturnContract(['item1' => 10, 'item2' => 20]);
-        $out = [];
-        foreach ($iterator as $k => $v) {
-            $out[$k] = $v;
-        }
+describe('Complex Array Shapes in Generator TSend Input', function () {
+    test('accepts valid shape sent into generator via $gen->send()', function () {
+        $gen = testComplexShapeGenerator();
+        $firstItem = $gen->current();
 
-        expect($out)->toBe(['item1' => 10, 'item2' => 20]);
+        expect($firstItem)->toBe(['id' => 10, 'name' => 'Alice']);
+
+        $gen->send(['action' => 'approve']); // Valid TSend shape
+        expect($gen->valid())->toBeTrue()
+            ->and($gen->current())->toBe(['id' => 20, 'name' => 'Bob'])
+        ;
+    });
+
+    test('throws TypeError when $gen->send() receives value violating TSend shape', function () {
+        $gen = testComplexShapeGenerator();
+        $gen->current();
+
+        expect(fn () => $gen->send(['action' => 'delete'])) // 'delete' violates 'approve'|'reject'
+            ->toThrow(TypeError::class, "Generator sent value (TSend)['action'] must be of type ('approve' | 'reject')")
+        ;
+    });
+});
+
+describe('Multi-Level IteratorAggregate Unwrapping & Method Forwarding', function () {
+    test('unwraps nested IteratorAggregates and preserves method and count forwarding on proxy', function () {
+        $nestedService = new NestedAggregateService(['item1' => 10, 'item2' => 20]);
+
+        expect(testTraversableParamContract($nestedService))->toBe(['item1' => 10, 'item2' => 20]);
+        expect(testCountableTraversableParam($nestedService))->toBe(2);
+    });
+});
+
+describe('Traversable Rewindability & Return Contracts', function () {
+    test('allows multiple foreach iterations over wrapped Traversable parameter', function () {
+        $iterator = new ArrayIterator(['a' => 10, 'b' => 20]);
+        expect(testMultipleIterationTraversableParam($iterator))->toBe(4);
     });
 
     test('throws TypeError lazily when returned ArrayIterator yields invalid element', function () {
@@ -226,17 +243,16 @@ describe('Lazy Generator & Traversable Return Contracts', function () {
 describe('Generator Input Validation ($gen->send() TSend Contract)', function () {
     test('accepts valid TSend value sent into generator', function () {
         $gen = testGeneratorReturnContract(false, false);
-        $gen->current(); // Reaches first yield
-        $gen->send(100); // 100 is positive-int (valid TSend)
+        $gen->current();
+        $gen->send(100);
 
         expect($gen->valid())->toBeTrue();
     });
 
     test('throws TypeError when $gen->send() receives value violating TSend contract', function () {
         $gen = testGeneratorReturnContract(false, false);
-        $gen->current(); // Reaches first yield
+        $gen->current();
 
-        // -500 violates positive-int TSend contract
         expect(fn () => $gen->send(-500))
             ->toThrow(TypeError::class, 'Generator sent value (TSend)')
         ;

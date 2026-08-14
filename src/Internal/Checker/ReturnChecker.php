@@ -25,17 +25,19 @@ final class ReturnChecker
     /**
      * @param array<string, mixed> $vars
      */
-    public static function checkReturn(string $function, mixed $value, ?object $thisObj, array $vars, TypeValidatorRegistry $registry, callable $wrapIterableCallback): mixed
+    public static function checkReturn(string $function, mixed $value, object|string|null $thisOrClass, array $vars, TypeValidatorRegistry $registry, callable $wrapIterableCallback): mixed
     {
         if (! (bool) (Config::get()['returns'] ?? true)) {
             return $value;
         }
 
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = $function;
-        if ($thisObj !== null && str_contains($function, '::')) {
+
+        if (str_contains($function, '::')) {
             [$classOrTrait, $methodName] = explode('::', $function, 2);
-            $actualClassName = \get_class($thisObj);
-            if ($actualClassName !== $classOrTrait) {
+            $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : null);
+            if ($actualClassName !== null && $actualClassName !== $classOrTrait) {
                 $effectiveFunction = $actualClassName . '::' . $methodName;
             }
         }
@@ -122,9 +124,9 @@ final class ReturnChecker
         if ($value instanceof \Traversable) {
             $baseName = '';
             if ($returnTypeNode instanceof IdentifierTypeNode) {
-                $baseName = strtolower($returnTypeNode->name);
+                $baseName = strtolower(ltrim($returnTypeNode->name, '\\'));
             } elseif ($returnTypeNode instanceof GenericTypeNode) {
-                $baseName = strtolower($returnTypeNode->type->name);
+                $baseName = strtolower(ltrim($returnTypeNode->type->name, '\\'));
             }
 
             $standardIterables = ['iterable', 'traversable', 'iterator', 'generator', 'iteratoraggregate', 'array'];
@@ -137,6 +139,8 @@ final class ReturnChecker
     }
 
     /**
+     * Recursively resolves multi-branch nested conditional return types.
+     *
      * @param array<int|string, mixed> $vars
      * @param array<string, TypeNode> $boundTemplates
      */
@@ -157,7 +161,9 @@ final class ReturnChecker
                 $isTargetMatch = ! $isTargetMatch;
             }
 
-            return $isTargetMatch ? $returnTypeNode->if : $returnTypeNode->else;
+            $selectedBranch = $isTargetMatch ? $returnTypeNode->if : $returnTypeNode->else;
+
+            return self::resolveConditionalReturnType($selectedBranch, $vars, $boundTemplates, $registry);
         }
 
         if ($returnTypeNode instanceof ConditionalTypeNode) {
@@ -186,7 +192,9 @@ final class ReturnChecker
                 $isTargetMatch = ! $isTargetMatch;
             }
 
-            return $isTargetMatch ? $returnTypeNode->if : $returnTypeNode->else;
+            $selectedBranch = $isTargetMatch ? $returnTypeNode->if : $returnTypeNode->else;
+
+            return self::resolveConditionalReturnType($selectedBranch, $vars, $boundTemplates, $registry);
         }
 
         return $returnTypeNode;

@@ -71,21 +71,24 @@ final class RuntimeTypeChecker
      *
      * @param array<string, mixed> $vars
      */
-    public static function setupScope(string $function, array $vars, ?object $thisObj = null): ErrorMessage|ScopeCleaner|null
+    public static function setupScope(string $function, array $vars, object|string|null $thisOrClass = null): ErrorMessage|ScopeCleaner|null
     {
         if (! self::isEnabled()) {
             return null;
         }
 
-        $err = self::checkParams($function, $vars, $thisObj);
+        $err = self::checkParams($function, $vars, $thisOrClass);
 
         if ($err !== null) {
+            $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
             if ($thisObj === null) {
                 TemplateManager::popCallFrame($function);
             }
 
             return $err;
         }
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
 
         return $thisObj === null ? new ScopeCleaner($function) : null;
     }
@@ -95,13 +98,13 @@ final class RuntimeTypeChecker
      *
      * @param array<string, mixed> $vars
      */
-    public static function checkParams(string $function, array $vars, ?object $thisObj = null): ?ErrorMessage
+    public static function checkParams(string $function, array $vars, object|string|null $thisOrClass = null): ?ErrorMessage
     {
         if (! self::isEnabled()) {
             return null;
         }
 
-        return ParamChecker::checkParams($function, $vars, $thisObj, self::getRegistry());
+        return ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry());
     }
 
     /**
@@ -109,13 +112,13 @@ final class RuntimeTypeChecker
      *
      * @param array<string, mixed> $vars
      */
-    public static function checkReturn(string $function, mixed $value, ?object $thisObj = null, array $vars = []): mixed
+    public static function checkReturn(string $function, mixed $value, object|string|null $thisOrClass = null, array $vars = []): mixed
     {
         if (! self::isEnabled()) {
             return $value;
         }
 
-        return ReturnChecker::checkReturn($function, $value, $thisObj, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
+        return ReturnChecker::checkReturn($function, $value, $thisOrClass, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
     }
 
     /**

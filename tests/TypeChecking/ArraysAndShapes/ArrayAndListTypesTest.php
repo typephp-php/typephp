@@ -117,6 +117,27 @@ function testKeylessImplicitTupleShape(array $tuple): bool
 }
 
 /**
+ * 1. Sealed Shape (Default)
+ *
+ * @param array{id: positive-int, username: non-empty-string} $sealedPayload
+ */
+function testSealedShape(array $sealedPayload): bool
+{
+    return true;
+}
+
+/**
+ * 2. Unsealed Typed Shape
+ * Requires 'id' to be positive-int, but permits additional string-string pairs
+ *
+ * @param array{id: positive-int, ...<string, string>} $unsealedPayload
+ */
+function testUnsealedTypedShape(array $unsealedPayload): bool
+{
+    return true;
+}
+
+/**
  * Helpers for Issue #20 Edge Cases
  *
  * @phpstan-type LocalTupleAlias array{list<positive-int>, list<non-empty-string>}
@@ -153,6 +174,38 @@ function testReturnKeylessTuple(bool $valid): array
 
     return [[10, 20], 'bundle'];
 }
+
+/**
+ * Positional Tuple with Optional Trailing Element
+ *
+ * @param array{0: positive-int, 1?: non-empty-string} $tuple
+ */
+function testOptionalTupleParam(array $tuple): bool
+{
+    return true;
+}
+
+describe('Positional Tuples with Optional Trailing Elements (array{0: T1, 1?: T2})', function () {
+    test('accepts tuple when optional trailing element is omitted', function () {
+        expect(testOptionalTupleParam([42]))->toBeTrue();
+    });
+
+    test('accepts tuple when optional trailing element is provided with valid value', function () {
+        expect(testOptionalTupleParam([42, 'Alice']))->toBeTrue();
+    });
+
+    test('throws TypeError when required first tuple item is invalid', function () {
+        expect(fn () => testOptionalTupleParam([-5]))
+            ->toThrow(TypeError::class, "['0'] must be of type positive-int")
+        ;
+    });
+
+    test('throws TypeError when optional second tuple item is provided with invalid value', function () {
+        expect(fn () => testOptionalTupleParam([42, '']))
+            ->toThrow(TypeError::class, "['1'] must be of type non-empty-string")
+        ;
+    });
+});
 
 describe('Class Object Arrays (Dog[])', function () {
     test('accepts array of matching class instances', function () {
@@ -378,5 +431,42 @@ describe('Issue #20 Edge Cases: Keyless Tuples in Type Aliases, Returns, and Mix
         expect(fn () => testReturnKeylessTuple(false))
             ->toThrow(TypeError::class, "Return value['0'][1] must be of type positive-int")
         ;
+    });
+});
+
+describe('Sealed vs Unsealed Array Shapes', function () {
+    describe('Sealed Shapes (array{id: int})', function () {
+        test('accepts exact declared shape keys', function () {
+            expect(testSealedShape(['id' => 10, 'username' => 'Alice']))->toBeTrue();
+        });
+
+        test('throws TypeError when sealed shape receives unexpected extra key', function () {
+            expect(fn () => testSealedShape(['id' => 10, 'username' => 'Alice', 'extra_key' => 'bar']))
+                ->toThrow(TypeError::class, "contains unsealed unexpected key 'extra_key'")
+            ;
+        });
+    });
+
+    describe('Unsealed Typed Shapes (array{id: int, ...<string, string>})', function () {
+        test('accepts required keys plus additional string-string pairs', function () {
+            $payload = [
+                'id' => 42,
+                'category' => 'admin_user',
+                'department' => 'engineering',
+            ];
+
+            expect(testUnsealedTypedShape($payload))->toBeTrue();
+        });
+
+        test('throws TypeError when unsealed extra value violates unsealed type contract', function () {
+            $payload = [
+                'id' => 42,
+                'code' => 999, // 999 is int, but unsealed type requires string value!
+            ];
+
+            expect(fn () => testUnsealedTypedShape($payload))
+                ->toThrow(TypeError::class, "['code'] must be of type string, int (999) given")
+            ;
+        });
     });
 });

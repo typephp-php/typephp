@@ -132,7 +132,23 @@ describe('Parameter Shift & Renaming Inheritance Disambiguation', function () {
             ;
 
             expect(fn () => $service->runAction(100, ''))
-                ->toThrow(TypeError::class, 'Argument $actionToken must be of type non-empty-string');
+                ->toThrow(TypeError::class, 'Argument $actionToken must be of type non-empty-string')
+            ;
         });
+    });
+});
+
+describe('PHP 8.0+ Named Arguments on Subtype Methods with Renamed Parameters', function () {
+    test('validates named arguments passed in swapped order on subtype method with renamed parameters from Interface', function () {
+        $service = new ChildShiftedOopService();
+
+        expect($service->execute(authToken: 'valid_token', statusCode: 200))->toBeTrue();
+
+        expect(fn () => $service->execute(authToken: 'valid_token', statusCode: -10))
+            ->toThrow(TypeError::class, 'Argument $statusCode must be of type positive-int')
+        ;
+
+        expect(fn () => $service->execute(authToken: '', statusCode: 200))
+            ->toThrow(TypeError::class, 'Argument $authToken must be of type non-empty-string');
     });
 });

@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace TypePHP\Wrapper;
 
+use Generator;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Contract\ContractParser;
+use TypePHP\Exception\TypeError as TypePHPTypeError;
 use TypePHP\Internal\ErrorFactory;
 use TypePHP\Validator\TypeValidatorRegistry;
 
@@ -19,16 +21,14 @@ final class IterableWrapper
 {
     /**
      * Wraps Traversable iterators and Generators to lazily validate keys and values during iteration.
-     *
-     * Performs the following steps:
-     * 1. Resolves key and item TypeNodes from contract metadata or aliases.
-     * 2. Constructs a callback to evaluate key and value type constraints.
-     * 3. Wraps Traversable objects with IteratorProxy for rewindability and method forwarding.
-     * 4. Wraps Generators with an interceptor generator to evaluate yielded items lazily.
      */
     public static function wrap(string $function, string $paramName, mixed $iterable, TypeValidatorRegistry $registry): mixed
     {
-        if (! is_iterable($iterable) || \is_array($iterable)) {
+        if (! is_iterable($iterable)) {
+            return $iterable;
+        }
+
+        if (\is_array($iterable) && $paramName !== 'return') {
             return $iterable;
         }
 
@@ -39,9 +39,9 @@ final class IterableWrapper
         if ($typeNode !== null) {
             $baseName = '';
             if ($typeNode instanceof IdentifierTypeNode) {
-                $baseName = strtolower($typeNode->name);
+                $baseName = strtolower(ltrim($typeNode->name, '\\'));
             } elseif ($typeNode instanceof GenericTypeNode) {
-                $baseName = strtolower($typeNode->type->name);
+                $baseName = strtolower(ltrim($typeNode->type->name, '\\'));
             }
 
             $standardIterables = ['iterable', 'traversable', 'iterator', 'generator', 'iteratoraggregate', 'array'];
@@ -55,7 +55,14 @@ final class IterableWrapper
         $prefix = ($paramName === 'return') ? "$function(): Return iterator" : "$function(): Iterator \$$paramName";
         $typeCheckCallback = self::createValidationCallback($registry, $keyTypeNode, $itemTypeNode, $prefix);
 
-        if (! ($iterable instanceof \Generator)) {
+        // Wrap delegated yield from arrays in a lazy generator
+        if (\is_array($iterable)) {
+            return self::wrapGenerator((function () use ($iterable) {
+                yield from $iterable;
+            })(), $typeCheckCallback);
+        }
+
+        if (! ($iterable instanceof Generator)) {
             return new IteratorProxy($iterable, $typeCheckCallback);
         }
 
@@ -108,14 +115,14 @@ final class IterableWrapper
             if ($keyTypeNode !== null && $key !== null) {
                 $err = $registry->validate($key, $keyTypeNode, "$prefix key");
                 if ($err !== null) {
-                    throw ErrorFactory::prepareException(new \TypeError($err->getMessage()));
+                    throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
                 }
             }
 
             if ($itemTypeNode !== null) {
                 $err = $registry->validate($value, $itemTypeNode, "$prefix value");
                 if ($err !== null) {
-                    throw ErrorFactory::prepareException(new \TypeError($err->getMessage()));
+                    throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
                 }
             }
         };
@@ -127,9 +134,9 @@ final class IterableWrapper
      * @param iterable<mixed, mixed> $iterable
      * @param \Closure(mixed, mixed): void $typeCheckCallback
      *
-     * @return \Generator<mixed, mixed>
+     * @return Generator<mixed, mixed>
      */
-    private static function wrapGenerator(iterable $iterable, \Closure $typeCheckCallback): \Generator
+    private static function wrapGenerator(iterable $iterable, \Closure $typeCheckCallback): Generator
     {
         foreach ($iterable as $key => $value) {
             $typeCheckCallback($key, $value);

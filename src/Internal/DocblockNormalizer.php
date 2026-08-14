@@ -29,7 +29,7 @@ final class DocblockNormalizer
     public static function normalize(string $doc): string
     {
         $doc = preg_replace('/(@(?:phpstan|psalm)-type\s+[a-zA-Z0-9_\x80-\xff]+)\s*=\s*/', '$1 ', $doc) ?? $doc;
-
+        $doc = preg_replace('/(callable|Closure)\s*\(([^)]*)\)(?!\s*:)/', '$1($2): mixed', $doc) ?? $doc;
         $doc = preg_replace('/(\\\\?[a-zA-Z_\x80-\xff][\\\\a-zA-Z0-9_\x80-\xff]*::[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)\s*(\??:)/', '"$1"$2', $doc) ?? $doc;
 
         if (! str_contains($doc, '{')) {

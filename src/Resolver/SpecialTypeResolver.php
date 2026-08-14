@@ -82,7 +82,7 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof IdentifierTypeNode) {
-            return self::resolveIdentifier($node, $declaringClass, $ref);
+            return self::resolveIdentifier($node, $declaringClass, $ref, $context, $thisObj);
         }
 
         if ($node instanceof ConstTypeNode) {
@@ -90,8 +90,8 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof GenericTypeNode) {
-            $genericType = self::resolve($node->type, $ref, $thisObj);
-            $innerTypes = array_map(fn ($t) => self::resolve($t, $ref, $thisObj), $node->genericTypes);
+            $genericType = self::resolve($node->type, $context, $thisObj);
+            $innerTypes = array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->genericTypes);
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
@@ -101,27 +101,27 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof OffsetAccessTypeNode) {
-            return self::resolveOffsetAccess($node, $ref, $thisObj);
+            return self::resolveOffsetAccess($node, $context, $thisObj);
         }
 
         if ($node instanceof ArrayShapeNode) {
-            return self::resolveArrayShape($node, $ref, $thisObj);
+            return self::resolveArrayShape($node, $context, $thisObj);
         }
 
         if ($node instanceof ObjectShapeNode) {
-            return self::resolveObjectShape($node, $ref, $thisObj);
+            return self::resolveObjectShape($node, $context, $thisObj);
         }
 
         if ($node instanceof CallableTypeNode) {
-            return self::resolveCallable($node, $ref, $thisObj);
+            return self::resolveCallable($node, $context, $thisObj);
         }
 
         if ($node instanceof ConditionalTypeNode) {
             return new ConditionalTypeNode(
-                self::resolve($node->subjectType, $ref, $thisObj),
-                self::resolve($node->targetType, $ref, $thisObj),
-                self::resolve($node->if, $ref, $thisObj),
-                self::resolve($node->else, $ref, $thisObj),
+                self::resolve($node->subjectType, $context, $thisObj),
+                self::resolve($node->targetType, $context, $thisObj),
+                self::resolve($node->if, $context, $thisObj),
+                self::resolve($node->else, $context, $thisObj),
                 $node->negated
             );
         }
@@ -129,27 +129,27 @@ final class SpecialTypeResolver
         if ($node instanceof ConditionalTypeForParameterNode) {
             return new ConditionalTypeForParameterNode(
                 $node->parameterName,
-                self::resolve($node->targetType, $ref, $thisObj),
-                self::resolve($node->if, $ref, $thisObj),
-                self::resolve($node->else, $ref, $thisObj),
+                self::resolve($node->targetType, $context, $thisObj),
+                self::resolve($node->if, $context, $thisObj),
+                self::resolve($node->else, $context, $thisObj),
                 $node->negated
             );
         }
 
         if ($node instanceof NullableTypeNode) {
-            return new NullableTypeNode(self::resolve($node->type, $ref, $thisObj));
+            return new NullableTypeNode(self::resolve($node->type, $context, $thisObj));
         }
 
         if ($node instanceof ArrayTypeNode) {
-            return new ArrayTypeNode(self::resolve($node->type, $ref, $thisObj));
+            return new ArrayTypeNode(self::resolve($node->type, $context, $thisObj));
         }
 
         if ($node instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolve($t, $ref, $thisObj), $node->types));
+            return new UnionTypeNode(array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->types));
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolve($t, $ref, $thisObj), $node->types));
+            return new IntersectionTypeNode(array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->types));
         }
 
         return $node;
@@ -281,12 +281,37 @@ final class SpecialTypeResolver
 
     /**
      * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod|string $context
      */
-    private static function resolveIdentifier(IdentifierTypeNode $node, ?string $declaringClass, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref): IdentifierTypeNode
-    {
+    private static function resolveIdentifier(
+        IdentifierTypeNode $node,
+        ?string $declaringClass,
+        \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref,
+        \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context,
+        ?object $thisObj = null
+    ): IdentifierTypeNode {
         $lower = strtolower($node->name);
 
-        if ($lower === '$this' || $lower === 'static') {
+        if ($lower === '$this') {
+            if ($thisObj !== null) {
+                return new IdentifierTypeNode(\get_class($thisObj));
+            }
+
+            return $node;
+        }
+
+        if ($lower === 'static') {
+            if ($thisObj !== null) {
+                return new IdentifierTypeNode(\get_class($thisObj));
+            }
+
+            if (\is_string($context) && str_contains($context, '::')) {
+                $callingClass = explode('::', $context, 2)[0];
+                if (class_exists($callingClass) || interface_exists($callingClass) || trait_exists($callingClass) || enum_exists($callingClass)) {
+                    return new IdentifierTypeNode($callingClass);
+                }
+            }
+
             return $node;
         }
 
@@ -331,12 +356,12 @@ final class SpecialTypeResolver
     }
 
     /**
-     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod|string $context
      */
-    private static function resolveOffsetAccess(OffsetAccessTypeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref, ?object $thisObj): TypeNode
+    private static function resolveOffsetAccess(OffsetAccessTypeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context, ?object $thisObj): TypeNode
     {
-        $baseType = self::resolve($node->type, $ref, $thisObj);
-        $offsetType = self::resolve($node->offset, $ref, $thisObj);
+        $baseType = self::resolve($node->type, $context, $thisObj);
+        $offsetType = self::resolve($node->offset, $context, $thisObj);
 
         $offsetKey = self::extractOffsetKey($offsetType);
 
@@ -362,11 +387,12 @@ final class SpecialTypeResolver
     }
 
     /**
-     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod|string $context
      */
-    private static function resolveArrayShape(ArrayShapeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref, ?object $thisObj): ArrayShapeNode
+    private static function resolveArrayShape(ArrayShapeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context, ?object $thisObj): ArrayShapeNode
     {
-        $items = array_map(function ($item) use ($ref, $thisObj) {
+        $ref = self::getReflectionContext($context);
+        $items = array_map(function ($item) use ($ref, $context, $thisObj) {
             /** @var ConstExprIntegerNode|ConstExprStringNode|ConstFetchNode|IdentifierTypeNode|null $keyName */
             $keyName = $item->keyName;
 
@@ -404,7 +430,7 @@ final class SpecialTypeResolver
             return new ArrayShapeItemNode(
                 $keyName,
                 $item->optional,
-                self::resolve($item->valueType, $ref, $thisObj)
+                self::resolve($item->valueType, $context, $thisObj)
             );
         }, $node->items);
 
@@ -414,8 +440,8 @@ final class SpecialTypeResolver
 
         $unsealedType = null;
         if ($node->unsealedType !== null) {
-            $unsealedKey = $node->unsealedType->keyType !== null ? self::resolve($node->unsealedType->keyType, $ref, $thisObj) : null;
-            $unsealedValue = self::resolve($node->unsealedType->valueType, $ref, $thisObj);
+            $unsealedKey = $node->unsealedType->keyType !== null ? self::resolve($node->unsealedType->keyType, $context, $thisObj) : null;
+            $unsealedValue = self::resolve($node->unsealedType->valueType, $context, $thisObj);
             $unsealedType = new ArrayShapeUnsealedTypeNode($unsealedValue, $unsealedKey);
         }
 
@@ -423,15 +449,15 @@ final class SpecialTypeResolver
     }
 
     /**
-     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod|string $context
      */
-    private static function resolveObjectShape(ObjectShapeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref, ?object $thisObj): ObjectShapeNode
+    private static function resolveObjectShape(ObjectShapeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context, ?object $thisObj): ObjectShapeNode
     {
-        $items = array_map(function ($item) use ($ref, $thisObj) {
+        $items = array_map(function ($item) use ($context, $thisObj) {
             return new ObjectShapeItemNode(
                 $item->keyName,
                 $item->optional,
-                self::resolve($item->valueType, $ref, $thisObj)
+                self::resolve($item->valueType, $context, $thisObj)
             );
         }, $node->items);
 
@@ -439,13 +465,13 @@ final class SpecialTypeResolver
     }
 
     /**
-     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod|string $context
      */
-    private static function resolveCallable(CallableTypeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref, ?object $thisObj): CallableTypeNode
+    private static function resolveCallable(CallableTypeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context, ?object $thisObj): CallableTypeNode
     {
-        $resolvedParameters = array_map(function (CallableTypeParameterNode $param) use ($ref, $thisObj) {
+        $resolvedParameters = array_map(function (CallableTypeParameterNode $param) use ($context, $thisObj) {
             return new CallableTypeParameterNode(
-                self::resolve($param->type, $ref, $thisObj),
+                self::resolve($param->type, $context, $thisObj),
                 $param->isReference,
                 $param->isVariadic,
                 $param->parameterName,
@@ -453,7 +479,7 @@ final class SpecialTypeResolver
             );
         }, $node->parameters);
 
-        $resolvedReturnType = self::resolve($node->returnType, $ref, $thisObj);
+        $resolvedReturnType = self::resolve($node->returnType, $context, $thisObj);
 
         return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $node->templateTypes);
     }

@@ -29,7 +29,7 @@ final class GeneratorChecker
             if ($sendTypeNode !== null) {
                 $err = $registry->validate($sendValue, $sendTypeNode, "$function(): Generator sent value (TSend)");
                 if ($err !== null) {
-                    throw new \TypePHP\Exception\TypeError($err->getMessage());
+                    return $err;
                 }
             }
         }
@@ -64,14 +64,14 @@ final class GeneratorChecker
         if ($key !== null && $keyTypeNode !== null) {
             $err = $registry->validate($key, $keyTypeNode, "$function(): Return iterator key");
             if ($err !== null) {
-                throw new \TypePHP\Exception\TypeError($err->getMessage());
+                return $err;
             }
         }
 
         if ($itemTypeNode !== null) {
             $err = $registry->validate($value, $itemTypeNode, "$function(): Return iterator value");
             if ($err !== null) {
-                throw new \TypePHP\Exception\TypeError($err->getMessage());
+                return $err;
             }
         }
 

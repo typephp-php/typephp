@@ -205,7 +205,9 @@ $model->setTraitId(-50);
 AppModel::setTraitVersion('');
 // Throws: TypeError: Property AppModel::$traitVersion must be of type non-empty-string
 ```
+
 ---
+
 ## Trait Inheritance Across Parent-Child Classes
 
 When a parent class uses a Trait (`ParentClass` uses `LoggerTrait`), any child class extending the parent (`ChildClass extends ParentClass`) automatically inherits all `@param`, `@return`, and `@var` contracts declared on the parent's Trait:
@@ -242,6 +244,43 @@ $child->logMessage(10, 'boot');
 $child->logMessage(-50, 'boot');
 // Throws: TypeError: ChildService::logMessage(): Argument $level must be of type positive-int
 ```
+
+---
+
+## Trait Method Aliasing (`use Trait { oldMethod as newMethod; }`)
+
+When a class uses a Trait and renames a method using PHP's trait `as` alias syntax, TypePHP inspects trait alias mappings and automatically inherits the original Trait method's DocBlock contracts onto the aliased method:
+
+```php
+trait LoggerTrait
+{
+    /**
+     * @param positive-int $level
+     * @param non-empty-string $message
+     */
+    public function logEvent(int $level, string $message): bool
+    {
+        return true;
+    }
+}
+
+class AuditService
+{
+    use LoggerTrait {
+        logEvent as recordAuditLog; // Aliases method from trait!
+    }
+}
+
+$service = new AuditService();
+
+// Valid Call
+$service->recordAuditLog(1, 'audit_ok');
+
+// Invalid Call ($level = -1 violates inherited Trait's @param positive-int)
+$service->recordAuditLog(-1, 'audit_ok');
+// Throws: TypeError: Argument $level must be of type positive-int
+```
+
 ---
 
 ## Partial Parameter Overriding (Gap-Filling)
@@ -292,42 +331,57 @@ $service->update(10, 'Charlie');
 
 ---
 
-## Parameter Renaming ($id → $userId) & Position Shifts
+## Parameter Renaming ($id → $userId) & Position Shift Disambiguation
 
-When a child class or attribute constructor overrides a parent method, parameter positions or parameter names may shift. TypePHP resolves parameter contract inheritance using **Name-First Resolution**:
+When a child class, constructor, or trait implementation overrides an ancestor method, parameter positions may shift when new parameters are inserted, or parameter names may be renamed.
 
-1. **Name Matching:** If a parameter name in the child method matches a parameter name in the parent class (e.g. `$api`), the parent's contract is inherited by that parameter regardless of its position index in the child.
-2. **Position Fallback:** If a parameter is renamed in the child class (e.g., `$id` $\rightarrow$ `$userId`), TypePHP falls back to matching by position index.
+TypePHP resolves parameter contract inheritance using **3-Tier Name & Position Disambiguation**:
+
+1. **Name-First Matching:** If a parameter name in the child method matches a parameter name in the parent class (e.g. `$container`), the parent's contract is mapped to that parameter regardless of its position index in the child.
+2. **Position Fallback on Renamed Parameters:** If a parameter is renamed in the child class (e.g., `$id` $\rightarrow$ `$userId`), TypePHP maps the contract using its position index.
+3. **Candidate Disambiguation (Shift Protection):** If a child class inserts a new parameter at index 0 (shifting all subsequent parameters down), TypePHP **verifies that the candidate child parameter does not already exist in the parent under its own name**. This prevents parent parameter contracts from accidentally mis-mapping onto shifted child parameters!
 
 ```php
-class BaseField
+class BaseRegistry
 {
     /**
-     * Parent constructor has $api at position #1
+     * Parent constructor has 3 params:
+     * Index 0: $container
+     * Index 1: $definitions
+     * Index 2: $repositoryMap
      *
-     * @param string $type
-     * @param bool|array{admin-api: bool} $api
-     */
-    public function __construct(string $type, bool|array $api = false) {}
-}
-
-class OneToManyRelation extends BaseField
-{
-    /**
-     * Child inserts $entity, $ref, $onDelete BEFORE $api (position shift!)
+     * @param array<string, string> $definitions
+     * @param array<string, string> $repositoryMap
      */
     public function __construct(
-        string $entity,
-        string $ref,
-        OnDeleteOption $onDelete = OnDeleteOption::NO_ACTION,
-        bool|array $api = false
+        ContainerInterface $container,
+        array $definitions,
+        array $repositoryMap
+    ) {}
+}
+
+class SalesChannelRegistry extends BaseRegistry
+{
+    /**
+     * Child inserts $prefix at Index 0 (shifting $container to Index 1),
+     * and renames $definitions -> $definitionMap at Index 2!
+     *
+     * @param array<string, string> $definitionMap
+     * @param array<string, string> $repositoryMap
+     */
+    public function __construct(
+        string $prefix,
+        ContainerInterface $container,
+        array $definitionMap,
+        array $repositoryMap
     ) {
-        parent::__construct('one-to-many', $api);
+        parent::__construct($container, $definitionMap, $repositoryMap);
     }
 }
 
-// $onDelete (position #2 in child) is NOT overwritten by $api's type (position #1 in parent)!
-$attr = new OneToManyRelation('unit', 'unit_id', OnDeleteOption::CASCADE, true);
+// TypePHP correctly keeps $container (Index 1 in child) untouched,
+// rather than mis-mapping parent's @param array $definitions (Index 1 in parent) onto it!
+new SalesChannelRegistry('sales_channel.', new Container(), ['prod' => 'ProductDef'], ['prod' => 'ProductRepo']);
 ```
 
 ---

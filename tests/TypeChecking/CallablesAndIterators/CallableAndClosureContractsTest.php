@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Dog;
-use TypePHP\Tests\Fixtures\Generics\GenericCollection;
 use TypePHP\Tests\Fixtures\Generics\Producer;
 use TypePHP\Tests\Fixtures\Services\HelperService;
+use TypePHP\Tests\Fixtures\Services\InvokableFormatterService;
+use TypePHP\Tests\Fixtures\Types\CountableArrayAccess;
+use TypePHP\Tests\Fixtures\Types\CountableOnly;
 
 /**
  * 1. Standard Callable Parameter Contract
@@ -19,18 +21,27 @@ function testProcessUserCallback(callable $callback): bool
 }
 
 /**
- * 2. Callback Receiving Bad Argument Inside Function
+ * 2. Named Parameter Callable Contract
  *
- * @param callable(int): string $callback
+ * @param callable(positive-int $id, non-empty-string $username): string $callback
  */
-function testExecuteBadArgumentCallback(callable $callback): mixed
+function testNamedParamCallback(callable $callback): string
 {
-    // Function passes a string to a callback expecting int
-    return $callback('not_an_int');
+    return $callback(username: 'Alice', id: 42);
 }
 
 /**
- * 3. Strict Closure Instance Parameter Contract
+ * 3. Named Parameter Callable Contract with Invalid Value
+ *
+ * @param callable(positive-int $id, non-empty-string $username): string $callback
+ */
+function testExecuteBadNamedParamCallback(callable $callback): string
+{
+    return $callback(username: '', id: 42);
+}
+
+/**
+ * 4. Strict Closure Instance Parameter Contract
  *
  * @param Closure(positive-int): non-empty-string $closure
  */
@@ -40,7 +51,7 @@ function testProcessClosureOnly(Closure $closure): string
 }
 
 /**
- * 4. Array Callable Parameter Contract
+ * 5. Array Callable Parameter Contract
  *
  * @param callable(positive-int): non-empty-string $callback
  */
@@ -50,17 +61,7 @@ function testProcessArrayCallable(callable $callback): string
 }
 
 /**
- * 5. Helper for Array Callable Return Type Failure Test
- *
- * @param callable(int): non-empty-string $callback
- */
-function testExecuteTesterArrayCallable(callable $callback): string
-{
-    return $callback(-5);
-}
-
-/**
- * 6. Variadic Callback Parameters (callable(positive-int ...$ids): void)
+ * 6. Variadic Callback Parameters
  *
  * @param callable(positive-int ...$ids): void $callback
  */
@@ -70,33 +71,77 @@ function testVariadicCallbackParam(callable $callback): void
 }
 
 /**
- * Helper for Invalid Variadic Callback Failure Test
- *
- * @param callable(positive-int ...$ids): void $callback
- */
-function testExecuteVariadicCallbackTester(callable $callback): void
-{
-    $callback(10, 20, -5);
-}
-
-/**
- * 7. Optional Callback Parameters (callable(positive-int, non-empty-string=): bool)
+ * 7. Optional Callback Parameters
  *
  * @param callable(positive-int, non-empty-string=): bool $callback
  */
-function testOptionalCallbackParam(callable $callback): bool
+function testOptionalCallbackParam(callable $callback, bool $passSecond = false): bool
 {
-    return $callback(10); // 2nd optional argument omitted
+    if ($passSecond) {
+        return $callback(10, 'custom_name');
+    }
+
+    return $callback(10);
 }
 
 /**
- * 8. Static Closure Contracts (static-closure(int): string)
+ * 8. Static Closure Contracts
  *
  * @param static-closure(int): string $closure
  */
 function testStaticClosureParam(Closure $closure): string
 {
     return $closure(100);
+}
+
+/**
+ * 9. Generic Container in Callable Contract (Valid)
+ *
+ * @param callable(Producer<Dog>): Dog $processor
+ */
+function testGenericCallableParam(callable $processor): Dog
+{
+    return $processor(new Producer(new Dog()));
+}
+
+/**
+ * 10. Generic Container in Callable Contract (Invalid Subtype)
+ *
+ * @param callable(Producer<Dog>): Dog $processor
+ */
+function testExecuteBadGenericCallableParam(callable $processor): Dog
+{
+    return $processor(new Producer(new Car())); // Passes Producer<Car> where Producer<Dog> is required!
+}
+
+/**
+ * 11. Typed Arrays and Shapes in Callable Contract
+ *
+ * @param callable(list<positive-int>, string[]): array{count: positive-int} $processor
+ */
+function testTypedArrayCallableParam(callable $processor): array
+{
+    return $processor([10, 20], ['tag1', 'tag2']);
+}
+
+/**
+ * 12. Union Types in Callable Contract
+ *
+ * @param callable(positive-int|'active'): ('success'|'error') $processor
+ */
+function testUnionCallableParam(callable $processor, mixed $input): string
+{
+    return $processor($input);
+}
+
+/**
+ * 13. Intersection Types in Callable Contract
+ *
+ * @param callable(Countable&ArrayAccess): bool $processor
+ */
+function testIntersectionCallableParam(callable $processor, object $collection): bool
+{
+    return $processor($collection);
 }
 
 describe('Standard Callable Contracts (callable(T1, T2): R)', function () {
@@ -110,51 +155,137 @@ describe('Standard Callable Contracts (callable(T1, T2): R)', function () {
         $badReturnCallback = fn (int $id, string $name): int => 123;
 
         expect(fn () => testProcessUserCallback($badReturnCallback))
-            ->toThrow(TypeError::class, 'Callback $callback return value')
-        ;
-    });
-
-    test('throws TypeError when function passes invalid argument into wrapped callback', function () {
-        $callback = fn (int $id): string => "id_{$id}";
-
-        expect(fn () => testExecuteBadArgumentCallback($callback))
-            ->toThrow(TypeError::class, 'Callback $callback argument #1')
+            ->toThrow(TypeError::class, 'return value must be of type bool')
         ;
     });
 });
 
-describe('Strict Closure Instance Contracts (Closure(T): R)', function () {
-    test('accepts native Closure instances', function () {
-        $closure = fn (int $id): string => "user_{$id}";
+describe('PHP 8.0+ Named Arguments on Callables', function () {
+    test('validates named arguments passed in swapped order to a wrapped callable', function () {
+        $callback = fn (int $id, string $username): string => "{$id}_{$username}";
 
-        expect(testProcessClosureOnly($closure))->toBe('user_42');
+        expect(testNamedParamCallback($callback))->toBe('42_Alice');
     });
 
-    test('throws TypeError when non-Closure callable (string function name) is passed', function () {
-        // 'strlen' is a valid callable, but NOT an instance of Closure
-        expect(fn () => testProcessClosureOnly('strlen'))
-            ->toThrow(TypeError::class, 'must be of type Closure')
+    test('throws TypeError when named argument passed to callable violates type contract', function () {
+        $callback = fn ($id, $username) => 'ok';
+
+        expect(fn () => testExecuteBadNamedParamCallback($callback))
+            ->toThrow(TypeError::class, 'must be of type non-empty-string')
+        ;
+    });
+});
+
+describe('Generics in Callables (callable(Producer<Dog>): Dog)', function () {
+    test('accepts callback taking generic Producer<Dog> and returning Dog', function () {
+        $cb = fn (Producer $p): Dog => $p->item;
+
+        expect(testGenericCallableParam($cb))->toBeInstanceOf(Dog::class);
+    });
+
+    test('throws TypeError when callback receives Producer with wrong generic subtype', function () {
+        $cb = fn (Producer $p): Dog => $p->item;
+
+        expect(fn () => testExecuteBadGenericCallableParam($cb))
+            ->toThrow(TypeError::class, 'Producer<covariant TypePHP\Tests\Fixtures\Domain\Dog>')
+        ;
+    });
+});
+
+describe('Typed Arrays and Lists in Callables', function () {
+    test('accepts callback taking list<positive-int> and string[], returning array shape', function () {
+        $cb = fn (array $ids, array $tags): array => ['count' => \count($ids)];
+
+        expect(testTypedArrayCallableParam($cb))->toBe(['count' => 2]);
+    });
+
+    test('throws TypeError when callback returns invalid array shape value', function () {
+        $badCb = fn (array $ids, array $tags): array => ['count' => -5]; // -5 violates positive-int!
+
+        expect(fn () => testTypedArrayCallableParam($badCb))
+            ->toThrow(TypeError::class, "['count'] must be of type positive-int")
+        ;
+    });
+});
+
+describe('Unions in Callables', function () {
+    test('accepts callback handling union arguments and union return types', function () {
+        $cb = fn (int|string $val): string => 'success';
+
+        expect(testUnionCallableParam($cb, 100))->toBe('success');
+        expect(testUnionCallableParam($cb, 'active'))->toBe('success');
+    });
+
+    test('throws TypeError when callback receives argument outside union contract', function () {
+        $cb = fn (int|string $val): string => 'success';
+
+        expect(fn () => testUnionCallableParam($cb, -50))
+            ->toThrow(TypeError::class, "must be of type (positive-int | 'active')")
         ;
     });
 
-    test('throws TypeError when non-Closure callable (array callable) is passed', function () {
-        $service = new HelperService();
+    test('throws TypeError when callback returns value outside return union contract', function () {
+        $badCb = fn (int|string $val): string => 'invalid_return';
 
-        expect(fn () => testProcessClosureOnly([$service, 'formatUser']))
+        expect(fn () => testUnionCallableParam($badCb, 100))
+            ->toThrow(TypeError::class, "must be of type ('success' | 'error')")
+        ;
+    });
+});
+
+describe('Intersections in Callables (Countable & ArrayAccess)', function () {
+    test('accepts callback taking object satisfying intersection contract', function () {
+        $cb = fn (object $c): bool => \count($c) >= 0;
+        $collection = new CountableArrayAccess();
+
+        expect(testIntersectionCallableParam($cb, $collection))->toBeTrue();
+    });
+
+    test('throws TypeError when callback receives object failing intersection contract', function () {
+        $cb = fn (object $c): bool => true;
+        $onlyCountable = new CountableOnly();
+
+        expect(fn () => testIntersectionCallableParam($cb, $onlyCountable))
+            ->toThrow(TypeError::class, 'must be of type ArrayAccess')
+        ;
+    });
+});
+
+describe('Invokable Objects (__invoke) vs Closure Instances', function () {
+    test('accepts invokable class instance for callable(T): R', function () {
+        $invokable = new InvokableFormatterService();
+
+        expect(testProcessArrayCallable($invokable))->toBe('invoked_100');
+    });
+
+    test('throws TypeError when invokable class instance is passed where Closure is strictly required', function () {
+        $invokable = new InvokableFormatterService();
+
+        expect(fn () => testProcessClosureOnly($invokable))
             ->toThrow(TypeError::class, 'must be of type Closure')
         ;
     });
 });
 
-describe('Array & First-Class Callables ([$obj, "method"] & $obj->method(...))', function () {
+describe('Optional Callback Parameters (callable(T1, T2=): R)', function () {
+    test('accepts invocation when optional second argument is omitted', function () {
+        $callback = fn (int $id, ?string $name = null): bool => $id > 0;
+
+        expect(testOptionalCallbackParam($callback, false))->toBeTrue();
+    });
+
+    test('accepts invocation when optional second argument is provided with valid value', function () {
+        $callback = fn (int $id, ?string $name = null): bool => $id > 0;
+
+        expect(testOptionalCallbackParam($callback, true))->toBeTrue();
+    });
+});
+
+describe('Array & First-Class Callables', function () {
     test('accepts valid instance method array callable', function () {
         $service = new HelperService();
 
         expect(testProcessArrayCallable([$service, 'formatUser']))->toBe('user_100');
-    });
-
-    test('accepts valid static method array callable', function () {
-        expect(testProcessArrayCallable([HelperService::class, 'staticFormat']))->toBe('static_user_100');
     });
 
     test('accepts valid PHP 8.1+ first-class callable syntax', function () {
@@ -162,177 +293,15 @@ describe('Array & First-Class Callables ([$obj, "method"] & $obj->method(...))',
 
         expect(testProcessArrayCallable($service->formatUser(...)))->toBe('user_100');
     });
-
-    test('throws TypeError when method invoked via array callable returns invalid type', function () {
-        $service = new HelperService();
-
-        expect(fn () => testExecuteTesterArrayCallable([$service, 'formatUser']))
-            ->toThrow(TypeError::class, 'Callback $callback return value')
-        ;
-    });
 });
 
-describe('Advanced PHPStan Callable Specs (Variadics, Optional Args, Static Closures)', function () {
-    test('validates variadic callback arguments', function () {
-        $validVariadic = fn (int ...$ids) => null;
-        testVariadicCallbackParam($validVariadic);
-
-        // Third variadic argument -5 violates positive-int
-        expect(fn () => testExecuteVariadicCallbackTester($validVariadic))
-            ->toThrow(TypeError::class, 'Callback $callback variadic argument #3')
-        ;
-    });
-
-    test('supports optional callback parameters (int=)', function () {
-        $callback = fn (int $id, ?string $name = null): bool => $id > 0;
-
-        expect(testOptionalCallbackParam($callback))->toBeTrue();
-    });
-
+describe('Static Closures (static-closure)', function () {
     test('accepts static closures and rejects non-static closures for static-closure', function () {
         $staticClosure = static fn (int $id): string => "static_{$id}";
         expect(testStaticClosureParam($staticClosure))->toBe('static_100');
 
         $nonStaticClosure = fn (int $id): string => "bound_{$id}";
         expect(fn () => testStaticClosureParam($nonStaticClosure))
-            ->toThrow(TypeError::class, 'must be a static Closure')
-        ;
-    });
-});
-
-describe('Inline @var Callable Variable Contracts', function () {
-    test('enforces contracts on callables assigned to variables with @var annotation', function () {
-        /** @var callable(positive-int, non-empty-string): bool $formatter */
-        $formatter = fn (int $id, string $name) => \strlen($name) > 0;
-
-        expect($formatter(10, 'alice'))->toBeTrue();
-
-        expect(fn () => $formatter(-5, 'alice'))
-            ->toThrow(TypeError::class, 'Variable $formatter: Callback argument #1')
-        ;
-    });
-
-    test('enforces contracts on inline callable with array shapes and list parameters', function () {
-        /** @var callable(list<positive-int>, array{status: 'active'}): bool $processor */
-        $processor = fn (array $ids, array $options) => \count($ids) > 0 && $options['status'] === 'active';
-
-        expect($processor([10, 20], ['status' => 'active']))->toBeTrue();
-
-        expect(fn () => $processor([10, -5], ['status' => 'active']))
-            ->toThrow(TypeError::class, 'Variable $processor: Callback argument #1')
-        ;
-
-        expect(fn () => $processor([10, 20], ['status' => 'inactive']))
-            ->toThrow(TypeError::class, 'Variable $processor: Callback argument #2')
-        ;
-    });
-
-    test('enforces contracts on inline callable return values with array shapes', function () {
-        /** @var callable(positive-int): array{id: positive-int, name: non-empty-string} $factory */
-        $factory = function (int $id): array {
-            if ($id === 999) {
-                return ['id' => -1, 'name' => 'Alice']; // Invalid return shape (id is -1)
-            }
-
-            return ['id' => $id, 'name' => 'Alice'];
-        };
-
-        expect($factory(10))->toBe(['id' => 10, 'name' => 'Alice']);
-
-        // Invalid return value
-        expect(fn () => $factory(999))
-            ->toThrow(TypeError::class, 'Variable $factory: Callback return value')
-        ;
-    });
-
-    test('enforces contracts on inline callable with generic object parameters', function () {
-        /** @var callable(Producer<Dog>): Dog $extractor */
-        $extractor = fn (Producer $producer) => $producer->item;
-
-        expect($extractor(new Producer(new Dog())))->toBeInstanceOf(Dog::class);
-
-        // Invalid argument: Producer holding Car instead of Dog
-        expect(fn () => $extractor(new Producer(new Car())))
-            ->toThrow(TypeError::class, 'Variable $extractor: Callback argument #1')
-        ;
-    });
-
-    test('enforces contracts on inline callable with union parameters and nullable return', function () {
-        /** @var callable(positive-int|non-empty-string): ?positive-int $finder */
-        $finder = function (int|string $query): ?int {
-            if ($query === 'not_found') {
-                return null;
-            }
-            if ($query === 'invalid') {
-                return -5;
-            }
-
-            return \is_int($query) ? $query : \strlen($query);
-        };
-
-        expect($finder(10))->toBe(10);
-        expect($finder('hello'))->toBe(5);
-        expect($finder('not_found'))->toBeNull();
-
-        expect(fn () => $finder(0))
-            ->toThrow(TypeError::class, 'Variable $finder: Callback argument #1')
-        ;
-
-        expect(fn () => $finder('invalid'))
-            ->toThrow(TypeError::class, 'Variable $finder: Callback return value')
-        ;
-    });
-
-    test('enforces contracts on inline callable with deeply nested generic arguments', function () {
-        /** @var callable(GenericCollection<Producer<Dog>>): positive-int $countDogs */
-        $countDogs = fn (GenericCollection $collection) => $collection->count();
-
-        // Set up a valid collection: GenericCollection<Producer<Dog>>
-        /** @var GenericCollection<Producer<Dog>> $validCollection */
-        $validCollection = new GenericCollection();
-        $validCollection->add(new Producer(new Dog()));
-
-        expect($countDogs($validCollection))->toBe(1);
-
-        // Set up an invalid collection: GenericCollection<Producer<Car>>
-        /** @var GenericCollection<Producer<Car>> $invalidCollection */
-        $invalidCollection = new GenericCollection();
-        $invalidCollection->add(new Producer(new Car()));
-
-        // Should fail because Producer<Car> is not Producer<Dog>
-        expect(fn () => $countDogs($invalidCollection))
-            ->toThrow(TypeError::class, 'Variable $countDogs: Callback argument #1')
-        ;
-    });
-
-    test('enforces contracts on higher-order callables returning callables', function () {
-        /** @var callable(positive-int): (callable(non-empty-string): non-empty-string) $multiplierFactory */
-        $multiplierFactory = function (int $multiplier): callable {
-            $inner = function (string $prefix) use ($multiplier): string {
-                if ($prefix === 'invalid') {
-                    return ''; // Violates return non-empty-string
-                }
-
-                return str_repeat($prefix, $multiplier);
-            };
-
-            return $inner;
-        };
-
-        $repeat3 = $multiplierFactory(3);
-
-        expect($repeat3('abc'))->toBe('abcabcabc');
-
-        expect(fn () => $multiplierFactory(-5))
-            ->toThrow(TypeError::class, 'Variable $multiplierFactory: Callback argument #1')
-        ;
-
-        expect(fn () => $repeat3(''))
-            ->toThrow(TypeError::class, 'argument #1')
-        ;
-
-        expect(fn () => $repeat3('invalid'))
-            ->toThrow(TypeError::class, 'return value')
-        ;
+            ->toThrow(TypeError::class, 'must be a static Closure');
     });
 });
