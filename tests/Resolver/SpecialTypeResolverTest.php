@@ -51,6 +51,17 @@ describe('SpecialTypeResolver Unit Tests', function () {
         expect($resolved)->toBeInstanceOf(IdentifierTypeNode::class);
     });
 
+    test('normalizes backslashes to forward slashes in file metadata seeding and lookups', function () {
+        $windowsPath = 'C:\\project\\app\\Services\\UserService.php';
+        SpecialTypeResolver::seedFileMetadata($windowsPath, 'App\\Services', ['User' => 'App\\Models\\User']);
+
+        $forwardPath = 'C:/project/app/Services/UserService.php';
+
+        expect(SpecialTypeResolver::getNamespaceFromFile($forwardPath))->toBe('App\\Services')
+            ->and(SpecialTypeResolver::getUseImportsFromFile($forwardPath))->toHaveKey('User')
+        ;
+    });
+
     test('leaves built-in scalar and pseudo-type keywords untouched', function () {
         $ref = new ReflectionMethod(UserService::class, 'find');
 

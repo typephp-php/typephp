@@ -34,8 +34,13 @@ final class FunctionContractInjector
             return; // Skip injecting contract checks for this specific function/method!
         }
 
+        $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
+        $isMagicLifecycle = $isClassMethod && \in_array($methodName, ['__construct', '__destruct', '__clone'], true);
+
         $hasParam = $isClassMethod || str_contains($docText, '@param');
-        $hasReturn = $isClassMethod || str_contains($docText, '@return') || str_contains($docText, '@phpstan-return') || str_contains($docText, '@psalm-return');
+
+        // Never inject return checks into constructors, destructors, or clone methods
+        $hasReturn = ! $isMagicLifecycle && ($isClassMethod || str_contains($docText, '@return') || str_contains($docText, '@phpstan-return') || str_contains($docText, '@psalm-return'));
 
         if (! $hasParam && ! $hasReturn) {
             return;

@@ -5,6 +5,7 @@ declare(strict_types=1);
 use PHPStan\PhpDocParser\Ast\PhpDoc\PhpDocNode;
 use TypePHP\Contract\DocblockExtractor;
 use TypePHP\Tests\Fixtures\Services\UserService;
+use TypePHP\Tests\Fixtures\Shopware\Metric\Type as MetricTypeEnum;
 use TypePHP\Tests\Fixtures\Types\UserApi;
 
 describe('DocblockExtractor Unit Tests', function () {
@@ -55,6 +56,14 @@ describe('DocblockExtractor Unit Tests', function () {
         DocblockExtractor::extractAliases($node, $aliases, $ref);
 
         expect($aliases)->toHaveKey('LocalUserShape');
+    });
+
+    test('resolves imported type aliases from PHP 8.1 Enums', function () {
+        $resolvedNode = DocblockExtractor::resolveImportedTypeAlias(MetricTypeEnum::class, 'MetricTypeValues');
+
+        expect($resolvedNode)->not()->toBeNull()
+            ->and((string) $resolvedNode)->toContain('histogram')
+        ;
     });
 
     test('extracts type from class-level @property, @property-read, and @property-write docblocks', function () {

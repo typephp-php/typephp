@@ -51,4 +51,25 @@ describe('FunctionContractInjector Unit Tests', function () {
             ->and($fn->stmts[2]->getAttribute('typephp_injected'))->toBeTrue()
         ;
     });
+
+    test('does not inject return checks into magic lifecycle methods like constructors', function () {
+        $fn = new Node\Stmt\ClassMethod('__construct', [
+            'params' => [
+                new Node\Param(new Node\Expr\Variable('id')),
+            ],
+            'stmts' => [],
+        ]);
+
+        FunctionContractInjector::inject($fn);
+
+        // Should have param check (setupScope, wrapCallable, wrapIterable) but NO return check
+        $hasReturn = false;
+        foreach ($fn->stmts as $stmt) {
+            if ($stmt instanceof Node\Stmt\Return_) {
+                $hasReturn = true;
+            }
+        }
+
+        expect($hasReturn)->toBeFalse();
+    });
 });

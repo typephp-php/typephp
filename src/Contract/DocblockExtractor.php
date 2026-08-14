@@ -130,14 +130,18 @@ final class DocblockExtractor
                 }
             }
         }
+
+        foreach ($aliases as $name => $type) {
+            $aliases[$name] = ContractParser::substituteAliases($type, $aliases);
+        }
     }
 
     /**
-     * Resolves an imported type alias (@phpstan-import-type) from a target class or interface.
+     * Resolves an imported type alias (@phpstan-import-type) from a target class, interface, trait, or enum.
      */
     public static function resolveImportedTypeAlias(string $fqcn, string $importedAlias): ?TypeNode
     {
-        if (! ClassNameValidator::isValid($fqcn) || (! class_exists($fqcn) && ! interface_exists($fqcn) && ! trait_exists($fqcn))) {
+        if (! ClassNameValidator::isValid($fqcn) || (! class_exists($fqcn) && ! interface_exists($fqcn) && ! trait_exists($fqcn) && ! enum_exists($fqcn))) {
             return null;
         }
 

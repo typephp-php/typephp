@@ -55,7 +55,7 @@ return [
     | TypePHP will automatically protect this directory from being re-transformed.
     */
     'cache' => true,
-    'cache_dir' => null,
+    'cache_dir' => __DIR__ . '/var/cache/',
 
     /*
     |--------------------------------------------------------------------------

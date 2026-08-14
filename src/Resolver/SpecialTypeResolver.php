@@ -160,6 +160,8 @@ final class SpecialTypeResolver
      */
     public static function resolveForFile(TypeNode $node, string $file): TypeNode
     {
+        $file = str_replace('\\', '/', $file);
+
         if ($node instanceof ThisTypeNode) {
             return clone $node;
         }
@@ -256,7 +258,7 @@ final class SpecialTypeResolver
             if (str_contains($context, '::')) {
                 [$className, $methodName] = explode('::', $context, 2);
 
-                if (class_exists($className) || interface_exists($className) || trait_exists($className)) {
+                if (class_exists($className) || interface_exists($className) || trait_exists($className) || enum_exists($className)) {
                     /** @var class-string<object> $className */
                     try {
                         return new \ReflectionMethod($className, $methodName);
@@ -620,7 +622,7 @@ final class SpecialTypeResolver
 
     private static function resolveConstantOffsetValue(string $fqcn, string $constName, string|int $offsetKey): ?TypeNode
     {
-        if ($fqcn !== '' && (class_exists($fqcn) || interface_exists($fqcn))) {
+        if ($fqcn !== '' && (class_exists($fqcn) || interface_exists($fqcn) || enum_exists($fqcn))) {
             try {
                 $refClass = new \ReflectionClass($fqcn);
                 if ($refClass->hasConstant($constName)) {
@@ -644,7 +646,7 @@ final class SpecialTypeResolver
 
     private static function resolveConstantKeyValue(string $fqcn, string $constName): ConstExprStringNode|ConstExprIntegerNode|null
     {
-        if (class_exists($fqcn) || interface_exists($fqcn)) {
+        if (class_exists($fqcn) || interface_exists($fqcn) || enum_exists($fqcn)) {
             try {
                 $refClass = new \ReflectionClass($fqcn);
                 if ($refClass->hasConstant($constName)) {
@@ -671,6 +673,7 @@ final class SpecialTypeResolver
     public static function seedFileMetadata(string $fileName, string $namespace, array $imports): void
     {
         if ($fileName !== '') {
+            $fileName = str_replace('\\', '/', $fileName);
             self::$fileNamespaces[$fileName] = $namespace;
             self::$fileUseImports[$fileName] = $imports;
         }
@@ -700,12 +703,18 @@ final class SpecialTypeResolver
      */
     public static function getUseImportsFromFile(string $fileName): array
     {
-        if ($fileName === '' || ! file_exists($fileName)) {
+        if ($fileName === '') {
             return [];
         }
 
+        $fileName = str_replace('\\', '/', $fileName);
+
         if (isset(self::$fileUseImports[$fileName])) {
             return self::$fileUseImports[$fileName];
+        }
+
+        if (! file_exists($fileName)) {
+            return [];
         }
 
         $source = file_get_contents($fileName);
@@ -723,12 +732,18 @@ final class SpecialTypeResolver
      */
     public static function getNamespaceFromFile(string $fileName): string
     {
-        if ($fileName === '' || ! file_exists($fileName)) {
+        if ($fileName === '') {
             return '';
         }
 
+        $fileName = str_replace('\\', '/', $fileName);
+
         if (isset(self::$fileNamespaces[$fileName])) {
             return self::$fileNamespaces[$fileName];
+        }
+
+        if (! file_exists($fileName)) {
+            return '';
         }
 
         $source = file_get_contents($fileName);
@@ -790,6 +805,8 @@ final class SpecialTypeResolver
      */
     public static function resolveFqcnForFile(string $name, string $file): string
     {
+        $file = str_replace('\\', '/', $file);
+
         if (self::isBuiltInTypeKeyword($name)) {
             return $name;
         }
