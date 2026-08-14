@@ -97,16 +97,17 @@ describe('Advanced Edge-Case Behaviors', function () {
             /** @var GenericCollection<?positive-int> $collection */
             $collection = new GenericCollection();
 
-            expect(fn() => $collection->add(-50))
-                ->toThrow(TypeError::class, 'Argument $item (template T = ?positive-int) must be of type positive-int, negative int (-50) given');
+            expect(fn () => $collection->add(-50))
+                ->toThrow(TypeError::class, 'Argument $item (template T = ?positive-int) must be of type positive-int, negative int (-50) given')
+            ;
         });
     });
 
     describe('Collections of Lazy Callables', function () {
         test('executes and validates a list of lazy callable proxies', function () {
             $formatters = [
-                fn(int $id): string => "id_{$id}",
-                fn(int $id): string => "user#{$id}",
+                fn (int $id): string => "id_{$id}",
+                fn (int $id): string => "user#{$id}",
             ];
 
             $results = processFormatterList($formatters, 42);
@@ -115,19 +116,21 @@ describe('Advanced Edge-Case Behaviors', function () {
 
         test('throws TypeError when a callable in the collection returns an invalid type', function () {
             $formatters = [
-                fn(int $id): string => "id_{$id}",
-                fn(int $id): string => '',
+                fn (int $id): string => "id_{$id}",
+                fn (int $id): string => '',
             ];
 
-            expect(fn() => processFormatterList($formatters, 42))
-                ->toThrow(TypeError::class, 'Callback $formatters[1] return value must be of type non-empty-string');
+            expect(fn () => processFormatterList($formatters, 42))
+                ->toThrow(TypeError::class, 'Callback $formatters[1] return value must be of type non-empty-string')
+            ;
         });
     });
 
     describe('Multi-Branch Nested Conditional Return Types', function () {
         test('throws TypeError when return value violates nested conditional branch', function () {
-            expect(fn() => testNestedConditionalReturn('float', -5.5))
-                ->toThrow(TypeError::class, 'Return value must be of type positive-float');
+            expect(fn () => testNestedConditionalReturn('float', -5.5))
+                ->toThrow(TypeError::class, 'Return value must be of type positive-float')
+            ;
         });
     });
 
@@ -135,8 +138,9 @@ describe('Advanced Edge-Case Behaviors', function () {
         test('inherits DocBlock contracts when a Trait method is aliased in a class', function () {
             $service = new TypePHP\Tests\Fixtures\Services\ClassUsingAliasedTraitMethod();
 
-            expect(fn() => $service->recordAuditLog(-1, 'audit_ok'))
-                ->toThrow(TypeError::class, 'Argument $level must be of type positive-int');
+            expect(fn () => $service->recordAuditLog(-1, 'audit_ok'))
+                ->toThrow(TypeError::class, 'Argument $level must be of type positive-int')
+            ;
         });
     });
 });

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace TypePHP\Wrapper;
 
-use ArrayIterator;
 use Generator;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
