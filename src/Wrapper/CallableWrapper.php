@@ -35,12 +35,10 @@ final class CallableWrapper
 
         $prefix = ($paramName === 'return') ? "$function(): Return value" : "$function(): Callback \$$paramName";
 
-        // 1. Single Callable
         if (\is_callable($callable)) {
             return self::wrapTypeNode($typeNode, $callable, $prefix, $registry);
         }
 
-        // 2. Collections of Callables (e.g. list<callable(...)> or callable[])
         if (\is_array($callable) && $typeNode !== null) {
             $innerCallableTypeNode = null;
 
@@ -116,18 +114,21 @@ final class CallableWrapper
     }
 
     /**
-     * Validates variadic and positional arguments passed into an intercepted callback.
+     * Validates variadic, positional, and named arguments passed into an intercepted callback.
      *
      * @param array<int|string, mixed> $args
      */
     private static function validateCallbackArguments(CallableTypeNode $typeNode, array $args, string $prefix, TypeValidatorRegistry $registry): void
     {
-        $argCount = \count($args);
+        $argValues = array_values($args);
+        $argCount = \count($argValues);
 
         foreach ($typeNode->parameters as $index => $paramNode) {
+            $rawParamName = ltrim($paramNode->parameterName ?? '', '$');
+
             if ($paramNode->isVariadic) {
                 for ($vIdx = $index; $vIdx < $argCount; $vIdx++) {
-                    $err = $registry->validate($args[$vIdx], $paramNode->type, "$prefix variadic argument #" . ($vIdx + 1));
+                    $err = $registry->validate($argValues[$vIdx], $paramNode->type, "$prefix variadic argument #" . ($vIdx + 1));
                     if ($err !== null) {
                         throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
                     }
@@ -136,8 +137,20 @@ final class CallableWrapper
                 break;
             }
 
-            if (\array_key_exists($index, $args)) {
-                $err = $registry->validate($args[$index], $paramNode->type, "$prefix argument #" . ($index + 1));
+            $val = null;
+            $hasVal = false;
+
+            if ($rawParamName !== '' && \array_key_exists($rawParamName, $args)) {
+                $val = $args[$rawParamName];
+                $hasVal = true;
+            } elseif (\array_key_exists($index, $argValues)) {
+                $val = $argValues[$index];
+                $hasVal = true;
+            }
+
+            if ($hasVal) {
+                $argLabel = $rawParamName !== '' ? "\$$rawParamName" : ('argument #' . ($index + 1));
+                $err = $registry->validate($val, $paramNode->type, "$prefix $argLabel");
                 if ($err !== null) {
                     throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
                 }

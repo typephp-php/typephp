@@ -5,6 +5,7 @@ declare(strict_types=1);
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use TypePHP\Exception\TypeError;
 use TypePHP\Validator\TypeValidatorRegistry;
 use TypePHP\Wrapper\CallableWrapper;
 
@@ -42,7 +43,7 @@ describe('CallableWrapper Unit Tests', function () {
         expect($wrapped(10))->toBe('id_10');
 
         expect(fn () => $wrapped(-5))
-            ->toThrow(TypeError::class, 'TestCallback argument #1')
+            ->toThrow(TypeError::class, 'TestCallback $id must be of type positive-int')
         ;
     });
 
