@@ -537,9 +537,16 @@ final class ContractParser
                     $targetParamName = $paramName;
                 } else {
                     $paramIndex = $hierNameToIndex[$paramName] ?? null;
-                    $targetParamName = ($paramIndex !== null && isset($baseParamNames[$paramIndex]))
-                        ? $baseParamNames[$paramIndex]
-                        : null;
+                    if ($paramIndex !== null && isset($baseParamNames[$paramIndex])) {
+                        $candidateName = $baseParamNames[$paramIndex];
+                        if (! isset($hierNameToIndex[$candidateName])) {
+                            $targetParamName = $candidateName;
+                        } else {
+                            $targetParamName = null;
+                        }
+                    } else {
+                        $targetParamName = null;
+                    }
                 }
 
                 if ($targetParamName !== null && ! isset($types[$targetParamName])) {
