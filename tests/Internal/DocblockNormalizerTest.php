@@ -10,6 +10,28 @@ describe('DocblockNormalizer', function () {
         expect(DocblockNormalizer::normalize($doc))->toBe($doc);
     });
 
+    test('auto-completes omitted return types for callable and Closure signatures', function () {
+        $doc1 = '/** @var callable(int[] $items) $callback */';
+        $expected1 = '/** @var callable(int[] $items): mixed $callback */';
+        expect(DocblockNormalizer::normalize($doc1))->toBe($expected1);
+
+        $doc2 = '/** @param Closure(string $name) $closure */';
+        $expected2 = '/** @param Closure(string $name): mixed $closure */';
+        expect(DocblockNormalizer::normalize($doc2))->toBe($expected2);
+
+        $doc3 = '/** @param callable() $emptyCallable */';
+        $expected3 = '/** @param callable(): mixed $emptyCallable */';
+        expect(DocblockNormalizer::normalize($doc3))->toBe($expected3);
+    });
+
+    test('preserves existing return types on callable signatures untouched', function () {
+        $doc1 = '/** @param callable(int): string $cb */';
+        expect(DocblockNormalizer::normalize($doc1))->toBe($doc1);
+
+        $doc2 = '/** @param Closure(int, string): bool $closure */';
+        expect(DocblockNormalizer::normalize($doc2))->toBe($doc2);
+    });
+
     test('strips optional equals sign from @phpstan-type and @psalm-type tags', function () {
         $doc1 = '/** @phpstan-type MetricTypeValues = "histogram"|"gauge" */';
         $expected1 = '/** @phpstan-type MetricTypeValues "histogram"|"gauge" */';
