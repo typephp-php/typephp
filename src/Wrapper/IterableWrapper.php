@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Wrapper;
 
+use ArrayIterator;
 use Generator;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
@@ -28,7 +29,6 @@ final class IterableWrapper
             return $iterable;
         }
 
-        // Preserve native PHP arrays for all standard function parameters!
         if (\is_array($iterable) && $paramName !== 'return') {
             return $iterable;
         }
@@ -40,9 +40,9 @@ final class IterableWrapper
         if ($typeNode !== null) {
             $baseName = '';
             if ($typeNode instanceof IdentifierTypeNode) {
-                $baseName = strtolower($typeNode->name);
+                $baseName = strtolower(ltrim($typeNode->name, '\\'));
             } elseif ($typeNode instanceof GenericTypeNode) {
-                $baseName = strtolower($typeNode->type->name);
+                $baseName = strtolower(ltrim($typeNode->type->name, '\\'));
             }
 
             $standardIterables = ['iterable', 'traversable', 'iterator', 'generator', 'iteratoraggregate', 'array'];
