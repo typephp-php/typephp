@@ -10,6 +10,16 @@ describe('DocblockNormalizer', function () {
         expect(DocblockNormalizer::normalize($doc))->toBe($doc);
     });
 
+    test('strips optional equals sign from @phpstan-type and @psalm-type tags', function () {
+        $doc1 = '/** @phpstan-type MetricTypeValues = "histogram"|"gauge" */';
+        $expected1 = '/** @phpstan-type MetricTypeValues "histogram"|"gauge" */';
+        expect(DocblockNormalizer::normalize($doc1))->toBe($expected1);
+
+        $doc2 = '/** @psalm-type UserRole = "admin"|"user" */';
+        $expected2 = '/** @psalm-type UserRole "admin"|"user" */';
+        expect(DocblockNormalizer::normalize($doc2))->toBe($expected2);
+    });
+
     test('converts stdClass shapes into intersection shapes', function () {
         $doc = '/** @param stdClass{id: int, name: string} $data */';
         $expected = '/** @param (stdClass&object{id: int, name: string}) $data */';

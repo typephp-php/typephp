@@ -130,14 +130,19 @@ final class DocblockExtractor
                 }
             }
         }
+
+        // Expand nested/imported alias references inside extracted local aliases
+        foreach ($aliases as $name => $type) {
+            $aliases[$name] = ContractParser::substituteAliases($type, $aliases);
+        }
     }
 
     /**
-     * Resolves an imported type alias (@phpstan-import-type) from a target class or interface.
+     * Resolves an imported type alias (@phpstan-import-type) from a target class, interface, trait, or enum.
      */
     public static function resolveImportedTypeAlias(string $fqcn, string $importedAlias): ?TypeNode
     {
-        if (! ClassNameValidator::isValid($fqcn) || (! class_exists($fqcn) && ! interface_exists($fqcn) && ! trait_exists($fqcn))) {
+        if (! ClassNameValidator::isValid($fqcn) || (! class_exists($fqcn) && ! interface_exists($fqcn) && ! trait_exists($fqcn) && ! enum_exists($fqcn))) {
             return null;
         }
 
@@ -148,10 +153,11 @@ final class DocblockExtractor
             if ($doc !== false) {
                 $phpDocNode = self::parseDocString($doc);
 
-                foreach ($phpDocNode->getTypeAliasTagValues() as $aliasTag) {
-                    if ($aliasTag->alias === $importedAlias) {
-                        return $aliasTag->type;
-                    }
+                $targetAliases = [];
+                self::extractAliases($phpDocNode, $targetAliases, $ref);
+
+                if (isset($targetAliases[$importedAlias])) {
+                    return $targetAliases[$importedAlias];
                 }
 
                 foreach ($phpDocNode->getTypeAliasImportTagValues() as $importTag) {

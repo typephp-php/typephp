@@ -69,7 +69,7 @@ final class ContractParser
             if (str_contains($function, '::')) {
                 [$className, $methodName] = explode('::', $function, 2);
 
-                if (class_exists($className) || interface_exists($className) || trait_exists($className)) {
+                if (class_exists($className) || interface_exists($className) || trait_exists($className) || enum_exists($className)) {
                     /** @var class-string<object> $className */
                     $refClass = new \ReflectionClass($className);
                     if ($refClass->hasMethod($methodName)) {
@@ -102,12 +102,6 @@ final class ContractParser
 
     /**
      * Parses and resolves the @var or @property docblock for a given class property.
-     *
-     * Resolution Steps:
-     * 1. Search class and parent class hierarchy for physical properties.
-     * 2. Search implemented interfaces (PHP 8.4 interface properties).
-     * 3. Fall back to class-level magic @property tags if enabled and physical property is not found.
-     * 4. Parse physical @var tags if not already resolved as a magic property.
      */
     public static function parseProperty(string $className, string $propertyName): ?TypeNode
     {
@@ -116,7 +110,7 @@ final class ContractParser
             return self::$propertyCache[$cacheKey];
         }
 
-        if (! class_exists($className) && ! trait_exists($className) && ! interface_exists($className)) {
+        if (! class_exists($className) && ! trait_exists($className) && ! interface_exists($className) && ! enum_exists($className)) {
             return self::$propertyCache[$cacheKey] = null;
         }
 
@@ -227,10 +221,6 @@ final class ContractParser
     /**
      * Parses and resolves a class-level @method docblock for __call / __callStatic.
      *
-     * Resolution Steps:
-     * 1. Search class, parent, interface, and trait hierarchy for @method tags (excluding vendor files).
-     * 2. Substitute type aliases and resolve FQCNs for parameters and return types.
-     *
      * @return array{return: ?TypeNode, parameters: array<int, array{name: string, type: ?TypeNode, isVariadic: bool, isOptional: bool}>, aliases: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>}|null
      */
     public static function parseMagicMethod(string $className, string $methodName): ?array
@@ -240,7 +230,7 @@ final class ContractParser
             return self::$magicMethodCache[$cacheKey];
         }
 
-        if (! class_exists($className) && ! trait_exists($className) && ! interface_exists($className)) {
+        if (! class_exists($className) && ! trait_exists($className) && ! interface_exists($className) && ! enum_exists($className)) {
             return self::$magicMethodCache[$cacheKey] = null;
         }
 
@@ -349,7 +339,7 @@ final class ContractParser
      */
     public static function parseClassAliases(string $className): array
     {
-        if (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className)) {
+        if (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className) && ! enum_exists($className)) {
             return [];
         }
 
@@ -547,9 +537,16 @@ final class ContractParser
                     $targetParamName = $paramName;
                 } else {
                     $paramIndex = $hierNameToIndex[$paramName] ?? null;
-                    $targetParamName = ($paramIndex !== null && isset($baseParamNames[$paramIndex]))
-                        ? $baseParamNames[$paramIndex]
-                        : null;
+                    if ($paramIndex !== null && isset($baseParamNames[$paramIndex])) {
+                        $candidateName = $baseParamNames[$paramIndex];
+                        if (! isset($hierNameToIndex[$candidateName])) {
+                            $targetParamName = $candidateName;
+                        } else {
+                            $targetParamName = null;
+                        }
+                    } else {
+                        $targetParamName = null;
+                    }
                 }
 
                 if ($targetParamName !== null && ! isset($types[$targetParamName])) {
@@ -609,7 +606,7 @@ final class ContractParser
      *
      * @param array<string, TypeNode> $aliases
      */
-    private static function substituteAliases(TypeNode $node, array $aliases): TypeNode
+    public static function substituteAliases(TypeNode $node, array $aliases): TypeNode
     {
         if ($node instanceof IdentifierTypeNode) {
             if (isset($aliases[$node->name])) {

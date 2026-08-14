@@ -5,6 +5,9 @@ declare(strict_types=1);
 use PHPStan\PhpDocParser\Ast\PhpDoc\PhpDocNode;
 use TypePHP\Contract\DocblockExtractor;
 use TypePHP\Tests\Fixtures\Services\UserService;
+use TypePHP\Tests\Fixtures\Shopware\Metric\Type as MetricTypeEnum;
+use TypePHP\Tests\Fixtures\Types\NestedAliasChainedB;
+use TypePHP\Tests\Fixtures\Types\NestedAliasService;
 use TypePHP\Tests\Fixtures\Types\UserApi;
 
 describe('DocblockExtractor Unit Tests', function () {
@@ -55,6 +58,39 @@ describe('DocblockExtractor Unit Tests', function () {
         DocblockExtractor::extractAliases($node, $aliases, $ref);
 
         expect($aliases)->toHaveKey('LocalUserShape');
+    });
+
+    test('resolves imported type aliases from Enums', function () {
+        $resolvedNode = DocblockExtractor::resolveImportedTypeAlias(MetricTypeEnum::class, 'MetricTypeValues');
+
+        expect($resolvedNode)->not()->toBeNull()
+            ->and((string) $resolvedNode)->toContain('histogram')
+        ;
+    });
+
+    test('resolves multi-tier chained imported type aliases (A -> B -> C)', function () {
+        $resolvedNode = DocblockExtractor::resolveImportedTypeAlias(NestedAliasChainedB::class, 'MidShape');
+
+        expect($resolvedNode)->not()->toBeNull()
+            ->and((string) $resolvedNode)->toContain('positive-int')
+            ->and((string) $resolvedNode)->toContain('non-empty-string')
+        ;
+    });
+
+    test('fully expands nested alias dependencies when extracting aliases from a class', function () {
+        $ref = new ReflectionClass(NestedAliasService::class);
+        $doc = $ref->getDocComment();
+        expect($doc)->not()->toBeFalse();
+
+        $phpDocNode = DocblockExtractor::parseDocString($doc);
+        $aliases = [];
+
+        DocblockExtractor::extractAliases($phpDocNode, $aliases, $ref);
+
+        expect($aliases)->toHaveKey('LocalRecordList')
+            ->and((string) $aliases['LocalRecordList'])->toContain('positive-int')
+            ->and((string) $aliases['LocalRecordList'])->toContain('active')
+        ;
     });
 
     test('extracts type from class-level @property, @property-read, and @property-write docblocks', function () {
