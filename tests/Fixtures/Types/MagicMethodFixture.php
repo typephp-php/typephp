@@ -24,11 +24,11 @@ class MagicMethodFixture
     public function __call(string $name, array $arguments): mixed
     {
         if ($name === 'processId') {
-            return $arguments[0] ?? null;
+            return $arguments[0] ?? $arguments['id'] ?? null;
         }
 
         if ($name === 'buildPayload') {
-            $ids = $arguments[0] ?? [];
+            $ids = $arguments[0] ?? $arguments['ids'] ?? [];
 
             return [
                 'id' => $ids[0] ?? 1,
@@ -37,7 +37,7 @@ class MagicMethodFixture
         }
 
         if ($name === 'getProducer') {
-            return $arguments[0] ?? null;
+            return $arguments[0] ?? $arguments['producer'] ?? null;
         }
 
         if ($name === 'checkCollection') {
@@ -45,7 +45,7 @@ class MagicMethodFixture
         }
 
         if ($name === 'saveUser') {
-            return $arguments[0] ?? null;
+            return $arguments[0] ?? $arguments['user'] ?? null;
         }
 
         return null;
@@ -54,7 +54,7 @@ class MagicMethodFixture
     public static function __callStatic(string $name, array $arguments): mixed
     {
         if ($name === 'fetchList') {
-            return $arguments;
+            return array_values($arguments);
         }
 
         return null;

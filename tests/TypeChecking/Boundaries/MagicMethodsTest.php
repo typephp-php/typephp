@@ -6,7 +6,7 @@ use TypePHP\Internal\Config;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Generics\Producer;
-use TypePHP\Tests\Fixtures\Types\ChildInheritedMagicMethodFixture;
+use TypePHP\Tests\Fixtures\Services\ChildMagicMethodService;
 use TypePHP\Tests\Fixtures\Types\CountableArrayAccess;
 use TypePHP\Tests\Fixtures\Types\CountableOnly;
 use TypePHP\Tests\Fixtures\Types\MagicMethodFixture;
@@ -27,11 +27,11 @@ describe('Class-Level Magic Methods (@method) with Complex Types', function () {
             expect($fixture->processId(42, 'Alice'))->toBe(42);
 
             expect(fn () => $fixture->processId(-5, 'Alice'))
-                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::processId(): Argument $id must be of type positive-int, negative int (-5) given')
+                ->toThrow(TypeError::class, 'TypePHP\Tests\Fixtures\Types\MagicMethodFixture::processId(): Argument $id must be of type positive-int, negative int (-5) given')
             ;
 
             expect(fn () => $fixture->processId(42, ''))
-                ->toThrow(TypeError::class, "TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::processId(): Argument \$name must be of type non-empty-string, empty string ('') given")
+                ->toThrow(TypeError::class, "TypePHP\Tests\Fixtures\Types\MagicMethodFixture::processId(): Argument \$name must be of type non-empty-string, empty string ('') given")
             ;
         });
 
@@ -39,7 +39,33 @@ describe('Class-Level Magic Methods (@method) with Complex Types', function () {
             expect(MagicMethodFixture::fetchList(1, 2, 3))->toBe([1, 2, 3]);
 
             expect(fn () => MagicMethodFixture::fetchList(1, 2, 'hello'))
-                ->toThrow(TypeError::class, "TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::fetchList(): Argument \$items[2] must be of type int, string 'hello' given")
+                ->toThrow(TypeError::class, "TypePHP\Tests\Fixtures\Types\MagicMethodFixture::fetchList(): Argument \$items[2] must be of type int, string 'hello' given")
+            ;
+        });
+    });
+
+    describe('PHP 8.0+ Named Arguments & Swapped Positions on Magic Methods', function () {
+        test('validates named arguments passed in swapped order to dynamic magic method', function () {
+            $fixture = new MagicMethodFixture();
+
+            expect($fixture->processId(name: 'Alice', id: 42))->toBe(42);
+
+            expect(fn () => $fixture->processId(name: 'Alice', id: -5))
+                ->toThrow(TypeError::class, 'TypePHP\Tests\Fixtures\Types\MagicMethodFixture::processId(): Argument $id must be of type positive-int')
+            ;
+        });
+
+        test('validates named arguments in swapped order on inherited magic method from parent class', function () {
+            $service = new ChildMagicMethodService();
+
+            expect($service->calculateScore(category: 'sports', baseScore: 100))->toBe(100);
+
+            expect(fn () => $service->calculateScore(category: 'sports', baseScore: -50))
+                ->toThrow(TypeError::class, 'Argument $baseScore must be of type positive-int')
+            ;
+
+            expect(fn () => $service->calculateScore(category: '', baseScore: 100))
+                ->toThrow(TypeError::class, 'Argument $category must be of type non-empty-string')
             ;
         });
     });
@@ -52,11 +78,11 @@ describe('Class-Level Magic Methods (@method) with Complex Types', function () {
             expect($result)->toBe(['id' => 10, 'tags' => ['php', 'typephp']]);
 
             expect(fn () => $fixture->buildPayload([10, -5], 'active'))
-                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::buildPayload(): Argument $ids[1] must be of type positive-int')
+                ->toThrow(TypeError::class, 'TypePHP\Tests\Fixtures\Types\MagicMethodFixture::buildPayload(): Argument $ids[1] must be of type positive-int')
             ;
 
             expect(fn () => $fixture->buildPayload([10, 20], 'archived'))
-                ->toThrow(TypeError::class, "TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::buildPayload(): Argument \$status must be of type ('active' | 'pending')")
+                ->toThrow(TypeError::class, "TypePHP\Tests\Fixtures\Types\MagicMethodFixture::buildPayload(): Argument \$status must be of type ('active' | 'pending')")
             ;
         });
     });
@@ -70,7 +96,7 @@ describe('Class-Level Magic Methods (@method) with Complex Types', function () {
 
             $carProducer = new Producer(new Car());
             expect(fn () => $fixture->getProducer($carProducer))
-                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::getProducer(): Argument $producer expects TypePHP\\Tests\\Fixtures\\Generics\\Producer<covariant TypePHP\\Tests\\Fixtures\\Domain\\Dog>')
+                ->toThrow(TypeError::class, 'TypePHP\Tests\Fixtures\Types\MagicMethodFixture::getProducer(): Argument $producer expects TypePHP\Tests\Fixtures\Generics\Producer<covariant TypePHP\Tests\Fixtures\Domain\Dog>')
             ;
         });
     });
@@ -83,7 +109,7 @@ describe('Class-Level Magic Methods (@method) with Complex Types', function () {
             expect($fixture->checkCollection(new CountableArrayAccess()))->toBeTrue();
 
             expect(fn () => $fixture->checkCollection(new CountableOnly()))
-                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::checkCollection(): Argument $collection must be of type ((Countable & ArrayAccess) | null)')
+                ->toThrow(TypeError::class, 'TypePHP\Tests\Fixtures\Types\MagicMethodFixture::checkCollection(): Argument $collection must be of type ((Countable & ArrayAccess) | null)')
             ;
         });
     });
@@ -97,28 +123,28 @@ describe('Class-Level Magic Methods (@method) with Complex Types', function () {
 
             $badUser = ['id' => 10, 'role' => 'superadmin'];
             expect(fn () => $fixture->saveUser($badUser))
-                ->toThrow(TypeError::class, "TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::saveUser(): Argument \$user['role'] must be of type ('admin' | 'user')")
+                ->toThrow(TypeError::class, "TypePHP\Tests\Fixtures\Types\MagicMethodFixture::saveUser(): Argument \$user['role'] must be of type ('admin' | 'user')")
             ;
         });
     });
 
     describe('Inheritance with @method (Classes, Interfaces & Traits)', function () {
         test('inherits @method contracts from parent classes, interfaces, and traits', function () {
-            $fixture = new ChildInheritedMagicMethodFixture();
+            $service = new ChildMagicMethodService();
 
-            expect($fixture->parentMethod(100))->toBe(100);
-            expect(fn () => $fixture->parentMethod(-5))
-                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\ChildInheritedMagicMethodFixture::parentMethod(): Argument $id must be of type positive-int')
+            expect($service->parentMethod(100))->toBe(100);
+            expect(fn () => $service->parentMethod(-5))
+                ->toThrow(TypeError::class, 'TypePHP\Tests\Fixtures\Services\ChildMagicMethodService::parentMethod(): Argument $id must be of type positive-int')
             ;
 
-            expect($fixture->interfaceMethod('hello'))->toBe('hello');
-            expect(fn () => $fixture->interfaceMethod(''))
-                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\ChildInheritedMagicMethodFixture::interfaceMethod(): Argument $title must be of type non-empty-string')
+            expect($service->interfaceMethod('hello'))->toBe('hello');
+            expect(fn () => $service->interfaceMethod(''))
+                ->toThrow(TypeError::class, 'TypePHP\Tests\Fixtures\Services\ChildMagicMethodService::interfaceMethod(): Argument $title must be of type non-empty-string')
             ;
 
-            expect($fixture->traitMethod('admin'))->toBeTrue();
-            expect(fn () => $fixture->traitMethod('guest'))
-                ->toThrow(TypeError::class, "TypePHP\\Tests\\Fixtures\\Types\\ChildInheritedMagicMethodFixture::traitMethod(): Argument \$role must be of type ('admin' | 'user')")
+            expect($service->traitMethod('admin'))->toBeTrue();
+            expect(fn () => $service->traitMethod('guest'))
+                ->toThrow(TypeError::class, "TypePHP\Tests\Fixtures\Services\ChildMagicMethodService::traitMethod(): Argument \$role must be of type ('admin' | 'user')")
             ;
         });
     });
