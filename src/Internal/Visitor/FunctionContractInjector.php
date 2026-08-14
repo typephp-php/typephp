@@ -48,9 +48,11 @@ final class FunctionContractInjector
 
         $isNativeVoid = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'void';
         $hasThis = $isClassMethod && ! $node->isStatic();
+
+        // Pass $this for instance methods, static::class for static methods, or null for global functions
         $thisArg = $hasThis
             ? new Node\Expr\Variable('this')
-            : new Node\Expr\ConstFetch(new Node\Name('null'));
+            : ($isClassMethod ? new Node\Expr\ClassConstFetch(new Node\Name('static'), 'class') : new Node\Expr\ConstFetch(new Node\Name('null')));
 
         $injectedStmts = [];
 

@@ -25,17 +25,19 @@ final class ReturnChecker
     /**
      * @param array<string, mixed> $vars
      */
-    public static function checkReturn(string $function, mixed $value, ?object $thisObj, array $vars, TypeValidatorRegistry $registry, callable $wrapIterableCallback): mixed
+    public static function checkReturn(string $function, mixed $value, object|string|null $thisOrClass, array $vars, TypeValidatorRegistry $registry, callable $wrapIterableCallback): mixed
     {
         if (! (bool) (Config::get()['returns'] ?? true)) {
             return $value;
         }
 
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = $function;
-        if ($thisObj !== null && str_contains($function, '::')) {
+
+        if (str_contains($function, '::')) {
             [$classOrTrait, $methodName] = explode('::', $function, 2);
-            $actualClassName = \get_class($thisObj);
-            if ($actualClassName !== $classOrTrait) {
+            $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : null);
+            if ($actualClassName !== null && $actualClassName !== $classOrTrait) {
                 $effectiveFunction = $actualClassName . '::' . $methodName;
             }
         }
