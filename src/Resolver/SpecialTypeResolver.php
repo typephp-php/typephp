@@ -281,6 +281,7 @@ final class SpecialTypeResolver
 
     /**
      * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod|string $context
      */
     private static function resolveIdentifier(
         IdentifierTypeNode $node,
@@ -359,7 +360,6 @@ final class SpecialTypeResolver
      */
     private static function resolveOffsetAccess(OffsetAccessTypeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context, ?object $thisObj): TypeNode
     {
-        $ref = self::getReflectionContext($context);
         $baseType = self::resolve($node->type, $context, $thisObj);
         $offsetType = self::resolve($node->offset, $context, $thisObj);
 

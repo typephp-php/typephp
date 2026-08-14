@@ -13,7 +13,6 @@ namespace TypePHP\Tests\Fixtures\Types;
  * @phpstan-type LocalRecordShape array{id: LocalId, status: LocalStatus}
  * @phpstan-type LocalRecordList list<LocalRecordShape>
  * @phpstan-type ImportedRecordList list<ImportedRecordShape>
- *
  * @phpstan-type AdminStatus 'admin_active'
  * @phpstan-type UserStatus 'user_active'
  * @phpstan-type UnionOfAliases AdminStatus|UserStatus

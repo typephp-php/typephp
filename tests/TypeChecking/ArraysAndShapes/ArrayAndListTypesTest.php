@@ -182,8 +182,9 @@ describe('Class Object Arrays (Dog[])', function () {
     });
 
     test('throws TypeError when array contains an invalid class object', function () {
-        expect(fn() => testDogArrayParam([new Dog(), new Car()]))
-            ->toThrow(TypeError::class);
+        expect(fn () => testDogArrayParam([new Dog(), new Car()]))
+            ->toThrow(TypeError::class)
+        ;
     });
 });
 
@@ -194,14 +195,16 @@ describe('Generic Key-Value Arrays (array<K, V>)', function () {
 
     test('throws TypeError when key type is invalid', function () {
         // Integer key 0 instead of string key
-        expect(fn() => testAssocScoreArrayParam([0 => 100]))
-            ->toThrow(TypeError::class, 'key');
+        expect(fn () => testAssocScoreArrayParam([0 => 100]))
+            ->toThrow(TypeError::class, 'key')
+        ;
     });
 
     test('throws TypeError when value type is invalid', function () {
         // Negative integer -10 instead of positive-int
-        expect(fn() => testAssocScoreArrayParam(['alice' => -10]))
-            ->toThrow(TypeError::class, "['alice']");
+        expect(fn () => testAssocScoreArrayParam(['alice' => -10]))
+            ->toThrow(TypeError::class, "['alice']")
+        ;
     });
 });
 
@@ -211,20 +214,23 @@ describe('Lists & Non-Empty Lists (list<T> & non-empty-list<T>)', function () {
     });
 
     test('throws TypeError when list contains associative keys', function () {
-        expect(fn() => testTagListParam(['tag' => 'php']))
-            ->toThrow(TypeError::class, 'must be a list');
+        expect(fn () => testTagListParam(['tag' => 'php']))
+            ->toThrow(TypeError::class, 'must be a list')
+        ;
     });
 
     test('throws TypeError when list contains an empty string', function () {
-        expect(fn() => testTagListParam(['php', '']))
-            ->toThrow(TypeError::class, 'non-empty-string');
+        expect(fn () => testTagListParam(['php', '']))
+            ->toThrow(TypeError::class, 'non-empty-string')
+        ;
     });
 
     test('accepts valid non-empty list and rejects empty array', function () {
         expect(testNonEmptyNumberListParam([1, 2, 3]))->toBe(3);
 
-        expect(fn() => testNonEmptyNumberListParam([]))
-            ->toThrow(TypeError::class, 'non-empty list');
+        expect(fn () => testNonEmptyNumberListParam([]))
+            ->toThrow(TypeError::class, 'non-empty list')
+        ;
     });
 });
 
@@ -243,8 +249,9 @@ describe('Deeply Nested Arrays (array<K, list<V>>)', function () {
             'math' => [100, -50], // -50 is not positive-int
         ];
 
-        expect(fn() => testNestedMatrixParam($invalidMatrix))
-            ->toThrow(TypeError::class);
+        expect(fn () => testNestedMatrixParam($invalidMatrix))
+            ->toThrow(TypeError::class)
+        ;
     });
 
     test('throws TypeError when nested list is associative', function () {
@@ -252,8 +259,9 @@ describe('Deeply Nested Arrays (array<K, list<V>>)', function () {
             'math' => ['score' => 100], // Not a list
         ];
 
-        expect(fn() => testNestedMatrixParam($invalidMatrix))
-            ->toThrow(TypeError::class);
+        expect(fn () => testNestedMatrixParam($invalidMatrix))
+            ->toThrow(TypeError::class)
+        ;
     });
 });
 
@@ -273,8 +281,9 @@ describe('Lists of Generic Objects (list<Producer<covariant Animal>>)', function
             new Producer(new Car()), // Car is not an Animal
         ];
 
-        expect(fn() => testGenericProducerListParam($producers))
-            ->toThrow(TypeError::class);
+        expect(fn () => testGenericProducerListParam($producers))
+            ->toThrow(TypeError::class)
+        ;
     });
 });
 
@@ -285,12 +294,14 @@ describe('Positional Tuple Shapes (array{0: T1, 1: T2})', function () {
 
     test('throws TypeError on invalid tuple element', function () {
         // First item -5 is not positive-int
-        expect(fn() => testTupleShapeParam([-5, 'alice']))
-            ->toThrow(TypeError::class, "['0']");
+        expect(fn () => testTupleShapeParam([-5, 'alice']))
+            ->toThrow(TypeError::class, "['0']")
+        ;
 
         // Second item '' is not non-empty-string
-        expect(fn() => testTupleShapeParam([10, '']))
-            ->toThrow(TypeError::class, "['1']");
+        expect(fn () => testTupleShapeParam([10, '']))
+            ->toThrow(TypeError::class, "['1']")
+        ;
     });
 });
 
@@ -311,8 +322,9 @@ describe('Unsealed Array Shapes (array{id: T, ...<K, V>})', function () {
             'invalid_extra' => 999, // int given, but string expected by unsealed type
         ];
 
-        expect(fn() => testUnsealedShapeParam($payload))
-            ->toThrow(TypeError::class);
+        expect(fn () => testUnsealedShapeParam($payload))
+            ->toThrow(TypeError::class)
+        ;
     });
 });
 
@@ -325,7 +337,7 @@ describe('Variadic Array Shapes (@param array{...} ...$users)', function () {
     });
 
     test('throws TypeError when any variadic argument violates the array shape', function () {
-        expect(fn() => testVariadicArrayShapeParam(
+        expect(fn () => testVariadicArrayShapeParam(
             ['id' => 1, 'name' => 'Alice'],
             ['id' => -2, 'name' => 'Bob'] // -2 is not positive-int
         ))->toThrow(TypeError::class);
@@ -349,8 +361,9 @@ describe('Complex Shapes with Generic Lists & Unions', function () {
             'tags' => ['php', ''], // Empty string violates list<non-empty-string>
         ];
 
-        expect(fn() => testComplexNestedShapeParam($payload))
-            ->toThrow(TypeError::class);
+        expect(fn () => testComplexNestedShapeParam($payload))
+            ->toThrow(TypeError::class)
+        ;
     });
 });
 
@@ -361,12 +374,12 @@ describe('Issue #20 Edge Cases: Keyless Tuples in Type Aliases, Returns, and Mix
             ['status_ok', 'code' => 200, [1, 2, 3]]
         ))->toBeTrue();
 
-        expect(fn() => testLocalTupleAliasParam(
+        expect(fn () => testLocalTupleAliasParam(
             [[10, -5], ['a', 'b']],
             ['status_ok', 'code' => 200, [1, 2, 3]]
         ))->toThrow(TypeError::class, "Argument \$payload['0'][1] must be of type positive-int");
 
-        expect(fn() => testLocalTupleAliasParam(
+        expect(fn () => testLocalTupleAliasParam(
             [[10, 20], ['a', 'b']],
             ['status_ok', 'code' => -100, [1, 2, 3]]
         ))->toThrow(TypeError::class, "Argument \$mixedPayload['code'] must be of type positive-int");
@@ -375,15 +388,17 @@ describe('Issue #20 Edge Cases: Keyless Tuples in Type Aliases, Returns, and Mix
     test('resolves keyless tuple shapes imported via @phpstan-import-type', function () {
         expect(testImportedTupleAliasParam([[100, 200], 'valid_string']))->toBeTrue();
 
-        expect(fn() => testImportedTupleAliasParam([[100, 200], '']))
-            ->toThrow(TypeError::class, "Argument \$tuple['1'] must be of type non-empty-string");
+        expect(fn () => testImportedTupleAliasParam([[100, 200], '']))
+            ->toThrow(TypeError::class, "Argument \$tuple['1'] must be of type non-empty-string")
+        ;
     });
 
     test('validates keyless tuple shapes returned from functions', function () {
         expect(testReturnKeylessTuple(true))->toBe([[10, 20], 'bundle']);
 
-        expect(fn() => testReturnKeylessTuple(false))
-            ->toThrow(TypeError::class, "Return value['0'][1] must be of type positive-int");
+        expect(fn () => testReturnKeylessTuple(false))
+            ->toThrow(TypeError::class, "Return value['0'][1] must be of type positive-int")
+        ;
     });
 });
 
@@ -394,8 +409,9 @@ describe('Sealed vs Unsealed Array Shapes', function () {
         });
 
         test('throws TypeError when sealed shape receives unexpected extra key', function () {
-            expect(fn() => testSealedShape(['id' => 10, 'username' => 'Alice', 'extra_key' => 'bar']))
-                ->toThrow(TypeError::class, "contains unsealed unexpected key 'extra_key'");
+            expect(fn () => testSealedShape(['id' => 10, 'username' => 'Alice', 'extra_key' => 'bar']))
+                ->toThrow(TypeError::class, "contains unsealed unexpected key 'extra_key'")
+            ;
         });
     });
 
@@ -416,7 +432,7 @@ describe('Sealed vs Unsealed Array Shapes', function () {
                 'code' => 999, // 999 is int, but unsealed type requires string value!
             ];
 
-            expect(fn() => testUnsealedTypedShape($payload))
+            expect(fn () => testUnsealedTypedShape($payload))
                 ->toThrow(TypeError::class, "['code'] must be of type string, int (999) given");
         });
     });

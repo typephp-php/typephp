@@ -43,22 +43,25 @@ describe('Parameter Shift & Renaming Inheritance Disambiguation', function () {
         test('throws TypeError when renamed $userId parameter fails parent inherited positive-int contract', function () {
             $service = new ChildShiftedMethodService();
 
-            expect(fn() => $service->updateUser(-5, 'Alice', ['active' => true]))
-                ->toThrow(TypeError::class, 'Argument $userId must be of type positive-int');
+            expect(fn () => $service->updateUser(-5, 'Alice', ['active' => true]))
+                ->toThrow(TypeError::class, 'Argument $userId must be of type positive-int')
+            ;
         });
 
         test('throws TypeError when renamed $userName parameter fails parent inherited non-empty-string contract', function () {
             $service = new ChildShiftedMethodService();
 
-            expect(fn() => $service->updateUser(42, '', ['active' => true]))
-                ->toThrow(TypeError::class, 'Argument $userName must be of type non-empty-string');
+            expect(fn () => $service->updateUser(42, '', ['active' => true]))
+                ->toThrow(TypeError::class, 'Argument $userName must be of type non-empty-string')
+            ;
         });
 
         test('throws TypeError when renamed $userOptions parameter fails parent inherited shape contract', function () {
             $service = new ChildShiftedMethodService();
 
-            expect(fn() => $service->updateUser(42, 'Alice', ['active' => 'not_bool']))
-                ->toThrow(TypeError::class, "Argument \$userOptions['active'] must be of type bool");
+            expect(fn () => $service->updateUser(42, 'Alice', ['active' => 'not_bool']))
+                ->toThrow(TypeError::class, "Argument \$userOptions['active'] must be of type bool")
+            ;
         });
     });
 
@@ -68,13 +71,15 @@ describe('Parameter Shift & Renaming Inheritance Disambiguation', function () {
         });
 
         test('throws TypeError when renamed $itemBatch parameter fails parent contract on static method', function () {
-            expect(fn() => ChildShiftedMethodService::processBatch([10, -5], 'json'))
-                ->toThrow(TypeError::class, 'Argument $itemBatch[1] must be of type positive-int');
+            expect(fn () => ChildShiftedMethodService::processBatch([10, -5], 'json'))
+                ->toThrow(TypeError::class, 'Argument $itemBatch[1] must be of type positive-int')
+            ;
         });
 
         test('throws TypeError when renamed $outputFormat parameter fails parent contract on static method', function () {
-            expect(fn() => ChildShiftedMethodService::processBatch([10, 20], ''))
-                ->toThrow(TypeError::class, 'Argument $outputFormat must be of type non-empty-string');
+            expect(fn () => ChildShiftedMethodService::processBatch([10, 20], ''))
+                ->toThrow(TypeError::class, 'Argument $outputFormat must be of type non-empty-string')
+            ;
         });
     });
 
@@ -84,11 +89,13 @@ describe('Parameter Shift & Renaming Inheritance Disambiguation', function () {
 
             expect($service->execute(200, 'valid_token'))->toBeTrue();
 
-            expect(fn() => $service->execute(-10, 'valid_token'))
-                ->toThrow(TypeError::class, 'Argument $statusCode must be of type positive-int');
+            expect(fn () => $service->execute(-10, 'valid_token'))
+                ->toThrow(TypeError::class, 'Argument $statusCode must be of type positive-int')
+            ;
 
-            expect(fn() => $service->execute(200, ''))
-                ->toThrow(TypeError::class, 'Argument $authToken must be of type non-empty-string');
+            expect(fn () => $service->execute(200, ''))
+                ->toThrow(TypeError::class, 'Argument $authToken must be of type non-empty-string')
+            ;
         });
 
         test('inherits and validates contracts from Abstract Classes with renamed parameters', function () {
@@ -96,8 +103,9 @@ describe('Parameter Shift & Renaming Inheritance Disambiguation', function () {
 
             expect($service->processItems([10, 20, 30]))->toBeTrue();
 
-            expect(fn() => $service->processItems([10, -5, 30]))
-                ->toThrow(TypeError::class, 'Argument $itemList[1] must be of type positive-int');
+            expect(fn () => $service->processItems([10, -5, 30]))
+                ->toThrow(TypeError::class, 'Argument $itemList[1] must be of type positive-int')
+            ;
         });
 
         test('inherits and validates contracts from Traits with renamed parameters', function () {
@@ -105,11 +113,13 @@ describe('Parameter Shift & Renaming Inheritance Disambiguation', function () {
 
             expect($service->logEvent(1, 'info_message'))->toBeTrue();
 
-            expect(fn() => $service->logEvent(-1, 'info_message'))
-                ->toThrow(TypeError::class, 'Argument $logLevel must be of type positive-int');
+            expect(fn () => $service->logEvent(-1, 'info_message'))
+                ->toThrow(TypeError::class, 'Argument $logLevel must be of type positive-int')
+            ;
 
-            expect(fn() => $service->logEvent(1, ''))
-                ->toThrow(TypeError::class, 'Argument $logMessage must be of type non-empty-string');
+            expect(fn () => $service->logEvent(1, ''))
+                ->toThrow(TypeError::class, 'Argument $logMessage must be of type non-empty-string')
+            ;
         });
 
         test('inherits Interface contracts when method is fulfilled by Trait with renamed parameters', function () {
@@ -117,11 +127,13 @@ describe('Parameter Shift & Renaming Inheritance Disambiguation', function () {
 
             expect($service->runAction(100, 'valid_token'))->toBeTrue();
 
-            expect(fn() => $service->runAction(-5, 'valid_token'))
-                ->toThrow(TypeError::class, 'Argument $actionCode must be of type positive-int');
+            expect(fn () => $service->runAction(-5, 'valid_token'))
+                ->toThrow(TypeError::class, 'Argument $actionCode must be of type positive-int')
+            ;
 
-            expect(fn() => $service->runAction(100, ''))
-                ->toThrow(TypeError::class, 'Argument $actionToken must be of type non-empty-string');
+            expect(fn () => $service->runAction(100, ''))
+                ->toThrow(TypeError::class, 'Argument $actionToken must be of type non-empty-string')
+            ;
         });
     });
 });
@@ -132,10 +144,11 @@ describe('PHP 8.0+ Named Arguments on Subtype Methods with Renamed Parameters', 
 
         expect($service->execute(authToken: 'valid_token', statusCode: 200))->toBeTrue();
 
-        expect(fn() => $service->execute(authToken: 'valid_token', statusCode: -10))
-            ->toThrow(TypeError::class, 'Argument $statusCode must be of type positive-int');
+        expect(fn () => $service->execute(authToken: 'valid_token', statusCode: -10))
+            ->toThrow(TypeError::class, 'Argument $statusCode must be of type positive-int')
+        ;
 
-        expect(fn() => $service->execute(authToken: '', statusCode: 200))
+        expect(fn () => $service->execute(authToken: '', statusCode: 200))
             ->toThrow(TypeError::class, 'Argument $authToken must be of type non-empty-string');
     });
 });

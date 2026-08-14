@@ -17,6 +17,7 @@ use TypePHP\Internal\ErrorMessage;
 use TypePHP\Internal\TypeFormatter;
 use TypePHP\Resolver\SpecialTypeResolver;
 use TypePHP\Resolver\TemplateManager;
+use TypePHP\Resolver\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**
@@ -78,6 +79,9 @@ final class ParamChecker
             TemplateManager::resolveInheritedTemplates($thisObj, $declaringClass);
         }
 
+        $boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $templates);
+        $declaredTemplates = $templates;
+
         foreach ($contract['types'] as $paramName => $typeNode) {
             if (! \array_key_exists($paramName, $vars)) {
                 continue;
@@ -92,6 +96,18 @@ final class ParamChecker
 
             if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
                 $typeNode = $aliases[$typeNode->name];
+            }
+
+            $isClassStringT = ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates));
+
+            $isBareTemplate = ($typeNode instanceof IdentifierTypeNode && isset($templates[$typeNode->name]))
+                || ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof IdentifierTypeNode && isset($templates[$typeNode->type->name]));
+
+            $shouldSkipTemplateSub = $isBareTemplate || $isClassStringT;
+
+            if (! $shouldSkipTemplateSub && (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0)) {
+                $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
+                $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
             }
 
             if ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates)) {

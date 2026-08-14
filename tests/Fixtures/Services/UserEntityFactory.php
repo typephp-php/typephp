@@ -6,4 +6,4 @@ namespace TypePHP\Tests\Fixtures\Services;
 
 class UserEntityFactory extends BaseEntityFactory
 {
-}   
+}
