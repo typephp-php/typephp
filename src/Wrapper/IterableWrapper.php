@@ -9,6 +9,7 @@ use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Contract\ContractParser;
+use TypePHP\Exception\TypeError as TypePHPTypeError;
 use TypePHP\Internal\ErrorFactory;
 use TypePHP\Validator\TypeValidatorRegistry;
 
@@ -108,14 +109,14 @@ final class IterableWrapper
             if ($keyTypeNode !== null && $key !== null) {
                 $err = $registry->validate($key, $keyTypeNode, "$prefix key");
                 if ($err !== null) {
-                    throw ErrorFactory::prepareException(new \TypeError($err->getMessage()));
+                    throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
                 }
             }
 
             if ($itemTypeNode !== null) {
                 $err = $registry->validate($value, $itemTypeNode, "$prefix value");
                 if ($err !== null) {
-                    throw ErrorFactory::prepareException(new \TypeError($err->getMessage()));
+                    throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
                 }
             }
         };
