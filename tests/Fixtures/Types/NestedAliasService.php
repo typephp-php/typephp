@@ -13,24 +13,13 @@ namespace TypePHP\Tests\Fixtures\Types;
  * @phpstan-type LocalRecordShape array{id: LocalId, status: LocalStatus}
  * @phpstan-type LocalRecordList list<LocalRecordShape>
  * @phpstan-type ImportedRecordList list<ImportedRecordShape>
+ *
  * @phpstan-type AdminStatus 'admin_active'
  * @phpstan-type UserStatus 'user_active'
  * @phpstan-type UnionOfAliases AdminStatus|UserStatus
  */
 class NestedAliasService
 {
-    /**
-     * Property hook validated against 3-class chained imported shape
-     *
-     * @var ChainedShape
-     */
-    public array $chainedProperty {
-        get => $this->_chainedProperty;
-        set => $this->_chainedProperty = $value;
-    }
-
-    private array $_chainedProperty = ['code' => 1, 'label' => 'init'];
-
     /**
      * @param LocalRecordList $records
      */

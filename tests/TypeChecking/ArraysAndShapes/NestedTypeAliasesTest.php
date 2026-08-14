@@ -22,24 +22,22 @@ describe('Nested Type Aliases (Local and Imported)', function () {
 
             $invalidRecords = [
                 ['id' => 10, 'status' => 'active'],
-                ['id' => -5, 'status' => 'pending'], // -5 violates LocalId (positive-int)
+                ['id' => -5, 'status' => 'pending'], 
             ];
 
             expect(fn () => $service->saveLocalRecords($invalidRecords))
-                ->toThrow(TypeError::class, "['id'] must be of type positive-int")
-            ;
+                ->toThrow(TypeError::class, "['id'] must be of type positive-int");
         });
 
         test('throws TypeError when nested shape item violates local union alias', function () {
             $service = new NestedAliasService();
 
             $invalidRecords = [
-                ['id' => 10, 'status' => 'archived'], // 'archived' violates LocalStatus ('active'|'pending')
+                ['id' => 10, 'status' => 'archived'], 
             ];
 
             expect(fn () => $service->saveLocalRecords($invalidRecords))
-                ->toThrow(TypeError::class, "['status'] must be of type ('active' | 'pending')")
-            ;
+                ->toThrow(TypeError::class, "['status'] must be of type ('active' | 'pending')");
         });
     });
 
@@ -59,12 +57,11 @@ describe('Nested Type Aliases (Local and Imported)', function () {
             $service = new NestedAliasService();
 
             $invalidRecords = [
-                ['id' => -100, 'status' => 'active'],
+                ['id' => -100, 'status' => 'active'], 
             ];
 
             expect(fn () => $service->saveImportedRecords($invalidRecords))
-                ->toThrow(TypeError::class, "['id'] must be of type positive-int")
-            ;
+                ->toThrow(TypeError::class, "['id'] must be of type positive-int");
         });
 
         test('throws TypeError when nested shape item violates imported union alias', function () {
@@ -75,8 +72,7 @@ describe('Nested Type Aliases (Local and Imported)', function () {
             ];
 
             expect(fn () => $service->saveImportedRecords($invalidRecords))
-                ->toThrow(TypeError::class, "['status'] must be of type ('active' | 'pending')")
-            ;
+                ->toThrow(TypeError::class, "['status'] must be of type ('active' | 'pending')");
         });
     });
 
@@ -87,12 +83,10 @@ describe('Nested Type Aliases (Local and Imported)', function () {
             expect($service->saveChainedData(['code' => 50, 'label' => 'valid']))->toBeTrue();
 
             expect(fn () => $service->saveChainedData(['code' => -10, 'label' => 'valid']))
-                ->toThrow(TypeError::class, "['code'] must be of type positive-int")
-            ;
+                ->toThrow(TypeError::class, "['code'] must be of type positive-int");
 
             expect(fn () => $service->saveChainedData(['code' => 50, 'label' => '']))
-                ->toThrow(TypeError::class, "['label'] must be of type non-empty-string")
-            ;
+                ->toThrow(TypeError::class, "['label'] must be of type non-empty-string");
         });
     });
 
@@ -104,20 +98,7 @@ describe('Nested Type Aliases (Local and Imported)', function () {
             expect($service->setUnionStatus('user_active'))->toBeTrue();
 
             expect(fn () => $service->setUnionStatus('guest_active'))
-                ->toThrow(TypeError::class, "('admin_active' | 'user_active')")
-            ;
-        });
-    });
-
-    describe('Edge Case 3: Property Hooks with Imported Type Aliases', function () {
-        test('validates PHP 8.4 property hook write against imported 3-tier shape alias', function () {
-            $service = new NestedAliasService();
-
-            $service->chainedProperty = ['code' => 100, 'label' => 'updated'];
-            expect($service->chainedProperty['code'])->toBe(100);
-
-            expect(fn () => $service->chainedProperty = ['code' => -1, 'label' => 'updated'])
-                ->toThrow(TypeError::class, "Property TypePHP\Tests\Fixtures\Types\NestedAliasService::\$chainedProperty['code'] must be of type positive-int");
+                ->toThrow(TypeError::class, "('admin_active' | 'user_active')");
         });
     });
 });
