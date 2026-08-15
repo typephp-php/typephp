@@ -148,25 +148,25 @@ final class RuntimeTypeChecker
     /**
      * Wraps a callable parameter to intercept calls and validate inputs/returns dynamically.
      */
-    public static function wrapCallable(string $function, string $paramName, mixed $callable): mixed
+    public static function wrapCallable(string $function, string $paramName, mixed $callable, object|string|null $thisOrClass = null): mixed
     {
         if (! self::isEnabled()) {
             return $callable;
         }
 
-        return CallableWrapper::wrap($function, $paramName, $callable, self::getRegistry());
+        return CallableWrapper::wrap($function, $paramName, $callable, self::getRegistry(), $thisOrClass);
     }
 
     /**
      * Wraps an iterable or generator parameter to lazily validate items during iteration.
      */
-    public static function wrapIterable(string $function, string $paramName, mixed $iterable): mixed
+    public static function wrapIterable(string $function, string $paramName, mixed $iterable, object|string|null $thisOrClass = null): mixed
     {
         if (! self::isEnabled()) {
             return $iterable;
         }
 
-        return IterableWrapper::wrap($function, $paramName, $iterable, self::getRegistry());
+        return IterableWrapper::wrap($function, $paramName, $iterable, self::getRegistry(), $thisOrClass);
     }
 
     /**

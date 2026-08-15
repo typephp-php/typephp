@@ -7,6 +7,8 @@ namespace TypePHP\Resolver;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
@@ -46,6 +48,28 @@ final class TemplateSubstitutor
             }
 
             return $node;
+        }
+
+        if ($node instanceof CallableTypeNode) {
+            $parameters = array_map(
+                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+                    self::substitute($param->type, $boundTemplates, $declaredTemplates),
+                    $param->isReference,
+                    $param->isVariadic,
+                    $param->parameterName,
+                    $param->isOptional
+                ),
+                $node->parameters
+            );
+
+            $returnType = self::substitute($node->returnType, $boundTemplates, $declaredTemplates);
+
+            return new CallableTypeNode(
+                $node->identifier,
+                $parameters,
+                $returnType,
+                $node->templateTypes
+            );
         }
 
         if ($node instanceof ConditionalTypeNode) {

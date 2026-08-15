@@ -74,7 +74,7 @@ final class FunctionContractInjector
             return false;
         }
 
-        $visitor = new class () extends NodeVisitorAbstract {
+        $visitor = new class() extends NodeVisitorAbstract {
             public bool $isGen = false;
 
             public function enterNode(Node $n): ?int
@@ -171,6 +171,7 @@ final class FunctionContractInjector
                                     new Node\Arg(new Node\Scalar\MagicConst\Method()),
                                     new Node\Arg(new Node\Scalar\String_($paramName)),
                                     new Node\Arg(new Node\Expr\Variable($paramName)),
+                                    new Node\Arg($thisArg),
                                 ]
                             )
                         )
@@ -194,6 +195,7 @@ final class FunctionContractInjector
                                     new Node\Arg(new Node\Scalar\MagicConst\Method()),
                                     new Node\Arg(new Node\Scalar\String_($paramName)),
                                     new Node\Arg(new Node\Expr\Variable($paramName)),
+                                    new Node\Arg($thisArg),
                                 ]
                             )
                         )
@@ -215,7 +217,7 @@ final class FunctionContractInjector
     private static function wrapGeneratorReturns(array $stmts): array
     {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class () extends NodeVisitorAbstract {
+        $traverser->addVisitor(new class() extends NodeVisitorAbstract {
             public function enterNode(Node $n): int|Node|null
             {
                 if ($n instanceof Node\Expr\Closure || $n instanceof Node\Expr\ArrowFunction || $n instanceof Node\Stmt\Function_ || $n instanceof Node\Stmt\ClassMethod) {
@@ -335,12 +337,11 @@ final class FunctionContractInjector
     private static function wrapNonGeneratorReturns(array $stmts, Node\Expr $thisArg, bool $isNativeVoid): array
     {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class ($thisArg, $isNativeVoid) extends NodeVisitorAbstract {
+        $traverser->addVisitor(new class($thisArg, $isNativeVoid) extends NodeVisitorAbstract {
             public function __construct(
                 private Node\Expr $thisArg,
                 private bool $isNativeVoid
-            ) {
-            }
+            ) {}
 
             public function enterNode(Node $n): int|array|null
             {

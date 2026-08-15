@@ -7,6 +7,8 @@ namespace TypePHP\Contract;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
@@ -614,6 +616,28 @@ final class ContractParser
             }
 
             return $node;
+        }
+
+        if ($node instanceof CallableTypeNode) {
+            $parameters = array_map(
+                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+                    self::substituteAliases($param->type, $aliases),
+                    $param->isReference,
+                    $param->isVariadic,
+                    $param->parameterName,
+                    $param->isOptional
+                ),
+                $node->parameters
+            );
+
+            $returnType = self::substituteAliases($node->returnType, $aliases);
+
+            return new CallableTypeNode(
+                $node->identifier,
+                $parameters,
+                $returnType,
+                $node->templateTypes
+            );
         }
 
         if ($node instanceof OffsetAccessTypeNode) {
