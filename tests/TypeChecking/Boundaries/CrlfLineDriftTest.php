@@ -133,8 +133,13 @@ describe('CRLF (\r\n) Windows Line-Drift Stress Test', function () {
             $caught = false;
         } catch (TypeError $e) {
             $caught = true;
-            expect($e->getLine())->toBe(13)
-                ->and(str_replace('\\', '/', $e->getFile()))->toBe(str_replace('\\', '/', $crlfScriptPath));
+            expect($e->getLine())->toBe(13);
+
+            $expectedPath = realpath($crlfScriptPath) !== false ? realpath($crlfScriptPath) : $crlfScriptPath;
+            $actualPath = realpath($e->getFile()) !== false ? realpath($e->getFile()) : $e->getFile();
+
+            expect(strtolower(str_replace('\\', '/', (string) $actualPath)))
+                ->toBe(strtolower(str_replace('\\', '/', (string) $expectedPath)));
         } finally {
             @unlink($crlfScriptPath);
             @rmdir($tempDir);
