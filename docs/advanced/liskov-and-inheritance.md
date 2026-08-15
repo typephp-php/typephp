@@ -283,6 +283,57 @@ $service->recordAuditLog(-1, 'audit_ok');
 
 ---
 
+## Trait Conflict Resolution (`insteadof`)
+
+When a class uses multiple traits with identical method names, PHP requires resolving the collision with `insteadof`. TypePHP respects `insteadof` precedence, enforcing contracts strictly from the selected trait:
+
+```php
+trait PrimaryLogger
+{
+    /**
+     * @param positive-int $level
+     * @param non-empty-string $message
+     */
+    public function log(int $level, string $message): string
+    {
+        return "primary: {$level} - {$message}";
+    }
+}
+
+trait SecondaryLogger
+{
+    /**
+     * @param negative-int $level
+     * @param string $message
+     */
+    public function log(int $level, string $message): string
+    {
+        return "secondary: {$level} - {$message}";
+    }
+}
+
+class LoggingService
+{
+    // PrimaryLogger::log is selected instead of SecondaryLogger
+    use SecondaryLogger, PrimaryLogger {
+        PrimaryLogger::log insteadof SecondaryLogger;
+        SecondaryLogger::log as secondaryLog;
+    }
+}
+
+$service = new LoggingService();
+
+// 1. Primary log() enforces positive-int and non-empty-string from PrimaryLogger
+$service->log(10, 'server_boot'); // Valid
+// $service->log(-5, 'server_boot'); // Throws: TypeError: Argument $level must be of type positive-int
+
+// 2. Aliased secondaryLog() enforces negative-int from SecondaryLogger
+$service->secondaryLog(-20, 'server_shutdown'); // Valid
+// $service->secondaryLog(20, 'server_shutdown'); // Throws: TypeError: Argument $level must be of type negative-int
+```
+
+---
+
 ## Partial Parameter Overriding (Gap-Filling)
 
 If a child class overrides a method and provides a docblock for **only some** parameters, TypePHP fills in the missing parameter contracts from the parent class or interface:
@@ -338,7 +389,7 @@ When a child class, constructor, or trait implementation overrides an ancestor m
 TypePHP resolves parameter contract inheritance using **3-Tier Name & Position Disambiguation**:
 
 1. **Name-First Matching:** If a parameter name in the child method matches a parameter name in the parent class (e.g. `$container`), the parent's contract is mapped to that parameter regardless of its position index in the child.
-2. **Position Fallback on Renamed Parameters:** If a parameter is renamed in the child class (e.g., `$id` $\rightarrow$ `$userId`), TypePHP maps the contract using its position index.
+2. **Position Fallback on Renamed Parameters:** If a parameter is renamed in the child class (e.g. `$id` $\rightarrow$ `$userId`), TypePHP maps the contract using its position index.
 3. **Candidate Disambiguation (Shift Protection):** If a child class inserts a new parameter at index 0 (shifting all subsequent parameters down), TypePHP **verifies that the candidate child parameter does not already exist in the parent under its own name**. This prevents parent parameter contracts from accidentally mis-mapping onto shifted child parameters!
 
 ```php
@@ -435,7 +486,7 @@ To ensure that resolving complex inheritance chains introduces zero perceptible 
 
 When you call `$userRepo->find(42)` 1,000 times in a loop:
 * **Invocation #1:** TypePHP builds the `UserRepository` inheritance tree, parses the docblocks, merges parent gaps, and caches the resolved contract in static RAM.
-* **Invocations #2 through #1,000:** TypePHP fetches the pre-resolved contract directly from static RAM in **O(1) constant nanoseconds**—zero Reflection traversal occurs!
+* **Invocations #2 through #1,000:** TypePHP fetches the pre-resolved contract directly from static RAM in **$O(1)$ constant nanoseconds**—zero Reflection traversal occurs!
 
 ---
 
@@ -445,3 +496,4 @@ TypePHP protects your application from third-party vendor docblock bugs using **
 
 * If a parent class or interface is located inside an excluded folder (such as `/vendor/`), TypePHP **ignores its inherited docblocks**.
 * This prevents third-party package docblock errors or outdated annotations from causing unexpected `TypeError` exceptions in your application code.
+```

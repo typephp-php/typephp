@@ -6,7 +6,7 @@ TypePHP provides lazy runtime validation for `Traversable` objects, `Iterator` i
 
 ## How Lazy Iteration Works (`IterableWrapper` & `IteratorProxy`)
 
-When an iterator or generator is passed into a function accepting `Traversable<K, V>` or returned from a function:
+When an iterable or generator is passed into a function accepting `Traversable<K, V>` or returned from a function:
 1. **Zero Memory Spikes:** TypePHP does not convert the iterator to an array or load items eagerly into RAM.
 2. **On-the-Fly Validation:** Keys (`K`) and values (`V`) are validated lazily during iteration at the exact moment each item is accessed inside `current()` or `yield`.
 3. **Rewindability Preserved:** `IteratorProxy` unwraps and preserves iterator rewindability, allowing multiple `foreach` loops over the same wrapped iterator without crashing.
@@ -36,14 +36,90 @@ function processTraversable(Traversable $items): array
     return $results;
 }
 
-// Valid Call
+// 1. Valid Call
 $iterator = new ArrayIterator(['item1' => 10, 'item2' => 20]);
 processTraversable($iterator);
 
-// Invalid Call (Value -50 violates positive-int)
+// 2. Invalid Call (Value -50 violates positive-int)
 $badIterator = new ArrayIterator(['item1' => 10, 'item2' => -50]);
 processTraversable($badIterator);
 // Throws: TypeError: Iterator $items value['item2'] must be of type positive-int, negative int (-50) given
+
+// 3. Invalid Call (Empty string violates non-empty-string key)
+$badKeyIterator = new ArrayIterator(['' => 10]);
+processTraversable($badKeyIterator);
+// Throws: TypeError: Iterator $items key must be of type non-empty-string, empty string ('') given
+```
+
+---
+
+## Generic Iterables with Template Substitution (`@template T`)
+
+When a function accepts generic iterables (`iterable<T>` or `Traversable<string, T>`), TypePHP dynamically substitutes `T` with the bound generic type and lazily validates items during iteration:
+
+> **Deep Dive Guide:** For comprehensive details on template bounds, covariance/contravariance, and runtime generic state inspection, see the [Generics & Bounds](/generics/generics-and-bounds) documentation.
+
+```php
+use App\Models\Animal;
+use App\Models\Dog;
+use App\Models\Car;
+
+/**
+ * Generic stream processor where T is inferred from $sample
+ *
+ * @template T
+ *
+ * @param iterable<T> $stream
+ * @param T $sample
+ *
+ * @return list<T>
+ */
+function collectStream(iterable $stream, mixed $sample): array
+{
+    $collected = [];
+    foreach ($stream as $item) {
+        $collected[] = $item;
+    }
+
+    return $collected;
+}
+
+// 1. Valid Call: Infers T = int, validates all items against int
+$intIterator = new ArrayIterator([10, 20, 30]);
+collectStream($intIterator, 1); // Returns [10, 20, 30]
+
+// 2. Invalid Call: T is inferred as int (from 1), but iterator yields string ('invalid')
+$badIterator = new ArrayIterator([10, 'invalid', 30]);
+collectStream($badIterator, 1);
+// Throws: TypeError: Iterator $stream value must be of type int, string 'invalid' given
+```
+
+### Generic Traversables with Class Bounds (`@template T of Animal`)
+
+```php
+/**
+ * @template T of Animal
+ *
+ * @param Traversable<non-empty-string, T> $stream
+ *
+ * @return list<T>
+ */
+function collectAnimalStream(Traversable $stream): array
+{
+    $collected = [];
+    foreach ($stream as $key => $animal) {
+        $collected[] = $animal;
+    }
+
+    return $collected;
+}
+
+// Valid Call
+collectAnimalStream(new ArrayIterator(['dog1' => new Dog()]));
+
+// Invalid Call (Car is not an Animal)
+collectAnimalStream(new ArrayIterator(['car1' => new Car()]));
+// Throws: TypeError: Iterator $stream value must be of type App\Models\Animal, App\Models\Car given
 ```
 
 ---
@@ -76,11 +152,38 @@ foreach ($gen as $name => $score) {
 }
 ```
 
+### Generic Generators Yielding Template `T` (`Generator<int, T>`)
+
+Generators seamlessly support generic template substitution for yielded values:
+
+```php
+/**
+ * @template T
+ *
+ * @param T $item
+ * @param positive-int $count
+ *
+ * @return Generator<int, T>
+ */
+function streamItem(mixed $item, int $count): Generator
+{
+    for ($i = 0; $i < $count; $i++) {
+        yield $i => $item;
+    }
+}
+
+// Infers T = int, yields int values
+$gen = streamItem(100, 3);
+foreach ($gen as $k => $v) {
+    // [0 => 100, 1 => 100, 2 => 100]
+}
+```
+
 ---
 
 ## Generator Input Validation (`$gen->send()` / `TSend`)
 
-TypePHP validates values sent into a generator via `$gen->send()` against the declared `TSend` template parameter:
+TypePHP validates values sent into an interactive generator via `$gen->send()` against the declared `TSend` parameter:
 
 ```php
 /**
@@ -97,15 +200,48 @@ function processInteractiveGenerator(): Generator
 $gen = processInteractiveGenerator();
 $gen->current(); // Advances to first yield
 
-// Valid Send (100 satisfies TSend = positive-int)
+// 1. Valid Send (100 satisfies TSend = positive-int)
 $gen->send(100);
 
-// Invalid Send (-500 violates TSend = positive-int)
+// 2. Invalid Send (-500 violates TSend = positive-int)
 $gen = processInteractiveGenerator();
 $gen->current();
 
 $gen->send(-500);
-// Throws: TypeError: processInteractiveGenerator(): Generator sent value (TSend) must be of type positive-int
+// Throws: TypeError: processInteractiveGenerator(): Generator sent value (TSend) must be of type positive-int, negative int (-500) given
+```
+
+### Generic Interactive Generators (`Generator<int, T, T, void>`)
+
+When `TSend` uses a generic template `T`, `$gen->send()` is dynamically validated against the bound generic type:
+
+```php
+/**
+ * @template T
+ *
+ * @param T $initial
+ *
+ * @return Generator<int, T, T, void>
+ */
+function streamInteractive(mixed $initial): Generator
+{
+    $current = $initial;
+    for ($i = 0; $i < 3; $i++) {
+        $input = yield $i => $current;
+        if ($input !== null) {
+            $current = $input;
+        }
+    }
+}
+
+// Initial value 10 locks T = int
+$gen = streamInteractive(10);
+$gen->current();
+
+$gen->send(20); // Valid (20 is int)
+
+$gen->send('invalid'); // Invalid: string violates T = int!
+// Throws: TypeError: streamInteractive(): Generator sent value (TSend) must be of type int, string 'invalid' given
 ```
 
 ---
@@ -139,7 +275,6 @@ Because `GeneratorChecker` delegates key, value, and `TSend` validation directly
 ```php
 use App\Generics\Producer;
 use App\Models\Dog;
-use App\Models\Car;
 
 /**
  * Generator yielding Array Shapes and accepting Array Shapes in $gen->send()
@@ -156,13 +291,58 @@ function processComplexGenerator(): Generator
 $gen = processComplexGenerator();
 $firstItem = $gen->current(); // Returns ['id' => 10, 'username' => 'Alice']
 
-// Valid Send
+// 1. Valid Send
 $gen->send(['action' => 'approve']);
 
-// Invalid Send ('action' => 'delete' violates 'approve'|'reject')
+// 2. Invalid Send ('action' => 'delete' violates 'approve'|'reject')
 $gen = processComplexGenerator();
 $gen->current();
 
 $gen->send(['action' => 'delete']);
 // Throws: TypeError: processComplexGenerator(): Generator sent value (TSend)['action'] must be of type ('approve' | 'reject')
+```
+
+---
+
+## Multi-Level `IteratorAggregate` Unwrapping & Method Forwarding
+
+When passing custom classes implementing `IteratorAggregate`, `IteratorProxy` recursively unwraps the inner iterator while preserving method forwarding and `Countable` support:
+
+```php
+class NestedCollection implements IteratorAggregate, Countable
+{
+    public function __construct(private array $items = ['a' => 10, 'b' => 20]) {}
+
+    public function getIterator(): Traversable
+    {
+        return new ArrayIterator($this->items);
+    }
+
+    public function count(): int
+    {
+        return count($this->items);
+    }
+
+    public function getCustomMetadata(): string
+    {
+        return 'custom_metadata';
+    }
+}
+
+/**
+ * @param Traversable<string, positive-int> $collection
+ */
+function processCollection(Traversable $collection): void
+{
+    // 1. Iteration validates on-the-fly
+    foreach ($collection as $k => $v) { ... }
+
+    // 2. Countable::count() is forwarded
+    echo count($collection); // 2
+
+    // 3. Custom methods forwarded via __call
+    echo $collection->getCustomMetadata(); // 'custom_metadata'
+}
+
+processCollection(new NestedCollection());
 ```

@@ -66,6 +66,148 @@ registerUser(age: 25, username: 'Alice', id: -5);
 
 ---
 
+## Arguments Passed By-Reference (`&$param`)
+
+TypePHP natively supports PHP's by-reference parameter semantics (`function update(int &$value)`).
+
+### How By-Reference Validation Works
+
+1. **Entry Guard Rails:** TypePHP inspects and validates the variable's value *on function entry* before the function body executes.
+2. **In-Place Caller Scope Mutation:** If the argument passes validation, the function body executes normally, and any modifications to the variable mutate the caller's variable in the caller's scope.
+3. **Safety Guarantee on Failure:** If an invalid value is passed into a by-reference parameter, a `TypeError` is thrown *before* any code in the function body runs, ensuring the caller's variable remains **100% un-mutated and un-corrupted**.
+
+```php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * @param positive-int &$score
+ * @param non-empty-string &$username
+ */
+function applyBonus(int &$score, string &$username): void
+{
+    $score += 50;
+    $username = strtoupper($username);
+}
+
+// 1. Valid Call: Value is validated on entry and mutated in caller scope
+$userScore = 100;
+$userName = 'alice';
+
+applyBonus($userScore, $userName);
+
+echo $userScore; // Output: 150
+echo $userName;  // Output: 'ALICE'
+
+// 2. Invalid Call: Throws TypeError on entry, leaving caller variable untouched!
+$invalidScore = -10;
+$userTag = 'alice';
+
+try {
+    applyBonus($invalidScore, $userTag);
+} catch (\TypeError $e) {
+    echo $invalidScore; // Still -10 (Caller variable was never corrupted!)
+}
+```
+
+### DocBlock Syntax Flexibility (`&$param` vs. `$param`)
+
+You can write your DocBlock annotations with or without the leading ampersand (`&`). Both are recognized identically by TypePHP's parser:
+
+```php
+// Option A: Explicit ampersand in DocBlock (Recommended)
+/**
+ * @param positive-int &$count
+ */
+function incrementCount(int &$count): void { $count++; }
+
+// Option B: Ampersand in native PHP signature only (Fully supported)
+/**
+ * @param positive-int $count
+ */
+function incrementCount(int &$count): void { $count++; }
+```
+
+### By-Reference Arrays & Shapes
+
+Mutating collections or array shapes in-place preserves caller scope bindings:
+
+```php
+/**
+ * @param list<positive-int> &$scores
+ */
+function appendReward(array &$scores): void
+{
+    $scores[] = 500; // Mutates array in caller scope
+}
+
+$myScores = [10, 20, 30];
+appendReward($myScores);
+
+print_r($myScores); // [10, 20, 30, 500]
+```
+
+### Variadic By-Reference Parameters (`&...$params`)
+
+When accepting a variable number of by-reference arguments (`int &...$numbers`), TypePHP validates every individual argument on entry and preserves in-place mutations across all variadic arguments:
+
+```php
+/**
+ * @param positive-int &...$numbers
+ */
+function doubleAll(int &...$numbers): void
+{
+    foreach ($numbers as &$num) {
+        $num *= 2;
+    }
+}
+
+$a = 5;
+$b = 10;
+$c = 15;
+
+doubleAll($a, $b, $c);
+
+echo "$a, $b, $c"; // Output: 10, 20, 30
+```
+
+### OOP & Interface Inheritance for By-Reference Parameters
+
+When a child class implements an interface or overrides a parent method with by-reference parameters, the type contract and reference semantics are inherited automatically (even when child methods rename parameters):
+
+```php
+interface StatusUpdaterInterface
+{
+    /**
+     * @param non-empty-string &$status
+     * @param positive-int &$code
+     */
+    public function update(string &$status, int &$code): void;
+}
+
+class StatusUpdater implements StatusUpdaterInterface
+{
+    // Inherits contracts and by-reference semantics seamlessly
+    public function update(string &$status, int &$statusCode): void
+    {
+        $status = strtoupper($status);
+        $statusCode += 100;
+    }
+}
+
+$updater = new StatusUpdater();
+$currentStatus = 'pending';
+$currentCode = 200;
+
+$updater->update($currentStatus, $currentCode);
+
+echo $currentStatus; // 'PENDING'
+echo $currentCode;   // 300
+```
+
+---
+
 ## Class Methods (Instance & Static)
 
 All parameter and return contract rules apply identically to **instance methods** (`public`, `protected`, `private`) and **static methods**:

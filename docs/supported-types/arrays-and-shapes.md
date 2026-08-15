@@ -1,6 +1,6 @@
 # Arrays & Shapes
 
-TypePHP provides runtime enforcement for sequential lists, key-value generic maps, typed class arrays, positional tuples, sealed and unsealed array shapes, and object shapes.
+TypePHP provides runtime enforcement for sequential lists, key-value generic maps, typed class arrays, positional tuples, sealed and unsealed array shapes, key/value extractions, offset access, and object shapes.
 
 ---
 
@@ -22,14 +22,14 @@ function processList(array $tags, array $scores): void
     // ...
 }
 
-// Valid Call
+// 1. Valid Call
 processList(['php', 'pest', 'typephp'], [10, 20, 30]);
 
-// Invalid Call (Associative array passed where list was expected)
+// 2. Invalid Call (Associative array passed where list was expected)
 processList(['tag1' => 'php'], [10, 20]);
 // Throws: TypeError: processList(): Argument $tags must be a list
 
-// Invalid Call (Empty array passed where non-empty-list was expected)
+// 3. Invalid Call (Empty array passed where non-empty-list was expected)
 processList(['php'], []);
 // Throws: TypeError: processList(): Argument $scores must be a non-empty list
 ```
@@ -51,14 +51,14 @@ function recordScores(array $userScores): void
     // ...
 }
 
-// Valid Call
+// 1. Valid Call
 recordScores(['alice' => 100, 'bob' => 95]);
 
-// Invalid Call (Key '0' is integer instead of string)
+// 2. Invalid Call (Key 0 is integer instead of string)
 recordScores([0 => 100]);
 // Throws: TypeError: recordScores(): Argument $userScores key must be of type string
 
-// Invalid Call (Value -5 violates positive-int)
+// 3. Invalid Call (Value -5 violates positive-int)
 recordScores(['alice' => -5]);
 // Throws: TypeError: recordScores(): Argument $userScores['alice'] must be of type positive-int
 ```
@@ -97,7 +97,7 @@ processTypedArrays(
 // Throws: TypeError: processTypedArrays(): Argument $ids[1] must be of type positive-int, negative int (-50) given
 ```
 
-> **Performance Optimization:** When validating arrays of objects (such as `User[]`), TypePHP memoizes previously checked object instances in `\WeakMap`. If the same object instance appears multiple times in a collection, its type is checked once and retrieved in O(1) time on subsequent accesses.
+> **Performance Optimization:** When validating arrays of objects (such as `User[]`), TypePHP memoizes previously checked object instances in `\WeakMap`. If the same object instance appears multiple times in a collection, its type is checked once and retrieved in $O(1)$ time on subsequent accesses.
 
 ---
 
@@ -114,13 +114,13 @@ function processMatrix(array $matrix): void
     // ...
 }
 
-// Valid Call
+// 1. Valid Call
 processMatrix([
     'math' => [100, 95],
     'science' => [88, 92],
 ]);
 
-// Invalid Call (Nested list item -50 violates positive-int)
+// 2. Invalid Call (Nested list item -50 violates positive-int)
 processMatrix([
     'math' => [100, -50],
 ]);
@@ -132,6 +132,8 @@ processMatrix([
 ## Generics inside Typed Arrays & Shapes (`list<Producer<T>>`)
 
 TypePHP validates generic container objects nested inside arrays or array shapes:
+
+> **Deep Dive Guide:** For comprehensive details on generic collections and variance modifiers (`covariant`/`contravariant`), see the [Generics & Bounds](/generics/generics-and-bounds) documentation.
 
 ```php
 use App\Generics\Producer;
@@ -147,13 +149,13 @@ function processGenericList(array $producers, array $payload): void
     // ...
 }
 
-// Valid Call
+// 1. Valid Call
 processGenericList(
     [new Producer(new Dog()), new Producer(new Dog())],
     ['items' => [new Producer(new Dog())], 'count' => 1]
 );
 
-// Invalid Call (Producer holds Car instead of Dog)
+// 2. Invalid Call (Producer holds Car instead of Dog)
 processGenericList(
     [new Producer(new Dog()), new Producer(new Car())],
     ['items' => [new Producer(new Dog())], 'count' => 1]
@@ -180,13 +182,13 @@ function saveUserPayload(array $payload): void
     // ...
 }
 
-// Valid Call (Optional 'role' key omitted)
+// 1. Valid Call (Optional 'role' key omitted)
 saveUserPayload(['id' => 10, 'username' => 'Alice']);
 
-// Valid Call (Optional 'role' key provided)
+// 2. Valid Call (Optional 'role' key provided)
 saveUserPayload(['id' => 10, 'username' => 'Alice', 'role' => 'admin']);
 
-// Invalid Call (Missing required 'username' key)
+// 3. Invalid Call (Missing required 'username' key)
 saveUserPayload(['id' => 10]);
 // Throws: TypeError: saveUserPayload(): Argument $payload is missing required key 'username'
 ```
@@ -208,50 +210,100 @@ function processUnsealedOptions(array $options): void
     // ...
 }
 
-// Valid Call (Includes extra string key 'category')
+// 1. Valid Call (Includes extra string key 'category')
 processUnsealedOptions(['id' => 10, 'category' => 'admin']);
 
-// Invalid Call (Extra key 'code' has integer value 999 instead of string)
+// 2. Invalid Call (Extra key 'code' has integer value 999 instead of string)
 processUnsealedOptions(['id' => 10, 'code' => 999]);
 // Throws: TypeError: processUnsealedOptions(): Argument $options['code'] must be of type string
 ```
 
+### Unsealed Shapes with Complex Nested Types (`...<string, list<T>>` or `...<string, array{...}>`)
+
+Wildcard extra keys in unsealed shapes can be constrained to complex nested structures like lists or sub-shapes:
+
+```php
+/**
+ * Unsealed shape requiring 'id', but permitting extra keys holding list<positive-int>
+ *
+ * @param array{id: positive-int, ...<string, list<positive-int>>} $payload
+ */
+function processBatchOptions(array $payload): void
+{
+    // ...
+}
+
+// 1. Valid Call
+processBatchOptions([
+    'id' => 10,
+    'even_scores' => [2, 4, 6],
+    'odd_scores' => [1, 3, 5],
+]);
+
+// 2. Invalid Call (-3 violates positive-int in nested extra list)
+processBatchOptions([
+    'id' => 10,
+    'odd_scores' => [1, -3, 5],
+]);
+// Throws: TypeError: Argument $payload['odd_scores'][1] must be of type positive-int
+```
+
 ---
 
-## Positional Tuple Shapes (`array{0: T1, 1: T2}`)
+## Positional Tuple Shapes (`array{0: T1, 1: T2}` & Keyless Tuples)
 
 Define fixed-length, positional array tuples:
 
 ```php
 /**
- * @param array{0: positive-int, 1: non-empty-string} $tuple
+ * Positional Tuple with Optional Trailing Element
+ *
+ * @param array{0: positive-int, 1: non-empty-string, 2?: bool} $tuple
  */
 function processTuple(array $tuple): void
 {
     // ...
 }
 
-// Valid Call
+// 1. Valid Call (Optional index 2 omitted)
 processTuple([100, 'success']);
 
-// Invalid Call (Index 0 is negative integer)
+// 2. Valid Call (Optional index 2 provided)
+processTuple([100, 'success', true]);
+
+// 3. Invalid Call (Index 0 is negative integer)
 processTuple([-5, 'success']);
 // Throws: TypeError: processTuple(): Argument $tuple['0'] must be of type positive-int
 ```
 
-Here is the updated documentation with a special, dedicated section for **`key-of<T>`** and **`value-of<T>`** inside `docs/supported-types/arrays-and-shapes.md`.
+### Implicit Keyless Tuple Syntax (`array{T1, T2}`)
+
+TypePHP fully supports implicit keyless tuple syntax (e.g. `array{list<positive-int>, non-empty-string}`):
+
+```php
+/**
+ * @param array{list<positive-int>, non-empty-string} $bundle
+ */
+function processBundle(array $bundle): void
+{
+    // ...
+}
+
+processBundle([[10, 20], 'bundle_tag']); // Valid
+```
 
 ---
+
 ## Key & Value Extraction (`key-of<T>` & `value-of<T>`)
 
-TypePHP supports dynamically restricting function parameters, return types, property writes, or array shape fields to the keys or values of an array constant, an array shape, or a PHP 8.1 Backed Enum using `key-of<T>` and `value-of<T>` type operators.
+TypePHP supports dynamically restricting function parameters, return types, property writes, or array shape fields to the keys or values of an array constant, an array shape, or a PHP 8.1 Enum using `key-of<T>` and `value-of<T>` type operators.
 
-> **Performance & Visibility:** TypePHP caches array and enum extractions in static memory, guaranteeing **$O(1)$ constant lookup times** during execution. Furthermore, it uses Reflection to safely bypass PHP visibility restrictions, allowing you to reference `private` or `protected` class constants (e.g., `key-of<self::PRIVATE_MAP>`) in docblocks without throwing runtime errors.
+> **Performance & Visibility:** TypePHP caches array and enum extractions in static memory, guaranteeing **$O(1)$ constant lookup times** during execution. Furthermore, it safely resolves `private` and `protected` class constants (e.g. `key-of<self::PRIVATE_MAP>`) without visibility violations.
 
 | Annotation | Supported Targets `T` | Validation Rule |
 | :--- | :--- | :--- |
-| **`key-of<T>`** | Array Constant, Array Shape, Enum | Validates that the value matches a valid **array key** or **Enum case name** (e.g., `'Active'`). |
-| **`value-of<T>`** | Array Constant, Backed Enum | Validates that the value matches a valid **array value** or **Enum backing value** (e.g., `'active'`). |
+| **`key-of<T>`** | Array Constant, Array Shape, UnitEnum, BackedEnum | Validates that the value matches a valid **array key**, shape key, or **Enum case name** (e.g. `'Active'`, `'Hearts'`). |
+| **`value-of<T>`** | Array Constant, BackedEnum | Validates that the value matches a valid **array value** or **BackedEnum backing value** (e.g. `'active'`, `1`). |
 
 ---
 
@@ -260,17 +312,10 @@ TypePHP supports dynamically restricting function parameters, return types, prop
 Extract allowed keys or values directly from `public`, `protected`, or `private` class constant arrays:
 
 ```php
-<?php
-
-declare(strict_types=1);
-
 namespace App\Database;
 
 class DriverManager
 {
-    /**
-     * Private constant array
-     */
     private const DRIVER_MAP = [
         'pdo_mysql'  => 'PDO\MySQL\Driver',
         'pdo_sqlite' => 'PDO\SQLite\Driver',
@@ -302,11 +347,22 @@ $manager->connect('pdo_mysql', 'PDO\PgSQL\Driver');
 
 ---
 
-### 2. Extracting from Enums
+### 2. Extracting from Enums (UnitEnums vs. BackedEnums)
 
-For Enums, `key-of<T>` strictly validates case **names**, while `value-of<T>` strictly validates **backing values**:
+* **UnitEnums (`enum Suit { case Hearts; case Spades; }`):**
+  * `key-of<Suit>` validates case **names** (`'Hearts'`, `'Spades'`).
+  * `value-of<Suit>` strictly rejects all values with a `TypeError` because pure UnitEnums possess no backing values.
+* **BackedEnums (`enum Status: string { case Active = 'active'; }` or `enum Code: int`):**
+  * `key-of<Status>` validates case **names** (`'Active'`).
+  * `value-of<Status>` validates **backing values** (`'active'`).
 
 ```php
+enum Suit
+{
+    case Hearts;
+    case Spades;
+}
+
 enum StatusEnum: string
 {
     case Active = 'active';
@@ -314,31 +370,33 @@ enum StatusEnum: string
 }
 
 /**
+ * @param key-of<Suit> $suitName          // Expects: 'Hearts' | 'Spades'
  * @param key-of<StatusEnum> $caseName    // Expects: 'Active' | 'Pending'
  * @param value-of<StatusEnum> $caseValue // Expects: 'active' | 'pending'
  */
-function setStatus(string $caseName, string $caseValue): void
+function configureStatus(string $suitName, string $caseName, string $caseValue): void
 {
     // ...
 }
 
-// Valid Call
-setStatus('Active', 'active');
+// 1. Valid Call
+configureStatus('Hearts', 'Active', 'active');
 
-// Invalid Case Name (Passing backing value 'active' where case name 'Active' was expected)
-setStatus('active', 'active');
+// 2. Invalid Case Name (Passing lowercase 'active' where case name 'Active' was expected)
+configureStatus('Hearts', 'active', 'active');
 // Throws: TypeError: Argument $caseName must be a key of enum StatusEnum
 
-// Invalid Backing Value
-setStatus('Active', 'archived');
-// Throws: TypeError: Argument $caseValue must be a value of enum StatusEnum
+// 3. Invalid UnitEnum value-of usage (UnitEnums have no backing values)
+function testBadUnitEnumValue(mixed $val): void {}
+/** @param value-of<Suit> $val */
+// Throws: TypeError: Argument $val must be a value of enum Suit
 ```
 
 ---
 
 ### 3. Inline Array Shapes & Type Aliases (`@phpstan-type`)
 
-`key-of<T>` and `value-of<T>` can be used directly on inline array shapes or nested deeply inside `@phpstan-type` / `@psalm-type` aliases:
+`key-of<T>` and `value-of<T>` can be used directly on inline array shapes or nested inside `@phpstan-type` / `@psalm-type` aliases:
 
 ```php
 namespace App\Services;
@@ -346,8 +404,6 @@ namespace App\Services;
 use App\Database\DriverManager;
 
 /**
- * Type alias extracting keys and values from external class constants
- *
  * @phpstan-type ConnectionParams array{
  *     driver: key-of<DriverManager::DRIVER_MAP>,
  *     driverClass?: value-of<DriverManager::DRIVER_MAP>
@@ -373,15 +429,13 @@ $service->configure(['driver' => 'pdo_mysql'], 'id');
 // Invalid Nested Driver Key inside Type Alias
 $service->configure(['driver' => 'pdo_pgsql'], 'id');
 // Throws: TypeError: Argument $params['driver'] must be a key of App\Database\DriverManager::DRIVER_MAP
-
-// Invalid Direct Shape Key ('invalid' is neither 'id' nor 'name')
-$service->configure(['driver' => 'pdo_mysql'], 'invalid');
-// Throws: TypeError: Argument $shapeKey must be a key of the specified array shape
 ```
----
-## Offset Access Types (`T[K]`)
 
-TypePHP supports evaluating offset access lookups on array shapes, constant arrays, and `@phpstan-type` aliases at runtime using `T[K]` syntax.
+---
+
+## Offset Access Types (`T[K]` & `T[K1][K2]`)
+
+TypePHP supports evaluating offset access lookups on array shapes, constant arrays, and `@phpstan-type` aliases at runtime using `T[K]` and multi-level `T[K1][K2]` syntax.
 
 > **AST Reduction:** TypePHP evaluates and reduces offset access lookups (e.g. `UserShape['id']` $\rightarrow$ `positive-int`) at the AST level before validation runs, executing type checks at **$O(1)$ constant speed**.
 
@@ -389,7 +443,12 @@ TypePHP supports evaluating offset access lookups on array shapes, constant arra
 namespace App\Services;
 
 /**
- * @phpstan-type UserShape array{id: positive-int, username: non-empty-string}
+ * @phpstan-type DatabaseConfig array{
+ *     connection: array{
+ *         port: int<1, 65535>,
+ *         driver: 'mysql'|'pgsql'
+ *     }
+ * }
  */
 class UserService
 {
@@ -398,12 +457,13 @@ class UserService
     ];
 
     /**
-     * Resolves UserShape['id'] directly to positive-int
+     * Resolves Multi-Level Offset DatabaseConfig['connection']['port'] -> int<1, 65535>
+     * Resolves Constant Offset self::CONFIG_MAP['mysql'] -> literal 'PDO\MySQL\Driver'
      *
-     * @param UserShape['id'] $userId
+     * @param DatabaseConfig['connection']['port'] $port
      * @param self::CONFIG_MAP['mysql'] $driverClass
      */
-    public function findUser(int $userId, string $driverClass): void
+    public function configure(int $port, string $driverClass): void
     {
         // ...
     }
@@ -411,17 +471,18 @@ class UserService
 
 $service = new UserService();
 
-// Valid
-$service->findUser(42, 'PDO\MySQL\Driver');
+// 1. Valid Call
+$service->configure(3306, 'PDO\MySQL\Driver');
 
-// Invalid $userId (-5 violates positive-int extracted from UserShape['id'])
-$service->findUser(-5, 'PDO\MySQL\Driver');
-// Throws: TypeError: Argument $userId must be of type positive-int
+// 2. Invalid Port (70000 exceeds int<1, 65535> extracted from nested offset)
+$service->configure(70000, 'PDO\MySQL\Driver');
+// Throws: TypeError: Argument $port must be <= 65535, 70000 given
 
-// Invalid $driverClass ('PDO\PgSQL\Driver' violates literal 'PDO\MySQL\Driver')
-$service->findUser(42, 'PDO\PgSQL\Driver');
+// 3. Invalid Driver Class ('PDO\PgSQL\Driver' violates literal 'PDO\MySQL\Driver')
+$service->configure(3306, 'PDO\PgSQL\Driver');
 // Throws: TypeError: Argument $driverClass must be literal 'PDO\MySQL\Driver'
 ```
+
 ---
 
 ## Object Shapes (`object{prop: type}` & `stdClass{prop: type}`)
@@ -430,11 +491,11 @@ Define property shape contracts for generic objects or strictly for `stdClass` i
 
 ### Generic Object Shapes (`object{prop: type}`)
 
-Accepts any object or `stdClass` matching the property shape:
+Accepts any object instance or `stdClass` matching the declared property shape:
 
 ```php
 /**
- * @param object{id: positive-int, name: non-empty-string} $user
+ * @param object{id: positive-int, name: non-empty-string, role?: string} $user
  */
 function processObjectShape(object $user): void
 {
@@ -446,11 +507,14 @@ $std->id = 42;
 $std->name = 'Alice';
 
 processObjectShape($std); // Valid
+
+class CustomUser { public int $id = 42; public string $name = 'Alice'; }
+processObjectShape(new CustomUser()); // Valid
 ```
 
 ### Strict `stdClass` Shapes (`stdClass{prop: type}`)
 
-Strictly requires a `stdClass` instance, rejecting custom class instances:
+Strictly requires a `\stdClass` instance, rejecting custom class instances:
 
 ```php
 /**
@@ -467,3 +531,7 @@ class CustomUser { public int $id = 42; public string $name = 'Alice'; }
 processStrictStdClass(new CustomUser());
 // Throws: TypeError: processStrictStdClass(): Argument $payload must be an instance of stdClass
 ```
+
+### Safe Inspection of Uninitialized Readonly Properties
+
+If an object instance contains uninitialized PHP 8.1+ `readonly` properties, TypePHP's `ObjectShapeValidator` safely inspects property initialization states using Reflection before attempting reads, throwing a clean `TypeError: property 'id' is uninitialized` without triggering PHP engine fatal crashes.
