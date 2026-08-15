@@ -4,18 +4,21 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Checker;
 
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Contract\ContractParser;
+use TypePHP\Contract\HierarchyResolver;
 use TypePHP\Internal\ClassNameValidator;
 use TypePHP\Internal\Config;
 use TypePHP\Resolver\SpecialTypeResolver;
 use TypePHP\Resolver\TemplateManager;
 use TypePHP\Resolver\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;
+use TypePHP\Wrapper\CallableWrapper;
 
 /**
  * @internal Evaluates function and method return contract validations (including dynamic @method calls via __call / __callStatic).
@@ -39,6 +42,24 @@ final class ReturnChecker
             $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : null);
             if ($actualClassName !== null && $actualClassName !== $classOrTrait) {
                 $effectiveFunction = $actualClassName . '::' . $methodName;
+            }
+
+            if ($thisObj !== null) {
+                $targetClass = $actualClassName ?? $classOrTrait;
+                $traitAliases = HierarchyResolver::getTraitAliases($targetClass);
+
+                if (\count($traitAliases) > 0) {
+                    $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
+                    foreach ($trace as $frame) {
+                        $frameFunc = $frame['function'];
+                        $frameClass = $frame['class'] ?? '';
+                        if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
+                            $effectiveFunction = $targetClass . '::' . $frameFunc;
+
+                            break;
+                        }
+                    }
+                }
             }
         }
 
@@ -83,6 +104,10 @@ final class ReturnChecker
                     if ($err !== null) {
                         return $err;
                     }
+
+                    if (\is_callable($value) && $returnTypeNode instanceof CallableTypeNode) {
+                        return CallableWrapper::wrapTypeNode($returnTypeNode, $value, $magicFunction . '(): Return value', $registry);
+                    }
                 }
             }
         }
@@ -119,6 +144,10 @@ final class ReturnChecker
         $err = $registry->validate($value, $returnTypeNode, $effectiveFunction . '(): Return value');
         if ($err !== null) {
             return $err;
+        }
+
+        if (\is_callable($value) && $returnTypeNode instanceof CallableTypeNode) {
+            return CallableWrapper::wrapTypeNode($returnTypeNode, $value, $effectiveFunction . '(): Return value', $registry);
         }
 
         if ($value instanceof \Traversable) {

@@ -27,12 +27,45 @@ final class HierarchyResolver
     private static array $classHierarchyCache = [];
 
     /**
+     * In-memory cache for class trait aliases.
+     *
+     * @var array<string, array<string, string>>
+     */
+    private static array $traitAliasCache = [];
+
+    /**
      * Resets the hierarchy cache. Useful for test isolation.
      */
     public static function reset(): void
     {
         self::$methodHierarchyCache = [];
         self::$classHierarchyCache = [];
+        self::$traitAliasCache = [];
+    }
+
+    /**
+     * Returns cached trait aliases for a given class.
+     *
+     * @return array<string, string>
+     */
+    public static function getTraitAliases(string $className): array
+    {
+        if (isset(self::$traitAliasCache[$className])) {
+            return self::$traitAliasCache[$className];
+        }
+
+        if (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className) && ! enum_exists($className)) {
+            return self::$traitAliasCache[$className] = [];
+        }
+
+        try {
+            /** @var class-string<object> $className */
+            $ref = new ReflectionClass($className);
+
+            return self::$traitAliasCache[$className] = $ref->getTraitAliases();
+        } catch (\Throwable $e) {
+            return self::$traitAliasCache[$className] = [];
+        }
     }
 
     /**
@@ -53,7 +86,7 @@ final class HierarchyResolver
 
         $targetClass = new ReflectionClass($targetClassName);
 
-        $traitAliases = $targetClass->getTraitAliases();
+        $traitAliases = self::getTraitAliases($targetClassName);
         if (isset($traitAliases[$methodName])) {
             [$traitName, $originalMethodName] = explode('::', $traitAliases[$methodName], 2);
             if (trait_exists($traitName)) {

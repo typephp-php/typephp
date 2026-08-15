@@ -7,6 +7,9 @@ namespace TypePHP\Internal\Checker;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use TypePHP\Contract\ContractParser;
+use TypePHP\Resolver\SpecialTypeResolver;
+use TypePHP\Resolver\TemplateManager;
+use TypePHP\Resolver\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**
@@ -14,7 +17,7 @@ use TypePHP\Validator\TypeValidatorRegistry;
  */
 final class GeneratorChecker
 {
-    public static function checkSend(string $function, mixed $sendValue, TypeValidatorRegistry $registry): mixed
+    public static function checkSend(string $function, mixed $sendValue, TypeValidatorRegistry $registry, object|string|null $thisOrClass = null): mixed
     {
         if ($sendValue === null) {
             return null;
@@ -22,6 +25,19 @@ final class GeneratorChecker
 
         $contract = ContractParser::parse($function);
         $returnTypeNode = $contract['return'] ?? null;
+
+        if ($returnTypeNode === null) {
+            return $sendValue;
+        }
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $templates = $contract['templates'] ?? [];
+        $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+
+        if (\count($boundTemplates) > 0 || \count($templates) > 0) {
+            $returnTypeNode = TemplateSubstitutor::substitute($returnTypeNode, $boundTemplates, $templates);
+            $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
+        }
 
         if ($returnTypeNode instanceof GenericTypeNode) {
             $sendTypeNode = $returnTypeNode->genericTypes[2] ?? null;
@@ -37,13 +53,22 @@ final class GeneratorChecker
         return $sendValue;
     }
 
-    public static function checkYield(string $function, mixed $key, mixed $value, TypeValidatorRegistry $registry): mixed
+    public static function checkYield(string $function, mixed $key, mixed $value, TypeValidatorRegistry $registry, object|string|null $thisOrClass = null): mixed
     {
         $contract = ContractParser::parse($function);
         $returnTypeNode = $contract['return'] ?? null;
 
         if ($returnTypeNode === null) {
             return $value;
+        }
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $templates = $contract['templates'] ?? [];
+        $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+
+        if (\count($boundTemplates) > 0 || \count($templates) > 0) {
+            $returnTypeNode = TemplateSubstitutor::substitute($returnTypeNode, $boundTemplates, $templates);
+            $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
         }
 
         $itemTypeNode = null;

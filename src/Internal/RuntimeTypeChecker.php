@@ -124,49 +124,49 @@ final class RuntimeTypeChecker
     /**
      * Validates a value sent into a generator via $gen->send() against TSend.
      */
-    public static function checkSend(string $function, mixed $sendValue): mixed
+    public static function checkSend(string $function, mixed $sendValue, object|string|null $thisOrClass = null): mixed
     {
         if (! self::isEnabled()) {
             return $sendValue;
         }
 
-        return GeneratorChecker::checkSend($function, $sendValue, self::getRegistry());
+        return GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass);
     }
 
     /**
      * Validates yielded keys and values from a generator function against TKey and TValue.
      */
-    public static function checkYield(string $function, mixed $key, mixed $value): mixed
+    public static function checkYield(string $function, mixed $key, mixed $value, object|string|null $thisOrClass = null): mixed
     {
         if (! self::isEnabled()) {
             return $value;
         }
 
-        return GeneratorChecker::checkYield($function, $key, $value, self::getRegistry());
+        return GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass);
     }
 
     /**
      * Wraps a callable parameter to intercept calls and validate inputs/returns dynamically.
      */
-    public static function wrapCallable(string $function, string $paramName, mixed $callable): mixed
+    public static function wrapCallable(string $function, string $paramName, mixed $callable, object|string|null $thisOrClass = null): mixed
     {
         if (! self::isEnabled()) {
             return $callable;
         }
 
-        return CallableWrapper::wrap($function, $paramName, $callable, self::getRegistry());
+        return CallableWrapper::wrap($function, $paramName, $callable, self::getRegistry(), $thisOrClass);
     }
 
     /**
      * Wraps an iterable or generator parameter to lazily validate items during iteration.
      */
-    public static function wrapIterable(string $function, string $paramName, mixed $iterable): mixed
+    public static function wrapIterable(string $function, string $paramName, mixed $iterable, object|string|null $thisOrClass = null): mixed
     {
         if (! self::isEnabled()) {
             return $iterable;
         }
 
-        return IterableWrapper::wrap($function, $paramName, $iterable, self::getRegistry());
+        return IterableWrapper::wrap($function, $paramName, $iterable, self::getRegistry(), $thisOrClass);
     }
 
     /**

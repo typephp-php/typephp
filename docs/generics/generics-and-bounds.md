@@ -101,6 +101,53 @@ pairUp(new Car(), new Dog());
 
 ---
 
+## Simultaneous First-Use Multi-Template Inference
+
+If you instantiate a multi-template class without an inline `@var` annotation (e.g. `$bag = new MultiTemplateBag()`):
+
+```php
+/**
+ * @template K of array-key = string
+ * @template V = int
+ */
+class MultiTemplateBag
+{
+    private array $storage = [];
+
+    /**
+     * @param K $key
+     * @param V $val
+     */
+    public function set(mixed $key, mixed $val): void
+    {
+        $this->storage[$key] = $val;
+    }
+}
+```
+
+1. **Simultaneous Inference:** The very first method call (e.g. `$bag->set('timeout', 30)`) infers and locks **all active template parameters simultaneously** (`K = string`, `V = int`) in `WeakMap` memory.
+2. **Lock-In:** All subsequent method calls on that instance enforce both locked types:
+
+```php
+$bag = new MultiTemplateBag();
+
+// 1. First method call infers K = string and V = int simultaneously
+$bag->set('max_retries', 5);
+
+// 2. Subsequent call matching K = string and V = int succeeds
+$bag->set('timeout', 30); // Valid
+
+// 3. Subsequent call violating locked K = string fails
+$bag->set(12345, 30);
+// Throws: TypeError: MultiTemplateBag::set(): Argument $key (template K = string) must be of type string
+
+// 4. Subsequent call violating locked V = int fails
+$bag->set('timeout', 'thirty');
+// Throws: TypeError: MultiTemplateBag::set(): Argument $val (template V = int) must be of type int
+```
+
+---
+
 ## Reified Generics API (Kind of)
 
 Unlike languages that use Type Erasure (such as TypeScript or Java), TypePHP maintains generic template parameters in memory. 
@@ -244,6 +291,116 @@ $box2 = clone $box1;
 
 ---
 
+## Generic Callables with Template Substitution
+
+When a function accepts a generic callback (`@param callable(T): T $transformer`), TypePHP automatically substitutes `T` with the inferred concrete type before callback invocation:
+
+```php
+/**
+ * @template T
+ *
+ * @param callable(T): T $transformer
+ * @param T $input
+ *
+ * @return T
+ */
+function transformValue(callable $transformer, mixed $input): mixed
+{
+    return $transformer($input);
+}
+
+// 1. Valid Call: Infers T = int, validates callback argument (int) and return (int)
+$double = fn (int $x): int => $x * 2;
+transformValue($double, 21); // Returns 42
+
+// 2. Invalid Callback Return: T is inferred as int (from 10), but callback returns string ('invalid')
+$badReturn = fn (int $x): string => 'invalid';
+transformValue($badReturn, 10);
+// Throws: TypeError: transformValue(): Return value must be of type int, string 'invalid' returned
+```
+
+---
+
+## Generic Iterables & Generators (`iterable<T>` & `Generator<K, V>`)
+
+TypePHP substitutes template parameters into iterators, validating yielded items, keys, and generator inputs (`$gen->send()`) lazily during execution:
+
+```php
+/**
+ * @template T
+ *
+ * @param iterable<T> $stream
+ * @param T $sample
+ *
+ * @return list<T>
+ */
+function collectStream(iterable $stream, mixed $sample): array
+{
+    $collected = [];
+    foreach ($stream as $item) {
+        $collected[] = $item;
+    }
+    return $collected;
+}
+
+// Infers T = int from $sample (1)
+$iterator = new ArrayIterator([10, 'invalid', 30]);
+collectStream($iterator, 1);
+// Throws: TypeError: Iterator $stream value must be of type int, string 'invalid' given
+```
+
+---
+
+## Conditional Types with Generics (`(T is Dog ? A : B)`)
+
+TypePHP dynamically evaluates conditional return types based on generic templates:
+
+```php
+/**
+ * @template T
+ *
+ * @param T $input
+ * @param mixed $output
+ *
+ * @return (T is Dog ? positive-int : non-empty-string)
+ */
+function processInput(mixed $input, mixed $output): mixed
+{
+    return $output;
+}
+
+// 1. T is inferred as Dog -> Evaluates return contract as positive-int
+processInput(new Dog(), 100); // Valid
+
+// 2. T is inferred as Cat -> Evaluates return contract as non-empty-string
+processInput(new Cat(), 'valid_string'); // Valid
+
+processInput(new Cat(), ''); // Invalid: empty string violates non-empty-string
+// Throws: TypeError: processInput(): Return value must be of type non-empty-string
+```
+
+### Negated Generic Conditionals (`(T is not Dog ? A : B)`)
+
+```php
+/**
+ * @template T
+ *
+ * @param T $input
+ * @param mixed $result
+ *
+ * @return (T is not Dog ? non-empty-string : positive-int)
+ */
+function processNegated(mixed $input, mixed $result): mixed
+{
+    return $result;
+}
+
+processNegated(new Cat(), 'valid_text'); // Valid (Cat is not Dog -> non-empty-string)
+processNegated(new Dog(), 42);           // Valid (Dog is Dog -> positive-int)
+```
+
+---
+
 ## Generics of Scalars, Refinements, and Array Shapes, Etc..
 
 Generic parameters (`T`) in TypePHP are not limited to object classes. You can bind generics to refined scalar types (`positive-int`, `non-empty-string`) or complex array shapes (`array{id: positive-int}`):
@@ -273,7 +430,6 @@ $userShapes->add(['id' => -5, 'name' => 'Alice']);
 ```
 
 For full reference guides on all supported scalar refinements and array shape structures, see [Primitives & Scalars](/supported-types/primitives-and-scalars) and [Arrays & Shapes](/supported-types/arrays-and-shapes).
-
 
 ---
 
@@ -794,3 +950,4 @@ processCovariantConsumer(new Consumer(new Dog()));
 // 2. Invalid Call (Car is not an Animal)
 processCovariantConsumer(new Consumer(new Car()));
 // Throws: TypeError: processCovariantConsumer() expects Consumer<covariant Animal>, but Consumer<Car> was given
+```

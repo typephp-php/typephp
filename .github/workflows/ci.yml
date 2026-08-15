@@ -43,4 +43,4 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.php == '8.3'
 
       - name: Run Test Suite (Pest)
-        run: ./vendor/bin/pest --ci
+        run: ./vendor/bin/pest --compact

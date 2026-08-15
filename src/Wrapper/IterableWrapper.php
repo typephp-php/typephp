@@ -12,6 +12,9 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Contract\ContractParser;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
 use TypePHP\Internal\ErrorFactory;
+use TypePHP\Resolver\SpecialTypeResolver;
+use TypePHP\Resolver\TemplateManager;
+use TypePHP\Resolver\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**
@@ -22,7 +25,7 @@ final class IterableWrapper
     /**
      * Wraps Traversable iterators and Generators to lazily validate keys and values during iteration.
      */
-    public static function wrap(string $function, string $paramName, mixed $iterable, TypeValidatorRegistry $registry): mixed
+    public static function wrap(string $function, string $paramName, mixed $iterable, TypeValidatorRegistry $registry, object|string|null $thisOrClass = null): mixed
     {
         if (! is_iterable($iterable)) {
             return $iterable;
@@ -35,6 +38,15 @@ final class IterableWrapper
         $contract = ContractParser::parse($function);
         $typeNode = ($paramName === 'return') ? ($contract['return'] ?? null) : ($contract['types'][$paramName] ?? null);
         $aliases = $contract['aliases'] ?? [];
+        $templates = $contract['templates'] ?? [];
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+
+        if ($typeNode !== null && (\count($boundTemplates) > 0 || \count($templates) > 0)) {
+            $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
+            $typeNode = SpecialTypeResolver::resolve($typeNode, $function, $thisObj);
+        }
 
         if ($typeNode !== null) {
             $baseName = '';
