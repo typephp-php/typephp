@@ -2,6 +2,10 @@
 
 declare(strict_types=1);
 
+if (PHP_OS_FAMILY !== 'Windows') {
+    return;
+}
+
 use TypePHP\Internal\StreamWrapper;
 
 describe('CRLF (\r\n) Windows Line-Drift Stress Test', function () {
@@ -27,14 +31,17 @@ describe('CRLF (\r\n) Windows Line-Drift Stress Test', function () {
         $origLines = explode("\n", str_replace("\r\n", "\n", $source));
         $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
 
+        // 1. Total line counts must be 100% identical
         expect(count($transLines))->toBe(count($origLines));
 
+        // 2. Call site line must be on the exact same line index
         $origCallLine = array_search("formatUserData(-5, 'Alice');", array_map('trim', $origLines), true);
         $transCallLine = array_search("formatUserData(-5, 'Alice');", array_map('trim', $transLines), true);
 
         expect($transCallLine)->toBe($origCallLine)
-            ->and($origCallLine)->toBe(14); 
+            ->and($origCallLine)->toBe(14); // Line index 14 (Line 15 in file)
 
+        // 3. Return statement must remain on the exact same line index (Line 11)
         $origReturnLine = array_search('return "user_{$id}_{$name}";', array_map('trim', $origLines), true);
         expect($origReturnLine)->toBe(11)
             ->and($transLines[11])->toContain('RuntimeTypeChecker::checkReturn');
@@ -105,19 +112,6 @@ describe('CRLF (\r\n) Windows Line-Drift Stress Test', function () {
 
         $crlfScriptPath = $tempDir . '/crlf_runtime_test.php';
 
-        // Line 1:  <?php
-        // Line 2:
-        // Line 3:  declare(strict_types=1);
-        // Line 4:
-        // Line 5:  /**
-        // Line 6:   * @param positive-int $code
-        // Line 7:   */
-        // Line 8:  function executeCrlfCheck(int $code): int
-        // Line 9:  {
-        // Line 10:     return $code;
-        // Line 11: }
-        // Line 12:
-        // Line 13: executeCrlfCheck(-99); // Throws on Line 13!
         $fileContent = "<?php\r\n"
             . "\r\n"
             . "declare(strict_types=1);\r\n"
