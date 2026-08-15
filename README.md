@@ -18,10 +18,121 @@
 
 TypePHP is a transparent, pure-PHP runtime type checker. You don't have to refactor a single line of your codebase, set up complex build toolchains, or compile C-extensions. Simply run your existing code, and TypePHP will enforce your extended PHPDoc contracts (generics, array shapes, `key-of`/`value-of` extractions, and scalar refinements) dynamically at runtime.
 
-
 **[Read the full TypePHP documentation »](https://typephp-php.github.io/typephp/)**
 
 **[Quick Start Guide »](https://typephp-php.github.io/typephp/getting-started/quick-start)**
+
+---
+
+## Live Diagnostics (Zero Line-Drift)
+
+When a type contract fails, web exception handlers (**Laravel Ignition, Symfony ErrorHandler, Whoops**) and CLI test runners (**Pest, PHPUnit**) highlight **the exact line of code** in your application where the invalid data was passed, with **zero line-drift**:
+
+### Web Framework Trace (Laravel Ignition)
+<p align="center">
+  <img src="docs/public/laravel-error-screen.png" alt="Laravel Ignition Exception Trace" width="100%">
+</p>
+
+### Web Framework Trace (Symfony ErrorHandler)
+<p align="center">
+  <img src="docs/public/symfony-error-screen.png" alt="Symfony ErrorHandler Exception Trace" width="100%">
+</p>
+
+### CLI Test Runner Trace (Pest PHP)
+<p align="center">
+  <img src="docs/public/pest-error-screen.png" alt="Pest CLI Exception Trace" width="100%">
+</p>
+
+---
+
+## See It In Action
+
+### 1. Framework Boundary Protection (Laravel / Symfony)
+Prevent dynamic data bugs from leaking into database queries or API responses:
+
+```php
+namespace App\Models;
+
+use App\Enums\Role;
+use Illuminate\Database\Eloquent\Model;
+
+class User extends Model
+{
+    /**
+     * @return list<int>
+     */
+    public function assignableRoles(): array
+    {
+        if ($this->isSuperAdmin()) {
+            // Bug! Returns an array of Role Enum instances instead of integers:
+            return Role::cases(); 
+        }
+
+        return [Role::STAFF->value];
+    }
+}
+
+// Executing $user->assignableRoles() throws:
+// TypePHP\Exception\TypeError: User::assignableRoles(): Return value[0] must be of type int, App\Enums\Role returned
+```
+
+### 2. True Runtime Generics with Memory State
+Define generic templates and TypePHP tracks their state per object instance in memory using native `\WeakMap`:
+
+```php
+/**
+ * @template T
+ */
+class Collection 
+{
+    /** @param T $item */
+    public function add(mixed $item): void { /* ... */ }
+}
+
+// Prebind T = User to this specific instance in WeakMap memory
+/** @var Collection<User> $users */
+$users = new Collection();
+
+$users->add(new User('Alice')); // Valid
+
+$users->add(new Product('SKU-100')); 
+// Throws TypeError: Argument $item (template T = User) must be of type User, Product given
+```
+
+### 3. Array Shapes & Constant Extractions
+Enforce strict associative array structures and constant key/value extractions:
+
+```php
+namespace App\Services;
+
+use App\Database\DriverManager;
+
+/**
+ * @phpstan-type ConnectionParams array{
+ *     driver: key-of<DriverManager::DRIVER_MAP>,
+ *     driverClass?: value-of<DriverManager::DRIVER_MAP>
+ * }
+ */
+class DatabaseService
+{
+    /**
+     * @param ConnectionParams $params
+     */
+    public function connect(array $params): void
+    {
+        // ...
+    }
+}
+
+$service = new DatabaseService();
+
+$service->connect(['driver' => 'pdo_mysql']); // Valid
+
+$service->connect(['driver' => 'pdo_invalid']);
+// Throws TypeError: Argument $params['driver'] must be a key of DriverManager::DRIVER_MAP
+```
+
+---
 
 ## Documentation
 

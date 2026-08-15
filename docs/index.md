@@ -134,5 +134,9 @@ When a type contract fails, web exception handlers (**Laravel Ignition, Whoops, 
 ### Web Framework Trace (Laravel Ignition)
 ![Laravel Ignition Exception Trace](/laravel-error-screen.png)
 
+### Web Framework Trace (Symfony ErrorHandler)
+![Symfony Exception Trace](/symfony-error-screen.png)
+
 ### CLI Test Runner Trace (Pest PHP)
 ![Pest CLI Exception Trace](/pest-error-screen.png)
+```
