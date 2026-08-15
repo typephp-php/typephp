@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Checker;
 
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
@@ -17,6 +18,7 @@ use TypePHP\Resolver\SpecialTypeResolver;
 use TypePHP\Resolver\TemplateManager;
 use TypePHP\Resolver\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;
+use TypePHP\Wrapper\CallableWrapper;
 
 /**
  * @internal Evaluates function and method return contract validations (including dynamic @method calls via __call / __callStatic).
@@ -102,6 +104,10 @@ final class ReturnChecker
                     if ($err !== null) {
                         return $err;
                     }
+
+                    if (\is_callable($value) && $returnTypeNode instanceof CallableTypeNode) {
+                        return CallableWrapper::wrapTypeNode($returnTypeNode, $value, $magicFunction . '(): Return value', $registry);
+                    }
                 }
             }
         }
@@ -138,6 +144,10 @@ final class ReturnChecker
         $err = $registry->validate($value, $returnTypeNode, $effectiveFunction . '(): Return value');
         if ($err !== null) {
             return $err;
+        }
+
+        if (\is_callable($value) && $returnTypeNode instanceof CallableTypeNode) {
+            return CallableWrapper::wrapTypeNode($returnTypeNode, $value, $effectiveFunction . '(): Return value', $registry);
         }
 
         if ($value instanceof \Traversable) {
