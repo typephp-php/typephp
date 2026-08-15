@@ -61,7 +61,7 @@ final class FunctionContractInjector
 
         if ($hasReturn) {
             $node->stmts = self::isGenerator($node)
-                ? self::wrapGeneratorReturns($node->stmts)
+                ? self::wrapGeneratorReturns($node->stmts, $thisArg)
                 : self::wrapNonGeneratorReturns($node->stmts, $thisArg, $isNativeVoid);
         }
 
@@ -214,10 +214,12 @@ final class FunctionContractInjector
      *
      * @return array<Node\Stmt>
      */
-    private static function wrapGeneratorReturns(array $stmts): array
+    private static function wrapGeneratorReturns(array $stmts, Node\Expr $thisArg): array
     {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class() extends NodeVisitorAbstract {
+        $traverser->addVisitor(new class($thisArg) extends NodeVisitorAbstract {
+            public function __construct(private Node\Expr $thisArg) {}
+
             public function enterNode(Node $n): int|Node|null
             {
                 if ($n instanceof Node\Expr\Closure || $n instanceof Node\Expr\ArrowFunction || $n instanceof Node\Stmt\Function_ || $n instanceof Node\Stmt\ClassMethod) {
@@ -237,6 +239,7 @@ final class FunctionContractInjector
                             new Node\Arg(new Node\Scalar\MagicConst\Method()),
                             new Node\Arg($n->key ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
                             new Node\Arg($n->value ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
+                            new Node\Arg($this->thisArg),
                         ]
                     );
 
@@ -272,6 +275,7 @@ final class FunctionContractInjector
                         [
                             new Node\Arg(new Node\Scalar\MagicConst\Method()),
                             new Node\Arg($n),
+                            new Node\Arg($this->thisArg),
                         ]
                     );
 
@@ -315,6 +319,7 @@ final class FunctionContractInjector
                             new Node\Arg(new Node\Scalar\MagicConst\Method()),
                             new Node\Arg(new Node\Scalar\String_('return')),
                             new Node\Arg($n->expr),
+                            new Node\Arg($this->thisArg),
                         ]
                     );
                 }

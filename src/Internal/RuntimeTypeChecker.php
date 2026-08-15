@@ -124,25 +124,25 @@ final class RuntimeTypeChecker
     /**
      * Validates a value sent into a generator via $gen->send() against TSend.
      */
-    public static function checkSend(string $function, mixed $sendValue): mixed
+    public static function checkSend(string $function, mixed $sendValue, object|string|null $thisOrClass = null): mixed
     {
         if (! self::isEnabled()) {
             return $sendValue;
         }
 
-        return GeneratorChecker::checkSend($function, $sendValue, self::getRegistry());
+        return GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass);
     }
 
     /**
      * Validates yielded keys and values from a generator function against TKey and TValue.
      */
-    public static function checkYield(string $function, mixed $key, mixed $value): mixed
+    public static function checkYield(string $function, mixed $key, mixed $value, object|string|null $thisOrClass = null): mixed
     {
         if (! self::isEnabled()) {
             return $value;
         }
 
-        return GeneratorChecker::checkYield($function, $key, $value, self::getRegistry());
+        return GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass);
     }
 
     /**
