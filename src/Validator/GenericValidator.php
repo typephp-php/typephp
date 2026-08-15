@@ -165,9 +165,10 @@ final class GenericValidator implements TypeValidatorInterface
      * 1. Array Constants: If T is a class constant (e.g., self::DRIVER_MAP), it safely reflects the
      *    target class to bypass visibility restrictions (private/protected), caches the array in memory,
      *    and verifies that the provided value exists as a value in that array.
-     * 2. Enums: If T is a Backed Enum identifier, it extracts and caches the enum case backing values,
+     * 2. Backed Enums: If T is a Backed Enum identifier, it extracts and caches the enum case backing values,
      *    then verifies that the provided value matches a valid case value.
-     * 3. Fallback: Returns null gracefully for unresolvable or unsupported structures.
+     * 3. Unit Enums: Pure non-backed UnitEnums have no backing values, so any value-of check fails.
+     * 4. Fallback: Returns null gracefully for unresolvable or unsupported structures.
      */
     private function validateValueOf(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
     {
@@ -190,16 +191,20 @@ final class GenericValidator implements TypeValidatorInterface
             }
         } elseif ($targetType instanceof IdentifierTypeNode) {
             $enumClass = $targetType->name;
-            if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass) && is_subclass_of($enumClass, \BackedEnum::class)) {
-                if (! isset(self::$enumValueCache[$enumClass])) {
-                    self::$enumValueCache[$enumClass] = array_map(fn ($case) => $case->value, $enumClass::cases());
+            if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass)) {
+                if (is_subclass_of($enumClass, \BackedEnum::class)) {
+                    if (! isset(self::$enumValueCache[$enumClass])) {
+                        self::$enumValueCache[$enumClass] = array_map(fn ($case) => $case->value, $enumClass::cases());
+                    }
+
+                    if (! \in_array($value, self::$enumValueCache[$enumClass], true)) {
+                        return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
+                    }
+
+                    return null;
                 }
 
-                if (! \in_array($value, self::$enumValueCache[$enumClass], true)) {
-                    return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
-                }
-
-                return null;
+                return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
             }
         }
 
