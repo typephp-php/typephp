@@ -52,7 +52,7 @@ final class ParamChecker
                 if (\count($traitAliases) > 0) {
                     $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
                     foreach ($trace as $frame) {
-                        $frameFunc = $frame['function'] ?? '';
+                        $frameFunc = $frame['function'];
                         $frameClass = $frame['class'] ?? '';
                         if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
                             $effectiveFunction = $targetClass . '::' . $frameFunc;
