@@ -1,6 +1,6 @@
 # Inline Variables (`@var`)
 
-While parameter and return contracts protect function boundaries, inline `@var` annotations enforce type safety on local variable assignments and reassignments inside function bodies or php file execution lines.
+While parameter and return contracts protect function boundaries, inline `@var` annotations enforce type safety on local variable assignments, reassignments, and direct return statements inside function bodies or PHP scripts.
 
 ---
 
@@ -43,7 +43,7 @@ TypePHP supports both single-variable single-line docblocks and multi-variable d
 $id = 100;
 
 /** @var non-empty-string $name -> single-line docblock */ 
-$name = 'Reymart'
+$name = 'Reymart';
 ```
 
 ### Multi-Variable Annotation (Array Destructuring)
@@ -76,6 +76,33 @@ $count = -5;
 ```
 
 Both `/** @var positive-int $count */` and `/** @var positive-int */` behave identically.
+
+---
+
+## Inline `@var` on Direct Return Statements
+
+You can place `/** @var Type */` directly above a `return` statement to perform surgical, expression-level type assertion narrowing inside function bodies, closures, or specific conditional branches:
+
+```php
+function fetchUserScores(): array
+{
+    /** @var list<positive-int> */
+    return [10, 20, 30]; // Valid
+}
+
+function fetchBadScores(): array
+{
+    /** @var list<positive-int> */
+    return [10, -5, 30]; // Throws TypeError on -5!
+}
+
+$getUser = function () use ($repo) {
+    /** @var array{id: positive-int, username: non-empty-string} */
+    return $repo->fetchRawUser();
+};
+```
+
+> **PHPStan & Psalm Parity:** Static analysis tools treat `/** @var Type */ return $expr;` as an inline type cast assertion. TypePHP physically enforces this assertion at runtime, ensuring that live dynamic returns strictly satisfy the annotated type.
 
 ---
 

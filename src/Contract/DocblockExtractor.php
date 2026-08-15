@@ -104,6 +104,29 @@ final class DocblockExtractor
     }
 
     /**
+     * Extracts the first @var tag's type string and variable name from a docblock string.
+     *
+     * @return array{0: string, 1: string}|null
+     */
+    public static function extractVarTagFromDoc(string $doc): ?array
+    {
+        try {
+            $phpDocNode = self::parseDocString($doc);
+            $varTags = $phpDocNode->getVarTagValues();
+            if (\count($varTags) > 0) {
+                $typeString = (string) $varTags[0]->type;
+                $varName = ltrim($varTags[0]->variableName, '$');
+
+                return [$typeString, $varName];
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore malformed docblocks
+        }
+
+        return null;
+    }
+
+    /**
      * Extracts local and imported type aliases (@phpstan-type and @phpstan-import-type) from a PHPDoc node.
      *
      * @param array<string, TypeNode> $aliases
