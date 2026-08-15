@@ -7,6 +7,7 @@ namespace TypePHP\Internal;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
+use TypePHP\Contract\DocblockExtractor;
 use TypePHP\Internal\Visitor\FunctionContractInjector;
 use TypePHP\Internal\Visitor\NodeBuilder;
 use TypePHP\Internal\Visitor\PropertyHookInjector;
@@ -66,6 +67,19 @@ final class ContractVisitor extends NodeVisitorAbstract
             PropertyHookInjector::process($node);
 
             return null;
+        }
+
+        if ($node instanceof Node\Stmt\Return_ && $node->expr !== null) {
+            $doc = $node->getDocComment();
+            if ($doc !== null && str_contains($doc->getText(), '@var')) {
+                $extracted = DocblockExtractor::extractVarTagFromDoc($doc->getText());
+                if ($extracted !== null) {
+                    [$typeString, $varName] = $extracted;
+                    $effectiveVarName = ($varName !== '') ? $varName : 'return';
+                    $checkCall = NodeBuilder::createVariableCheckCall($node->expr, $typeString, $effectiveVarName);
+                    $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall, $node->getStartLine());
+                }
+            }
         }
 
         if ($node instanceof Node\Stmt\Expression) {

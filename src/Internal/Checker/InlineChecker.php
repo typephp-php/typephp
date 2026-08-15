@@ -98,18 +98,22 @@ final class InlineChecker
                 return $value;
             }
 
+            $context = ($varName === 'return') ? 'Return value' : "Variable \$$varName";
+
             if ($typeNode instanceof CallableTypeNode || ($typeNode instanceof IdentifierTypeNode && strtolower($typeNode->name) === 'callable')) {
-                return CallableWrapper::wrapTypeNode($typeNode, $value, "Variable \$$varName: Callback", $registry);
+                $cbPrefix = ($varName === 'return') ? 'Return value: Callback' : "Variable \$$varName: Callback";
+
+                return CallableWrapper::wrapTypeNode($typeNode, $value, $cbPrefix, $registry);
             }
 
             if ($typeNode instanceof GenericTypeNode && $checkGenerics && \is_object($value)) {
-                $err = TemplateManager::bindInstanceFromNode($value, $typeNode, "Variable \$$varName", true);
+                $err = TemplateManager::bindInstanceFromNode($value, $typeNode, $context, true);
                 if ($err !== null) {
                     return $err;
                 }
             }
 
-            $err = $registry->validate($value, $typeNode, "Variable \$$varName");
+            $err = $registry->validate($value, $typeNode, $context);
             if ($err !== null) {
                 return $err;
             }
