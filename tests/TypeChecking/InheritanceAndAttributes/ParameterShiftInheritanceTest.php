@@ -149,6 +149,7 @@ describe('PHP 8.0+ Named Arguments on Subtype Methods with Renamed Parameters', 
         ;
 
         expect(fn () => $service->execute(authToken: '', statusCode: 200))
-            ->toThrow(TypeError::class, 'Argument $authToken must be of type non-empty-string');
+            ->toThrow(TypeError::class, 'Argument $authToken must be of type non-empty-string')
+        ;
     });
 });

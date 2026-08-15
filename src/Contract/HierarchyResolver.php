@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace TypePHP\Contract;
 
+use ReflectionClass;
+use ReflectionMethod;
+
 /**
  * @internal Resolves class, interface, trait, and method inheritance hierarchies from child to root.
  */
@@ -12,14 +15,14 @@ final class HierarchyResolver
     /**
      * In-memory cache for resolved ReflectionMethod hierarchy arrays.
      *
-     * @var array<string, array<int, \ReflectionMethod>>
+     * @var array<string, array<int, ReflectionMethod>>
      */
     private static array $methodHierarchyCache = [];
 
     /**
      * In-memory cache for resolved ReflectionClass hierarchy arrays.
      *
-     * @var array<string, array<int, \ReflectionClass<object>>>
+     * @var array<string, array<int, ReflectionClass<object>>>
      */
     private static array $classHierarchyCache = [];
 
@@ -35,16 +38,9 @@ final class HierarchyResolver
     /**
      * Builds an array of ReflectionMethods representing the inheritance hierarchy from child to root.
      *
-     * Resolution Flow:
-     * 1. Target Class: Uses $ref->class to inspect the target executing class (ensures interface
-     *    contracts are discovered even when method bodies are fulfilled by a Trait).
-     * 2. Parent Classes: Traverses up the parent class chain to inherit parent method docblocks.
-     * 3. Interfaces: Traverses implemented interfaces to inherit interface contract docblocks.
-     * 4. Traits: Traverses used traits to inherit trait method docblocks.
-     *
-     * @return array<int, \ReflectionMethod>
+     * @return array<int, ReflectionMethod>
      */
-    public static function getMethodHierarchy(\ReflectionMethod $ref): array
+    public static function getMethodHierarchy(ReflectionMethod $ref): array
     {
         $cacheKey = $ref->class . '::' . $ref->getName();
         if (isset(self::$methodHierarchyCache[$cacheKey])) {
@@ -55,7 +51,18 @@ final class HierarchyResolver
         $methodName = $ref->getName();
         $targetClassName = $ref->class;
 
-        $targetClass = new \ReflectionClass($targetClassName);
+        $targetClass = new ReflectionClass($targetClassName);
+
+        $traitAliases = $targetClass->getTraitAliases();
+        if (isset($traitAliases[$methodName])) {
+            [$traitName, $originalMethodName] = explode('::', $traitAliases[$methodName], 2);
+            if (trait_exists($traitName)) {
+                $traitRef = new ReflectionClass($traitName);
+                if ($traitRef->hasMethod($originalMethodName)) {
+                    $hierarchy[] = $traitRef->getMethod($originalMethodName);
+                }
+            }
+        }
 
         $parent = $targetClass->getParentClass();
         while ($parent !== false) {
@@ -81,40 +88,46 @@ final class HierarchyResolver
     }
 
     /**
-     * Builds an array of ReflectionClasses representing the class inheritance hierarchy from child to root.
+     * Builds an array of ReflectionClasses representing the complete inheritance hierarchy from child to root.
+     * Recursively traverses parent classes, implemented interfaces, and used traits across all levels.
      *
-     * Resolution Flow:
-     * 1. Target Class: Includes the primary reflection class.
-     * 2. Parent Classes: Traverses parent classes up the inheritance tree.
-     * 3. Interfaces: Collects all implemented interfaces.
-     * 4. Traits: Collects all used traits.
+     * @param ReflectionClass<object> $ref
      *
-     * @param \ReflectionClass<object> $ref
-     *
-     * @return array<int, \ReflectionClass<object>>
+     * @return array<int, ReflectionClass<object>>
      */
-    public static function getClassHierarchy(\ReflectionClass $ref): array
+    public static function getClassHierarchy(ReflectionClass $ref): array
     {
         $cacheKey = $ref->getName();
         if (isset(self::$classHierarchyCache[$cacheKey])) {
             return self::$classHierarchyCache[$cacheKey];
         }
 
-        $hierarchy = [$ref];
+        $hierarchy = [];
+        $visited = [];
 
-        $parent = $ref->getParentClass();
-        while ($parent !== false) {
-            $hierarchy[] = $parent;
-            $parent = $parent->getParentClass();
-        }
+        $collect = function (ReflectionClass $class) use (&$collect, &$hierarchy, &$visited): void {
+            $name = $class->getName();
+            if (isset($visited[$name])) {
+                return;
+            }
+            $visited[$name] = true;
+            $hierarchy[] = $class;
 
-        foreach ($ref->getInterfaces() as $interface) {
-            $hierarchy[] = $interface;
-        }
+            $parent = $class->getParentClass();
+            if ($parent !== false) {
+                $collect($parent);
+            }
 
-        foreach ($ref->getTraits() as $trait) {
-            $hierarchy[] = $trait;
-        }
+            foreach ($class->getInterfaces() as $interface) {
+                $collect($interface);
+            }
+
+            foreach ($class->getTraits() as $trait) {
+                $collect($trait);
+            }
+        };
+
+        $collect($ref);
 
         return self::$classHierarchyCache[$cacheKey] = $hierarchy;
     }

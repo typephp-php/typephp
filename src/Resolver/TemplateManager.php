@@ -18,9 +18,11 @@ use PHPStan\PhpDocParser\Parser\PhpDocParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
+use TypePHP\Contract\HierarchyResolver;
 use TypePHP\Internal\ClassNameValidator;
 use TypePHP\Internal\ErrorFactory;
 use TypePHP\Internal\ErrorMessage;
+use WeakMap;
 
 /**
  * @internal Manages generic template bindings for object instances (via WeakMap) and static call stack frames.
@@ -30,9 +32,9 @@ final class TemplateManager
     /**
      * WeakMap storing generic template bindings per object instance.
      *
-     * @var \WeakMap<object, array<string, TypeNode>>|null
+     * @var WeakMap<object, array<string, TypeNode>>|null
      */
-    private static ?\WeakMap $instanceTemplateBindings = null;
+    private static ?WeakMap $instanceTemplateBindings = null;
 
     /**
      * Call stack frames storing template bindings per function or method call.
@@ -87,7 +89,6 @@ final class TemplateManager
 
     /**
      * Retrieves currently bound template types for a function call or object instance.
-     * Automatically resolves pending clone sources.
      *
      * @param array<string, TemplateTagValueNode> $templates
      *
@@ -120,7 +121,6 @@ final class TemplateManager
 
     /**
      * Retrieves all bound template TypeNodes for a specific object instance.
-     * Automatically resolves @extends and @implements template mappings if unbound.
      *
      * @return array<string, TypeNode>
      */
@@ -130,7 +130,6 @@ final class TemplateManager
             self::copyInstanceBindings(self::$pendingCloneSource, $instance);
         }
 
-        // Auto-resolve @extends and @implements generic template mappings
         if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$instance])) {
             self::resolveInheritedTemplates($instance, \get_class($instance));
         }
@@ -244,7 +243,7 @@ final class TemplateManager
     {
         if ($thisObj !== null) {
             if (self::$instanceTemplateBindings === null) {
-                self::$instanceTemplateBindings = new \WeakMap();
+                self::$instanceTemplateBindings = new WeakMap();
             }
             $bindings = self::$instanceTemplateBindings[$thisObj] ?? [];
             $bindings[$templateName] = $inferredType;
@@ -280,67 +279,76 @@ final class TemplateManager
 
         try {
             $ref = new \ReflectionClass($className);
-            $classDoc = $ref->getDocComment();
+            $classHierarchy = HierarchyResolver::getClassHierarchy($ref);
 
-            if ($classDoc !== false) {
-                [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
+            [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
 
-                $classTokens = new TokenIterator($lexer->tokenize($classDoc));
-                $classPhpDocNode = $phpDocParser->parse($classTokens);
+            $templates = [];
+            $classVariances = [];
 
-                $templates = [];
-                $classVariances = [];
+            // Collect template parameters across the entire class/interface hierarchy!
+            foreach ($classHierarchy as $hierClass) {
+                $classDoc = $hierClass->getDocComment();
+                if ($classDoc !== false) {
+                    $classTokens = new TokenIterator($lexer->tokenize($classDoc));
+                    $classPhpDocNode = $phpDocParser->parse($classTokens);
 
-                foreach ($classPhpDocNode->getTags() as $tagNode) {
-                    if ($tagNode->value instanceof TemplateTagValueNode) {
-                        $templates[] = $tagNode->value;
-                        $tagName = strtolower($tagNode->name);
+                    foreach ($classPhpDocNode->getTags() as $tagNode) {
+                        if ($tagNode->value instanceof TemplateTagValueNode) {
+                            $tName = $tagNode->value->name;
+                            if (! isset($templates[$tName])) {
+                                $templates[$tName] = $tagNode->value;
+                                $tagName = strtolower($tagNode->name);
 
-                        if (str_contains($tagName, 'covariant')) {
-                            $classVariances[$tagNode->value->name] = GenericTypeNode::VARIANCE_COVARIANT;
-                        } elseif (str_contains($tagName, 'contravariant')) {
-                            $classVariances[$tagNode->value->name] = GenericTypeNode::VARIANCE_CONTRAVARIANT;
-                        } else {
-                            $classVariances[$tagNode->value->name] = GenericTypeNode::VARIANCE_INVARIANT;
+                                if (str_contains($tagName, 'covariant')) {
+                                    $classVariances[$tName] = GenericTypeNode::VARIANCE_COVARIANT;
+                                } elseif (str_contains($tagName, 'contravariant')) {
+                                    $classVariances[$tName] = GenericTypeNode::VARIANCE_CONTRAVARIANT;
+                                } else {
+                                    $classVariances[$tName] = GenericTypeNode::VARIANCE_INVARIANT;
+                                }
+                            }
                         }
                     }
                 }
+            }
 
-                if (self::$instanceTemplateBindings === null) {
-                    self::$instanceTemplateBindings = new \WeakMap();
-                }
+            if (self::$instanceTemplateBindings === null) {
+                self::$instanceTemplateBindings = new WeakMap();
+            }
 
-                foreach ($templates as $index => $templateTag) {
-                    if (isset($typeNode->genericTypes[$index])) {
-                        $expectedTypeNode = $typeNode->genericTypes[$index];
+            $templateList = array_values($templates);
 
-                        $usageVariance = $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT;
-                        $declaredVariance = $classVariances[$templateTag->name] ?? GenericTypeNode::VARIANCE_INVARIANT;
+            foreach ($templateList as $index => $templateTag) {
+                if (isset($typeNode->genericTypes[$index])) {
+                    $expectedTypeNode = $typeNode->genericTypes[$index];
 
-                        $variance = ($usageVariance !== GenericTypeNode::VARIANCE_INVARIANT)
-                            ? $usageVariance
-                            : $declaredVariance;
+                    $usageVariance = $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT;
+                    $declaredVariance = $classVariances[$templateTag->name] ?? GenericTypeNode::VARIANCE_INVARIANT;
 
-                        $templateName = $templateTag->name;
-                        $existingBindings = self::$instanceTemplateBindings[$instance] ?? [];
+                    $variance = ($usageVariance !== GenericTypeNode::VARIANCE_INVARIANT)
+                        ? $usageVariance
+                        : $declaredVariance;
 
-                        if (isset($existingBindings[$templateName])) {
-                            $existingTypeNode = $existingBindings[$templateName];
+                    $templateName = $templateTag->name;
+                    $existingBindings = self::$instanceTemplateBindings[$instance] ?? [];
 
-                            $valid = self::checkVariance($existingTypeNode, $expectedTypeNode, $variance);
+                    if (isset($existingBindings[$templateName])) {
+                        $existingTypeNode = $existingBindings[$templateName];
 
-                            if (! $valid) {
-                                return ErrorFactory::createError(
-                                    $context . " expects {$className}<{$variance} {$expectedTypeNode}>, but {$className}<{$existingTypeNode}> was given"
-                                );
-                            }
+                        $valid = self::checkVariance($existingTypeNode, $expectedTypeNode, $variance);
+
+                        if (! $valid) {
+                            return ErrorFactory::createError(
+                                $context . " expects {$className}<{$variance} {$expectedTypeNode}>, but {$className}<{$existingTypeNode}> was given"
+                            );
                         }
+                    }
 
-                        if ($forceBind || ! isset($existingBindings[$templateName])) {
-                            $bindings = self::$instanceTemplateBindings[$instance] ?? [];
-                            $bindings[$templateName] = $expectedTypeNode;
-                            self::$instanceTemplateBindings[$instance] = $bindings;
-                        }
+                    if ($forceBind || ! isset($existingBindings[$templateName])) {
+                        $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+                        $bindings[$templateName] = $expectedTypeNode;
+                        self::$instanceTemplateBindings[$instance] = $bindings;
                     }
                 }
             }
@@ -360,68 +368,71 @@ final class TemplateManager
 
         try {
             $ref = new \ReflectionClass($actualClassName);
-            $classDoc = $ref->getDocComment();
+            $classHierarchy = HierarchyResolver::getClassHierarchy($ref);
 
-            if ($classDoc !== false) {
-                [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
+            [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
 
-                $classTokens = new TokenIterator($lexer->tokenize($classDoc));
-                $classPhpDocNode = $phpDocParser->parse($classTokens);
+            foreach ($classHierarchy as $hierClass) {
+                $classDoc = $hierClass->getDocComment();
 
-                $declaredTemplateNames = [];
-                foreach ($classPhpDocNode->getTags() as $tag) {
-                    if ($tag->value instanceof TemplateTagValueNode) {
-                        $declaredTemplateNames[$tag->value->name] = true;
+                if ($classDoc !== false) {
+                    $classTokens = new TokenIterator($lexer->tokenize($classDoc));
+                    $classPhpDocNode = $phpDocParser->parse($classTokens);
+
+                    $declaredTemplateNames = [];
+                    foreach ($classPhpDocNode->getTags() as $tag) {
+                        if ($tag->value instanceof TemplateTagValueNode) {
+                            $declaredTemplateNames[$tag->value->name] = true;
+                        }
                     }
-                }
 
-                $inheritedTags = array_merge(
-                    $classPhpDocNode->getExtendsTagValues(),
-                    $classPhpDocNode->getImplementsTagValues()
-                );
+                    $inheritedTags = array_merge(
+                        $classPhpDocNode->getExtendsTagValues(),
+                        $classPhpDocNode->getImplementsTagValues()
+                    );
 
-                foreach ($inheritedTags as $inheritedTag) {
-                    $genericTypeNode = $inheritedTag->type;
-                    if ($genericTypeNode instanceof GenericTypeNode) {
-                        $parentName = SpecialTypeResolver::resolveFqcn($genericTypeNode->type->name, $ref);
+                    foreach ($inheritedTags as $inheritedTag) {
+                        $genericTypeNode = $inheritedTag->type;
+                        if ($genericTypeNode instanceof GenericTypeNode) {
+                            $parentName = SpecialTypeResolver::resolveFqcn($genericTypeNode->type->name, $hierClass);
 
-                        if (ClassNameValidator::isValid($parentName) && is_a($actualClassName, $parentName, true)) {
-                            if (! class_exists($parentName) && ! interface_exists($parentName)) {
-                                continue;
-                            }
-
-                            $parentRef = new \ReflectionClass($parentName);
-                            $parentDoc = $parentRef->getDocComment();
-
-                            if ($parentDoc !== false) {
-                                $parentTokens = new TokenIterator($lexer->tokenize($parentDoc));
-                                $parentPhpDocNode = $phpDocParser->parse($parentTokens);
-
-                                $parentTemplateNames = [];
-                                foreach ($parentPhpDocNode->getTags() as $tag) {
-                                    if ($tag->value instanceof TemplateTagValueNode) {
-                                        $parentTemplateNames[] = $tag->value->name;
-                                    }
+                            if (ClassNameValidator::isValid($parentName) && is_a($actualClassName, $parentName, true)) {
+                                if (! class_exists($parentName) && ! interface_exists($parentName)) {
+                                    continue;
                                 }
 
-                                $bindings = self::$instanceTemplateBindings[$instance] ?? [];
-                                foreach ($parentTemplateNames as $idx => $templateName) {
-                                    if (isset($genericTypeNode->genericTypes[$idx])) {
-                                        $resolved = self::resolveTypeNodeAst($genericTypeNode->genericTypes[$idx], $ref);
+                                $parentRef = new \ReflectionClass($parentName);
+                                $parentDoc = $parentRef->getDocComment();
 
-                                        // Skip binding if it's just an inherited placeholder pointing to our own declared templates
-                                        if ($resolved instanceof IdentifierTypeNode && isset($declaredTemplateNames[$resolved->name])) {
-                                            continue;
+                                if ($parentDoc !== false) {
+                                    $parentTokens = new TokenIterator($lexer->tokenize($parentDoc));
+                                    $parentPhpDocNode = $phpDocParser->parse($parentTokens);
+
+                                    $parentTemplateNames = [];
+                                    foreach ($parentPhpDocNode->getTags() as $tag) {
+                                        if ($tag->value instanceof TemplateTagValueNode) {
+                                            $parentTemplateNames[] = $tag->value->name;
                                         }
-
-                                        $bindings[$templateName] = $resolved;
                                     }
-                                }
 
-                                if (self::$instanceTemplateBindings === null) {
-                                    self::$instanceTemplateBindings = new \WeakMap();
+                                    $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+                                    foreach ($parentTemplateNames as $idx => $templateName) {
+                                        if (isset($genericTypeNode->genericTypes[$idx])) {
+                                            $resolved = self::resolveTypeNodeAst($genericTypeNode->genericTypes[$idx], $hierClass);
+
+                                            if ($resolved instanceof IdentifierTypeNode && isset($declaredTemplateNames[$resolved->name])) {
+                                                continue;
+                                            }
+
+                                            $bindings[$templateName] = $resolved;
+                                        }
+                                    }
+
+                                    if (self::$instanceTemplateBindings === null) {
+                                        self::$instanceTemplateBindings = new WeakMap();
+                                    }
+                                    self::$instanceTemplateBindings[$instance] = $bindings;
                                 }
-                                self::$instanceTemplateBindings[$instance] = $bindings;
                             }
                         }
                     }
