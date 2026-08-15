@@ -10,6 +10,7 @@ use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Contract\ContractParser;
+use TypePHP\Contract\HierarchyResolver;
 use TypePHP\Internal\ClassNameValidator;
 use TypePHP\Internal\Config;
 use TypePHP\Resolver\SpecialTypeResolver;
@@ -39,6 +40,24 @@ final class ReturnChecker
             $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : null);
             if ($actualClassName !== null && $actualClassName !== $classOrTrait) {
                 $effectiveFunction = $actualClassName . '::' . $methodName;
+            }
+
+            if ($thisObj !== null) {
+                $targetClass = $actualClassName ?? $classOrTrait;
+                $traitAliases = HierarchyResolver::getTraitAliases($targetClass);
+
+                if (\count($traitAliases) > 0) {
+                    $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
+                    foreach ($trace as $frame) {
+                        $frameFunc = $frame['function'] ?? '';
+                        $frameClass = $frame['class'] ?? '';
+                        if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
+                            $effectiveFunction = $targetClass . '::' . $frameFunc;
+
+                            break;
+                        }
+                    }
+                }
             }
         }
 
