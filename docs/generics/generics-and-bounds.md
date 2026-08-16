@@ -663,7 +663,7 @@ $producers->add(new Producer(new Car()));
 
 ---
 
-## Class Inheritance (`@extends`, `@implements`, and `@use`)
+## Class, Interface, & Trait Inheritance (`@extends`, `@implements`, `@use`)
 
 When a child class extends a generic parent class, implements a generic interface, or uses a generic trait, declare the template mapping using any of the recognized inherited template annotations:
 
@@ -672,6 +672,8 @@ When a child class extends a generic parent class, implements a generic interfac
 | **Class Inheritance** | `@extends`, `@template-extends`, `@phpstan-extends`, `@psalm-extends` |
 | **Interface Implementation** | `@implements`, `@template-implements`, `@phpstan-implements`, `@psalm-implements` |
 | **Trait Usage** | `@use`, `@template-use`, `@phpstan-use` |
+
+### 1. Interface Implementation (`@implements` / `@template-implements`)
 
 ```php
 /**
@@ -709,6 +711,106 @@ $processor->process(new Cat());
 // Invalid Call
 $processor->process(new Dog());
 // Throws: TypeError: CatProcessor::process(): Argument $item (template T = Cat) must be of type Cat
+```
+
+### 2. Class Extension (`@extends` / `@template-extends`)
+
+```php
+/**
+ * @template T
+ */
+abstract class BaseRepository
+{
+    /**
+     * @param T $entity
+     */
+    public function save(mixed $entity): void
+    {
+        // ...
+    }
+}
+
+/**
+ * Fulfills T = User via @template-extends
+ *
+ * @template-extends BaseRepository<User>
+ */
+class UserRepository extends BaseRepository
+{
+}
+
+$userRepo = new UserRepository();
+
+// Valid Save
+$userRepo->save(new User('Alice'));
+
+// Invalid Save
+$userRepo->save(new Product('SKU-100'));
+// Throws: TypeError: UserRepository::save(): Argument $entity (template T = User) must be of type User
+```
+
+### 3. Generic Traits (`@use` / `@template-use` / `@phpstan-use`)
+
+When a class uses a generic Trait, declare the template binding either at the **class level** or **directly above the inline `use Trait;` statement**:
+
+#### Generic Trait Definition (`ItemLoggerTrait.php`)
+
+```php
+/**
+ * @template T
+ */
+trait ItemLoggerTrait
+{
+    /**
+     * @param T $item
+     */
+    public function logItem(mixed $item): bool
+    {
+        return true;
+    }
+}
+```
+
+#### Option A: Class-Level Trait Annotation (`@use` / `@template-use`)
+
+```php
+/**
+ * Class docblock binds T = Dog for the trait
+ *
+ * @use ItemLoggerTrait<Dog>
+ */
+class ClassLevelLogService
+{
+    use ItemLoggerTrait;
+}
+
+$service = new ClassLevelLogService();
+
+$service->logItem(new Dog()); // Valid
+
+$service->logItem(new Car());
+// Throws: TypeError: Argument $item (template T = Dog) must be of type Dog, Car given
+```
+
+#### Option B: Inline Statement Trait Annotation (`/** @use */ use Trait;`)
+
+```php
+class InlineLogService
+{
+    /**
+     * Inline statement docblock binds T = Dog
+     *
+     * @use ItemLoggerTrait<Dog>
+     */
+    use ItemLoggerTrait;
+}
+
+$service = new InlineLogService();
+
+$service->logItem(new Dog()); // Valid
+
+$service->logItem(new Car());
+// Throws: TypeError: Argument $item (template T = Dog) must be of type Dog, Car given
 ```
 
 ---
@@ -993,4 +1095,5 @@ processCovariantConsumer(new Consumer(new Dog()));
 // 2. Invalid Call (Car is not an Animal)
 processCovariantConsumer(new Consumer(new Car()));
 // Throws: TypeError: processCovariantConsumer() expects Consumer<covariant Animal>, but Consumer<Car> was given
+```
 ```

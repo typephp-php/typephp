@@ -7,6 +7,7 @@ use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Generics\ClassLevelTraitService;
 use TypePHP\Tests\Fixtures\Generics\InlineTraitUseService;
+use TypePHP\Tests\Fixtures\Generics\SingleLineInlineTraitUseService;
 use TypePHP\TypePHP;
 
 describe('Generic Traits with @use, @template-use, and @phpstan-use Annotations', function () {
@@ -33,6 +34,16 @@ describe('Generic Traits with @use, @template-use, and @phpstan-use Annotations'
             expect(fn () => $service->logItem(new Car()))
                 ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Domain\Dog')
             ;
+        });
+
+        test('pre-binds generic template T with single-line docblock (/** @use Trait<T> */ use Trait;)', function () {
+            $service = new SingleLineInlineTraitUseService();
+
+            expect(TypePHP::getGenericType($service))->toBe(Dog::class);
+
+            expect($service->logItem(new Dog()))->toBeTrue();
+            expect(fn () => $service->logItem(new Car()))
+                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Domain\Dog');
         });
     });
 });
