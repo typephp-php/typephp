@@ -11,6 +11,7 @@ interface DoctrineCollectionInterface
 {
     /**
      * @param mixed $element
+     *
      * @phpstan-param T $element
      */
     public function add(mixed $element): bool;

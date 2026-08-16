@@ -26,7 +26,6 @@ final class Config
     private static ?string $projectRoot = null;
 
     /**
-     * @phpstan-re
      * Locates the project root directory by searching upwards for vendor/autoload.php or composer.json.
      * Caches the result in memory so the search happens exactly once.
      */
@@ -43,7 +42,7 @@ final class Config
                 return self::$projectRoot = rtrim(str_replace('\\', '/', $dir), '/');
             }
 
-            $parent = dirname($dir);
+            $parent = \dirname($dir);
             if ($parent === $dir) {
                 break;
             }
@@ -59,7 +58,7 @@ final class Config
                     return self::$projectRoot = rtrim(str_replace('\\', '/', $dir), '/');
                 }
 
-                $parent = dirname($dir);
+                $parent = \dirname($dir);
                 if ($parent === $dir) {
                     break;
                 }

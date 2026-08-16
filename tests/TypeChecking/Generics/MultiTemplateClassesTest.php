@@ -15,10 +15,12 @@ describe('Multi-Template Classes (Map<K, V> and Dictionary<K, V>)', function () 
             $bag->set('score_alpha', 100);
             expect($bag->get('score_alpha'))->toBe(100);
             expect(fn () => $bag->set('', 100))
-                ->toThrow(TypeError::class, 'must be of type non-empty-string');
+                ->toThrow(TypeError::class, 'must be of type non-empty-string')
+            ;
 
             expect(fn () => $bag->set('score_beta', -50))
-                ->toThrow(TypeError::class, 'must be of type positive-int');
+                ->toThrow(TypeError::class, 'must be of type positive-int')
+            ;
         });
 
         test('inspects multiple pre-bound generic types via TypePHP public API', function () {
@@ -30,7 +32,8 @@ describe('Multi-Template Classes (Map<K, V> and Dictionary<K, V>)', function () 
                 ->and(TypePHP::getGenericTypes($catalog))->toBe([
                     'K' => 'string',
                     'V' => Dog::class,
-                ]);
+                ])
+            ;
         });
     });
 
@@ -51,10 +54,12 @@ describe('Multi-Template Classes (Map<K, V> and Dictionary<K, V>)', function () 
             expect($bag->get('timeout'))->toBe(30);
 
             expect(fn () => $bag->set(12345, 30))
-                ->toThrow(TypeError::class, 'template K = string');
+                ->toThrow(TypeError::class, 'template K = string')
+            ;
 
             expect(fn () => $bag->set('timeout', 'thirty'))
-                ->toThrow(TypeError::class, 'template V = int');
+                ->toThrow(TypeError::class, 'template V = int')
+            ;
         });
     });
 
@@ -69,7 +74,8 @@ describe('Multi-Template Classes (Map<K, V> and Dictionary<K, V>)', function () 
             expect($cloned->get('new_key'))->toBe(20);
 
             expect(fn () => $cloned->set('bad_val', -99))
-                ->toThrow(TypeError::class, 'must be of type positive-int');
+                ->toThrow(TypeError::class, 'must be of type positive-int')
+            ;
         });
     });
 });

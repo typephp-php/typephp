@@ -29,19 +29,22 @@ describe('Multi-Level Nested Offset Access (T[K1][K2])', function () {
 
         test('throws TypeError when port exceeds integer bounds from nested offset access', function () {
             $container = new DeepOffsetContainer();
-            
+
             expect(fn () => $container->configureDatabase(70000, 'mysql'))
-                ->toThrow(TypeError::class, 'Argument $port');
+                ->toThrow(TypeError::class, 'Argument $port')
+            ;
 
             expect(fn () => $container->configureDatabase(0, 'mysql'))
-                ->toThrow(TypeError::class, 'Argument $port');
+                ->toThrow(TypeError::class, 'Argument $port')
+            ;
         });
 
         test('throws TypeError when driver violates literal union from nested offset access', function () {
             $container = new DeepOffsetContainer();
 
             expect(fn () => $container->configureDatabase(3306, 'sqlite'))
-                ->toThrow(TypeError::class, "Argument \$driver must be of type ('mysql' | 'pgsql')");
+                ->toThrow(TypeError::class, "Argument \$driver must be of type ('mysql' | 'pgsql')")
+            ;
         });
     });
 
@@ -57,7 +60,8 @@ describe('Multi-Level Nested Offset Access (T[K1][K2])', function () {
 
         test('throws TypeError when host is empty string', function () {
             expect(fn () => testDirectNestedOffsetAccess('', true))
-                ->toThrow(TypeError::class, 'Argument $host must be of type non-empty-string');
+                ->toThrow(TypeError::class, 'Argument $host must be of type non-empty-string')
+            ;
         });
     });
 });

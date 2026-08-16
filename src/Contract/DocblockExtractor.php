@@ -114,7 +114,7 @@ final class DocblockExtractor
     /**
      * Extracts @var tags with priority: @phpstan-var > @psalm-var > @var.
      *
-     * @return array<int, VarTagValueNode>
+     * @return array<VarTagValueNode>
      */
     public static function getVarTags(PhpDocNode $node): array
     {
@@ -132,16 +132,101 @@ final class DocblockExtractor
     }
 
     /**
-     * Extracts all @template tag values from a parsed PHPDoc node.
+     * Extracts all @template tags with priority: @phpstan-template-* > @psalm-template-* > @template-*.
      *
      * @return array<string, TemplateTagValueNode>
      */
     public static function extractTemplates(PhpDocNode $node): array
     {
+        $templates = [];
+
+        $priorityGroups = [
+            ['@template', '@template-covariant', '@template-contravariant'],
+            ['@psalm-template', '@psalm-template-covariant', '@psalm-template-contravariant'],
+            ['@phpstan-template', '@phpstan-template-covariant', '@phpstan-template-contravariant'],
+        ];
+
+        foreach ($priorityGroups as $tagNames) {
+            foreach ($tagNames as $tagName) {
+                foreach ($node->getTagsByName($tagName) as $tagNode) {
+                    if ($tagNode->value instanceof TemplateTagValueNode) {
+                        $templates[$tagNode->value->name] = $tagNode->value;
+                    }
+                }
+            }
+        }
+
+        return $templates;
+    }
+
+    /**
+     * Extracts declared template variances ('covariant', 'contravariant', or 'invariant') per template name.
+     *
+     * @return array<string, string>
+     */
+    public static function extractTemplateVariances(PhpDocNode $node): array
+    {
+        $variances = [];
+
+        $priorityGroups = [
+            ['@template', '@template-covariant', '@template-contravariant'],
+            ['@psalm-template', '@psalm-template-covariant', '@psalm-template-contravariant'],
+            ['@phpstan-template', '@phpstan-template-covariant', '@phpstan-template-contravariant'],
+        ];
+
+        foreach ($priorityGroups as $tagNames) {
+            foreach ($tagNames as $tagName) {
+                foreach ($node->getTagsByName($tagName) as $tagNode) {
+                    if ($tagNode->value instanceof TemplateTagValueNode) {
+                        $tName = $tagNode->value->name;
+                        $lowerTag = strtolower($tagNode->name);
+
+                        if (str_contains($lowerTag, 'covariant')) {
+                            $variances[$tName] = 'covariant';
+                        } elseif (str_contains($lowerTag, 'contravariant')) {
+                            $variances[$tName] = 'contravariant';
+                        } else {
+                            $variances[$tName] = 'invariant';
+                        }
+                    }
+                }
+            }
+        }
+
+        return $variances;
+    }
+
+    /**
+     * Extracts all inherited template type tags (@extends, @implements, @use and their @template-*, @phpstan-*, @psalm-* variants).
+     *
+     * @return array<int, \PHPStan\PhpDocParser\Ast\PhpDoc\ExtendsTagValueNode|\PHPStan\PhpDocParser\Ast\PhpDoc\ImplementsTagValueNode|\PHPStan\PhpDocParser\Ast\PhpDoc\UsesTagValueNode>
+     */
+    public static function getInheritedTags(PhpDocNode $node): array
+    {
         $tags = [];
-        foreach ($node->getTags() as $tagNode) {
-            if ($tagNode->value instanceof TemplateTagValueNode) {
-                $tags[$tagNode->value->name] = $tagNode->value;
+        $tagNames = [
+            '@extends',
+            '@template-extends',
+            '@phpstan-extends',
+            '@psalm-extends',
+            '@implements',
+            '@template-implements',
+            '@phpstan-implements',
+            '@psalm-implements',
+            '@use',
+            '@template-use',
+            '@phpstan-use',
+        ];
+
+        foreach ($tagNames as $name) {
+            foreach ($node->getTagsByName($name) as $tagNode) {
+                if (
+                    $tagNode->value instanceof \PHPStan\PhpDocParser\Ast\PhpDoc\ExtendsTagValueNode ||
+                    $tagNode->value instanceof \PHPStan\PhpDocParser\Ast\PhpDoc\ImplementsTagValueNode ||
+                    $tagNode->value instanceof \PHPStan\PhpDocParser\Ast\PhpDoc\UsesTagValueNode
+                ) {
+                    $tags[] = $tagNode->value;
+                }
             }
         }
 
@@ -226,7 +311,6 @@ final class DocblockExtractor
             }
         }
 
-        // Expand nested/imported alias references inside extracted local aliases
         foreach ($aliases as $name => $type) {
             $aliases[$name] = ContractParser::substituteAliases($type, $aliases);
         }

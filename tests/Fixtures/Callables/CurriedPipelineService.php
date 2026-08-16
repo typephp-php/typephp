@@ -15,7 +15,7 @@ class CurriedPipelineService
     {
         return function (int $minLen): callable {
             return function (string $text) use ($minLen): bool {
-                return strlen($text) >= $minLen;
+                return \strlen($text) >= $minLen;
             };
         };
     }

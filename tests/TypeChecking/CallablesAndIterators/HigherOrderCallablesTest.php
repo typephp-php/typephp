@@ -32,7 +32,8 @@ describe('Higher-Order & Curried Callables', function () {
             $factory = $service->createValidatorFactory();
 
             expect(fn () => $factory(-5))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
         });
 
         test('throws TypeError when inner curried callback receives invalid argument', function () {
@@ -41,7 +42,8 @@ describe('Higher-Order & Curried Callables', function () {
             $validator = $factory(3);
 
             expect(fn () => $validator(''))
-                ->toThrow(TypeError::class, 'non-empty-string');
+                ->toThrow(TypeError::class, 'non-empty-string')
+            ;
         });
 
         test('throws TypeError when inner curried callback returns invalid return type', function () {
@@ -50,7 +52,8 @@ describe('Higher-Order & Curried Callables', function () {
             $badValidator = $badFactory(3);
 
             expect(fn () => $badValidator('ValidString'))
-                ->toThrow(TypeError::class, 'must be of type bool');
+                ->toThrow(TypeError::class, 'must be of type bool')
+            ;
         });
     });
 
@@ -65,10 +68,11 @@ describe('Higher-Order & Curried Callables', function () {
 
         test('throws TypeError when transformer inside higher-order pipeline violates return type', function () {
             $pipeline = fn (callable $trans, int $val): string => $trans($val);
-            $badTransformer = fn (int $id): string => ''; 
+            $badTransformer = fn (int $id): string => '';
 
             expect(fn () => testHigherOrderPipeline($pipeline, $badTransformer, 42))
-                ->toThrow(TypeError::class, 'non-empty-string');
+                ->toThrow(TypeError::class, 'non-empty-string')
+            ;
         });
     });
 });

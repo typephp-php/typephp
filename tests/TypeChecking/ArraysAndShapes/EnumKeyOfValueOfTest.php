@@ -46,18 +46,22 @@ describe('key-of and value-of with UnitEnums and Int BackedEnums', function () {
 
         test('key-of<UnitEnum> rejects invalid case names and lowercase names', function () {
             expect(fn () => testUnitEnumKeyOf('hearts'))
-                ->toThrow(TypeError::class, 'must be a key of enum TypePHP\Tests\Fixtures\Enums\Suit');
+                ->toThrow(TypeError::class, 'must be a key of enum TypePHP\Tests\Fixtures\Enums\Suit')
+            ;
 
             expect(fn () => testUnitEnumKeyOf('InvalidSuit'))
-                ->toThrow(TypeError::class, 'must be a key of enum TypePHP\Tests\Fixtures\Enums\Suit');
+                ->toThrow(TypeError::class, 'must be a key of enum TypePHP\Tests\Fixtures\Enums\Suit')
+            ;
         });
 
         test('value-of<UnitEnum> throws TypeError because UnitEnums have no backing values', function () {
             expect(fn () => testUnitEnumValueOf('Hearts'))
-                ->toThrow(TypeError::class, 'must be a value of enum TypePHP\Tests\Fixtures\Enums\Suit');
+                ->toThrow(TypeError::class, 'must be a value of enum TypePHP\Tests\Fixtures\Enums\Suit')
+            ;
 
             expect(fn () => testUnitEnumValueOf(1))
-                ->toThrow(TypeError::class, 'must be a value of enum TypePHP\Tests\Fixtures\Enums\Suit');
+                ->toThrow(TypeError::class, 'must be a value of enum TypePHP\Tests\Fixtures\Enums\Suit')
+            ;
         });
     });
 
@@ -69,7 +73,8 @@ describe('key-of and value-of with UnitEnums and Int BackedEnums', function () {
 
         test('key-of<IntEnum> rejects invalid case names', function () {
             expect(fn () => testIntBackedEnumKeyOf('pending'))
-                ->toThrow(TypeError::class, 'must be a key of enum TypePHP\Tests\Fixtures\Enums\TransactionStatus');
+                ->toThrow(TypeError::class, 'must be a key of enum TypePHP\Tests\Fixtures\Enums\TransactionStatus')
+            ;
         });
 
         test('value-of<IntEnum> accepts backing integers', function () {
@@ -79,7 +84,8 @@ describe('key-of and value-of with UnitEnums and Int BackedEnums', function () {
 
         test('value-of<IntEnum> rejects non-existent integers and string numbers', function () {
             expect(fn () => testIntBackedEnumValueOf(99))
-                ->toThrow(TypeError::class, 'must be a value of enum TypePHP\Tests\Fixtures\Enums\TransactionStatus');
+                ->toThrow(TypeError::class, 'must be a value of enum TypePHP\Tests\Fixtures\Enums\TransactionStatus')
+            ;
         });
     });
 });

@@ -24,9 +24,10 @@ describe('PHP 8.5+ Pipe Operator (|>) and Multi-Step Pipelines', function () {
         test('throws TypeError at the exact pipe step where parameter contract is violated', function () {
             $service = new PipePipelineService();
             $runner = new NativePipeRunner();
-            
+
             expect(fn () => $runner->runPipeline(-5, $service))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
         });
 
         test('executes standalone method pipeline with native pipe operator', function () {
@@ -41,7 +42,8 @@ describe('PHP 8.5+ Pipe Operator (|>) and Multi-Step Pipelines', function () {
             $runner = new NativePipeRunner();
 
             expect(fn () => $runner->runStandalonePipeline(-50))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
         });
     });
 
@@ -71,7 +73,7 @@ PHP;
             $origLines = explode("\n", str_replace("\r\n", "\n", $source));
             $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
 
-            expect(count($transLines))->toBe(count($origLines));
+            expect(\count($transLines))->toBe(\count($origLines));
 
             $origTarget = array_search('$targetLine = true;', array_map('trim', $origLines), true);
             $transTarget = array_search('$targetLine = true;', array_map('trim', $transLines), true);

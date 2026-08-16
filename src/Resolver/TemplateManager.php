@@ -18,6 +18,7 @@ use PHPStan\PhpDocParser\Parser\PhpDocParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
+use TypePHP\Contract\DocblockExtractor;
 use TypePHP\Contract\HierarchyResolver;
 use TypePHP\Internal\ClassNameValidator;
 use TypePHP\Internal\ErrorFactory;
@@ -160,22 +161,7 @@ final class TemplateManager
                 $classTokens = new TokenIterator($lexer->tokenize($classDoc));
                 $classPhpDocNode = $phpDocParser->parse($classTokens);
 
-                $variances = [];
-                foreach ($classPhpDocNode->getTags() as $tagNode) {
-                    if ($tagNode->value instanceof TemplateTagValueNode) {
-                        $tagName = strtolower($tagNode->name);
-
-                        if (str_contains($tagName, 'covariant')) {
-                            $variances[$tagNode->value->name] = 'covariant';
-                        } elseif (str_contains($tagName, 'contravariant')) {
-                            $variances[$tagNode->value->name] = 'contravariant';
-                        } else {
-                            $variances[$tagNode->value->name] = 'invariant';
-                        }
-                    }
-                }
-
-                return $variances;
+                return DocblockExtractor::extractTemplateVariances($classPhpDocNode);
             }
         } catch (\Throwable $e) {
             // Silently ignore reflection errors
@@ -286,28 +272,24 @@ final class TemplateManager
             $templates = [];
             $classVariances = [];
 
-            // Collect template parameters across the entire class/interface hierarchy!
+            // Collect template parameters across the entire class/interface hierarchy with priority!
             foreach ($classHierarchy as $hierClass) {
                 $classDoc = $hierClass->getDocComment();
                 if ($classDoc !== false) {
                     $classTokens = new TokenIterator($lexer->tokenize($classDoc));
                     $classPhpDocNode = $phpDocParser->parse($classTokens);
 
-                    foreach ($classPhpDocNode->getTags() as $tagNode) {
-                        if ($tagNode->value instanceof TemplateTagValueNode) {
-                            $tName = $tagNode->value->name;
-                            if (! isset($templates[$tName])) {
-                                $templates[$tName] = $tagNode->value;
-                                $tagName = strtolower($tagNode->name);
+                    $hierTemplates = DocblockExtractor::extractTemplates($classPhpDocNode);
+                    $hierVariances = DocblockExtractor::extractTemplateVariances($classPhpDocNode);
 
-                                if (str_contains($tagName, 'covariant')) {
-                                    $classVariances[$tName] = GenericTypeNode::VARIANCE_COVARIANT;
-                                } elseif (str_contains($tagName, 'contravariant')) {
-                                    $classVariances[$tName] = GenericTypeNode::VARIANCE_CONTRAVARIANT;
-                                } else {
-                                    $classVariances[$tName] = GenericTypeNode::VARIANCE_INVARIANT;
-                                }
-                            }
+                    foreach ($hierTemplates as $tName => $tagNode) {
+                        if (! isset($templates[$tName])) {
+                            $templates[$tName] = $tagNode;
+                            $classVariances[$tName] = match ($hierVariances[$tName] ?? 'invariant') {
+                                'covariant' => GenericTypeNode::VARIANCE_COVARIANT,
+                                'contravariant' => GenericTypeNode::VARIANCE_CONTRAVARIANT,
+                                default => GenericTypeNode::VARIANCE_INVARIANT,
+                            };
                         }
                     }
                 }
@@ -386,13 +368,12 @@ final class TemplateManager
                         }
                     }
 
-                    $inheritedTags = array_merge(
-                        $classPhpDocNode->getExtendsTagValues(),
-                        $classPhpDocNode->getImplementsTagValues()
-                    );
+                    // Extract all @extends, @implements, @use and their @template-*, @phpstan-*, @psalm-* variations
+                    $inheritedTags = DocblockExtractor::getInheritedTags($classPhpDocNode);
 
                     foreach ($inheritedTags as $inheritedTag) {
-                        $genericTypeNode = $inheritedTag->type;
+                        /** @var GenericTypeNode|null $genericTypeNode */
+                        $genericTypeNode = $inheritedTag->type ?? null;
                         if ($genericTypeNode instanceof GenericTypeNode) {
                             $parentName = SpecialTypeResolver::resolveFqcn($genericTypeNode->type->name, $hierClass);
 

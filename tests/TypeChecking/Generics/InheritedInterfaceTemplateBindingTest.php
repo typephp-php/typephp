@@ -29,7 +29,8 @@ describe('Inherited Interface Template Discovery during Instance Pre-binding', f
             $container = new ChildWithoutTemplateDocblock();
 
             expect(fn () => $container->push(new Car()))
-                ->toThrow(TypeError::class, 'must be of type (' . Dog::class . ' | ' . Cat::class . ')');
+                ->toThrow(TypeError::class, 'must be of type (' . Dog::class . ' | ' . Cat::class . ')')
+            ;
         });
     });
 
@@ -42,7 +43,8 @@ describe('Inherited Interface Template Discovery during Instance Pre-binding', f
             expect($service->setItem(new Cat()))->toBeTrue();
 
             expect(fn () => $service->setItem(new Car()))
-                ->toThrow(TypeError::class, 'must be of type (' . Dog::class . ' | ' . Cat::class . ')');
+                ->toThrow(TypeError::class, 'must be of type (' . Dog::class . ' | ' . Cat::class . ')')
+            ;
         });
     });
 
@@ -54,7 +56,8 @@ describe('Inherited Interface Template Discovery during Instance Pre-binding', f
             expect($service->processElement(100))->toBeTrue();
 
             expect(fn () => $service->processElement(-50))
-                ->toThrow(TypeError::class, 'must be of type positive-int');
+                ->toThrow(TypeError::class, 'must be of type positive-int')
+            ;
         });
     });
 
@@ -65,16 +68,19 @@ describe('Inherited Interface Template Discovery during Instance Pre-binding', f
 
             expect($service->processData(42))->toBeTrue();
             expect(fn () => $service->processData(-5))
-                ->toThrow(TypeError::class, 'must be of type positive-int');
+                ->toThrow(TypeError::class, 'must be of type positive-int')
+            ;
 
             expect($service->setKey('valid_key'))->toBeTrue();
             expect(fn () => $service->setKey(''))
-                ->toThrow(TypeError::class, 'must be of type non-empty-string');
-                
+                ->toThrow(TypeError::class, 'must be of type non-empty-string')
+            ;
+
             expect($service->setVal(new Dog()))->toBeTrue();
             expect($service->setVal(new Cat()))->toBeTrue();
             expect(fn () => $service->setVal(new Car()))
-                ->toThrow(TypeError::class, 'must be of type (' . Dog::class . ' | ' . Cat::class . ')');
+                ->toThrow(TypeError::class, 'must be of type (' . Dog::class . ' | ' . Cat::class . ')')
+            ;
         });
     });
 });

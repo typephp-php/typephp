@@ -19,7 +19,7 @@ function testUnpackFunction(int $id, string $name, int $age): array
  */
 function testVariadicUnpackFunction(int ...$ids): int
 {
-    return count($ids);
+    return \count($ids);
 }
 
 describe('PHP 8.0+ Argument Unpacking / Spread (...$args)', function () {
@@ -63,7 +63,8 @@ describe('PHP 8.0+ Argument Unpacking / Spread (...$args)', function () {
             ];
 
             expect(fn () => testUnpackFunction(...$badPayload))
-                ->toThrow(TypeError::class, 'Argument $id must be of type positive-int');
+                ->toThrow(TypeError::class, 'Argument $id must be of type positive-int')
+            ;
         });
 
         test('throws TypeError when unpacked int range argument exceeds max bound', function () {
@@ -74,7 +75,8 @@ describe('PHP 8.0+ Argument Unpacking / Spread (...$args)', function () {
             ];
 
             expect(fn () => testUnpackFunction(...$badAgePayload))
-                ->toThrow(TypeError::class, 'Argument $age');
+                ->toThrow(TypeError::class, 'Argument $age')
+            ;
         });
 
         test('throws TypeError when unpacked string argument is empty', function () {
@@ -85,7 +87,8 @@ describe('PHP 8.0+ Argument Unpacking / Spread (...$args)', function () {
             ];
 
             expect(fn () => testUnpackFunction(...$badNamePayload))
-                ->toThrow(TypeError::class, 'Argument $name must be of type non-empty-string');
+                ->toThrow(TypeError::class, 'Argument $name must be of type non-empty-string')
+            ;
         });
     });
 
@@ -100,7 +103,8 @@ describe('PHP 8.0+ Argument Unpacking / Spread (...$args)', function () {
             $ids = [10, 20, -5, 40];
 
             expect(fn () => testVariadicUnpackFunction(...$ids))
-                ->toThrow(TypeError::class, 'Argument $ids[2] must be of type positive-int');
+                ->toThrow(TypeError::class, 'Argument $ids[2] must be of type positive-int')
+            ;
         });
     });
 
@@ -133,7 +137,8 @@ describe('PHP 8.0+ Argument Unpacking / Spread (...$args)', function () {
             ];
 
             expect(fn () => $service->configureUser(...$params))
-                ->toThrow(TypeError::class, "Argument \$role must be of type ('admin' | 'editor' | 'viewer')");
+                ->toThrow(TypeError::class, "Argument \$role must be of type ('admin' | 'editor' | 'viewer')")
+            ;
         });
 
         test('accepts unpacked variadic integers on class method', function () {
@@ -144,7 +149,8 @@ describe('PHP 8.0+ Argument Unpacking / Spread (...$args)', function () {
 
             $badScores = [100, -50, 300];
             expect(fn () => $service->sumScores(...$badScores))
-                ->toThrow(TypeError::class, 'Argument $scores[1] must be of type positive-int');
+                ->toThrow(TypeError::class, 'Argument $scores[1] must be of type positive-int')
+            ;
         });
     });
 });

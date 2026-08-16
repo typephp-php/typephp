@@ -27,14 +27,16 @@ describe('DNF & Complex Intersections ((A&B)|null, Shapes, and Generics)', funct
             $service = new DnfService();
 
             expect(fn () => $service->processNullableIntersection(new CountableOnly()))
-                ->toThrow(TypeError::class, 'must be of type ((Countable & ArrayAccess) | null)');
+                ->toThrow(TypeError::class, 'must be of type ((Countable & ArrayAccess) | null)')
+            ;
         });
 
         test('throws TypeError when object only implements ArrayAccess', function () {
             $service = new DnfService();
 
             expect(fn () => $service->processNullableIntersection(new ArrayAccessOnly()))
-                ->toThrow(TypeError::class, 'must be of type ((Countable & ArrayAccess) | null)');
+                ->toThrow(TypeError::class, 'must be of type ((Countable & ArrayAccess) | null)')
+            ;
         });
     });
 
@@ -57,7 +59,8 @@ describe('DNF & Complex Intersections ((A&B)|null, Shapes, and Generics)', funct
             ];
 
             expect(fn () => $service->processShapeWithIntersection($badData))
-                ->toThrow(TypeError::class, "['collection'] must be of type ArrayAccess");
+                ->toThrow(TypeError::class, "['collection'] must be of type ArrayAccess")
+            ;
         });
 
         test('throws TypeError when shape scalar property is invalid', function () {
@@ -68,7 +71,8 @@ describe('DNF & Complex Intersections ((A&B)|null, Shapes, and Generics)', funct
             ];
 
             expect(fn () => $service->processShapeWithIntersection($badData))
-                ->toThrow(TypeError::class, "['id'] must be of type positive-int");
+                ->toThrow(TypeError::class, "['id'] must be of type positive-int")
+            ;
         });
     });
 
@@ -89,7 +93,8 @@ describe('DNF & Complex Intersections ((A&B)|null, Shapes, and Generics)', funct
             $service = new DnfService();
 
             expect(fn () => $service->processDnfAlias(new CountableOnly()))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
         });
     });
 
@@ -109,7 +114,8 @@ describe('DNF & Complex Intersections ((A&B)|null, Shapes, and Generics)', funct
             $collection = new GenericCollection();
 
             expect(fn () => $collection->add(new CountableOnly()))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
         });
     });
 });

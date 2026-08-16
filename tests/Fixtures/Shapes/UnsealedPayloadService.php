@@ -13,7 +13,7 @@ class UnsealedPayloadService
      */
     public function processBatchOptions(array $payload): int
     {
-        return count($payload);
+        return \count($payload);
     }
 
     /**
@@ -23,6 +23,6 @@ class UnsealedPayloadService
      */
     public function processPlayerStats(array $data): int
     {
-        return count($data);
+        return \count($data);
     }
 }

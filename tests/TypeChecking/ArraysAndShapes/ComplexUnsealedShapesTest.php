@@ -42,7 +42,8 @@ describe('Complex Unsealed Array Shapes (...<string, ComplexType>)', function ()
             ];
 
             expect(fn () => $service->processBatchOptions($badPayload))
-                ->toThrow(TypeError::class, "['odd_scores'][1] must be of type positive-int");
+                ->toThrow(TypeError::class, "['odd_scores'][1] must be of type positive-int")
+            ;
         });
 
         test('throws TypeError when an extra key is not a list', function () {
@@ -53,7 +54,8 @@ describe('Complex Unsealed Array Shapes (...<string, ComplexType>)', function ()
             ];
 
             expect(fn () => $service->processBatchOptions($badPayload))
-                ->toThrow(TypeError::class, "['extra_info'] must be a list");
+                ->toThrow(TypeError::class, "['extra_info'] must be a list")
+            ;
         });
     });
 
@@ -78,7 +80,8 @@ describe('Complex Unsealed Array Shapes (...<string, ComplexType>)', function ()
             ];
 
             expect(fn () => $service->processPlayerStats($badData))
-                ->toThrow(TypeError::class, "['player_two']['score'] must be of type positive-int");
+                ->toThrow(TypeError::class, "['player_two']['score'] must be of type positive-int")
+            ;
         });
 
         test('throws TypeError when an extra sub-shape is missing a required inner property', function () {
@@ -89,7 +92,8 @@ describe('Complex Unsealed Array Shapes (...<string, ComplexType>)', function ()
             ];
 
             expect(fn () => $service->processPlayerStats($badData))
-                ->toThrow(TypeError::class, "['player_one'] is missing required key 'active'");
+                ->toThrow(TypeError::class, "['player_one'] is missing required key 'active'")
+            ;
         });
     });
 
@@ -111,7 +115,8 @@ describe('Complex Unsealed Array Shapes (...<string, ComplexType>)', function ()
             ];
 
             expect(fn () => testComplexUnsealedFunction($config))
-                ->toThrow(TypeError::class, "['tags'][1] must be of type non-empty-string");
+                ->toThrow(TypeError::class, "['tags'][1] must be of type non-empty-string")
+            ;
         });
     });
 });

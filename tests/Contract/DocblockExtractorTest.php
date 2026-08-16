@@ -204,3 +204,52 @@ DOC;
         });
     });
 });
+
+describe('@template Priority and Variance Extractions', function () {
+    test('prioritizes @phpstan-template with bound over basic @template', function () {
+        $doc = <<<'DOC'
+/**
+ * @template T
+ * @phpstan-template T of \TypePHP\Tests\Fixtures\Domain\Animal
+ */
+DOC;
+        $node = DocblockExtractor::parseDocString($doc);
+        $templates = DocblockExtractor::extractTemplates($node);
+
+        expect($templates)->toHaveKey('T')
+            ->and($templates['T']->bound)->not()->toBeNull()
+            ->and((string) $templates['T']->bound)->toBe('\TypePHP\Tests\Fixtures\Domain\Animal')
+        ;
+    });
+
+    test('extracts declared template variances with @phpstan-template-covariant priority', function () {
+        $doc = <<<'DOC'
+/**
+ * @template T
+ * @phpstan-template-covariant T
+ * @psalm-template-contravariant K
+ */
+DOC;
+        $node = DocblockExtractor::parseDocString($doc);
+        $variances = DocblockExtractor::extractTemplateVariances($node);
+
+        expect($variances)->toBe([
+            'T' => 'covariant',
+            'K' => 'contravariant',
+        ]);
+    });
+
+    test('extracts all inherited template tag variations via getInheritedTags', function () {
+        $doc = <<<'DOC'
+/**
+ * @template-extends BaseRepository<User>
+ * @phpstan-implements ProcessorInterface<string>
+ * @use LoggerTrait<int>
+ */
+DOC;
+        $node = DocblockExtractor::parseDocString($doc);
+        $inherited = DocblockExtractor::getInheritedTags($node);
+
+        expect($inherited)->toHaveCount(3);
+    });
+});

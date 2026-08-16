@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace TypePHP\Tests\Fixtures\Callables;
 
 use TypePHP\Tests\Fixtures\Domain\Animal;
-use TypePHP\Tests\Fixtures\Domain\Dog;
 
 class GenericCallableService
 {
