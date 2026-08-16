@@ -7,12 +7,12 @@ namespace TypePHP\Tests\Fixtures\Generics;
 /**
  * @template T
  */
-abstract class SingleAbstractGenericParent
+trait GenericItemLoggerTrait
 {
     /**
      * @param T $item
      */
-    public function setItem(mixed $item): bool
+    public function logItem(mixed $item): bool
     {
         return true;
     }

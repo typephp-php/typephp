@@ -7,8 +7,8 @@ if (PHP_VERSION_ID < 80400) {
 }
 
 use TypePHP\Internal\Config;
-use TypePHP\Tests\Fixtures\Domain\User;
 use TypePHP\Tests\Fixtures\Types\HookedInterfaceImplementation;
+use TypePHP\Tests\Fixtures\Types\HookedUser;
 use TypePHP\Tests\Fixtures\Types\PropertyHooks;
 
 beforeEach(function () {
@@ -76,8 +76,8 @@ describe('PHP 8.4 Property Hooks Validation', function () {
         expect($fixture->unvalidatedHook)->toBe(-50);
     });
 
-    test('validates asymmetric visibility properties combined with property hooks', function () {
-        $profile = new User();
+     test('validates asymmetric visibility properties combined with property hooks', function () {
+        $profile = new HookedUser();
 
         $profile->updateProfile(100, 'Bob');
         expect($profile->id)->toBe(100);

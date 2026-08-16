@@ -37,6 +37,39 @@ registerUser(-5, 'Alice', 'admin');
 
 ---
 
+## Tooling Annotation Priority Hierarchy (`@phpstan-*` > `@psalm-*` > `@*`)
+
+Modern PHP packages and frameworks (such as **Doctrine Collections**, **Symfony**, and **Laravel**) frequently declare both broad IDE-fallback annotations and strict static analysis contracts on the exact same method signature:
+
+```php
+/**
+ * @param mixed $element            // Broad fallback for standard IDEs
+ * @phpstan-param positive-int $element // Refined contract for static analyzers
+ *
+ * @return mixed
+ * @phpstan-return list<positive-int>
+ */
+public function add(mixed $element): mixed;
+```
+
+When multiple tool annotations are declared on the same parameter or return value, TypePHP resolves the active contract using a deterministic **3-Tier Priority Hierarchy**:
+
+$$\text{1. } \mathbf{@phpstan\text{-}*} \quad \longrightarrow \quad \text{2. } \mathbf{@psalm\text{-}*} \quad \longrightarrow \quad \text{3. } \mathbf{@* \text{ (Standard)}}$$
+
+### Why Priority Matters in Real-World Codebases
+
+1. **Refined Contracts Take Precedence:** Tool-specific annotations (`@phpstan-param`, `@psalm-return`) contain specific type constraints (such as generic templates, array shapes, or integer bounds) that standard `@param mixed` omits. TypePHP always enforces the tighter, intended contract.
+2. **Third-Party Framework Compatibility:** Libraries like Doctrine Collections declare `@phpstan-param T $element` on `Collection::add` alongside native `mixed $element`. TypePHP automatically prioritizes `@phpstan-param`, making generic collections enforce types at runtime without manual wrapper code.
+
+### Tooling Priority Matrix Across Boundary Contracts
+
+| Boundary Type | Priority 1 (Highest) | Priority 2 | Priority 3 (Fallback) |
+| :--- | :--- | :--- | :--- |
+| **Parameters** | `@phpstan-param` | `@psalm-param` | `@param` |
+| **Return Values** | `@phpstan-return` | `@psalm-return` | `@return` |
+
+---
+
 ## PHP 8.0+ Named Arguments
 
 TypePHP natively supports PHP 8.0+ Named Arguments. Because parameter contracts are mapped by parameter name rather than argument position index, you can pass named arguments in any order, and TypePHP will accurately validate each parameter:
@@ -257,7 +290,7 @@ TypePHP fully validates class constructor arguments, supporting both standard co
 
 ### Promoted Properties (PHP 8.0+)
 
-Annotate promoted properties in the constructor's docblock using standard `@param` tags:
+Annotate promoted properties in the constructor's docblock using standard `@param` or `@phpstan-param` tags:
 
 ```php
 class Order
@@ -284,7 +317,7 @@ new Order(-1, 'SKU-99', 5);
 
 ### Property `@var` Fallback for Un-Annotated Constructors
 
-If a constructor parameter is un-annotated (or lacks a `@param` tag), TypePHP automatically inspects the corresponding class property's `@var` docblock to infer the parameter contract:
+If a constructor parameter is un-annotated (or lacks a `@param` tag), TypePHP automatically inspects the corresponding class property's `@var` / `@phpstan-var` docblock to infer the parameter contract:
 
 ```php
 class User
@@ -328,8 +361,6 @@ function getUserStatus(int $id): array
 getUserStatus(-10);
 // Throws: TypeError: getUserStatus(): Return value['id'] must be of type positive-int
 ```
-
-> **PHPStan and Psalm Compatibility:** TypePHP also recognizes `@phpstan-param`, `@phpstan-return`, `@psalm-param`, and `@psalm-return` annotations.
 
 ---
 

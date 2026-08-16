@@ -74,6 +74,43 @@ collectSameType(10, 20, 'invalid');
 
 ---
 
+## Tooling Template Priority Hierarchy (`@phpstan-template-*` > `@psalm-template-*` > `@template-*`)
+
+When third-party packages or framework classes declare both general IDE template docblocks and strict tool-specific annotations on the same class, TypePHP resolves the active generic contract using a deterministic **3-Tier Priority Hierarchy**:
+
+$$\begin{aligned}
+\mathbf{Priority\ 1\ (Highest):} & \quad \text{@phpstan-template-covariant} \ > \ \text{@phpstan-template-contravariant} \ > \ \text{@phpstan-template} \\
+\mathbf{Priority\ 2:} & \quad \text{@psalm-template-covariant} \ > \ \text{@psalm-template-contravariant} \ > \ \text{@psalm-template} \\
+\mathbf{Priority\ 3\ (Base):} & \quad \text{@template-covariant} \ > \ \text{@template-contravariant} \ > \ \text{@template}
+\end{aligned}$$
+
+### Why Priority Matters for Templates
+
+Authors often write a broad `@template T` for generic IDE docblocks, and then declare `@phpstan-template T of Animal` to specify strict upper bounds for static analyzers. TypePHP always extracts the tool-specific annotation so that runtime bound enforcement matches the author's intended contract:
+
+```php
+/**
+ * Standard tag has no bound, but @phpstan-template enforces Animal bound:
+ *
+ * @template T
+ * @phpstan-template T of Animal
+ * @phpstan-template-covariant T
+ */
+class BoundedProducer
+{
+    public function __construct(public mixed $item) {}
+}
+
+// Valid: Dog extends Animal
+new BoundedProducer(new Dog());
+
+// Invalid: Car does not extend Animal
+new BoundedProducer(new Car());
+// Throws: TypeError: BoundedProducer::__construct(): Argument $item (template T) must be of type Animal, Car given
+```
+
+---
+
 ## Multiple Generic Templates (`@template T`, `@template U`)
 
 Functions and classes are not limited to a single template parameter. You can declare multiple independent generic templates (such as `T`, `U`, `K`, `V`):
@@ -163,10 +200,10 @@ $users = new Collection();
 /** @var Dictionary<string, Product> $catalog */
 $catalog = new Dictionary();
 
-//  Single-Template Smart Fallback (No template name needed!)
+// Single-Template Smart Fallback (No template name needed!)
 $userType = TypePHP::getGenericType(object: $users); // Returns 'App\Models\User'
 
-//  Multi-Template Explicit Inspection
+// Multi-Template Explicit Inspection
 $keyType   = TypePHP::getGenericType(object: $catalog, template: 'K'); // Returns 'string'
 $valueType = TypePHP::getGenericType(object: $catalog, template: 'V'); // Returns 'App\Models\Product'
 
@@ -174,13 +211,13 @@ $valueType = TypePHP::getGenericType(object: $catalog, template: 'V'); // Return
 $userRepo = new UserRepository();
 $repoType = TypePHP::getGenericType(object: $userRepo); // Returns 'App\Models\User'
 
-//  Inspect all bound template parameters as an array
+// Inspect all bound template parameters as an array
 $types = TypePHP::getGenericTypes(object: $catalog); // Returns ['K' => 'string', 'V' => 'App\Models\Product']
 
-//  Inspect Declared Variance ('covariant', 'contravariant', or 'invariant')
+// Inspect Declared Variance ('covariant', 'contravariant', or 'invariant')
 $variance = TypePHP::getGenericVariance(object: $producer); // Returns 'covariant'
 
-//  Inspect All Bound Variances as Arrays
+// Inspect All Bound Variances as Arrays
 $variances = TypePHP::getGenericVariances(object: $producer); // Returns ['T' => 'covariant']
 ```
 
@@ -626,9 +663,17 @@ $producers->add(new Producer(new Car()));
 
 ---
 
-## Class Inheritance (`@extends` and `@implements`)
+## Class, Interface, & Trait Inheritance (`@extends`, `@implements`, `@use`)
 
-When a child class extends a generic parent class or implements a generic interface, declare the template mapping using `@extends` or `@implements` (also recognized as `@template-extends` and `@template-implements`):
+When a child class extends a generic parent class, implements a generic interface, or uses a generic trait, declare the template mapping using any of the recognized inherited template annotations:
+
+| Inheritance Context | Supported Tag Variations |
+| :--- | :--- |
+| **Class Inheritance** | `@extends`, `@template-extends`, `@phpstan-extends`, `@psalm-extends` |
+| **Interface Implementation** | `@implements`, `@template-implements`, `@phpstan-implements`, `@psalm-implements` |
+| **Trait Usage** | `@use`, `@template-use`, `@phpstan-use` |
+
+### 1. Interface Implementation (`@implements` / `@template-implements`)
 
 ```php
 /**
@@ -646,9 +691,9 @@ interface ProcessorInterface
 }
 
 /**
- * Fulfills T = Cat via @implements
+ * Fulfills T = Cat via @template-implements
  *
- * @implements ProcessorInterface<Cat>
+ * @template-implements ProcessorInterface<Cat>
  */
 class CatProcessor implements ProcessorInterface
 {
@@ -666,6 +711,106 @@ $processor->process(new Cat());
 // Invalid Call
 $processor->process(new Dog());
 // Throws: TypeError: CatProcessor::process(): Argument $item (template T = Cat) must be of type Cat
+```
+
+### 2. Class Extension (`@extends` / `@template-extends`)
+
+```php
+/**
+ * @template T
+ */
+abstract class BaseRepository
+{
+    /**
+     * @param T $entity
+     */
+    public function save(mixed $entity): void
+    {
+        // ...
+    }
+}
+
+/**
+ * Fulfills T = User via @template-extends
+ *
+ * @template-extends BaseRepository<User>
+ */
+class UserRepository extends BaseRepository
+{
+}
+
+$userRepo = new UserRepository();
+
+// Valid Save
+$userRepo->save(new User('Alice'));
+
+// Invalid Save
+$userRepo->save(new Product('SKU-100'));
+// Throws: TypeError: UserRepository::save(): Argument $entity (template T = User) must be of type User
+```
+
+### 3. Generic Traits (`@use` / `@template-use` / `@phpstan-use`)
+
+When a class uses a generic Trait, declare the template binding either at the **class level** or **directly above the inline `use Trait;` statement**:
+
+#### Generic Trait Definition (`ItemLoggerTrait.php`)
+
+```php
+/**
+ * @template T
+ */
+trait ItemLoggerTrait
+{
+    /**
+     * @param T $item
+     */
+    public function logItem(mixed $item): bool
+    {
+        return true;
+    }
+}
+```
+
+#### Option A: Class-Level Trait Annotation (`@use` / `@template-use`)
+
+```php
+/**
+ * Class docblock binds T = Dog for the trait
+ *
+ * @use ItemLoggerTrait<Dog>
+ */
+class ClassLevelLogService
+{
+    use ItemLoggerTrait;
+}
+
+$service = new ClassLevelLogService();
+
+$service->logItem(new Dog()); // Valid
+
+$service->logItem(new Car());
+// Throws: TypeError: Argument $item (template T = Dog) must be of type Dog, Car given
+```
+
+#### Option B: Inline Statement Trait Annotation (`/** @use */ use Trait;`)
+
+```php
+class InlineLogService
+{
+    /**
+     * Inline statement docblock binds T = Dog
+     *
+     * @use ItemLoggerTrait<Dog>
+     */
+    use ItemLoggerTrait;
+}
+
+$service = new InlineLogService();
+
+$service->logItem(new Dog()); // Valid
+
+$service->logItem(new Car());
+// Throws: TypeError: Argument $item (template T = Dog) must be of type Dog, Car given
 ```
 
 ---
@@ -722,7 +867,7 @@ $users->add(new Product('SKU-999'));
 
 ## Real-World Example 2: Generic Repositories (`Repository<T>`)
 
-When a class extends a generic parent class (`@extends BaseRepository<User>`), TypePHP automatically resolves and inherits the parent's generic template bindings:
+When a class extends a generic parent class (`@extends BaseRepository<User>` or `@template-extends BaseRepository<User>`), TypePHP automatically resolves and inherits the parent's generic template bindings:
 
 ```php
 namespace App\Repositories;
@@ -744,9 +889,9 @@ abstract class BaseRepository
 }
 
 /**
- * Fulfills T = User via @extends
+ * Fulfills T = User via @template-extends
  *
- * @extends BaseRepository<User>
+ * @template-extends BaseRepository<User>
  */
 class UserRepository extends BaseRepository
 {
@@ -950,4 +1095,5 @@ processCovariantConsumer(new Consumer(new Dog()));
 // 2. Invalid Call (Car is not an Animal)
 processCovariantConsumer(new Consumer(new Car()));
 // Throws: TypeError: processCovariantConsumer() expects Consumer<covariant Animal>, but Consumer<Car> was given
+```
 ```

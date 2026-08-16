@@ -40,8 +40,7 @@ final class FileFilter
         /** @var array<mixed> $excludes */
         $excludes = \is_array($config['exclude'] ?? null) ? $config['exclude'] : ['vendor/**', 'storage/**', 'var/**', 'cache/**'];
 
-        $cwd = getcwd();
-        $baseDir = $cwd !== false ? rtrim(str_replace('\\', '/', $cwd), '/') : '';
+        $baseDir = Config::getProjectRoot();
 
         $longestIncludeMatch = 0;
         foreach ($includes as $pattern) {

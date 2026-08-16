@@ -25,10 +25,12 @@ describe('Anonymous Classes with Type Contracts (new class { ... })', function (
             expect($service->generateCode(42, 'ITEM'))->toBe('ITEM_42');
 
             expect(fn () => $service->generateCode(-5, 'ITEM'))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
 
             expect(fn () => $service->generateCode(42, ''))
-                ->toThrow(TypeError::class, 'non-empty-string');
+                ->toThrow(TypeError::class, 'non-empty-string')
+            ;
         });
 
         test('validates return contracts when anonymous class method returns invalid value', function () {
@@ -40,12 +42,13 @@ describe('Anonymous Classes with Type Contracts (new class { ... })', function (
                  */
                 public function badReturn(int $id): string
                 {
-                    return ''; 
+                    return '';
                 }
             };
 
             expect(fn () => $service->badReturn(10))
-                ->toThrow(TypeError::class, 'Return value');
+                ->toThrow(TypeError::class, 'Return value')
+            ;
         });
     });
 
@@ -61,10 +64,12 @@ describe('Anonymous Classes with Type Contracts (new class { ... })', function (
             expect($service->formatUser(100, 'Alice'))->toBe(['id' => 100, 'name' => 'Alice']);
 
             expect(fn () => $service->formatUser(-1, 'Alice'))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
 
             expect(fn () => $service->formatUser(100, ''))
-                ->toThrow(TypeError::class, 'non-empty-string');
+                ->toThrow(TypeError::class, 'non-empty-string')
+            ;
         });
 
         test('inherits by-reference parameter contracts on anonymous class implementing interface', function () {
@@ -86,7 +91,8 @@ describe('Anonymous Classes with Type Contracts (new class { ... })', function (
 
             $badStatus = '';
             expect(fn () => $service->updateStatus($badStatus))
-                ->toThrow(TypeError::class, 'non-empty-string');
+                ->toThrow(TypeError::class, 'non-empty-string')
+            ;
         });
     });
 
@@ -102,7 +108,8 @@ describe('Anonymous Classes with Type Contracts (new class { ... })', function (
             expect($service->find(10))->toBe(['id' => 10, 'name' => 'Alice']);
 
             expect(fn () => $service->find(-5))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
         });
     });
 
@@ -124,7 +131,8 @@ describe('Anonymous Classes with Type Contracts (new class { ... })', function (
             expect($container->count)->toBe(50);
 
             expect(fn () => $container->count = -10)
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
 
             expect(fn () => $container->title = '')
                 ->toThrow(TypeError::class, 'non-empty-string');

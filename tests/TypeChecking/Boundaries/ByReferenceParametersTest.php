@@ -69,7 +69,8 @@ describe('Arguments Passed By-Reference (&$param)', function () {
             $value = -50;
 
             expect(fn () => testByRefScalar($value))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
 
             // Value must remain untouched in caller scope
             expect($value)->toBe(-50);
@@ -83,7 +84,8 @@ describe('Arguments Passed By-Reference (&$param)', function () {
 
             $invalidCounter = -10;
             expect(fn () => testByRefNativeOnly($invalidCounter))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
 
             expect($invalidCounter)->toBe(-10);
         });
@@ -96,7 +98,8 @@ describe('Arguments Passed By-Reference (&$param)', function () {
 
             $emptyName = '';
             expect(fn () => testByRefString($emptyName))
-                ->toThrow(TypeError::class, 'non-empty-string');
+                ->toThrow(TypeError::class, 'non-empty-string')
+            ;
 
             expect($emptyName)->toBe('');
         });
@@ -114,7 +117,8 @@ describe('Arguments Passed By-Reference (&$param)', function () {
             $list = [10, -20, 30];
 
             expect(fn () => testByRefList($list))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
 
             // Original array remains untouched
             expect($list)->toBe([10, -20, 30]);
@@ -131,7 +135,8 @@ describe('Arguments Passed By-Reference (&$param)', function () {
 
             expect($a)->toBe(11)
                 ->and($b)->toBe(12)
-                ->and($c)->toBe(13);
+                ->and($c)->toBe(13)
+            ;
         });
 
         test('throws TypeError when any variadic by-reference argument is invalid on entry', function () {
@@ -140,12 +145,14 @@ describe('Arguments Passed By-Reference (&$param)', function () {
             $c = 3;
 
             expect(fn () => testByRefVariadic($a, $b, $c))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
 
             // None of the variables should have mutated
             expect($a)->toBe(1)
                 ->and($b)->toBe(-5)
-                ->and($c)->toBe(3);
+                ->and($c)->toBe(3)
+            ;
         });
     });
 
@@ -164,7 +171,8 @@ describe('Arguments Passed By-Reference (&$param)', function () {
             $status = '';
 
             expect(fn () => $service->updateStatus($status))
-                ->toThrow(TypeError::class, 'non-empty-string');
+                ->toThrow(TypeError::class, 'non-empty-string')
+            ;
 
             expect($status)->toBe('');
         });
@@ -178,7 +186,8 @@ describe('Arguments Passed By-Reference (&$param)', function () {
 
             $badCode = -10;
             expect(fn () => $service->incrementCode($badCode))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
 
             expect($badCode)->toBe(-10);
         });

@@ -44,7 +44,8 @@ describe('Generic Iterables & Generators (@template T with iterable<T> and Gener
 
             $result = $service->collectAnimalStream($iterator);
             expect($result)->toHaveCount(2)
-                ->and($result[0])->toBeInstanceOf(Dog::class);
+                ->and($result[0])->toBeInstanceOf(Dog::class)
+            ;
         });
 
         test('throws TypeError lazily when traversable yields non-string key', function () {
@@ -101,7 +102,8 @@ describe('Generic Iterables & Generators (@template T with iterable<T> and Gener
             $gen->current();
 
             expect(fn () => $gen->send('invalid'))
-                ->toThrow(TypeError::class, 'must be of type int');
+                ->toThrow(TypeError::class, 'must be of type int')
+            ;
         });
     });
 });

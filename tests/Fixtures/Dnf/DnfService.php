@@ -18,7 +18,7 @@ class DnfService
      */
     public function processNullableIntersection(?object $payload): ?int
     {
-        return $payload !== null ? count($payload) : null;
+        return $payload !== null ? \count($payload) : null;
     }
 
     /**
@@ -26,7 +26,7 @@ class DnfService
      */
     public function processShapeWithIntersection(array $data): int
     {
-        return count($data['collection']);
+        return \count($data['collection']);
     }
 
     /**
@@ -34,6 +34,6 @@ class DnfService
      */
     public function processDnfAlias(object $payload): int
     {
-        return count($payload);
+        return \count($payload);
     }
 }

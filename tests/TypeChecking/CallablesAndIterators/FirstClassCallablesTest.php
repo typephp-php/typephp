@@ -46,7 +46,8 @@ describe('PHP 8.1+ First-Class Callables ($obj->method(...) and Class::staticMet
             $callable = $service->formatRecord(...);
 
             expect(fn () => applyRecordFormatter($callable, -5, 'ITEM'))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
         });
 
         test('throws TypeError when first-class callable receives empty prefix string', function () {
@@ -54,7 +55,8 @@ describe('PHP 8.1+ First-Class Callables ($obj->method(...) and Class::staticMet
             $callable = $service->formatRecord(...);
 
             expect(fn () => applyRecordFormatter($callable, 42, ''))
-                ->toThrow(TypeError::class, 'non-empty-string');
+                ->toThrow(TypeError::class, 'non-empty-string')
+            ;
         });
 
         test('throws TypeError when first-class callable method returns an invalid return value', function () {
@@ -62,7 +64,8 @@ describe('PHP 8.1+ First-Class Callables ($obj->method(...) and Class::staticMet
             $badCallable = $service->badReturnMethod(...);
 
             expect(fn () => applyCodeFormatter($badCallable, 10))
-                ->toThrow(TypeError::class, 'must be of type non-empty-string');
+                ->toThrow(TypeError::class, 'must be of type non-empty-string')
+            ;
         });
     });
 
@@ -78,7 +81,8 @@ describe('PHP 8.1+ First-Class Callables ($obj->method(...) and Class::staticMet
             $staticCallable = FirstClassCallableService::formatStaticCode(...);
 
             expect(fn () => applyCodeFormatter($staticCallable, -10))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
         });
     });
 
@@ -92,10 +96,12 @@ describe('PHP 8.1+ First-Class Callables ($obj->method(...) and Class::staticMet
             expect($formatter(100, 'USER'))->toBe('USER_100');
 
             expect(fn () => $formatter(-1, 'USER'))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
 
             expect(fn () => $formatter(100, ''))
-                ->toThrow(TypeError::class, 'non-empty-string');
+                ->toThrow(TypeError::class, 'non-empty-string')
+            ;
         });
     });
 });

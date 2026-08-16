@@ -40,7 +40,8 @@ describe('Generic Callables (@template T with callable(T): T)', function () {
             $badReturnCallback = fn (int $x): string => 'invalid';
 
             expect(fn () => $service->transform($badReturnCallback, 10))
-                ->toThrow(TypeError::class, 'must be of type int');
+                ->toThrow(TypeError::class, 'must be of type int')
+            ;
         });
 
         test('executes generic callback with class bound (@template T of Animal)', function () {
@@ -52,10 +53,11 @@ describe('Generic Callables (@template T with callable(T): T)', function () {
 
         test('throws TypeError when generic animal callback returns empty string', function () {
             $service = new GenericCallableService();
-            $badFormatter = fn (Dog $d): string => ''; 
+            $badFormatter = fn (Dog $d): string => '';
 
             expect(fn () => $service->formatAnimal($badFormatter, new Dog()))
-                ->toThrow(TypeError::class, 'must be of type non-empty-string');
+                ->toThrow(TypeError::class, 'must be of type non-empty-string')
+            ;
         });
     });
 
@@ -68,10 +70,11 @@ describe('Generic Callables (@template T with callable(T): T)', function () {
         });
 
         test('throws TypeError when comparator return value is not a boolean', function () {
-            $badComparator = fn (int $x, int $y): int => 1; 
+            $badComparator = fn (int $x, int $y): int => 1;
 
             expect(fn () => testGenericComparator($badComparator, 10, 5))
-                ->toThrow(TypeError::class, 'must be of type bool');
+                ->toThrow(TypeError::class, 'must be of type bool')
+            ;
         });
     });
 });

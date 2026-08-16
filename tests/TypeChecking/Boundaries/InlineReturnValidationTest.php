@@ -8,7 +8,7 @@ declare(strict_types=1);
 function testInlineVarOnReturnArray(): array
 {
     /** @var list<string> */
-    return [1, 2, 3]; 
+    return [1, 2, 3];
 }
 
 /**
@@ -36,7 +36,7 @@ function testInlineVarOnReturnInClosure(): array
 {
     $closure = function (): array {
         /** @var array{id: positive-int, name: non-empty-string} */
-        return ['id' => -10, 'name' => 'Alice']; 
+        return ['id' => -10, 'name' => 'Alice'];
     };
 
     return $closure();
@@ -49,16 +49,19 @@ describe('Inline @var Validation on Direct Return Statements', function () {
 
     test('throws TypeError when direct return expression violates unnamed inline @var contract', function () {
         expect(fn () => testInlineVarOnReturnArray())
-            ->toThrow(TypeError::class, 'must be of type string');
+            ->toThrow(TypeError::class, 'must be of type string')
+        ;
     });
 
     test('throws TypeError when direct return expression violates named inline @var contract', function () {
         expect(fn () => testNamedInlineVarOnReturn(-5))
-            ->toThrow(TypeError::class, 'positive-int');
+            ->toThrow(TypeError::class, 'positive-int')
+        ;
     });
 
     test('throws TypeError when closure return expression violates inline @var array shape', function () {
         expect(fn () => testInlineVarOnReturnInClosure())
-            ->toThrow(TypeError::class, 'positive-int');
+            ->toThrow(TypeError::class, 'positive-int')
+        ;
     });
 });

@@ -32,19 +32,21 @@ describe('CRLF (\r\n) Windows Line-Drift Stress Test', function () {
         $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
 
         // 1. Total line counts must be 100% identical
-        expect(count($transLines))->toBe(count($origLines));
+        expect(\count($transLines))->toBe(\count($origLines));
 
         // 2. Call site line must be on the exact same line index
         $origCallLine = array_search("formatUserData(-5, 'Alice');", array_map('trim', $origLines), true);
         $transCallLine = array_search("formatUserData(-5, 'Alice');", array_map('trim', $transLines), true);
 
         expect($transCallLine)->toBe($origCallLine)
-            ->and($origCallLine)->toBe(14); // Line index 14 (Line 15 in file)
+            ->and($origCallLine)->toBe(14) // Line index 14 (Line 15 in file)
+        ;
 
         // 3. Return statement must remain on the exact same line index (Line 11)
         $origReturnLine = array_search('return "user_{$id}_{$name}";', array_map('trim', $origLines), true);
         expect($origReturnLine)->toBe(11)
-            ->and($transLines[11])->toContain('RuntimeTypeChecker::checkReturn');
+            ->and($transLines[11])->toContain('RuntimeTypeChecker::checkReturn')
+        ;
     });
 
     test('transforms CRLF (\r\n) constructor property promotion with zero line-drift', function () {
@@ -70,13 +72,14 @@ describe('CRLF (\r\n) Windows Line-Drift Stress Test', function () {
         $origLines = explode("\n", str_replace("\r\n", "\n", $source));
         $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
 
-        expect(count($transLines))->toBe(count($origLines));
+        expect(\count($transLines))->toBe(\count($origLines));
 
         $origCallLine = array_search("new CrlfOrder(-1, 'SKU-100');", array_map('trim', $origLines), true);
         $transCallLine = array_search("new CrlfOrder(-1, 'SKU-100');", array_map('trim', $transLines), true);
 
         expect($transCallLine)->toBe($origCallLine)
-            ->and($origCallLine)->toBe(15);
+            ->and($origCallLine)->toBe(15)
+        ;
     });
 
     test('transforms CRLF (\r\n) multi-line inline @var destructuring with zero line-drift', function () {
@@ -95,18 +98,19 @@ describe('CRLF (\r\n) Windows Line-Drift Stress Test', function () {
         $origLines = explode("\n", str_replace("\r\n", "\n", $source));
         $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
 
-        expect(count($transLines))->toBe(count($origLines));
+        expect(\count($transLines))->toBe(\count($origLines));
 
         $origTargetLine = array_search('$targetLine = true;', array_map('trim', $origLines), true);
         $transTargetLine = array_search('$targetLine = true;', array_map('trim', $transLines), true);
 
         expect($transTargetLine)->toBe($origTargetLine)
-            ->and($origTargetLine)->toBe(8);
+            ->and($origTargetLine)->toBe(8)
+        ;
     });
 
     test('preserves exact line numbers in actual TypeError exceptions thrown from CRLF files', function () {
         $tempDir = sys_get_temp_dir() . '/typephp_crlf_test';
-        if (!is_dir($tempDir)) {
+        if (! is_dir($tempDir)) {
             mkdir($tempDir, 0777, true);
         }
 
@@ -139,7 +143,8 @@ describe('CRLF (\r\n) Windows Line-Drift Stress Test', function () {
             $actualPath = realpath($e->getFile()) !== false ? realpath($e->getFile()) : $e->getFile();
 
             expect(strtolower(str_replace('\\', '/', (string) $actualPath)))
-                ->toBe(strtolower(str_replace('\\', '/', (string) $expectedPath)));
+                ->toBe(strtolower(str_replace('\\', '/', (string) $expectedPath)))
+            ;
         } finally {
             @unlink($crlfScriptPath);
             @rmdir($tempDir);

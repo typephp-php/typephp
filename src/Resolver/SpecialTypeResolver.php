@@ -53,6 +53,13 @@ final class SpecialTypeResolver
     private static array $fileNamespaces = [];
 
     /**
+     * In-memory cache of class trait use statement docblocks keyed by class FQCN.
+     *
+     * @var array<string, array<int, string>>
+     */
+    private static array $classTraitUseDocs = [];
+
+    /**
      * Validates strict object identity ($value === $thisObj) when the return type node specifies $this.
      */
     public static function checkThisIdentity(TypeNode $returnTypeNode, mixed $value, ?object $thisObj, string $function): ?ErrorMessage
@@ -692,17 +699,52 @@ final class SpecialTypeResolver
     }
 
     /**
-     * Seeds the in-memory cache directly from StreamWrapper to prevent double file reads and re-parsing.
+     * Seeds file metadata directly from StreamWrapper.
      *
      * @param array<string, string> $imports
+     * @param array<string, array<int, string>> $classTraitUseDocs
      */
-    public static function seedFileMetadata(string $fileName, string $namespace, array $imports): void
+    public static function seedFileMetadata(string $fileName, string $namespace, array $imports, array $classTraitUseDocs = []): void
     {
         if ($fileName !== '') {
             $fileName = str_replace('\\', '/', $fileName);
             self::$fileNamespaces[$fileName] = $namespace;
             self::$fileUseImports[$fileName] = $imports;
+            foreach ($classTraitUseDocs as $className => $docs) {
+                self::$classTraitUseDocs[$className] = $docs;
+            }
         }
+    }
+
+    /**
+     * Returns all inline trait use statement docblock strings declared inside a class.
+     *
+     * @return array<int, string>
+     */
+    public static function getClassTraitUseDocs(string $className): array
+    {
+        if (isset(self::$classTraitUseDocs[$className])) {
+            return self::$classTraitUseDocs[$className];
+        }
+
+        if (! class_exists($className) && ! trait_exists($className)) {
+            return self::$classTraitUseDocs[$className] = [];
+        }
+
+        try {
+            $ref = new \ReflectionClass($className);
+            $fileName = $ref->getFileName();
+            if ($fileName !== false && file_exists($fileName)) {
+                $source = file_get_contents($fileName);
+                if ($source !== false) {
+                    self::parseFileMetadata($fileName, $source);
+                }
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore reflection errors
+        }
+
+        return self::$classTraitUseDocs[$className] ?? [];
     }
 
     /**
@@ -939,7 +981,7 @@ final class SpecialTypeResolver
     }
 
     /**
-     * Parses the AST of a PHP file once to extract both namespace and use import statements.
+     * Parses the AST of a PHP file once to extract namespace, use imports, and class trait use docblocks.
      */
     private static function parseFileMetadata(string $fileName, string $source): void
     {
@@ -994,6 +1036,16 @@ final class SpecialTypeResolver
                         $fqcn = $prefix . '\\' . $use->name->toString();
                         $alias = $use->getAlias()->toString();
                         $imports[$alias] = $fqcn;
+                    }
+                } elseif ($stmt instanceof Stmt\Class_ && $stmt->name !== null) {
+                    $className = $namespace !== '' ? $namespace . '\\' . $stmt->name->toString() : $stmt->name->toString();
+                    foreach ($stmt->stmts as $classStmt) {
+                        if ($classStmt instanceof Stmt\TraitUse) {
+                            $doc = $classStmt->getDocComment();
+                            if ($doc !== null) {
+                                self::$classTraitUseDocs[$className][] = $doc->getText();
+                            }
+                        }
                     }
                 }
             }

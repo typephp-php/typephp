@@ -44,4 +44,34 @@ describe('ScopeManager Unit Tests', function () {
 
         expect($manager->getVarTypeFromScope('username'))->toBe('non-empty-string');
     });
+
+    test('prioritizes @phpstan-var over @var in scoped variable extractions', function () {
+        $manager = new ScopeManager();
+        $manager->pushScope();
+
+        $doc = <<<'DOC'
+/**
+ * @var mixed $count
+ * @phpstan-var positive-int $count
+ */
+DOC;
+        $manager->extractVarDocblock($doc);
+
+        expect($manager->getVarTypeFromScope('count'))->toBe('positive-int');
+    });
+
+    test('prioritizes @psalm-var over @var in scoped variable extractions when @phpstan-var is absent', function () {
+        $manager = new ScopeManager();
+        $manager->pushScope();
+
+        $doc = <<<'DOC'
+/**
+ * @var mixed $tag
+ * @psalm-var non-empty-string $tag
+ */
+DOC;
+        $manager->extractVarDocblock($doc);
+
+        expect($manager->getVarTypeFromScope('tag'))->toBe('non-empty-string');
+    });
 });

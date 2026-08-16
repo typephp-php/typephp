@@ -4,11 +4,9 @@ declare(strict_types=1);
 
 namespace TypePHP\Tests\Fixtures\Iterators;
 
-use ArrayIterator;
 use Generator;
 use Traversable;
 use TypePHP\Tests\Fixtures\Domain\Animal;
-use TypePHP\Tests\Fixtures\Domain\Dog;
 
 class GenericStreamService
 {

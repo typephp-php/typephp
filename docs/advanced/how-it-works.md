@@ -38,6 +38,14 @@ Whenever your application loads a PHP file via `require`, `include`, or Composer
 
 ---
 
+## Project Root Resolution & Web Server Independence
+
+To ensure consistent configuration loading across CLI commands, test runners (Pest, PHPUnit), and production web servers (where `getcwd()` points to `public/`), `Config::getProjectRoot()` searches upwards from the library's directory to locate `vendor/autoload.php` or `composer.json`.
+
+Once located, the project root path is memoized in static memory. All relative `include`, `exclude`, and `cache_dir` configuration globs resolve reliably against the true application root directory across all PHP SAPIs (`cli`, `fpm`, `frankenphp`, `swoole`).
+
+---
+
 ## Stream Interception
 
 TypePHP registers a custom stream wrapper for PHP's native `file://` protocol using `stream_wrapper_register()`.
@@ -80,6 +88,18 @@ If the file is included, TypePHP parses the source code into an AST using `nikic
 * **Local Assignments (`@var`):** Wraps `$x = $value` with `RuntimeTypeChecker::checkVariable()`.
 * **Class Properties:** Wraps `$this->prop = $value` and PHP 8.4 Property Hooks with `RuntimeTypeChecker::checkProperty()`.
 * **Callables & Iterators:** Wraps callbacks and generators in lazy proxies (`CallableWrapper`, `IterableWrapper`).
+
+---
+
+## Tooling Annotation Normalization & Tag Priority Hierarchy
+
+Third-party packages often define both broad IDE docblocks and strict tool-specific contracts on the same signature (such as `@param mixed $element` alongside `@phpstan-param T $element` in Doctrine Collections).
+
+`DocblockExtractor` normalizes and evaluates tag definitions using a **3-Tier Priority System**:
+
+1. **Tool-Specific Annotations Take Precedence:** `@phpstan-param` and `@psalm-param` override `@param`; `@phpstan-return` and `@psalm-return` override `@return`; `@phpstan-var` overrides `@var`.
+2. **Inherited Template Extraction:** Collects class, interface, and trait template mappings across all recognized variations (`@extends`, `@template-extends`, `@phpstan-extends`, `@psalm-extends`, `@implements`, `@template-implements`, `@use`, `@template-use`).
+3. **Variance Modifiers:** Extracts class-level `@template-covariant` and `@template-contravariant` tags to configure the runtime variance engine.
 
 ---
 
@@ -226,3 +246,4 @@ TypePHP gives you granular control so you can choose where and when to pay the p
 * **Selective Path Whitelisting:** Type-check only mission-critical domain logic (`app/Domain/**`) while bypassing non-critical files completely.
 * **Granular Toggles:** Turn off array checking (`inline_vars.arrays => false`) or scalar checking (`inline_vars.scalars => false`) on high-frequency internal loops while maintaining strict parameter and return boundaries (`params => true`, `returns => true`).
 * **Environment Master Switch:** Disable TypePHP completely in environment builds (`enabled => false`) for 100% un-transformed, native PHP execution speed.
+```
