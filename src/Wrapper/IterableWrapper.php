@@ -37,32 +37,42 @@ final class IterableWrapper
 
         $contract = ContractParser::parse($function);
         $typeNode = ($paramName === 'return') ? ($contract['return'] ?? null) : ($contract['types'][$paramName] ?? null);
+
+        // If no docblock contract exists, never wrap!
+        if ($typeNode === null) {
+            return $iterable;
+        }
+
         $aliases = $contract['aliases'] ?? [];
         $templates = $contract['templates'] ?? [];
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
 
-        if ($typeNode !== null && (\count($boundTemplates) > 0 || \count($templates) > 0)) {
+        if (\count($boundTemplates) > 0 || \count($templates) > 0) {
             $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
             $typeNode = SpecialTypeResolver::resolve($typeNode, $function, $thisObj);
         }
 
-        if ($typeNode !== null) {
-            $baseName = '';
-            if ($typeNode instanceof IdentifierTypeNode) {
-                $baseName = strtolower(ltrim($typeNode->name, '\\'));
-            } elseif ($typeNode instanceof GenericTypeNode) {
-                $baseName = strtolower(ltrim($typeNode->type->name, '\\'));
-            }
+        // Only wrap generic iterable keywords, never concrete classes like FileCollection
+        $baseName = '';
+        if ($typeNode instanceof IdentifierTypeNode) {
+            $baseName = strtolower(ltrim($typeNode->name, '\\'));
+        } elseif ($typeNode instanceof GenericTypeNode) {
+            $baseName = strtolower(ltrim($typeNode->type->name, '\\'));
+        }
 
-            $standardIterables = ['iterable', 'traversable', 'iterator', 'generator', 'iteratoraggregate', 'array'];
-            if ($baseName !== '' && ! \in_array($baseName, $standardIterables, true)) {
-                return $iterable;
-            }
+        $standardIterables = ['iterable', 'traversable', 'iterator', 'generator'];
+        if (! \in_array($baseName, $standardIterables, true)) {
+            return $iterable;
         }
 
         [$keyTypeNode, $itemTypeNode] = self::extractKeyAndItemTypeNodes($typeNode, $aliases);
+
+        // If there are no inner type constraints to validate, never wrap!
+        if ($keyTypeNode === null && $itemTypeNode === null) {
+            return $iterable;
+        }
 
         $prefix = ($paramName === 'return') ? "$function(): Return iterator" : "$function(): Iterator \$$paramName";
         $typeCheckCallback = self::createValidationCallback($registry, $keyTypeNode, $itemTypeNode, $prefix);

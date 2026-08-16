@@ -14,6 +14,56 @@ When an iterable or generator is passed into a function accepting `Traversable<K
 
 ---
 
+## Generic Streams vs. Concrete Collection Classes (Zero Proxy Overhead)
+
+A critical architectural design in TypePHP is distinguishing between **abstract generic streams** and **concrete collection classes**:
+
+### 1. Abstract Generic Streams (`iterable<T>`, `Traversable<K, V>`, `Generator<K, V>`)
+When a method or parameter specifies an abstract stream keyword with inner type constraints:
+```php
+/**
+ * Abstract stream contract -> Wrapped in IteratorProxy
+ *
+ * @param Traversable<string, positive-int> $scores
+ */
+public function processScores(Traversable $scores): void
+```
+Because `Traversable` is a general interface with no methods of its own, TypePHP wraps it in a lazy `IteratorProxy` to validate yielded items and keys during iteration.
+
+### 2. Concrete Collection Classes (`FileCollection`, `ArrayCollection`, `OrderList`)
+When a method parameter, property, or return value is a concrete class (even if that class implements `\IteratorAggregate` or `\Traversable`):
+```php
+class StorefrontConfig
+{
+    // Native PHP class type hint
+    protected FileCollection $styleFiles;
+
+    public function setStyleFiles(FileCollection $styleFiles): void
+    {
+        $this->styleFiles = $styleFiles; // Preserved as raw FileCollection!
+    }
+}
+```
+
+TypePHP leaves concrete collections **100% unwrapped as raw PHP objects**:
+
+* **Preserves Native PHP Nominal Type Hints:** Prevents fatal PHP engine errors (e.g. `Cannot assign IteratorProxy to property ...::$styleFiles of type FileCollection`).
+* **Preserves Custom Domain Methods & State:** Custom business methods (like `$files->getPublicUrls()` or `$files->filterByExtension()`) and private properties remain directly accessible.
+* **Direct `\WeakMap` Enforcement:** For generic concrete classes (like `ArrayCollection<int, Animal>`), TypePHP tracks generic template bindings directly in `\WeakMap` memory, running validation rules inside `$collection->add()` and `$collection->set()` without needing any wrapper proxy!
+* **Zero Allocation Overhead:** Eliminates proxy object allocations and garbage collection pressure, allowing concrete collections to run at native C-level speed.
+
+### Summary: When TypePHP Wraps vs. Leaves Unwrapped
+
+| Type Annotation | Object Passed | Action Taken | Why |
+| :--- | :--- | :---: | :--- |
+| `Traversable<string, positive-int>` | Any Iterator / Generator | **Wrapped in `IteratorProxy`** | Abstract stream; needs lazy item validation during iteration. |
+| `iterable<User>` | Any Array / Traversable | **Wrapped in `IteratorProxy`** | Abstract stream; validates items on-the-fly. |
+| `FileCollection` | `new FileCollection()` | **Unwrapped (Raw Object)** | Concrete class; preserves native PHP type hints and domain methods. |
+| `ArrayCollection<int, Animal>` | `new ArrayCollection()` | **Unwrapped (Raw Object)** | Generic state is tracked directly via `\WeakMap` inside `add()`/`set()`. |
+| Un-annotated (`mixed $items`) | Any Iterator | **Unwrapped (Raw Object)** | No type contracts to enforce; zero overhead. |
+
+---
+
 ## Traversable & Iterator Contracts (`Traversable<K, V>`)
 
 Validate keys and values on any `Traversable` or `ArrayIterator` instance:
@@ -345,4 +395,5 @@ function processCollection(Traversable $collection): void
 }
 
 processCollection(new NestedCollection());
+```
 ```
