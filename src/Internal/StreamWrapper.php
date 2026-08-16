@@ -599,7 +599,7 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Scans top-level AST statements for namespace and use import declarations to seed SpecialTypeResolver.
+     * Scans top-level AST statements for namespace, use imports, and trait use declarations to seed SpecialTypeResolver.
      *
      * @param array<\PhpParser\Node\Stmt> $stmts
      */
@@ -611,6 +611,7 @@ final class StreamWrapper implements StreamWrapperInterface
 
         $namespace = '';
         $imports = [];
+        $classTraitUseDocs = [];
 
         $nodesToScan = $stmts;
         foreach ($stmts as $stmt) {
@@ -645,9 +646,19 @@ final class StreamWrapper implements StreamWrapperInterface
                     $alias = $use->getAlias()->toString();
                     $imports[$alias] = $fqcn;
                 }
+            } elseif ($stmt instanceof \PhpParser\Node\Stmt\Class_ && $stmt->name !== null) {
+                $className = $namespace !== '' ? $namespace . '\\' . $stmt->name->toString() : $stmt->name->toString();
+                foreach ($stmt->stmts as $classStmt) {
+                    if ($classStmt instanceof \PhpParser\Node\Stmt\TraitUse) {
+                        $doc = $classStmt->getDocComment();
+                        if ($doc !== null) {
+                            $classTraitUseDocs[$className][] = $doc->getText();
+                        }
+                    }
+                }
             }
         }
 
-        SpecialTypeResolver::seedFileMetadata($filePath, $namespace, $imports);
+        SpecialTypeResolver::seedFileMetadata($filePath, $namespace, $imports, $classTraitUseDocs);
     }
 }

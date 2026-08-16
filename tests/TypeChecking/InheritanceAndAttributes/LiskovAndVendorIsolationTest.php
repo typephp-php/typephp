@@ -51,4 +51,19 @@ describe('Liskov Substitution Principle & Vendor Isolation', function () {
             Config::reset();
         });
     });
+
+    describe('Edge Case 4: Vendor Isolation on Generic Traits', function () {
+        test('protects application child class from buggy docblock on excluded vendor parent using a trait', function () {
+            $ref = new ReflectionClass(SimulatedVendorParent::class);
+            $filePath = str_replace('\\', '/', (string) $ref->getFileName());
+
+            Config::set(['exclude' => [$filePath]]);
+
+            $appService = new AppChildService();
+
+            expect($appService->execute(100))->toBeTrue();
+
+            Config::reset();
+        });
+    });
 });

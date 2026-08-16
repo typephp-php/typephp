@@ -19,6 +19,7 @@ use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
 use TypePHP\Contract\DocblockExtractor;
+use TypePHP\Contract\FileFilter;
 use TypePHP\Contract\HierarchyResolver;
 use TypePHP\Internal\ClassNameValidator;
 use TypePHP\Internal\ErrorFactory;
@@ -342,7 +343,8 @@ final class TemplateManager
     }
 
     /**
-     * Resolves and binds parent class (@extends) and interface (@implements) template mappings.
+     * Resolves and binds parent class (@extends), interface (@implements), and trait (@use) template mappings.
+     * Respects Vendor Isolation by skipping docblocks from excluded vendor ancestor files.
      */
     public static function resolveInheritedTemplates(object $instance, string $targetClassName): void
     {
@@ -355,10 +357,26 @@ final class TemplateManager
             [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
 
             foreach ($classHierarchy as $hierClass) {
-                $classDoc = $hierClass->getDocComment();
+                $fileName = $hierClass->getFileName();
 
+                if ($hierClass->getName() !== $actualClassName && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
+                    continue;
+                }
+
+                $docsToInspect = [];
+
+                $classDoc = $hierClass->getDocComment();
                 if ($classDoc !== false) {
-                    $classTokens = new TokenIterator($lexer->tokenize($classDoc));
+                    $docsToInspect[] = $classDoc;
+                }
+
+                $traitDocs = SpecialTypeResolver::getClassTraitUseDocs($hierClass->getName());
+                foreach ($traitDocs as $tDoc) {
+                    $docsToInspect[] = $tDoc;
+                }
+
+                foreach ($docsToInspect as $rawDoc) {
+                    $classTokens = new TokenIterator($lexer->tokenize($rawDoc));
                     $classPhpDocNode = $phpDocParser->parse($classTokens);
 
                     $declaredTemplateNames = [];
@@ -372,13 +390,14 @@ final class TemplateManager
                     $inheritedTags = DocblockExtractor::getInheritedTags($classPhpDocNode);
 
                     foreach ($inheritedTags as $inheritedTag) {
-                        /** @var GenericTypeNode|null $genericTypeNode */
-                        $genericTypeNode = $inheritedTag->type ?? null;
+                        $genericTypeNode = $inheritedTag->type;
                         if ($genericTypeNode instanceof GenericTypeNode) {
                             $parentName = SpecialTypeResolver::resolveFqcn($genericTypeNode->type->name, $hierClass);
 
-                            if (ClassNameValidator::isValid($parentName) && is_a($actualClassName, $parentName, true)) {
-                                if (! class_exists($parentName) && ! interface_exists($parentName)) {
+                            $isHierarchyMember = is_a($actualClassName, $parentName, true) || trait_exists($parentName);
+
+                            if (ClassNameValidator::isValid($parentName) && $isHierarchyMember) {
+                                if (! class_exists($parentName) && ! interface_exists($parentName) && ! trait_exists($parentName)) {
                                     continue;
                                 }
 
