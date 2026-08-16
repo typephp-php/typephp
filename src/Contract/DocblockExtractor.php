@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace TypePHP\Contract;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\MethodTagValueNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\ParamTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\PhpDocNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\ReturnTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\VarTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Lexer\Lexer;
 use PHPStan\PhpDocParser\Parser\ConstExprParser;
@@ -59,6 +62,76 @@ final class DocblockExtractor
     }
 
     /**
+     * Extracts parameter tags with priority: @phpstan-param > @psalm-param > @param.
+     *
+     * @return array<string, ParamTagValueNode>
+     */
+    public static function getParamTags(PhpDocNode $node): array
+    {
+        $tags = [];
+
+        foreach ($node->getParamTagValues('@param') as $tag) {
+            $pName = ltrim($tag->parameterName, '$');
+            $tags[$pName] = $tag;
+        }
+
+        foreach ($node->getParamTagValues('@psalm-param') as $tag) {
+            $pName = ltrim($tag->parameterName, '$');
+            $tags[$pName] = $tag;
+        }
+
+        foreach ($node->getParamTagValues('@phpstan-param') as $tag) {
+            $pName = ltrim($tag->parameterName, '$');
+            $tags[$pName] = $tag;
+        }
+
+        return $tags;
+    }
+
+    /**
+     * Extracts return tag with priority: @phpstan-return > @psalm-return > @return.
+     */
+    public static function getReturnTag(PhpDocNode $node): ?ReturnTagValueNode
+    {
+        $phpstanReturns = $node->getReturnTagValues('@phpstan-return');
+        if (\count($phpstanReturns) > 0) {
+            return $phpstanReturns[0];
+        }
+
+        $psalmReturns = $node->getReturnTagValues('@psalm-return');
+        if (\count($psalmReturns) > 0) {
+            return $psalmReturns[0];
+        }
+
+        $returns = $node->getReturnTagValues('@return');
+        if (\count($returns) > 0) {
+            return $returns[0];
+        }
+
+        return null;
+    }
+
+    /**
+     * Extracts @var tags with priority: @phpstan-var > @psalm-var > @var.
+     *
+     * @return array<int, VarTagValueNode>
+     */
+    public static function getVarTags(PhpDocNode $node): array
+    {
+        $phpstanVars = $node->getVarTagValues('@phpstan-var');
+        if (\count($phpstanVars) > 0) {
+            return $phpstanVars;
+        }
+
+        $psalmVars = $node->getVarTagValues('@psalm-var');
+        if (\count($psalmVars) > 0) {
+            return $psalmVars;
+        }
+
+        return $node->getVarTagValues('@var');
+    }
+
+    /**
      * Extracts all @template tag values from a parsed PHPDoc node.
      *
      * @return array<string, TemplateTagValueNode>
@@ -76,22 +149,21 @@ final class DocblockExtractor
     }
 
     /**
-     * Extracts a TypeNode from a property's @var or @param docblock.
+     * Extracts a TypeNode from a property's @var, @param, @phpstan-param, or @psalm-param docblock.
      */
     public static function extractTypeFromPropertyDoc(string $doc, string $propName): ?TypeNode
     {
         try {
             $phpDocNode = self::parseDocString($doc);
 
-            foreach ($phpDocNode->getVarTagValues() as $varTag) {
+            foreach (self::getVarTags($phpDocNode) as $varTag) {
                 $tagVarName = ltrim($varTag->variableName, '$');
                 if ($tagVarName === '' || $tagVarName === $propName) {
                     return $varTag->type;
                 }
             }
 
-            foreach ($phpDocNode->getParamTagValues() as $paramTag) {
-                $tagParamName = ltrim($paramTag->parameterName, '$');
+            foreach (self::getParamTags($phpDocNode) as $tagParamName => $paramTag) {
                 if ($tagParamName === '' || $tagParamName === $propName) {
                     return $paramTag->type;
                 }
@@ -112,7 +184,7 @@ final class DocblockExtractor
     {
         try {
             $phpDocNode = self::parseDocString($doc);
-            $varTags = $phpDocNode->getVarTagValues();
+            $varTags = self::getVarTags($phpDocNode);
             if (\count($varTags) > 0) {
                 $typeString = (string) $varTags[0]->type;
                 $varName = ltrim($varTags[0]->variableName, '$');

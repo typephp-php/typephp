@@ -189,7 +189,7 @@ final class ContractParser
 
             if (! $isMagicProperty) {
                 $phpDocNode = DocblockExtractor::parseDocString($doc);
-                $varTags = $phpDocNode->getVarTagValues();
+                $varTags = DocblockExtractor::getVarTags($phpDocNode);
 
                 if (\count($varTags) === 0) {
                     return self::$propertyCache[$cacheKey] = null;
@@ -420,8 +420,7 @@ final class ContractParser
             $baseParamVariadic[$p->getName()] = $p->isVariadic();
         }
 
-        foreach ($phpDocNode->getParamTagValues() as $paramTag) {
-            $paramName = ltrim($paramTag->parameterName, '$');
+        foreach (DocblockExtractor::getParamTags($phpDocNode) as $paramName => $paramTag) {
             $type = $paramTag->type;
             $isVariadic = $paramTag->isVariadic || ($baseParamVariadic[$paramName] ?? false);
             if ($isVariadic) {
@@ -431,9 +430,9 @@ final class ContractParser
             $types[$paramName] = SpecialTypeResolver::resolve($substitutedType, $ref);
         }
 
-        $returnTags = $phpDocNode->getReturnTagValues();
-        if (\count($returnTags) > 0) {
-            $substitutedReturn = self::substituteAliases($returnTags[0]->type, $aliases);
+        $returnTag = DocblockExtractor::getReturnTag($phpDocNode);
+        if ($returnTag !== null) {
+            $substitutedReturn = self::substituteAliases($returnTag->type, $aliases);
             $returnType = SpecialTypeResolver::resolve($substitutedReturn, $ref);
         }
 
@@ -478,6 +477,7 @@ final class ContractParser
 
     /**
      * Resolves method-level docblocks (@param, @return, @template, aliases) up the method hierarchy.
+     * Prioritizes @phpstan-param and @psalm-param over standard @param tags.
      *
      * @param \ReflectionMethod $ref
      * @param array<string, TypeNode> $types
@@ -532,9 +532,9 @@ final class ContractParser
                 $hierNameToIndex[$p->getName()] = $idx;
             }
 
-            foreach ($phpDocNode->getParamTagValues() as $paramTag) {
-                $paramName = ltrim($paramTag->parameterName, '$');
+            $paramTags = DocblockExtractor::getParamTags($phpDocNode);
 
+            foreach ($paramTags as $paramName => $paramTag) {
                 if (isset($baseParamSet[$paramName])) {
                     $targetParamName = $paramName;
                 } else {
@@ -563,9 +563,9 @@ final class ContractParser
             }
 
             if ($returnType === null) {
-                $returnTags = $phpDocNode->getReturnTagValues();
-                if (\count($returnTags) > 0) {
-                    $substitutedReturn = self::substituteAliases($returnTags[0]->type, $aliases);
+                $returnTag = DocblockExtractor::getReturnTag($phpDocNode);
+                if ($returnTag !== null) {
+                    $substitutedReturn = self::substituteAliases($returnTag->type, $aliases);
                     $returnType = SpecialTypeResolver::resolve($substitutedReturn, $hierRef);
                 }
             }

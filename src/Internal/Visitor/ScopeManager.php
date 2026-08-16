@@ -40,6 +40,7 @@ final class ScopeManager
 
     /**
      * Extracts all @var tags from a docblock comment and registers them in the current scope frame.
+     * Prioritizes @phpstan-var > @psalm-var > @var.
      */
     public function extractVarDocblock(string $docText, ?Node\Expr $expr = null): void
     {
@@ -49,7 +50,7 @@ final class ScopeManager
 
             $tokens = new TokenIterator($lexer->tokenize($docText));
             $phpDocNode = $phpDocParser->parse($tokens);
-            $varTags = $phpDocNode->getVarTagValues();
+            $varTags = DocblockExtractor::getVarTags($phpDocNode);
 
             foreach ($varTags as $varTag) {
                 $typeString = (string) $varTag->type;

@@ -61,9 +61,7 @@ final class StreamWrapper implements StreamWrapperInterface
         $resolvedConfig = array_replace_recursive(Config::get(), $config);
 
         if (! self::$isInitialized || \count($config) > 0) {
-            $cwd = getcwd();
-            $base = $cwd !== false ? $cwd : '';
-            self::$baseDir = rtrim(str_replace('\\', '/', $base), '/');
+            self::$baseDir = Config::getProjectRoot();
 
             /** @var array<int, string> $includes */
             $includes = \is_array($resolvedConfig['include'] ?? null) ? $resolvedConfig['include'] : ['**'];
@@ -505,8 +503,8 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-      * Determines whether a target PHP file path should be intercepted using Pattern Specificity.
-      */
+     * Determines whether a target PHP file path should be intercepted using Pattern Specificity.
+     */
     private static function isApplicationFile(string $path, string|false $resolvedPath): bool
     {
         if (! (bool) (Config::get()['enabled'] ?? true)) {

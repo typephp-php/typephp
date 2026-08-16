@@ -108,4 +108,99 @@ describe('DocblockExtractor Unit Tests', function () {
         $missingType = DocblockExtractor::extractTypeFromClassPropertyDoc($doc, 'missing');
         expect($missingType)->toBeNull();
     });
+
+    describe('Prioritized Tag Extractions (@phpstan-* > @psalm-* > standard)', function () {
+        test('prioritizes @phpstan-param over @psalm-param and @param', function () {
+            $doc = <<<'DOC'
+/**
+ * @param mixed $element
+ * @psalm-param int $element
+ * @phpstan-param positive-int $element
+ */
+DOC;
+            $node = DocblockExtractor::parseDocString($doc);
+            $paramTags = DocblockExtractor::getParamTags($node);
+
+            expect($paramTags)->toHaveKey('element')
+                ->and((string) $paramTags['element']->type)->toBe('positive-int')
+            ;
+        });
+
+        test('prioritizes @psalm-param over @param when @phpstan-param is absent', function () {
+            $doc = <<<'DOC'
+/**
+ * @param mixed $element
+ * @psalm-param non-empty-string $element
+ */
+DOC;
+            $node = DocblockExtractor::parseDocString($doc);
+            $paramTags = DocblockExtractor::getParamTags($node);
+
+            expect($paramTags)->toHaveKey('element')
+                ->and((string) $paramTags['element']->type)->toBe('non-empty-string')
+            ;
+        });
+
+        test('prioritizes @phpstan-return over @psalm-return and @return', function () {
+            $doc = <<<'DOC'
+/**
+ * @return mixed
+ * @psalm-return array<string, int>
+ * @phpstan-return list<positive-int>
+ */
+DOC;
+            $node = DocblockExtractor::parseDocString($doc);
+            $returnTag = DocblockExtractor::getReturnTag($node);
+
+            expect($returnTag)->not()->toBeNull()
+                ->and((string) $returnTag->type)->toBe('list<positive-int>')
+            ;
+        });
+
+        test('prioritizes @psalm-return over @return when @phpstan-return is absent', function () {
+            $doc = <<<'DOC'
+/**
+ * @return mixed
+ * @psalm-return array{id: positive-int}
+ */
+DOC;
+            $node = DocblockExtractor::parseDocString($doc);
+            $returnTag = DocblockExtractor::getReturnTag($node);
+
+            expect($returnTag)->not()->toBeNull()
+                ->and((string) $returnTag->type)->toBe('array{id: positive-int}')
+            ;
+        });
+
+        test('prioritizes @phpstan-var over @psalm-var and @var', function () {
+            $doc = <<<'DOC'
+/**
+ * @var mixed $item
+ * @psalm-var int $item
+ * @phpstan-var positive-int $item
+ */
+DOC;
+            $node = DocblockExtractor::parseDocString($doc);
+            $varTags = DocblockExtractor::getVarTags($node);
+
+            expect($varTags)->toHaveCount(1)
+                ->and((string) $varTags[0]->type)->toBe('positive-int')
+            ;
+        });
+
+        test('prioritizes @psalm-var over @var when @phpstan-var is absent', function () {
+            $doc = <<<'DOC'
+/**
+ * @var mixed $item
+ * @psalm-var non-empty-string $item
+ */
+DOC;
+            $node = DocblockExtractor::parseDocString($doc);
+            $varTags = DocblockExtractor::getVarTags($node);
+
+            expect($varTags)->toHaveCount(1)
+                ->and((string) $varTags[0]->type)->toBe('non-empty-string')
+            ;
+        });
+    });
 });
