@@ -43,7 +43,8 @@ describe('Generic Traits with @use, @template-use, and @phpstan-use Annotations'
 
             expect($service->logItem(new Dog()))->toBeTrue();
             expect(fn () => $service->logItem(new Car()))
-                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Domain\Dog');
+                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Domain\Dog')
+            ;
         });
     });
 });
