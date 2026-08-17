@@ -98,6 +98,46 @@ final class ParamChecker
             TemplateManager::resolveInheritedTemplates($thisObj, $declaringClass);
         }
 
+        foreach ($contract['types'] as $paramName => $typeNode) {
+            if (! \array_key_exists($paramName, $vars) || ! \is_array($vars[$paramName]) || \count($vars[$paramName]) === 0) {
+                continue;
+            }
+
+            $arrVal = $vars[$paramName];
+            $sampleKey = array_key_first($arrVal);
+            $sampleItem = reset($arrVal);
+
+            if ($typeNode instanceof GenericTypeNode) {
+                $baseType = strtolower($typeNode->type->name);
+                if (\in_array($baseType, ['array', 'list', 'iterable', 'traversable'], true)) {
+                    if (\count($typeNode->genericTypes) === 1 && $typeNode->genericTypes[0] instanceof IdentifierTypeNode) {
+                        $tName = $typeNode->genericTypes[0]->name;
+                        if (isset($templates[$tName]) && ! TemplateManager::isBound($effectiveFunction, $thisObj, $tName)) {
+                            TemplateManager::bindTemplate($effectiveFunction, $thisObj, $tName, TemplateManager::inferTypeFromValue($sampleItem));
+                        }
+                    } elseif (\count($typeNode->genericTypes) >= 2) {
+                        if ($typeNode->genericTypes[0] instanceof IdentifierTypeNode) {
+                            $kName = $typeNode->genericTypes[0]->name;
+                            if (isset($templates[$kName]) && ! TemplateManager::isBound($effectiveFunction, $thisObj, $kName)) {
+                                TemplateManager::bindTemplate($effectiveFunction, $thisObj, $kName, TemplateManager::inferTypeFromValue($sampleKey));
+                            }
+                        }
+                        if ($typeNode->genericTypes[1] instanceof IdentifierTypeNode) {
+                            $vName = $typeNode->genericTypes[1]->name;
+                            if (isset($templates[$vName]) && ! TemplateManager::isBound($effectiveFunction, $thisObj, $vName)) {
+                                TemplateManager::bindTemplate($effectiveFunction, $thisObj, $vName, TemplateManager::inferTypeFromValue($sampleItem));
+                            }
+                        }
+                    }
+                }
+            } elseif ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof IdentifierTypeNode) {
+                $tName = $typeNode->type->name;
+                if (isset($templates[$tName]) && ! TemplateManager::isBound($effectiveFunction, $thisObj, $tName)) {
+                    TemplateManager::bindTemplate($effectiveFunction, $thisObj, $tName, TemplateManager::inferTypeFromValue($sampleItem));
+                }
+            }
+        }
+
         $boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $templates);
         $declaredTemplates = $templates;
 
