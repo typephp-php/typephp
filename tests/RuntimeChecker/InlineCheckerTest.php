@@ -42,8 +42,7 @@ describe('InlineChecker Unit Tests', function () {
 
             $invalid = InlineChecker::checkVariable(-5, 'positive-int', 'age', __FILE__, $registry);
             expect($invalid)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalid->getMessage())->toContain('Variable $age must be of type positive-int')
-            ;
+                ->and($invalid->getMessage())->toContain('Variable $age must be of type positive-int');
         });
 
         test('validates non-empty-string and numeric-string', function () {
@@ -57,11 +56,15 @@ describe('InlineChecker Unit Tests', function () {
         });
 
         test('ignores scalar validation when scalars toggle is false', function () {
-            Config::set(['inline_vars' => ['scalars' => false]]);
-            $registry = new TypeValidatorRegistry();
+            try {
+                Config::set(['inline_vars' => ['scalars' => false]]);
+                $registry = new TypeValidatorRegistry();
 
-            $result = InlineChecker::checkVariable(-5, 'positive-int', 'age', __FILE__, $registry);
-            expect($result)->toBe(-5);
+                $result = InlineChecker::checkVariable(-5, 'positive-int', 'age', __FILE__, $registry);
+                expect($result)->toBe(-5);
+            } finally {
+                Config::reset();
+            }
         });
     });
 
@@ -74,18 +77,21 @@ describe('InlineChecker Unit Tests', function () {
             expect(InlineChecker::checkVariable([1, -5, 3], 'list<positive-int>', 'scores', __FILE__, $registry))->toBeInstanceOf(ErrorMessage::class);
 
             expect(InlineChecker::checkVariable(['id' => 1, 'name' => 'Alice'], 'array{id: int, name: string}', 'user', __FILE__, $registry))
-                ->toBe(['id' => 1, 'name' => 'Alice'])
-            ;
+                ->toBe(['id' => 1, 'name' => 'Alice']);
 
             expect(InlineChecker::checkVariable(['id' => 1], 'array{id: int, name: string}', 'user', __FILE__, $registry))->toBeInstanceOf(ErrorMessage::class);
         });
 
         test('ignores array validation when arrays toggle is false', function () {
-            Config::set(['inline_vars' => ['arrays' => false]]);
-            $registry = new TypeValidatorRegistry();
+            try {
+                Config::set(['inline_vars' => ['arrays' => false]]);
+                $registry = new TypeValidatorRegistry();
 
-            $result = InlineChecker::checkVariable(['bad_key' => 1], 'list<int>', 'scores', __FILE__, $registry);
-            expect($result)->toBe(['bad_key' => 1]);
+                $result = InlineChecker::checkVariable(['bad_key' => 1], 'list<int>', 'scores', __FILE__, $registry);
+                expect($result)->toBe(['bad_key' => 1]);
+            } finally {
+                Config::reset();
+            }
         });
     });
 
@@ -106,16 +112,19 @@ describe('InlineChecker Unit Tests', function () {
             $result = InlineChecker::checkVariable($collection, $typeString, 'dogs', __FILE__, $registry);
 
             expect($result)->toBe($collection)
-                ->and(TypePHP::getGenericType($collection))->toBe(Dog::class)
-            ;
+                ->and(TypePHP::getGenericType($collection))->toBe(Dog::class);
         });
 
         test('ignores object and generic checks when respective toggles are false', function () {
-            Config::set(['inline_vars' => ['objects' => false, 'generics' => false]]);
-            $registry = new TypeValidatorRegistry();
+            try {
+                Config::set(['inline_vars' => ['objects' => false, 'generics' => false]]);
+                $registry = new TypeValidatorRegistry();
 
-            $car = new Car();
-            expect(InlineChecker::checkVariable($car, Dog::class, 'animal', __FILE__, $registry))->toBe($car);
+                $car = new Car();
+                expect(InlineChecker::checkVariable($car, Dog::class, 'animal', __FILE__, $registry))->toBe($car);
+            } finally {
+                Config::reset();
+            }
         });
     });
 
@@ -127,8 +136,7 @@ describe('InlineChecker Unit Tests', function () {
             $wrapped = InlineChecker::checkVariable($cb, 'callable(positive-int): non-empty-string', 'formatter', __FILE__, $registry);
 
             expect($wrapped)->toBeCallable()
-                ->and($wrapped(10))->toBe('user_10')
-            ;
+                ->and($wrapped(10))->toBe('user_10');
 
             expect(fn () => $wrapped(-5))->toThrow(TypeError::class, 'positive-int');
         });
@@ -139,24 +147,27 @@ describe('InlineChecker Unit Tests', function () {
             $invalid = InlineChecker::checkVariable(-5, 'positive-int', 'return', __FILE__, $registry);
 
             expect($invalid)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalid->getMessage())->toContain('Return value must be of type positive-int')
-            ;
+                ->and($invalid->getMessage())->toContain('Return value must be of type positive-int');
         });
 
         test('returns value immediately when all inline checks are disabled', function () {
-            Config::set([
-                'inline_vars' => [
-                    'generics' => false,
-                    'callables' => false,
-                    'scalars' => false,
-                    'arrays' => false,
-                    'objects' => false,
-                ],
-            ]);
-            $registry = new TypeValidatorRegistry();
+            try {
+                Config::set([
+                    'inline_vars' => [
+                        'generics' => false,
+                        'callables' => false,
+                        'scalars' => false,
+                        'arrays' => false,
+                        'objects' => false,
+                    ],
+                ]);
+                $registry = new TypeValidatorRegistry();
 
-            $result = InlineChecker::checkVariable(-5, 'positive-int', 'age', __FILE__, $registry);
-            expect($result)->toBe(-5);
+                $result = InlineChecker::checkVariable(-5, 'positive-int', 'age', __FILE__, $registry);
+                expect($result)->toBe(-5);
+            } finally {
+                Config::reset();
+            }
         });
     });
 
@@ -170,8 +181,7 @@ describe('InlineChecker Unit Tests', function () {
 
             $invalid = InlineChecker::checkProperty(['invalid'], $fixture, 'numbers', __FILE__, $registry);
             expect($invalid)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalid->getMessage())->toContain('numbers[0]')
-            ;
+                ->and($invalid->getMessage())->toContain("numbers['0']");
         });
 
         test('validates static class properties against @var docblock', function () {
@@ -182,8 +192,7 @@ describe('InlineChecker Unit Tests', function () {
 
             $invalid = InlineChecker::checkProperty(12345, ConfiguredProperty::class, 'staticTitle', __FILE__, $registry);
             expect($invalid)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalid->getMessage())->toContain('staticTitle must be of type string')
-            ;
+                ->and($invalid->getMessage())->toContain('staticTitle must be of type string');
         });
 
         test('substitutes generic template types in class properties', function () {
@@ -196,24 +205,27 @@ describe('InlineChecker Unit Tests', function () {
             $registry = new TypeValidatorRegistry();
             $collection = new HookedCollection();
 
-            TemplateManager::bindTemplate(HookedCollection::class . '::__construct', $collection, 'T', new PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode(Dog::class));
+            TemplateManager::bindTemplate(HookedCollection::class . '::__construct', $collection, 'T', new \PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode(Dog::class));
 
             $valid = InlineChecker::checkProperty([new Dog()], $collection, 'items', __FILE__, $registry);
             expect($valid)->toBeArray();
 
             $invalid = InlineChecker::checkProperty([new Car()], $collection, 'items', __FILE__, $registry);
             expect($invalid)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalid->getMessage())->toContain("items['0']")
-            ;
+                ->and($invalid->getMessage())->toContain("items['0']");
         });
 
         test('ignores property checks when properties toggle is false', function () {
-            Config::set(['inline_vars' => ['properties' => false]]);
-            $registry = new TypeValidatorRegistry();
-            $fixture = new ConfiguredProperty();
+            try {
+                Config::set(['inline_vars' => ['properties' => false]]);
+                $registry = new TypeValidatorRegistry();
+                $fixture = new ConfiguredProperty();
 
-            $result = InlineChecker::checkProperty(['invalid'], $fixture, 'numbers', __FILE__, $registry);
-            expect($result)->toBe(['invalid']);
+                $result = InlineChecker::checkProperty(['invalid'], $fixture, 'numbers', __FILE__, $registry);
+                expect($result)->toBe(['invalid']);
+            } finally {
+                Config::reset();
+            }
         });
 
         test('returns value untouched for un-annotated properties or invalid inputs', function () {
