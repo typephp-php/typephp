@@ -6,6 +6,8 @@ namespace TypePHP\Internal\Checker;
 
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Contract\ContractParser;
 use TypePHP\Resolver\SpecialTypeResolver;
 use TypePHP\Resolver\TemplateManager;
@@ -17,74 +19,50 @@ use TypePHP\Validator\TypeValidatorRegistry;
  */
 final class GeneratorChecker
 {
-    public static function checkSend(string $function, mixed $sendValue, TypeValidatorRegistry $registry, object|string|null $thisOrClass = null): mixed
-    {
+    /**
+     * Validates a value sent into a generator via $gen->send() against TSend.
+     */
+    public static function checkSend(
+        string $function,
+        mixed $sendValue,
+        TypeValidatorRegistry $registry,
+        object|string|null $thisOrClass = null
+    ): mixed {
         if ($sendValue === null) {
             return null;
         }
 
-        $contract = ContractParser::parse($function);
-        $returnTypeNode = $contract['return'] ?? null;
-
-        if ($returnTypeNode === null) {
+        $returnTypeNode = self::resolveGeneratorReturnType($function, $thisOrClass);
+        if (! ($returnTypeNode instanceof GenericTypeNode)) {
             return $sendValue;
         }
 
-        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $templates = $contract['templates'] ?? [];
-        $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
-
-        if (\count($boundTemplates) > 0 || \count($templates) > 0) {
-            $returnTypeNode = TemplateSubstitutor::substitute($returnTypeNode, $boundTemplates, $templates);
-            $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
+        $sendTypeNode = $returnTypeNode->genericTypes[2] ?? null;
+        if ($sendTypeNode === null) {
+            return $sendValue;
         }
 
-        if ($returnTypeNode instanceof GenericTypeNode) {
-            $sendTypeNode = $returnTypeNode->genericTypes[2] ?? null;
+        $err = $registry->validate($sendValue, $sendTypeNode, "$function(): Generator sent value (TSend)");
 
-            if ($sendTypeNode !== null) {
-                $err = $registry->validate($sendValue, $sendTypeNode, "$function(): Generator sent value (TSend)");
-                if ($err !== null) {
-                    return $err;
-                }
-            }
-        }
-
-        return $sendValue;
+        return $err ?? $sendValue;
     }
 
-    public static function checkYield(string $function, mixed $key, mixed $value, TypeValidatorRegistry $registry, object|string|null $thisOrClass = null): mixed
-    {
-        $contract = ContractParser::parse($function);
-        $returnTypeNode = $contract['return'] ?? null;
-
+    /**
+     * Validates yielded keys and values from a generator function against TKey and TValue.
+     */
+    public static function checkYield(
+        string $function,
+        mixed $key,
+        mixed $value,
+        TypeValidatorRegistry $registry,
+        object|string|null $thisOrClass = null
+    ): mixed {
+        $returnTypeNode = self::resolveGeneratorReturnType($function, $thisOrClass);
         if ($returnTypeNode === null) {
             return $value;
         }
 
-        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $templates = $contract['templates'] ?? [];
-        $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
-
-        if (\count($boundTemplates) > 0 || \count($templates) > 0) {
-            $returnTypeNode = TemplateSubstitutor::substitute($returnTypeNode, $boundTemplates, $templates);
-            $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
-        }
-
-        $itemTypeNode = null;
-        $keyTypeNode = null;
-
-        if ($returnTypeNode instanceof GenericTypeNode) {
-            $typesCount = \count($returnTypeNode->genericTypes);
-            if ($typesCount === 1) {
-                $itemTypeNode = $returnTypeNode->genericTypes[0];
-            } elseif ($typesCount >= 2) {
-                $keyTypeNode = $returnTypeNode->genericTypes[0];
-                $itemTypeNode = $returnTypeNode->genericTypes[1];
-            }
-        } elseif ($returnTypeNode instanceof ArrayTypeNode) {
-            $itemTypeNode = $returnTypeNode->type;
-        }
+        [$keyTypeNode, $itemTypeNode] = self::extractYieldTypes($returnTypeNode);
 
         if ($key !== null && $keyTypeNode !== null) {
             $err = $registry->validate($key, $keyTypeNode, "$function(): Return iterator key");
@@ -101,5 +79,59 @@ final class GeneratorChecker
         }
 
         return $value;
+    }
+
+    /**
+     * Resolves the generator's return contract, applying alias expansion, template substitution, and special types.
+     */
+    private static function resolveGeneratorReturnType(string $function, object|string|null $thisOrClass): ?TypeNode
+    {
+        $contract = ContractParser::parse($function);
+        $returnTypeNode = $contract['return'] ?? null;
+
+        if ($returnTypeNode === null) {
+            return null;
+        }
+
+        $aliases = $contract['aliases'] ?? [];
+        if ($returnTypeNode instanceof IdentifierTypeNode && isset($aliases[$returnTypeNode->name])) {
+            $returnTypeNode = $aliases[$returnTypeNode->name];
+        }
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $templates = $contract['templates'] ?? [];
+        $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+
+        if (\count($boundTemplates) > 0 || \count($templates) > 0) {
+            $returnTypeNode = TemplateSubstitutor::substitute($returnTypeNode, $boundTemplates, $templates);
+            $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
+        }
+
+        return $returnTypeNode;
+    }
+
+    /**
+     * Extracts yielded key and item TypeNodes from a resolved generator/array AST node.
+     *
+     * @return array{0: ?TypeNode, 1: ?TypeNode}
+     */
+    private static function extractYieldTypes(TypeNode $returnTypeNode): array
+    {
+        $itemTypeNode = null;
+        $keyTypeNode = null;
+
+        if ($returnTypeNode instanceof GenericTypeNode) {
+            $typesCount = \count($returnTypeNode->genericTypes);
+            if ($typesCount === 1) {
+                $itemTypeNode = $returnTypeNode->genericTypes[0];
+            } elseif ($typesCount >= 2) {
+                $keyTypeNode = $returnTypeNode->genericTypes[0];
+                $itemTypeNode = $returnTypeNode->genericTypes[1];
+            }
+        } elseif ($returnTypeNode instanceof ArrayTypeNode) {
+            $itemTypeNode = $returnTypeNode->type;
+        }
+
+        return [$keyTypeNode, $itemTypeNode];
     }
 }

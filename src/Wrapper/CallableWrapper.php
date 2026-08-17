@@ -93,7 +93,11 @@ final class CallableWrapper
         return function (...$args) use ($callable, $typeNode, $registry, $prefix) {
             self::validateCallbackArguments($typeNode, $args, $prefix, $registry);
 
-            $result = $callable(...$args);
+            try {
+                $result = $callable(...$args);
+            } catch (\TypeError $e) {
+                throw ErrorFactory::prepareException($e);
+            }
 
             $err = $registry->validate($result, $typeNode->returnType, "$prefix return value");
             if ($err !== null) {

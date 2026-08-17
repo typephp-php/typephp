@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Contract;
 
+use PHPStan\PhpDocParser\Ast\PhpDoc\MethodTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
@@ -120,70 +121,23 @@ final class ContractParser
             /** @var class-string<object> $className */
             $refClass = new \ReflectionClass($className);
 
-            $doc = false;
-            $declaringClass = null;
+            $resolved = self::findDeclaredPropertyDoc($refClass, $propertyName);
+            $doc = $resolved['doc'] ?? false;
+            $declaringClass = $resolved['declaringClass'] ?? null;
             $typeNode = null;
             $isMagicProperty = false;
 
-            $current = $refClass;
-            while ($current !== false) {
-                if ($current->hasProperty($propertyName)) {
-                    $refProp = $current->getProperty($propertyName);
-                    $fetchedDoc = $refProp->getDocComment();
-                    if ($fetchedDoc !== false) {
-                        $doc = $fetchedDoc;
-                        $declaringClass = $current;
-
-                        break;
-                    }
-                }
-                $current = $current->getParentClass();
-            }
-
-            if ($doc === false) {
-                foreach ($refClass->getInterfaces() as $interface) {
-                    if ($interface->hasProperty($propertyName)) {
-                        $interfaceProp = $interface->getProperty($propertyName);
-                        $fetchedDoc = $interfaceProp->getDocComment();
-                        if ($fetchedDoc !== false) {
-                            $doc = $fetchedDoc;
-                            $declaringClass = $interface;
-
-                            break;
-                        }
-                    }
-                }
-            }
-
             if ($doc === false && (bool) (Config::get()['magic_properties'] ?? true)) {
-                $classHierarchy = HierarchyResolver::getClassHierarchy($refClass);
-                foreach ($classHierarchy as $hierClass) {
-                    $fileName = $hierClass->getFileName();
-                    if ($hierClass !== $refClass && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
-                        continue;
-                    }
-
-                    $classDoc = $hierClass->getDocComment();
-                    if ($classDoc !== false) {
-                        $extractedType = DocblockExtractor::extractTypeFromClassPropertyDoc($classDoc, $propertyName);
-                        if ($extractedType !== null) {
-                            $doc = $classDoc;
-                            $declaringClass = $hierClass;
-                            $typeNode = $extractedType;
-                            $isMagicProperty = true;
-
-                            break;
-                        }
-                    }
+                $magicResolved = self::findMagicPropertyDoc($refClass, $propertyName);
+                if ($magicResolved !== null) {
+                    $doc = $magicResolved['doc'];
+                    $declaringClass = $magicResolved['declaringClass'];
+                    $typeNode = $magicResolved['typeNode'];
+                    $isMagicProperty = true;
                 }
             }
 
-            if ($doc === false || $declaringClass === null) {
-                return self::$propertyCache[$cacheKey] = null;
-            }
-
-            $shouldRespectIgnore = (bool) (Config::get()['respect_ignore_tags'] ?? true);
-            if ($shouldRespectIgnore && (str_contains($doc, '@typephp-ignore') || str_contains($doc, '@typephp-disable'))) {
+            if ($doc === false || $declaringClass === null || self::shouldIgnoreDoc($doc)) {
                 return self::$propertyCache[$cacheKey] = null;
             }
 
@@ -221,6 +175,70 @@ final class ContractParser
     }
 
     /**
+     * @param \ReflectionClass<object> $refClass
+     *
+     * @return array{doc: string, declaringClass: \ReflectionClass<object>}|null
+     */
+    private static function findDeclaredPropertyDoc(\ReflectionClass $refClass, string $propertyName): ?array
+    {
+        $current = $refClass;
+        while ($current !== false) {
+            if ($current->hasProperty($propertyName)) {
+                $refProp = $current->getProperty($propertyName);
+                $doc = $refProp->getDocComment();
+                if ($doc !== false) {
+                    return ['doc' => $doc, 'declaringClass' => $current];
+                }
+            }
+            $parent = $current->getParentClass();
+            $current = $parent !== false ? $parent : false;
+        }
+
+        foreach ($refClass->getInterfaces() as $interface) {
+            if ($interface->hasProperty($propertyName)) {
+                $interfaceProp = $interface->getProperty($propertyName);
+                $doc = $interfaceProp->getDocComment();
+                if ($doc !== false) {
+                    return ['doc' => $doc, 'declaringClass' => $interface];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param \ReflectionClass<object> $refClass
+     *
+     * @return array{doc: string, declaringClass: \ReflectionClass<object>, typeNode: TypeNode}|null
+     */
+    private static function findMagicPropertyDoc(\ReflectionClass $refClass, string $propertyName): ?array
+    {
+        $classHierarchy = HierarchyResolver::getClassHierarchy($refClass);
+
+        foreach ($classHierarchy as $hierClass) {
+            $fileName = $hierClass->getFileName();
+            if ($hierClass !== $refClass && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
+                continue;
+            }
+
+            $classDoc = $hierClass->getDocComment();
+            if ($classDoc !== false) {
+                $extractedType = DocblockExtractor::extractTypeFromClassPropertyDoc($classDoc, $propertyName);
+                if ($extractedType !== null) {
+                    return [
+                        'doc' => $classDoc,
+                        'declaringClass' => $hierClass,
+                        'typeNode' => $extractedType,
+                    ];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Parses and resolves a class-level @method docblock for __call / __callStatic.
      *
      * @return array{return: ?TypeNode, parameters: array<int, array{name: string, type: ?TypeNode, isVariadic: bool, isOptional: bool}>, aliases: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>}|null
@@ -239,36 +257,17 @@ final class ContractParser
         try {
             /** @var class-string<object> $className */
             $refClass = new \ReflectionClass($className);
-            $doc = false;
-            $declaringClass = null;
-            $methodTag = null;
 
-            $classHierarchy = HierarchyResolver::getClassHierarchy($refClass);
-            foreach ($classHierarchy as $hierClass) {
-                $fileName = $hierClass->getFileName();
-                if ($hierClass !== $refClass && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
-                    continue;
-                }
-
-                $classDoc = $hierClass->getDocComment();
-                if ($classDoc !== false) {
-                    $tag = DocblockExtractor::extractMagicMethodContract($classDoc, $methodName);
-                    if ($tag !== null) {
-                        $doc = $classDoc;
-                        $declaringClass = $hierClass;
-                        $methodTag = $tag;
-
-                        break;
-                    }
-                }
-            }
-
-            if ($methodTag === null || $declaringClass === null || $doc === false) {
+            $resolved = self::findMagicMethodDoc($refClass, $methodName);
+            if ($resolved === null) {
                 return self::$magicMethodCache[$cacheKey] = null;
             }
 
-            $shouldRespectIgnore = (bool) (Config::get()['respect_ignore_tags'] ?? true);
-            if ($shouldRespectIgnore && (str_contains($doc, '@typephp-ignore') || str_contains($doc, '@typephp-disable'))) {
+            $doc = $resolved['doc'];
+            $declaringClass = $resolved['declaringClass'];
+            $methodTag = $resolved['methodTag'];
+
+            if (self::shouldIgnoreDoc($doc)) {
                 return self::$magicMethodCache[$cacheKey] = null;
             }
 
@@ -285,43 +284,7 @@ final class ContractParser
                 $resolvedReturn = SpecialTypeResolver::resolve($subReturn, $declaringClass);
             }
 
-            $resolvedParams = [];
-            foreach ($methodTag->parameters as $p) {
-                $pType = $p->type ?? null;
-                if ($pType !== null) {
-                    $subType = self::substituteAliases($pType, $aliases);
-                    $pType = SpecialTypeResolver::resolve($subType, $declaringClass);
-                }
-
-                $rawParamName = '';
-                $pVars = get_object_vars($p);
-                foreach ($pVars as $key => $val) {
-                    if (\is_string($val) && str_starts_with($val, '$')) {
-                        $rawParamName = $val;
-
-                        break;
-                    }
-                }
-                if ($rawParamName === '') {
-                    foreach (['parameterName', 'name', 'paramName', 'varName'] as $key) {
-                        if (isset($pVars[$key]) && \is_string($pVars[$key])) {
-                            $rawParamName = $pVars[$key];
-
-                            break;
-                        }
-                    }
-                }
-
-                $pName = ltrim($rawParamName, '$');
-                $isOptional = (isset($pVars['isOptional']) && (bool) $pVars['isOptional']) || (($p->defaultValue ?? null) !== null);
-
-                $resolvedParams[] = [
-                    'name' => $pName,
-                    'type' => $pType,
-                    'isVariadic' => $p->isVariadic,
-                    'isOptional' => $isOptional,
-                ];
-            }
+            $resolvedParams = self::resolveMagicParameters($methodTag, $declaringClass, $aliases);
 
             return self::$magicMethodCache[$cacheKey] = [
                 'return' => $resolvedReturn,
@@ -332,6 +295,105 @@ final class ContractParser
         } catch (\Throwable $e) {
             return self::$magicMethodCache[$cacheKey] = null;
         }
+    }
+
+    /**
+     * @param \ReflectionClass<object> $refClass
+     *
+     * @return array{doc: string, declaringClass: \ReflectionClass<object>, methodTag: MethodTagValueNode}|null
+     */
+    private static function findMagicMethodDoc(\ReflectionClass $refClass, string $methodName): ?array
+    {
+        $classHierarchy = HierarchyResolver::getClassHierarchy($refClass);
+
+        foreach ($classHierarchy as $hierClass) {
+            $fileName = $hierClass->getFileName();
+            if ($hierClass !== $refClass && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
+                continue;
+            }
+
+            $classDoc = $hierClass->getDocComment();
+            if ($classDoc !== false) {
+                $tag = DocblockExtractor::extractMagicMethodContract($classDoc, $methodName);
+                if ($tag !== null) {
+                    return [
+                        'doc' => $classDoc,
+                        'declaringClass' => $hierClass,
+                        'methodTag' => $tag,
+                    ];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param \ReflectionClass<object> $declaringClass
+     * @param array<string, TypeNode> $aliases
+     *
+     * @return array<int, array{name: string, type: ?TypeNode, isVariadic: bool, isOptional: bool}>
+     */
+    private static function resolveMagicParameters(
+        MethodTagValueNode $methodTag,
+        \ReflectionClass $declaringClass,
+        array $aliases
+    ): array {
+        $resolvedParams = [];
+
+        foreach ($methodTag->parameters as $p) {
+            $pType = $p->type ?? null;
+            if ($pType !== null) {
+                $subType = self::substituteAliases($pType, $aliases);
+                $pType = SpecialTypeResolver::resolve($subType, $declaringClass);
+            }
+
+            $pName = self::extractRawParamName($p);
+            $pVars = get_object_vars($p);
+            $isOptional = (isset($pVars['isOptional']) && (bool) $pVars['isOptional']) || (($p->defaultValue ?? null) !== null);
+
+            $resolvedParams[] = [
+                'name' => $pName,
+                'type' => $pType,
+                'isVariadic' => $p->isVariadic,
+                'isOptional' => $isOptional,
+            ];
+        }
+
+        return $resolvedParams;
+    }
+
+    private static function extractRawParamName(object $paramNode): string
+    {
+        $rawParamName = '';
+        $pVars = get_object_vars($paramNode);
+
+        foreach ($pVars as $key => $val) {
+            if (\is_string($val) && str_starts_with($val, '$')) {
+                $rawParamName = $val;
+
+                break;
+            }
+        }
+
+        if ($rawParamName === '') {
+            foreach (['parameterName', 'name', 'paramName', 'varName'] as $key) {
+                if (isset($pVars[$key]) && \is_string($pVars[$key])) {
+                    $rawParamName = $pVars[$key];
+
+                    break;
+                }
+            }
+        }
+
+        return ltrim($rawParamName, '$');
+    }
+
+    private static function shouldIgnoreDoc(string $doc): bool
+    {
+        $shouldRespectIgnore = (bool) (Config::get()['respect_ignore_tags'] ?? true);
+
+        return $shouldRespectIgnore && (str_contains($doc, '@typephp-ignore') || str_contains($doc, '@typephp-disable'));
     }
 
     /**
@@ -535,21 +597,7 @@ final class ContractParser
             $paramTags = DocblockExtractor::getParamTags($phpDocNode);
 
             foreach ($paramTags as $paramName => $paramTag) {
-                if (isset($baseParamSet[$paramName])) {
-                    $targetParamName = $paramName;
-                } else {
-                    $paramIndex = $hierNameToIndex[$paramName] ?? null;
-                    if ($paramIndex !== null && isset($baseParamNames[$paramIndex])) {
-                        $candidateName = $baseParamNames[$paramIndex];
-                        if (! isset($hierNameToIndex[$candidateName])) {
-                            $targetParamName = $candidateName;
-                        } else {
-                            $targetParamName = null;
-                        }
-                    } else {
-                        $targetParamName = null;
-                    }
-                }
+                $targetParamName = self::resolveTargetParamName($paramName, $baseParamSet, $baseParamNames, $hierNameToIndex);
 
                 if ($targetParamName !== null && ! isset($types[$targetParamName])) {
                     $type = $paramTag->type;
@@ -570,6 +618,33 @@ final class ContractParser
                 }
             }
         }
+    }
+
+    /**
+     * Disambiguates parameter name vs index position during inheritance.
+     *
+     * @param array<string, int> $baseParamSet
+     * @param array<int, string> $baseParamNames
+     * @param array<string, int> $hierNameToIndex
+     */
+    private static function resolveTargetParamName(
+        string $paramName,
+        array $baseParamSet,
+        array $baseParamNames,
+        array $hierNameToIndex
+    ): ?string {
+        if (isset($baseParamSet[$paramName])) {
+            return $paramName;
+        }
+
+        $paramIndex = $hierNameToIndex[$paramName] ?? null;
+        if ($paramIndex === null || ! isset($baseParamNames[$paramIndex])) {
+            return null;
+        }
+
+        $candidateName = $baseParamNames[$paramIndex];
+
+        return ! isset($hierNameToIndex[$candidateName]) ? $candidateName : null;
     }
 
     /**

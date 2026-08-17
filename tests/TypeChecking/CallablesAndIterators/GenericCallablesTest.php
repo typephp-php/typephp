@@ -77,4 +77,72 @@ describe('Generic Callables (@template T with callable(T): T)', function () {
             ;
         });
     });
+
+    describe('Higher-Order Generic Array Transformers (array<K, V> with callable(V): V2)', function () {
+        test('infers template parameters from array and validates array items on entry', function () {
+            $service = new GenericCallableService();
+            $stringify = fn (int $n): string => "val_{$n}";
+
+            expect($service->mapArray($stringify, ['item1' => 10, 'item2' => 20]))
+                ->toBe(['item1' => 'val_10', 'item2' => 'val_20'])
+            ;
+
+            expect(fn () => $service->mapArray($stringify, ['item1' => 10, 'item2' => 'invalid_string']))
+                ->toThrow(TypeError::class, "['item2']")
+            ;
+        });
+
+        test('validates sequential lists with list<T> and callback(T): R', function () {
+            $service = new GenericCallableService();
+            $double = fn (int $n): int => $n * 2;
+
+            expect($service->mapList($double, [1, 2, 3]))->toBe([2, 4, 6]);
+
+            expect(fn () => $service->mapList($double, [1, 'bad_int', 3]))
+                ->toThrow(TypeError::class, '[1]')
+            ;
+        });
+
+        test('validates both key and value passed into callback(K, V): V2', function () {
+            $service = new GenericCallableService();
+            $combiner = fn (string $k, int $v): string => "{$k}:{$v}";
+
+            $result = $service->mapWithKey($combiner, ['alpha' => 10, 'beta' => 20]);
+            expect($result)->toBe(['alpha' => 'alpha:10', 'beta' => 'beta:20']);
+
+            expect(fn () => $service->mapWithKey($combiner, [0 => 10]))
+                ->toThrow(TypeError::class, 'key')
+            ;
+        });
+
+        test('throws TypeError when callback parameter type conflicts with inferred array value V', function () {
+            $service = new GenericCallableService();
+
+            $stringOnlyCallback = fn (string $s): string => strtoupper($s);
+
+            expect(fn () => $service->mapArray($stringOnlyCallback, ['a' => 10]))
+                ->toThrow(TypeError::class, 'must be of type string')
+            ;
+        });
+
+        test('accepts PHP 8.1+ first-class callables in generic array transformer', function () {
+            $service = new GenericCallableService();
+            $doubler = new class () {
+                public function double(int $n): string
+                {
+                    return "doubled_{$n}";
+                }
+            };
+
+            $result = $service->mapArray($doubler->double(...), ['a' => 5, 'b' => 10]);
+            expect($result)->toBe(['a' => 'doubled_5', 'b' => 'doubled_10']);
+        });
+
+        test('handles empty array cleanly without crashing on template inference', function () {
+            $service = new GenericCallableService();
+            $fn = fn (int $x): string => (string) $x;
+
+            expect($service->mapArray($fn, []))->toBe([]);
+        });
+    });
 });

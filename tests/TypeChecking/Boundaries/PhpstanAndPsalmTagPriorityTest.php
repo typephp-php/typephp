@@ -166,7 +166,8 @@ describe('Tooling Annotation Priorities (@phpstan-* and @psalm-*)', function () 
             $producer = new CovariantProducer(new Dog());
 
             expect(TypePHP::getGenericVariance($producer))->toBe('covariant')
-                ->and(handleCovariantProducer($producer))->toBeInstanceOf(Dog::class);
+                ->and(handleCovariantProducer($producer))->toBeInstanceOf(Dog::class)
+            ;
         });
     });
 });

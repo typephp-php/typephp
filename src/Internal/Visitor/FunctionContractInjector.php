@@ -29,34 +29,26 @@ final class FunctionContractInjector
 
         $docText = $doc !== null ? $doc->getText() : '';
 
-        // Per-Function/Method Suppression Tag
-        if ((bool) (Config::get()['respect_ignore_tags'] ?? true) && (str_contains($docText, '@typephp-ignore') || str_contains($docText, '@typephp-disable'))) {
-            return; // Skip injecting contract checks for this specific function/method!
+        if (self::shouldSkipInjection($docText)) {
+            return;
         }
 
         $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
         $isMagicLifecycle = $isClassMethod && \in_array($methodName, ['__construct', '__destruct', '__clone'], true);
 
-        $hasParam = $isClassMethod || str_contains($docText, '@param');
-
-        // Never inject return checks into constructors, destructors, or clone methods
+        $hasParam = $isClassMethod || str_contains($docText, '@param') || str_contains($docText, '@phpstan-param') || str_contains($docText, '@psalm-param');
         $hasReturn = ! $isMagicLifecycle && ($isClassMethod || str_contains($docText, '@return') || str_contains($docText, '@phpstan-return') || str_contains($docText, '@psalm-return'));
 
         if (! $hasParam && ! $hasReturn) {
             return;
         }
 
+        $thisArg = self::resolveThisArg($isClassMethod, $node);
         $isNativeVoid = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'void';
-        $hasThis = $isClassMethod && ! $node->isStatic();
-
-        $thisArg = $hasThis
-            ? new Node\Expr\Variable('this')
-            : ($isClassMethod ? new Node\Expr\ClassConstFetch(new Node\Name('static'), 'class') : new Node\Expr\ConstFetch(new Node\Name('null')));
 
         $injectedStmts = [];
-
         if ($hasParam) {
-            $injectedStmts = self::buildParamInjections($node, $docText, $thisArg, $isClassMethod);
+            $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg, $isClassMethod);
         }
 
         if ($hasReturn) {
@@ -68,13 +60,32 @@ final class FunctionContractInjector
         $node->stmts = array_merge($injectedStmts, $node->stmts);
     }
 
+    private static function shouldSkipInjection(string $docText): bool
+    {
+        $shouldRespectIgnore = (bool) (Config::get()['respect_ignore_tags'] ?? true);
+
+        return $shouldRespectIgnore && (str_contains($docText, '@typephp-ignore') || str_contains($docText, '@typephp-disable'));
+    }
+
+    private static function resolveThisArg(bool $isClassMethod, Node\Stmt\Function_|Node\Stmt\ClassMethod $node): Node\Expr
+    {
+        if (! $isClassMethod) {
+            return new Node\Expr\ConstFetch(new Node\Name('null'));
+        }
+
+        /** @var Node\Stmt\ClassMethod $node */
+        return $node->isStatic()
+            ? new Node\Expr\ClassConstFetch(new Node\Name('static'), 'class')
+            : new Node\Expr\Variable('this');
+    }
+
     private static function isGenerator(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): bool
     {
         if ($node->stmts === null) {
             return false;
         }
 
-        $visitor = new class() extends NodeVisitorAbstract {
+        $visitor = new class () extends NodeVisitorAbstract {
             public bool $isGen = false;
 
             public function enterNode(Node $n): ?int
@@ -101,112 +112,257 @@ final class FunctionContractInjector
     }
 
     /**
+     * @param array<Node\Param> $params
+     *
      * @return array<Node\Stmt>
      */
     private static function buildParamInjections(
-        Node\Stmt\Function_|Node\Stmt\ClassMethod $node,
+        array $params,
         string $docText,
         Node\Expr $thisArg,
         bool $isClassMethod
     ): array {
-        $injectedStmts = [];
+        $injectedStmts = [self::buildSetupScopeStmt($thisArg)];
 
-        $ifStmt = new Node\Stmt\If_(
-            new Node\Expr\Instanceof_(
-                new Node\Expr\Assign(
-                    new Node\Expr\Variable('__typephpErr'),
-                    new Node\Expr\FuncCall(
-                        new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::setupScope'),
-                        [
-                            new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                            new Node\Arg(new Node\Expr\FuncCall(new Node\Name('get_defined_vars'))),
-                            new Node\Arg($thisArg),
-                        ]
-                    )
-                ),
-                new Node\Name('\TypePHP\Internal\ErrorMessage')
-            ),
+        $callableWrappers = self::buildParamWrappers(
+            $params,
+            '\TypePHP\Internal\RuntimeTypeChecker::wrapCallable',
+            $thisArg,
+            $isClassMethod || str_contains($docText, 'callable') || str_contains($docText, 'Closure')
+        );
+
+        $iterableWrappers = self::buildParamWrappers(
+            $params,
+            '\TypePHP\Internal\RuntimeTypeChecker::wrapIterable',
+            $thisArg,
+            str_contains($docText, 'iterable') || str_contains($docText, 'Traversable') || str_contains($docText, 'Generator') || str_contains($docText, 'Iterator')
+        );
+
+        return array_merge($injectedStmts, $callableWrappers, $iterableWrappers);
+    }
+
+    private static function buildSetupScopeStmt(Node\Expr $thisArg): Node\Stmt\If_
+    {
+        $checkCall = new Node\Expr\FuncCall(
+            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::setupScope'),
             [
-                'stmts' => [
-                    new Node\Stmt\Expression(
-                        new Node\Expr\Throw_(
-                            new Node\Expr\StaticCall(
-                                new Node\Name('\TypePHP\Internal\ErrorFactory'),
-                                'prepareException',
-                                [
-                                    new Node\Arg(
-                                        new Node\Expr\New_(
-                                            new Node\Name('\TypePHP\Exception\TypeError'),
-                                            [
-                                                new Node\Arg(
-                                                    new Node\Expr\MethodCall(
-                                                        new Node\Expr\Variable('__typephpErr'),
-                                                        'getMessage'
-                                                    )
-                                                ),
-                                            ]
-                                        )
-                                    ),
-                                ]
-                            )
-                        )
-                    ),
-                ],
+                new Node\Arg(new Node\Scalar\MagicConst\Method()),
+                new Node\Arg(new Node\Expr\FuncCall(new Node\Name('get_defined_vars'))),
+                new Node\Arg($thisArg),
             ]
         );
 
+        $throwStmt = self::buildTypeErrorThrowStmt(new Node\Expr\Variable('__typephpErr'));
+
+        $ifStmt = new Node\Stmt\If_(
+            new Node\Expr\Instanceof_(
+                new Node\Expr\Assign(new Node\Expr\Variable('__typephpErr'), $checkCall),
+                new Node\Name('\TypePHP\Internal\ErrorMessage')
+            ),
+            ['stmts' => [$throwStmt]]
+        );
+
         $ifStmt->setAttribute('typephp_injected', true);
-        $injectedStmts[] = $ifStmt;
 
-        if ($isClassMethod || str_contains($docText, 'callable') || str_contains($docText, 'Closure')) {
-            foreach ($node->params as $param) {
-                if ($param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
-                    $paramName = $param->var->name;
-                    $expr = new Node\Stmt\Expression(
-                        new Node\Expr\Assign(
-                            new Node\Expr\Variable($paramName),
-                            new Node\Expr\FuncCall(
-                                new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::wrapCallable'),
-                                [
-                                    new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                                    new Node\Arg(new Node\Scalar\String_($paramName)),
-                                    new Node\Arg(new Node\Expr\Variable($paramName)),
-                                    new Node\Arg($thisArg),
-                                ]
-                            )
+        return $ifStmt;
+    }
+
+    /**
+     * @param array<Node\Param> $params
+     *
+     * @return array<Node\Stmt>
+     */
+    private static function buildParamWrappers(array $params, string $wrapperFunc, Node\Expr $thisArg, bool $shouldWrap): array
+    {
+        if (! $shouldWrap) {
+            return [];
+        }
+
+        $wrappers = [];
+        foreach ($params as $param) {
+            if ($param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
+                $paramName = $param->var->name;
+                $expr = new Node\Stmt\Expression(
+                    new Node\Expr\Assign(
+                        new Node\Expr\Variable($paramName),
+                        new Node\Expr\FuncCall(
+                            new Node\Name($wrapperFunc),
+                            [
+                                new Node\Arg(new Node\Scalar\MagicConst\Method()),
+                                new Node\Arg(new Node\Scalar\String_($paramName)),
+                                new Node\Arg(new Node\Expr\Variable($paramName)),
+                                new Node\Arg($thisArg),
+                            ]
                         )
-                    );
-                    $expr->setAttribute('typephp_injected', true);
-                    $injectedStmts[] = $expr;
-                }
+                    )
+                );
+                $expr->setAttribute('typephp_injected', true);
+                $wrappers[] = $expr;
             }
         }
 
-        if (str_contains($docText, 'iterable') || str_contains($docText, 'Traversable') || str_contains($docText, 'Generator') || str_contains($docText, 'Iterator')) {
-            foreach ($node->params as $param) {
-                if ($param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
-                    $paramName = $param->var->name;
-                    $expr = new Node\Stmt\Expression(
-                        new Node\Expr\Assign(
-                            new Node\Expr\Variable($paramName),
-                            new Node\Expr\FuncCall(
-                                new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::wrapIterable'),
+        return $wrappers;
+    }
+
+    public static function buildTypeErrorThrowStmt(Node\Expr $errorVar): Node\Stmt\Expression
+    {
+        return new Node\Stmt\Expression(
+            new Node\Expr\Throw_(
+                new Node\Expr\StaticCall(
+                    new Node\Name('\TypePHP\Internal\ErrorFactory'),
+                    'prepareException',
+                    [
+                        new Node\Arg(
+                            new Node\Expr\New_(
+                                new Node\Name('\TypePHP\Exception\TypeError'),
                                 [
-                                    new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                                    new Node\Arg(new Node\Scalar\String_($paramName)),
-                                    new Node\Arg(new Node\Expr\Variable($paramName)),
-                                    new Node\Arg($thisArg),
+                                    new Node\Arg(
+                                        new Node\Expr\MethodCall($errorVar, 'getMessage')
+                                    ),
                                 ]
                             )
-                        )
-                    );
-                    $expr->setAttribute('typephp_injected', true);
-                    $injectedStmts[] = $expr;
-                }
-            }
-        }
+                        ),
+                    ]
+                )
+            )
+        );
+    }
 
-        return $injectedStmts;
+    public static function buildReturnCheckCall(Node\Expr $exprToWrap, Node\Expr $thisArg): Node\Expr\FuncCall
+    {
+        return new Node\Expr\FuncCall(
+            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkReturn'),
+            [
+                new Node\Arg(new Node\Scalar\MagicConst\Method()),
+                new Node\Arg($exprToWrap),
+                new Node\Arg($thisArg),
+                new Node\Arg(new Node\Expr\FuncCall(new Node\Name('get_defined_vars'))),
+            ]
+        );
+    }
+
+    /**
+     * @return array<Node\Stmt>
+     */
+    public static function buildVoidReturnGuard(Node\Expr\FuncCall $checkCall): array
+    {
+        $ifStmt = new Node\Stmt\If_(
+            new Node\Expr\Instanceof_(
+                new Node\Expr\Assign(new Node\Expr\Variable('__typephpRet'), $checkCall),
+                new Node\Name('\TypePHP\Internal\ErrorMessage')
+            ),
+            ['stmts' => [self::buildTypeErrorThrowStmt(new Node\Expr\Variable('__typephpRet'))]]
+        );
+        $ifStmt->setAttribute('typephp_injected', true);
+
+        $retStmt = new Node\Stmt\Return_(null);
+        $retStmt->setAttribute('typephp_injected', true);
+
+        return [$ifStmt, $retStmt];
+    }
+
+    public static function buildTernaryReturnExpr(Node\Expr\FuncCall $checkCall): Node\Expr\Ternary
+    {
+        return new Node\Expr\Ternary(
+            new Node\Expr\Instanceof_(
+                new Node\Expr\Assign(new Node\Expr\Variable('__typephpRet'), $checkCall),
+                new Node\Name('\TypePHP\Internal\ErrorMessage')
+            ),
+            new Node\Expr\Throw_(
+                new Node\Expr\StaticCall(
+                    new Node\Name('\TypePHP\Internal\ErrorFactory'),
+                    'prepareException',
+                    [
+                        new Node\Arg(
+                            new Node\Expr\New_(
+                                new Node\Name('\TypePHP\Exception\TypeError'),
+                                [
+                                    new Node\Arg(
+                                        new Node\Expr\MethodCall(new Node\Expr\Variable('__typephpRet'), 'getMessage')
+                                    ),
+                                ]
+                            )
+                        ),
+                    ]
+                )
+            ),
+            new Node\Expr\Variable('__typephpRet')
+        );
+    }
+
+    public static function buildWrappedYieldNode(Node\Expr\Yield_ $n, Node\Expr $thisArg): Node\Expr\Ternary
+    {
+        $checkYieldCall = new Node\Expr\FuncCall(
+            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkYield'),
+            [
+                new Node\Arg(new Node\Scalar\MagicConst\Method()),
+                new Node\Arg($n->key ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
+                new Node\Arg($n->value ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
+                new Node\Arg($thisArg),
+            ]
+        );
+
+        $n->value = new Node\Expr\Ternary(
+            new Node\Expr\Instanceof_(
+                new Node\Expr\Assign(new Node\Expr\Variable('__typephpYld'), $checkYieldCall),
+                new Node\Name('\TypePHP\Internal\ErrorMessage')
+            ),
+            new Node\Expr\Throw_(
+                new Node\Expr\StaticCall(
+                    new Node\Name('\TypePHP\Internal\ErrorFactory'),
+                    'prepareException',
+                    [
+                        new Node\Arg(
+                            new Node\Expr\New_(
+                                new Node\Name('\TypePHP\Exception\TypeError'),
+                                [
+                                    new Node\Arg(
+                                        new Node\Expr\MethodCall(new Node\Expr\Variable('__typephpYld'), 'getMessage')
+                                    ),
+                                ]
+                            )
+                        ),
+                        new Node\Arg(new Node\Scalar\LNumber($n->getStartLine())),
+                    ]
+                )
+            ),
+            new Node\Expr\Variable('__typephpYld')
+        );
+
+        $checkSendCall = new Node\Expr\FuncCall(
+            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkSend'),
+            [
+                new Node\Arg(new Node\Scalar\MagicConst\Method()),
+                new Node\Arg($n),
+                new Node\Arg($thisArg),
+            ]
+        );
+
+        return new Node\Expr\Ternary(
+            new Node\Expr\Instanceof_(
+                new Node\Expr\Assign(new Node\Expr\Variable('__typephpSnd'), $checkSendCall),
+                new Node\Name('\TypePHP\Internal\ErrorMessage')
+            ),
+            new Node\Expr\Throw_(
+                new Node\Expr\StaticCall(
+                    new Node\Name('\TypePHP\Internal\ErrorFactory'),
+                    'prepareException',
+                    [
+                        new Node\Arg(
+                            new Node\Expr\New_(
+                                new Node\Name('\TypePHP\Exception\TypeError'),
+                                [
+                                    new Node\Arg(
+                                        new Node\Expr\MethodCall(new Node\Expr\Variable('__typephpSnd'), 'getMessage')
+                                    ),
+                                ]
+                            )
+                        ),
+                    ]
+                )
+            ),
+            new Node\Expr\Variable('__typephpSnd')
+        );
     }
 
     /**
@@ -217,8 +373,10 @@ final class FunctionContractInjector
     private static function wrapGeneratorReturns(array $stmts, Node\Expr $thisArg): array
     {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class($thisArg) extends NodeVisitorAbstract {
-            public function __construct(private Node\Expr $thisArg) {}
+        $traverser->addVisitor(new class ($thisArg) extends NodeVisitorAbstract {
+            public function __construct(private Node\Expr $thisArg)
+            {
+            }
 
             public function enterNode(Node $n): int|Node|null
             {
@@ -233,77 +391,7 @@ final class FunctionContractInjector
 
                     $n->setAttribute('typephp_wrapped', true);
 
-                    $checkYieldCall = new Node\Expr\FuncCall(
-                        new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkYield'),
-                        [
-                            new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                            new Node\Arg($n->key ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
-                            new Node\Arg($n->value ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
-                            new Node\Arg($this->thisArg),
-                        ]
-                    );
-
-                    $n->value = new Node\Expr\Ternary(
-                        new Node\Expr\Instanceof_(
-                            new Node\Expr\Assign(new Node\Expr\Variable('__typephpYld'), $checkYieldCall),
-                            new Node\Name('\TypePHP\Internal\ErrorMessage')
-                        ),
-                        new Node\Expr\Throw_(
-                            new Node\Expr\StaticCall(
-                                new Node\Name('\TypePHP\Internal\ErrorFactory'),
-                                'prepareException',
-                                [
-                                    new Node\Arg(
-                                        new Node\Expr\New_(
-                                            new Node\Name('\TypePHP\Exception\TypeError'),
-                                            [
-                                                new Node\Arg(
-                                                    new Node\Expr\MethodCall(new Node\Expr\Variable('__typephpYld'), 'getMessage')
-                                                ),
-                                            ]
-                                        )
-                                    ),
-                                    new Node\Arg(new Node\Scalar\LNumber($n->getStartLine())),
-                                ]
-                            )
-                        ),
-                        new Node\Expr\Variable('__typephpYld')
-                    );
-
-                    $checkSendCall = new Node\Expr\FuncCall(
-                        new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkSend'),
-                        [
-                            new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                            new Node\Arg($n),
-                            new Node\Arg($this->thisArg),
-                        ]
-                    );
-
-                    return new Node\Expr\Ternary(
-                        new Node\Expr\Instanceof_(
-                            new Node\Expr\Assign(new Node\Expr\Variable('__typephpSnd'), $checkSendCall),
-                            new Node\Name('\TypePHP\Internal\ErrorMessage')
-                        ),
-                        new Node\Expr\Throw_(
-                            new Node\Expr\StaticCall(
-                                new Node\Name('\TypePHP\Internal\ErrorFactory'),
-                                'prepareException',
-                                [
-                                    new Node\Arg(
-                                        new Node\Expr\New_(
-                                            new Node\Name('\TypePHP\Exception\TypeError'),
-                                            [
-                                                new Node\Arg(
-                                                    new Node\Expr\MethodCall(new Node\Expr\Variable('__typephpSnd'), 'getMessage')
-                                                ),
-                                            ]
-                                        )
-                                    ),
-                                ]
-                            )
-                        ),
-                        new Node\Expr\Variable('__typephpSnd')
-                    );
+                    return FunctionContractInjector::buildWrappedYieldNode($n, $this->thisArg);
                 }
 
                 if ($n instanceof Node\Expr\YieldFrom) {
@@ -342,11 +430,12 @@ final class FunctionContractInjector
     private static function wrapNonGeneratorReturns(array $stmts, Node\Expr $thisArg, bool $isNativeVoid): array
     {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class($thisArg, $isNativeVoid) extends NodeVisitorAbstract {
+        $traverser->addVisitor(new class ($thisArg, $isNativeVoid) extends NodeVisitorAbstract {
             public function __construct(
                 private Node\Expr $thisArg,
                 private bool $isNativeVoid
-            ) {}
+            ) {
+            }
 
             public function enterNode(Node $n): int|array|null
             {
@@ -356,96 +445,13 @@ final class FunctionContractInjector
 
                 if ($n instanceof Node\Stmt\Return_) {
                     $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
-
-                    $checkReturnCall = new Node\Expr\FuncCall(
-                        new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkReturn'),
-                        [
-                            new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                            new Node\Arg($exprToWrap),
-                            new Node\Arg($this->thisArg),
-                            new Node\Arg(new Node\Expr\FuncCall(new Node\Name('get_defined_vars'))),
-                        ]
-                    );
+                    $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg);
 
                     if ($this->isNativeVoid) {
-                        $ifStmt = new Node\Stmt\If_(
-                            new Node\Expr\Instanceof_(
-                                new Node\Expr\Assign(
-                                    new Node\Expr\Variable('__typephpRet'),
-                                    $checkReturnCall
-                                ),
-                                new Node\Name('\TypePHP\Internal\ErrorMessage')
-                            ),
-                            [
-                                'stmts' => [
-                                    new Node\Stmt\Expression(
-                                        new Node\Expr\Throw_(
-                                            new Node\Expr\StaticCall(
-                                                new Node\Name('\TypePHP\Internal\ErrorFactory'),
-                                                'prepareException',
-                                                [
-                                                    new Node\Arg(
-                                                        new Node\Expr\New_(
-                                                            new Node\Name('\TypePHP\Exception\TypeError'),
-                                                            [
-                                                                new Node\Arg(
-                                                                    new Node\Expr\MethodCall(
-                                                                        new Node\Expr\Variable('__typephpRet'),
-                                                                        'getMessage'
-                                                                    )
-                                                                ),
-                                                            ]
-                                                        )
-                                                    ),
-                                                ]
-                                            )
-                                        )
-                                    ),
-                                ],
-                            ]
-                        );
-                        $ifStmt->setAttribute('typephp_injected', true);
-
-                        $retStmt = new Node\Stmt\Return_(null);
-                        $retStmt->setAttribute('typephp_injected', true);
-
-                        return [
-                            $ifStmt,
-                            $retStmt,
-                        ];
+                        return FunctionContractInjector::buildVoidReturnGuard($checkCall);
                     }
 
-                    $n->expr = new Node\Expr\Ternary(
-                        new Node\Expr\Instanceof_(
-                            new Node\Expr\Assign(
-                                new Node\Expr\Variable('__typephpRet'),
-                                $checkReturnCall
-                            ),
-                            new Node\Name('\TypePHP\Internal\ErrorMessage')
-                        ),
-                        new Node\Expr\Throw_(
-                            new Node\Expr\StaticCall(
-                                new Node\Name('\TypePHP\Internal\ErrorFactory'),
-                                'prepareException',
-                                [
-                                    new Node\Arg(
-                                        new Node\Expr\New_(
-                                            new Node\Name('\TypePHP\Exception\TypeError'),
-                                            [
-                                                new Node\Arg(
-                                                    new Node\Expr\MethodCall(
-                                                        new Node\Expr\Variable('__typephpRet'),
-                                                        'getMessage'
-                                                    )
-                                                ),
-                                            ]
-                                        )
-                                    ),
-                                ]
-                            )
-                        ),
-                        new Node\Expr\Variable('__typephpRet')
-                    );
+                    $n->expr = FunctionContractInjector::buildTernaryReturnExpr($checkCall);
                 }
 
                 return null;
@@ -457,93 +463,12 @@ final class FunctionContractInjector
 
         $lastStmt = end($newStmts);
         if (! $lastStmt instanceof Node\Stmt\Return_ && ! ($lastStmt instanceof Node\Stmt\Expression && $lastStmt->expr instanceof Node\Expr\Throw_)) {
-            $checkReturnCall = new Node\Expr\FuncCall(
-                new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkReturn'),
-                [
-                    new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                    new Node\Arg(new Node\Expr\ConstFetch(new Node\Name('null'))),
-                    new Node\Arg($thisArg),
-                    new Node\Arg(new Node\Expr\FuncCall(new Node\Name('get_defined_vars'))),
-                ]
-            );
+            $checkCall = self::buildReturnCheckCall(new Node\Expr\ConstFetch(new Node\Name('null')), $thisArg);
 
             if ($isNativeVoid) {
-                $ifStmt = new Node\Stmt\If_(
-                    new Node\Expr\Instanceof_(
-                        new Node\Expr\Assign(
-                            new Node\Expr\Variable('__typephpRet'),
-                            $checkReturnCall
-                        ),
-                        new Node\Name('\TypePHP\Internal\ErrorMessage')
-                    ),
-                    [
-                        'stmts' => [
-                            new Node\Stmt\Expression(
-                                new Node\Expr\Throw_(
-                                    new Node\Expr\StaticCall(
-                                        new Node\Name('\TypePHP\Internal\ErrorFactory'),
-                                        'prepareException',
-                                        [
-                                            new Node\Arg(
-                                                new Node\Expr\New_(
-                                                    new Node\Name('\TypePHP\Exception\TypeError'),
-                                                    [
-                                                        new Node\Arg(
-                                                            new Node\Expr\MethodCall(
-                                                                new Node\Expr\Variable('__typephpRet'),
-                                                                'getMessage'
-                                                            )
-                                                        ),
-                                                    ]
-                                                )
-                                            ),
-                                        ]
-                                    )
-                                )
-                            ),
-                        ],
-                    ]
-                );
-                $ifStmt->setAttribute('typephp_injected', true);
-                $newStmts[] = $ifStmt;
-
-                $retStmt = new Node\Stmt\Return_(null);
-                $retStmt->setAttribute('typephp_injected', true);
-                $newStmts[] = $retStmt;
+                $newStmts = array_merge($newStmts, self::buildVoidReturnGuard($checkCall));
             } else {
-                $retStmt = new Node\Stmt\Return_(
-                    new Node\Expr\Ternary(
-                        new Node\Expr\Instanceof_(
-                            new Node\Expr\Assign(
-                                new Node\Expr\Variable('__typephpRet'),
-                                $checkReturnCall
-                            ),
-                            new Node\Name('\TypePHP\Internal\ErrorMessage')
-                        ),
-                        new Node\Expr\Throw_(
-                            new Node\Expr\StaticCall(
-                                new Node\Name('\TypePHP\Internal\ErrorFactory'),
-                                'prepareException',
-                                [
-                                    new Node\Arg(
-                                        new Node\Expr\New_(
-                                            new Node\Name('\TypePHP\Exception\TypeError'),
-                                            [
-                                                new Node\Arg(
-                                                    new Node\Expr\MethodCall(
-                                                        new Node\Expr\Variable('__typephpRet'),
-                                                        'getMessage'
-                                                    )
-                                                ),
-                                            ]
-                                        )
-                                    ),
-                                ]
-                            )
-                        ),
-                        new Node\Expr\Variable('__typephpRet')
-                    )
-                );
+                $retStmt = new Node\Stmt\Return_(self::buildTernaryReturnExpr($checkCall));
                 $retStmt->setAttribute('typephp_injected', true);
                 $newStmts[] = $retStmt;
             }

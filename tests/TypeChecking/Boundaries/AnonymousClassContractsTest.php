@@ -135,7 +135,8 @@ describe('Anonymous Classes with Type Contracts (new class { ... })', function (
             ;
 
             expect(fn () => $container->title = '')
-                ->toThrow(TypeError::class, 'non-empty-string');
+                ->toThrow(TypeError::class, 'non-empty-string')
+            ;
         });
     });
 });

@@ -76,7 +76,7 @@ describe('PHP 8.4 Property Hooks Validation', function () {
         expect($fixture->unvalidatedHook)->toBe(-50);
     });
 
-     test('validates asymmetric visibility properties combined with property hooks', function () {
+    test('validates asymmetric visibility properties combined with property hooks', function () {
         $profile = new HookedUser();
 
         $profile->updateProfile(100, 'Bob');

@@ -9,7 +9,7 @@ export default defineConfig({
     nav: [
       { text: 'Home', link: '/' },
       { text: 'Documentation', link: '/getting-started/installation' },
-      { text: 'Generics', link: '/generics/generics-and-bounds' },
+      { text: 'Generics', link: '/generics/basics-and-bounds' },
       { text: 'CLI', link: '/getting-started/cli-commands' },
       { text: 'FAQ', link: '/troubleshooting' },
       { text: 'GitHub', link: 'https://github.com/typephp-php/typephp' }
@@ -22,6 +22,16 @@ export default defineConfig({
           { text: 'Quick Start', link: '/getting-started/quick-start' },
           { text: 'Configuration', link: '/getting-started/configuration' },
           { text: 'CLI Commands', link: '/getting-started/cli-commands' },
+        ]
+      },
+      {
+        text: 'Runtime Generics',
+        items: [
+          { text: 'Basics & Bounds', link: '/generics/basics-and-bounds' },
+          { text: 'Inheritance & Traits', link: '/generics/inheritance-and-traits' },
+          { text: 'Reified Generics & State', link: '/generics/reified-generics' },
+          { text: 'Advanced Types & Callables', link: '/generics/advanced-generics' },
+          { text: 'Demystifying Variance', link: '/generics/variance' },
         ]
       },
       {
@@ -42,12 +52,6 @@ export default defineConfig({
           { text: 'Iterators & Generators', link: '/supported-types/iterators-and-generators' },
           { text: 'Unions, Intersections & Conditionals', link: '/supported-types/unions-intersections-and-conditionals' },
           { text: 'Type Aliases', link: '/supported-types/type-aliases' },
-        ]
-      },
-      {
-        text: 'Runtime Generics',
-        items: [
-          { text: 'Generics & Bounds', link: '/generics/generics-and-bounds' },
         ]
       },
       {

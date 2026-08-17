@@ -16,12 +16,7 @@ final class PropertyHookInjector
 {
     public static function process(Node\Stmt\Property $node): void
     {
-        if (! isset($node->hooks) || ! \is_array($node->hooks) || $node->hooks === []) {
-            return;
-        }
-
-        $doc = $node->getDocComment();
-        if ((bool) (Config::get()['respect_ignore_tags'] ?? true) && $doc !== null && (str_contains($doc->getText(), '@typephp-ignore') || str_contains($doc->getText(), '@typephp-disable'))) {
+        if (self::shouldSkipInjection($node)) {
             return;
         }
 
@@ -31,64 +26,92 @@ final class PropertyHookInjector
             $hookName = strtolower($hook->name->toString());
 
             if ($hookName === 'get') {
-                if ($hook->body instanceof Node\Expr) {
-                    $checkCall = NodeBuilder::createPropertyCheckCall($hook->body, new Node\Expr\Variable('this'), $propertyName);
-                    $hook->body = NodeBuilder::createTernaryThrowExpr($checkCall);
-                } elseif (\is_array($hook->body)) {
-                    $hook->body = self::wrapHookReturnStatements($hook->body, $propertyName);
-                }
+                self::processGetHook($hook, $propertyName);
             } elseif ($hookName === 'set') {
-                $paramName = $hook->params !== [] && $hook->params[0]->var instanceof Node\Expr\Variable && \is_string($hook->params[0]->var->name)
-                    ? $hook->params[0]->var->name
-                    : 'value';
+                self::processSetHook($hook, $propertyName);
+            }
+        }
+    }
 
-                $checkCall = NodeBuilder::createPropertyCheckCall(new Node\Expr\Variable($paramName), new Node\Expr\Variable('this'), $propertyName);
+    private static function shouldSkipInjection(Node\Stmt\Property $node): bool
+    {
+        if (! isset($node->hooks) || ! \is_array($node->hooks) || $node->hooks === []) {
+            return true;
+        }
 
-                if (\is_array($hook->body)) {
-                    $paramCheckStmt = new Node\Stmt\Expression(
-                        new Node\Expr\Assign(
-                            new Node\Expr\Variable($paramName),
-                            NodeBuilder::createTernaryThrowExpr($checkCall)
-                        )
-                    );
-                    $paramCheckStmt->setAttribute('typephp_injected', true);
-                    array_unshift($hook->body, $paramCheckStmt);
-                } elseif ($hook->body instanceof Node\Expr) {
-                    // Bypass php-parser formatting bugs by keeping short hooks as Expressions
-                    $hook->body = new Node\Expr\Ternary(
-                        new Node\Expr\Instanceof_(
-                            new Node\Expr\Assign(
-                                new Node\Expr\Variable('__typephpVal'),
-                                $checkCall
-                            ),
-                            new Node\Name('\TypePHP\Internal\ErrorMessage')
-                        ),
-                        new Node\Expr\Throw_(
-                            new Node\Expr\StaticCall(
-                                new Node\Name('\TypePHP\Internal\ErrorFactory'),
-                                'prepareException',
+        $doc = $node->getDocComment();
+        if ($doc === null) {
+            return false;
+        }
+
+        $shouldRespectIgnore = (bool) (Config::get()['respect_ignore_tags'] ?? true);
+
+        return $shouldRespectIgnore && (str_contains($doc->getText(), '@typephp-ignore') || str_contains($doc->getText(), '@typephp-disable'));
+    }
+
+    private static function processGetHook(Node\PropertyHook $hook, string $propertyName): void
+    {
+        if ($hook->body instanceof Node\Expr) {
+            $checkCall = NodeBuilder::createPropertyCheckCall($hook->body, new Node\Expr\Variable('this'), $propertyName);
+            $hook->body = NodeBuilder::createTernaryThrowExpr($checkCall);
+        } elseif (\is_array($hook->body)) {
+            $hook->body = self::wrapHookReturnStatements($hook->body, $propertyName);
+        }
+    }
+
+    private static function processSetHook(Node\PropertyHook $hook, string $propertyName): void
+    {
+        $paramName = self::extractSetParamName($hook);
+        $checkCall = NodeBuilder::createPropertyCheckCall(new Node\Expr\Variable($paramName), new Node\Expr\Variable('this'), $propertyName);
+
+        if (\is_array($hook->body)) {
+            $paramCheckStmt = new Node\Stmt\Expression(
+                new Node\Expr\Assign(
+                    new Node\Expr\Variable($paramName),
+                    NodeBuilder::createTernaryThrowExpr($checkCall)
+                )
+            );
+            $paramCheckStmt->setAttribute('typephp_injected', true);
+            array_unshift($hook->body, $paramCheckStmt);
+        } elseif ($hook->body instanceof Node\Expr) {
+            $hook->body = self::buildExpressionSetHookTernary($checkCall, $hook->body);
+        }
+    }
+
+    private static function extractSetParamName(Node\PropertyHook $hook): string
+    {
+        return ($hook->params !== [] && $hook->params[0]->var instanceof Node\Expr\Variable && \is_string($hook->params[0]->var->name))
+            ? $hook->params[0]->var->name
+            : 'value';
+    }
+
+    private static function buildExpressionSetHookTernary(Node\Expr\FuncCall $checkCall, Node\Expr $assignmentExpr): Node\Expr\Ternary
+    {
+        return new Node\Expr\Ternary(
+            new Node\Expr\Instanceof_(
+                new Node\Expr\Assign(new Node\Expr\Variable('__typephpVal'), $checkCall),
+                new Node\Name('\TypePHP\Internal\ErrorMessage')
+            ),
+            new Node\Expr\Throw_(
+                new Node\Expr\StaticCall(
+                    new Node\Name('\TypePHP\Internal\ErrorFactory'),
+                    'prepareException',
+                    [
+                        new Node\Arg(
+                            new Node\Expr\New_(
+                                new Node\Name('\TypePHP\Exception\TypeError'),
                                 [
                                     new Node\Arg(
-                                        new Node\Expr\New_(
-                                            new Node\Name('\TypePHP\Exception\TypeError'),
-                                            [
-                                                new Node\Arg(
-                                                    new Node\Expr\MethodCall(
-                                                        new Node\Expr\Variable('__typephpVal'),
-                                                        'getMessage'
-                                                    )
-                                                ),
-                                            ]
-                                        )
+                                        new Node\Expr\MethodCall(new Node\Expr\Variable('__typephpVal'), 'getMessage')
                                     ),
                                 ]
                             )
                         ),
-                        $hook->body // False branch evaluates the original assignment
-                    );
-                }
-            }
-        }
+                    ]
+                )
+            ),
+            $assignmentExpr
+        );
     }
 
     /**

@@ -1,0 +1,34 @@
+.VPDocAsideOutline .outline-link,
+.VPDocOutlineItem .outline-link {
+    white-space: normal !important;
+    line-height: 1.5 !important;
+    word-break: break-word !important;
+    padding-top: 6px !important;
+    padding-bottom: 6px !important;
+    display: block !important;
+}
+
+.VPDocAsideOutline .outline-item,
+.VPDocOutlineItem,
+.VPDocAsideOutline ul > li {
+    margin-top: 6px !important;
+    margin-bottom: 8px !important;
+}
+
+.VPDocAsideOutline .nested {
+    padding-left: 14px !important;
+    margin-top: 4px !important;
+    margin-bottom: 4px !important;
+}
+
+.VPSidebarItem.is-link .text {
+    white-space: normal !important;
+    line-height: 1.4 !important;
+    word-break: break-word !important;
+}
+
+@media (min-width: 1280px) {
+    .VPDoc.has-aside .aside-container {
+        width: 270px !important;
+    }
+}

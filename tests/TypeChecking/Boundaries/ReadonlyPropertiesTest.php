@@ -92,7 +92,8 @@ describe('PHP 8.1+ Readonly Properties & Constructor Promotion', function () {
             ;
 
             expect(fn () => $container->initialize(10, ''))
-                ->toThrow(TypeError::class, 'non-empty-string');
+                ->toThrow(TypeError::class, 'non-empty-string')
+            ;
         });
     });
 });

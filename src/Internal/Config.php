@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace TypePHP\Internal;
 
 use TypePHP\Contract\ContractParser;
+use TypePHP\Contract\HierarchyResolver;
 use TypePHP\Extension\ExtensionInterface;
 use TypePHP\Extension\ExtensionManager;
+use TypePHP\Resolver\TemplateManager;
 
 /**
  * Global configuration manager for loading and dynamically overriding settings.
@@ -149,5 +151,7 @@ final class Config
         self::$projectRoot = null;
 
         ContractParser::reset();
+        TemplateManager::reset();
+        HierarchyResolver::reset();
     }
 }
