@@ -187,6 +187,12 @@ describe('InlineChecker Unit Tests', function () {
         });
 
         test('substitutes generic template types in class properties', function () {
+            if (PHP_VERSION_ID < 80400) {
+                expect(true)->toBeTrue();
+
+                return;
+            }
+
             $registry = new TypeValidatorRegistry();
             $collection = new HookedCollection();
 

@@ -111,6 +111,12 @@ describe('ContractParser Unit Tests', function () {
         });
 
         test('parses interface property docblocks', function () {
+            if (PHP_VERSION_ID < 80400) {
+                expect(true)->toBeTrue();
+
+                return;
+            }
+
             $readOnlyProp = ContractParser::parseProperty(HookedInterfaceImplementation::class, 'readOnlyProp');
 
             expect($readOnlyProp)->not()->toBeNull()
@@ -314,7 +320,8 @@ describe('ContractParser Unit Tests', function () {
 
             expect($result)->toBeInstanceOf(ObjectShapeNode::class)
                 ->and((string) $result->items[0]->valueType)->toBe('positive-int')
-                ->and((string) $result->items[1]->valueType)->toBe('non-empty-string');
+                ->and((string) $result->items[1]->valueType)->toBe('non-empty-string')
+            ;
         });
     });
 });

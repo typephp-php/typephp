@@ -51,6 +51,16 @@ final class TemplateManager
     public static ?object $pendingCloneSource = null;
 
     /**
+     * Resets all static generic template bindings and call stack frames. Useful for test isolation.
+     */
+    public static function reset(): void
+    {
+        self::$instanceTemplateBindings = null;
+        self::$callStackBindings = [];
+        self::$pendingCloneSource = null;
+    }
+
+    /**
      * Copies bound generic template types from a source object to a cloned target object.
      */
     public static function copyInstanceBindings(object $source, object $target): void
