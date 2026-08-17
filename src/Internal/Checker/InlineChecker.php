@@ -41,6 +41,53 @@ final class InlineChecker
     private static array $parsedTypeNodeCache = [];
 
     /**
+     * Fast lookup set for scalar refinement types.
+     */
+    private const SCALAR_TYPES = [
+        'int' => true,
+        'integer' => true,
+        'string' => true,
+        'bool' => true,
+        'boolean' => true,
+        'float' => true,
+        'double' => true,
+        'null' => true,
+        'true' => true,
+        'false' => true,
+        'scalar' => true,
+        'numeric' => true,
+        'positive-int' => true,
+        'negative-int' => true,
+        'non-positive-int' => true,
+        'non-negative-int' => true,
+        'non-zero-int' => true,
+        'unsigned-int' => true,
+        'positive-float' => true,
+        'negative-float' => true,
+        'non-positive-float' => true,
+        'non-negative-float' => true,
+        'non-zero-float' => true,
+        'non-empty-string' => true,
+        'numeric-string' => true,
+        'lowercase-string' => true,
+        'non-empty-lowercase-string' => true,
+        'uppercase-string' => true,
+        'non-empty-uppercase-string' => true,
+        'truthy' => true,
+        'falsy' => true,
+        'array-key' => true,
+    ];
+
+    /**
+     * Fast lookup set for iterable types.
+     */
+    private const ARRAY_TYPES = [
+        'array' => true,
+        'list' => true,
+        'iterable' => true,
+    ];
+
+    /**
      * Evaluates inline variable validation dynamically based on configuration.
      */
     public static function checkVariable(mixed $value, string $typeString, string $varName, string $file, TypeValidatorRegistry $registry): mixed
@@ -49,13 +96,7 @@ final class InlineChecker
         /** @var array<string, bool> $config */
         $config = \is_array($rawConfig) ? $rawConfig : [];
 
-        $checkGenerics = (bool) ($config['generics'] ?? true);
-        $checkCallables = (bool) ($config['callables'] ?? true);
-        $checkScalars = (bool) ($config['scalars'] ?? false);
-        $checkArrays = (bool) ($config['arrays'] ?? false);
-        $checkObjects = (bool) ($config['objects'] ?? false);
-
-        if (! $checkGenerics && ! $checkCallables && ! $checkScalars && ! $checkArrays && ! $checkObjects) {
+        if (! self::hasActiveInlineChecks($config)) {
             return $value;
         }
 
@@ -67,32 +108,7 @@ final class InlineChecker
                 $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
             }
 
-            // Resolve local class-level aliases for the executing context by traversing back the call stack
-            $className = null;
-            $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
-            foreach ($trace as $frame) {
-                $classCandidate = $frame['class'] ?? null;
-                if ($classCandidate !== null && ! str_starts_with($classCandidate, 'TypePHP\\Internal\\') && ! str_starts_with($classCandidate, 'TypePHP\\Wrapper\\')) {
-                    $className = $classCandidate;
-
-                    break;
-                }
-            }
-
-            if ($className !== null) {
-                if (class_exists($className) || interface_exists($className) || trait_exists($className)) {
-                    try {
-                        $refClass = new \ReflectionClass($className);
-                        $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
-
-                        $classAliases = ContractParser::parseClassAliases($className);
-                        if (\count($classAliases) > 0) {
-                            $typeNode = TemplateSubstitutor::substitute($typeNode, $classAliases);
-                        }
-                    } catch (\ReflectionException $e) {
-                    }
-                }
-            }
+            $typeNode = self::resolveCallerContext($typeNode);
 
             if (! self::shouldValidateType($typeNode, $config)) {
                 return $value;
@@ -106,6 +122,7 @@ final class InlineChecker
                 return CallableWrapper::wrapTypeNode($typeNode, $value, $cbPrefix, $registry);
             }
 
+            $checkGenerics = (bool) ($config['generics'] ?? true);
             if ($typeNode instanceof GenericTypeNode && $checkGenerics && \is_object($value)) {
                 $err = TemplateManager::bindInstanceFromNode($value, $typeNode, $context, true);
                 if ($err !== null) {
@@ -152,26 +169,8 @@ final class InlineChecker
             return $value;
         }
 
-        // Substitute class-level property generics for object instances
         if (\is_object($objectOrClass)) {
-            $constructorTarget = $className . '::__construct';
-            $contract = ContractParser::parse($constructorTarget);
-
-            $boundTemplates = TemplateManager::getBoundTemplates('none', $objectOrClass, $contract['templates']);
-            $declaredTemplates = $contract['templates'];
-
-            if (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0) {
-                $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
-
-                if (class_exists($className) || interface_exists($className) || trait_exists($className)) {
-                    try {
-                        $refClass = new \ReflectionClass($className);
-                        $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
-                    } catch (\ReflectionException $e) {
-                        // Silently continue if reflection fails
-                    }
-                }
-            }
+            $typeNode = self::substitutePropertyGenerics($typeNode, $objectOrClass, $className);
         }
 
         try {
@@ -184,6 +183,83 @@ final class InlineChecker
         }
 
         return $value;
+    }
+
+    /**
+     * Checks if at least one inline variable category is active.
+     *
+     * @param array<string, bool> $config
+     */
+    private static function hasActiveInlineChecks(array $config): bool
+    {
+        return (bool) ($config['generics'] ?? true)
+            || (bool) ($config['callables'] ?? true)
+            || (bool) ($config['scalars'] ?? false)
+            || (bool) ($config['arrays'] ?? false)
+            || (bool) ($config['objects'] ?? false);
+    }
+
+    /**
+     * Resolves caller class context and applies class-level type aliases to the AST.
+     */
+    private static function resolveCallerContext(TypeNode $typeNode): TypeNode
+    {
+        $className = null;
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 7);
+
+        foreach ($trace as $frame) {
+            $classCandidate = $frame['class'] ?? null;
+            if ($classCandidate !== null && ! str_starts_with($classCandidate, 'TypePHP\\Internal\\') && ! str_starts_with($classCandidate, 'TypePHP\\Wrapper\\')) {
+                $className = $classCandidate;
+
+                break;
+            }
+        }
+
+        if ($className === null || (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className))) {
+            return $typeNode;
+        }
+
+        try {
+            $refClass = new \ReflectionClass($className);
+            $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
+
+            $classAliases = ContractParser::parseClassAliases($className);
+            if (\count($classAliases) > 0) {
+                $typeNode = TemplateSubstitutor::substitute($typeNode, $classAliases);
+            }
+        } catch (\ReflectionException $e) {
+            // Silently continue if reflection fails
+        }
+
+        return $typeNode;
+    }
+
+    /**
+     * Substitutes generic template types declared on class properties.
+     */
+    private static function substitutePropertyGenerics(TypeNode $typeNode, object $object, string $className): TypeNode
+    {
+        $constructorTarget = $className . '::__construct';
+        $contract = ContractParser::parse($constructorTarget);
+
+        $boundTemplates = TemplateManager::getBoundTemplates('none', $object, $contract['templates']);
+        $declaredTemplates = $contract['templates'];
+
+        if (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0) {
+            $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
+
+            if (class_exists($className) || interface_exists($className) || trait_exists($className)) {
+                try {
+                    $refClass = new \ReflectionClass($className);
+                    $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
+                } catch (\ReflectionException $e) {
+                    // Silently continue if reflection fails
+                }
+            }
+        }
+
+        return $typeNode;
     }
 
     /**
@@ -247,33 +323,11 @@ final class InlineChecker
                 return (bool) ($config['callables'] ?? true);
             }
 
-            if (\in_array($lower, ['array', 'list', 'iterable'], true)) {
+            if (isset(self::ARRAY_TYPES[$lower])) {
                 return $checkArrays;
             }
 
-            if (\in_array($lower, [
-                'int',
-                'integer',
-                'string',
-                'bool',
-                'boolean',
-                'float',
-                'double',
-                'null',
-                'true',
-                'false',
-                'scalar',
-                'numeric',
-                'positive-int',
-                'negative-int',
-                'non-empty-string',
-                'numeric-string',
-                'truthy',
-                'falsy',
-                'uppercase-string',
-                'non-empty-uppercase-string',
-                'array-key',
-            ], true)) {
+            if (isset(self::SCALAR_TYPES[$lower])) {
                 return (bool) ($config['scalars'] ?? false);
             }
 
@@ -282,7 +336,7 @@ final class InlineChecker
 
         if ($node instanceof GenericTypeNode) {
             $lower = strtolower($node->type->name);
-            if (\in_array($lower, ['array', 'list', 'iterable'], true)) {
+            if (isset(self::ARRAY_TYPES[$lower])) {
                 return $checkArrays;
             }
 
