@@ -131,14 +131,14 @@ describe('InlineChecker Unit Tests', function () {
     describe('checkVariable: Callables & Direct Returns', function () {
         test('wraps callable variable in lazy proxy', function () {
             $registry = new TypeValidatorRegistry();
-            $cb = fn (int $id): string => "user_{$id}";
+            $cb = fn(int $id): string => "user_{$id}";
 
             $wrapped = InlineChecker::checkVariable($cb, 'callable(positive-int): non-empty-string', 'formatter', __FILE__, $registry);
 
             expect($wrapped)->toBeCallable()
                 ->and($wrapped(10))->toBe('user_10');
 
-            expect(fn () => $wrapped(-5))->toThrow(TypeError::class, 'positive-int');
+            expect(fn() => $wrapped(-5))->toThrow(TypeError::class, 'positive-int');
         });
 
         test('formats error message context as Return value when varName is return', function () {
@@ -181,7 +181,7 @@ describe('InlineChecker Unit Tests', function () {
 
             $invalid = InlineChecker::checkProperty(['invalid'], $fixture, 'numbers', __FILE__, $registry);
             expect($invalid)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalid->getMessage())->toContain("numbers['0']");
+                ->and($invalid->getMessage())->toContain('numbers[0]');
         });
 
         test('validates static class properties against @var docblock', function () {
