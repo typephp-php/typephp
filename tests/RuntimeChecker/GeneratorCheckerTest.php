@@ -38,7 +38,8 @@ describe('GeneratorChecker Unit Tests', function () {
             $result = GeneratorChecker::checkYield('sampleGeneratorFixture', 'a', -50, $registry);
 
             expect($result)->toBeInstanceOf(ErrorMessage::class)
-                ->and($result->getMessage())->toContain('Return iterator value');
+                ->and($result->getMessage())->toContain('Return iterator value')
+            ;
         });
 
         test('returns ErrorMessage on invalid yielded key', function () {
@@ -47,7 +48,8 @@ describe('GeneratorChecker Unit Tests', function () {
             $result = GeneratorChecker::checkYield('sampleGeneratorFixture', 123, 10, $registry);
 
             expect($result)->toBeInstanceOf(ErrorMessage::class)
-                ->and($result->getMessage())->toContain('Return iterator key');
+                ->and($result->getMessage())->toContain('Return iterator key')
+            ;
         });
 
         test('validates single-template Generator<T>', function () {
@@ -80,7 +82,8 @@ describe('GeneratorChecker Unit Tests', function () {
             $result = GeneratorChecker::checkSend('sampleGeneratorFixture', -500, $registry);
 
             expect($result)->toBeInstanceOf(ErrorMessage::class)
-                ->and($result->getMessage())->toContain('Generator sent value (TSend)');
+                ->and($result->getMessage())->toContain('Generator sent value (TSend)')
+            ;
         });
 
         test('returns null immediately when sendValue is null', function () {
