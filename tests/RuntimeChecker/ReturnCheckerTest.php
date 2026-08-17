@@ -7,7 +7,7 @@ use TypePHP\Internal\Config;
 use TypePHP\Internal\ErrorMessage;
 use TypePHP\Tests\Fixtures\Collections\ConcreteFileCollection;
 use TypePHP\Tests\Fixtures\Collections\PluginConfiguration;
-use TypePHP\Tests\Fixtures\Conditionals\ConditionalReturnService;
+use TypePHP\Tests\Fixtures\Conditionals\ConditionalReturnService;;
 use TypePHP\Tests\Fixtures\Generics\DogConditionalBox;
 use TypePHP\Tests\Fixtures\Services\AdminEntityFactory;
 use TypePHP\Tests\Fixtures\Services\FluentService;
@@ -19,6 +19,7 @@ use TypePHP\Validator\TypeValidatorRegistry;
 describe('ReturnChecker Unit Tests', function () {
     beforeEach(function () {
         Config::reset();
+        Config::set(['returns' => true]);
     });
 
     afterEach(function () {
@@ -44,19 +45,22 @@ describe('ReturnChecker Unit Tests', function () {
             $result = ReturnChecker::checkReturn($target, $badValue, new UserService(), ['id' => -5], $registry, fn () => null);
 
             expect($result)->toBeInstanceOf(ErrorMessage::class)
-                ->and($result->getMessage())->toContain("Return value['id'] must be of type positive-int")
-            ;
+                ->and($result->getMessage())->toContain("Return value['id'] must be of type positive-int");
         });
 
         test('returns value directly when returns checking is disabled in config', function () {
-            Config::set(['returns' => false]);
-            $registry = new TypeValidatorRegistry();
-            $target = UserService::class . '::find';
+            try {
+                Config::set(['returns' => false]);
+                $registry = new TypeValidatorRegistry();
+                $target = UserService::class . '::find';
 
-            $badValue = ['id' => -99, 'name' => 'Alice'];
-            $result = ReturnChecker::checkReturn($target, $badValue, new UserService(), ['id' => -99], $registry, fn () => null);
+                $badValue = ['id' => -99, 'name' => 'Alice'];
+                $result = ReturnChecker::checkReturn($target, $badValue, new UserService(), ['id' => -99], $registry, fn () => null);
 
-            expect($result)->toBe($badValue);
+                expect($result)->toBe($badValue);
+            } finally {
+                Config::reset();
+            }
         });
     });
 
@@ -79,8 +83,7 @@ describe('ReturnChecker Unit Tests', function () {
             $result = ReturnChecker::checkReturn($target, new FluentService(), $service, [], $registry, fn () => null);
 
             expect($result)->toBeInstanceOf(ErrorMessage::class)
-                ->and($result->getMessage())->toContain('must be $this instance')
-            ;
+                ->and($result->getMessage())->toContain('must be $this instance');
         });
     });
 
@@ -103,8 +106,7 @@ describe('ReturnChecker Unit Tests', function () {
             $result = ReturnChecker::checkReturn($target, $siblingInstance, UserEntityFactory::class, [], $registry, fn () => null);
 
             expect($result)->toBeInstanceOf(ErrorMessage::class)
-                ->and($result->getMessage())->toContain('must be of type TypePHP\Tests\Fixtures\Services\UserEntityFactory')
-            ;
+                ->and($result->getMessage())->toContain('must be of type TypePHP\Tests\Fixtures\Services\UserEntityFactory');
         });
     });
 
@@ -119,8 +121,7 @@ describe('ReturnChecker Unit Tests', function () {
 
             $badResult = ReturnChecker::checkReturn($target, -10, $service, ['format' => 'int', 'value' => -10], $registry, fn () => null);
             expect($badResult)->toBeInstanceOf(ErrorMessage::class)
-                ->and($badResult->getMessage())->toContain('positive-int')
-            ;
+                ->and($badResult->getMessage())->toContain('positive-int');
         });
 
         test('evaluates fallback else branch (non-empty-string)', function () {
@@ -133,8 +134,7 @@ describe('ReturnChecker Unit Tests', function () {
 
             $badResult = ReturnChecker::checkReturn($target, '', $service, ['format' => 'other', 'value' => ''], $registry, fn () => null);
             expect($badResult)->toBeInstanceOf(ErrorMessage::class)
-                ->and($badResult->getMessage())->toContain('non-empty-string')
-            ;
+                ->and($badResult->getMessage())->toContain('non-empty-string');
         });
 
         test('evaluates negated parameter conditions ($flag is not true)', function () {
@@ -161,8 +161,7 @@ describe('ReturnChecker Unit Tests', function () {
 
             $badResult = ReturnChecker::checkReturn($target, -50, $box, ['input' => -50], $registry, fn () => null);
             expect($badResult)->toBeInstanceOf(ErrorMessage::class)
-                ->and($badResult->getMessage())->toContain('positive-int')
-            ;
+                ->and($badResult->getMessage())->toContain('positive-int');
         });
     });
 
@@ -193,8 +192,7 @@ describe('ReturnChecker Unit Tests', function () {
             ], $registry, fn () => null);
 
             expect($result)->toBeInstanceOf(ErrorMessage::class)
-                ->and($result->getMessage())->toContain("Return value['id'] must be of type positive-int")
-            ;
+                ->and($result->getMessage())->toContain("Return value['id'] must be of type positive-int");
         });
     });
 
