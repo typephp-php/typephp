@@ -107,7 +107,7 @@ processTraversable($badKeyIterator);
 
 When a function accepts generic iterables (`iterable<T>` or `Traversable<string, T>`), TypePHP dynamically substitutes `T` with the bound generic type and lazily validates items during iteration:
 
-> **Deep Dive Guide:** For comprehensive details on template bounds, covariance/contravariance, and runtime generic state inspection, see the [Generics & Bounds](/generics/generics-and-bounds) documentation.
+> **Deep Dive Guide:** For comprehensive details on template bounds, covariance/contravariance, and runtime generic state inspection, see the [Generics Basics & Bounds](/generics/basics-and-bounds) documentation.
 
 ```php
 use App\Models\Animal;

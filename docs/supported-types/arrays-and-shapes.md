@@ -133,7 +133,7 @@ processMatrix([
 
 TypePHP validates generic container objects nested inside arrays or array shapes:
 
-> **Deep Dive Guide:** For comprehensive details on generic collections and variance modifiers (`covariant`/`contravariant`), see the [Generics & Bounds](/generics/generics-and-bounds) documentation.
+> **Deep Dive Guide:** For comprehensive details on generic collections and variance modifiers (`covariant`/`contravariant`), see the [Generics Basics & Bounds](/generics/basics-and-bounds) documentation.
 
 ```php
 use App\Generics\Producer;

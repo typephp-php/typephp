@@ -57,7 +57,7 @@ function badInvoker(callable $callback): bool
 
 When a function uses generic template parameters (`@template T`), TypePHP dynamically substitutes `T` into the callable's parameter and return types based on the bound generic type:
 
-> **Deep Dive Guide:** For full details on generic templates, reified type inspection, and class bounds, see the dedicated [Generics & Bounds](/generics/generics-and-bounds) guide.
+> **Deep Dive Guide:** For full details on generic templates, reified type inspection, and class bounds, see the dedicated [Generics Basics & Bounds](/generics/basics-and-bounds) guide.
 
 ```php
 /**
@@ -147,7 +147,7 @@ executeComplexCallback(function (Producer $producer, array $ids): array {
 // Throws: TypeError: Callback $processor return value['count'] must be of type positive-int, negative int (-5) given
 ```
 
-> **Generics & Variance in Callables:** Need to enforce covariance (`Producer<covariant Animal>`) or contravariance (`Consumer<contravariant Dog>`) within callback arguments? See [Demystifying Variance in Generics](/generics/generics-and-bounds#demystifying-variance-covariant-contravariant-invariant).
+> **Generics & Variance in Callables:** Need to enforce covariance (`Producer<covariant Animal>`) or contravariance (`Consumer<contravariant Dog>`) within callback arguments? See [Demystifying Variance in Generics](/generics/variance).
 
 ---
 
