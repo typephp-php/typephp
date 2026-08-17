@@ -29,58 +29,22 @@ final class ParamChecker
     /**
      * @param array<string, mixed> $vars
      */
-    public static function checkParams(string $function, array $vars, object|string|null $thisOrClass, TypeValidatorRegistry $registry): ?ErrorMessage
-    {
+    public static function checkParams(
+        string $function,
+        array $vars,
+        object|string|null $thisOrClass,
+        TypeValidatorRegistry $registry
+    ): ?ErrorMessage {
         if (! (bool) (Config::get()['params'] ?? true)) {
             return null;
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $effectiveFunction = $function;
+        $effectiveFunction = self::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        if (str_contains($function, '::')) {
-            [$classOrTrait, $methodName] = explode('::', $function, 2);
-            $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : null);
-            if ($actualClassName !== null && $actualClassName !== $classOrTrait) {
-                $effectiveFunction = $actualClassName . '::' . $methodName;
-            }
-
-            if ($thisObj !== null) {
-                $targetClass = $actualClassName ?? $classOrTrait;
-                $traitAliases = HierarchyResolver::getTraitAliases($targetClass);
-
-                if (\count($traitAliases) > 0) {
-                    $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
-                    foreach ($trace as $frame) {
-                        $frameFunc = $frame['function'];
-                        $frameClass = $frame['class'] ?? '';
-                        if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
-                            $effectiveFunction = $targetClass . '::' . $frameFunc;
-
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
-        if ($isMagicCall && (bool) (Config::get()['magic_methods'] ?? true)) {
-            $magicMethodName = array_values($vars)[0] ?? null;
-            $magicArgs = array_values($vars)[1] ?? [];
-
-            if (\is_string($magicMethodName) && \is_array($magicArgs)) {
-                $className = explode('::', $effectiveFunction, 2)[0];
-                $magicContract = ContractParser::parseMagicMethod($className, $magicMethodName);
-
-                if ($magicContract !== null) {
-                    $magicFunction = $className . '::' . $magicMethodName;
-                    $err = self::validateMagicArguments($magicContract, $magicArgs, $magicFunction, $thisObj, $registry);
-                    if ($err !== null) {
-                        return $err;
-                    }
-                }
-            }
+        $magicError = self::handleMagicCall($effectiveFunction, $vars, $thisObj, $registry);
+        if ($magicError !== null) {
+            return $magicError;
         }
 
         $contract = ContractParser::parse($effectiveFunction);
@@ -91,52 +55,8 @@ final class ParamChecker
         $templates = $contract['templates'];
         $aliases = $contract['aliases'];
 
-        if ($thisObj === null) {
-            TemplateManager::clearCallBindings($effectiveFunction, $templates);
-        } elseif (str_contains($effectiveFunction, '::')) {
-            $declaringClass = explode('::', $effectiveFunction, 2)[0];
-            TemplateManager::resolveInheritedTemplates($thisObj, $declaringClass);
-        }
-
-        foreach ($contract['types'] as $paramName => $typeNode) {
-            if (! \array_key_exists($paramName, $vars) || ! \is_array($vars[$paramName]) || \count($vars[$paramName]) === 0) {
-                continue;
-            }
-
-            $arrVal = $vars[$paramName];
-            $sampleKey = array_key_first($arrVal);
-            $sampleItem = reset($arrVal);
-
-            if ($typeNode instanceof GenericTypeNode) {
-                $baseType = strtolower($typeNode->type->name);
-                if (\in_array($baseType, ['array', 'list', 'iterable', 'traversable'], true)) {
-                    if (\count($typeNode->genericTypes) === 1 && $typeNode->genericTypes[0] instanceof IdentifierTypeNode) {
-                        $tName = $typeNode->genericTypes[0]->name;
-                        if (isset($templates[$tName]) && ! TemplateManager::isBound($effectiveFunction, $thisObj, $tName)) {
-                            TemplateManager::bindTemplate($effectiveFunction, $thisObj, $tName, TemplateManager::inferTypeFromValue($sampleItem));
-                        }
-                    } elseif (\count($typeNode->genericTypes) >= 2) {
-                        if ($typeNode->genericTypes[0] instanceof IdentifierTypeNode) {
-                            $kName = $typeNode->genericTypes[0]->name;
-                            if (isset($templates[$kName]) && ! TemplateManager::isBound($effectiveFunction, $thisObj, $kName)) {
-                                TemplateManager::bindTemplate($effectiveFunction, $thisObj, $kName, TemplateManager::inferTypeFromValue($sampleKey));
-                            }
-                        }
-                        if ($typeNode->genericTypes[1] instanceof IdentifierTypeNode) {
-                            $vName = $typeNode->genericTypes[1]->name;
-                            if (isset($templates[$vName]) && ! TemplateManager::isBound($effectiveFunction, $thisObj, $vName)) {
-                                TemplateManager::bindTemplate($effectiveFunction, $thisObj, $vName, TemplateManager::inferTypeFromValue($sampleItem));
-                            }
-                        }
-                    }
-                }
-            } elseif ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof IdentifierTypeNode) {
-                $tName = $typeNode->type->name;
-                if (isset($templates[$tName]) && ! TemplateManager::isBound($effectiveFunction, $thisObj, $tName)) {
-                    TemplateManager::bindTemplate($effectiveFunction, $thisObj, $tName, TemplateManager::inferTypeFromValue($sampleItem));
-                }
-            }
-        }
+        self::initializeCallContext($effectiveFunction, $thisObj, $templates);
+        self::preInferGenericArrayTemplates($contract['types'], $vars, $effectiveFunction, $thisObj, $templates);
 
         $boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $templates);
         $declaredTemplates = $templates;
@@ -146,48 +66,19 @@ final class ParamChecker
                 continue;
             }
 
-            if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
-                $typeNode = $aliases[$typeNode->name];
-            }
+            $err = self::validateSingleParam(
+                $paramName,
+                $typeNode,
+                $vars[$paramName],
+                $effectiveFunction,
+                $thisObj,
+                $templates,
+                $aliases,
+                $boundTemplates,
+                $declaredTemplates,
+                $registry
+            );
 
-            $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
-            $val = $vars[$paramName];
-
-            if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
-                $typeNode = $aliases[$typeNode->name];
-            }
-
-            $isClassStringT = ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates));
-
-            $isBareTemplate = ($typeNode instanceof IdentifierTypeNode && isset($templates[$typeNode->name]))
-                || ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof IdentifierTypeNode && isset($templates[$typeNode->type->name]));
-
-            $shouldSkipTemplateSub = $isBareTemplate || $isClassStringT;
-
-            if (! $shouldSkipTemplateSub && (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0)) {
-                $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
-                $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
-            }
-
-            if ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates)) {
-                $err = self::resolveClassStringTemplate($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates);
-                if ($err !== null) {
-                    return $err;
-                }
-
-                continue;
-            }
-
-            if (self::getTemplateName($typeNode, $templates) !== null) {
-                $err = self::resolveTemplateParam($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $registry);
-                if ($err !== null) {
-                    return $err;
-                }
-
-                continue;
-            }
-
-            $err = $registry->validate($val, $typeNode, $effectiveFunction . '(): Argument $' . $paramName);
             if ($err !== null) {
                 return $err;
             }
@@ -197,24 +88,244 @@ final class ParamChecker
     }
 
     /**
+     * Resolves the actual runtime class name vs trait name and matches any active trait aliases.
+     */
+    private static function resolveEffectiveFunction(string $function, object|string|null $thisOrClass, ?object $thisObj): string
+    {
+        if (! str_contains($function, '::')) {
+            return $function;
+        }
+
+        [$classOrTrait, $methodName] = explode('::', $function, 2);
+        $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : null);
+
+        $effectiveFunction = ($actualClassName !== null && $actualClassName !== $classOrTrait)
+            ? $actualClassName . '::' . $methodName
+            : $function;
+
+        if ($thisObj !== null) {
+            $targetClass = $actualClassName ?? $classOrTrait;
+            $traitAliases = HierarchyResolver::getTraitAliases($targetClass);
+
+            if (\count($traitAliases) > 0) {
+                $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
+                foreach ($trace as $frame) {
+                    $frameFunc = $frame['function'];
+                    $frameClass = $frame['class'] ?? '';
+                    if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
+                        return $targetClass . '::' . $frameFunc;
+                    }
+                }
+            }
+        }
+
+        return $effectiveFunction;
+    }
+
+    /**
+     * Intercepts and delegates dynamic @method calls routed via __call and __callStatic.
+     *
+     * @param array<string, mixed> $vars
+     */
+    private static function handleMagicCall(
+        string $effectiveFunction,
+        array $vars,
+        ?object $thisObj,
+        TypeValidatorRegistry $registry
+    ): ?ErrorMessage {
+        $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
+        if (! $isMagicCall || ! (bool) (Config::get()['magic_methods'] ?? true)) {
+            return null;
+        }
+
+        $magicMethodName = array_values($vars)[0] ?? null;
+        $magicArgs = array_values($vars)[1] ?? [];
+
+        if (! \is_string($magicMethodName) || ! \is_array($magicArgs)) {
+            return null;
+        }
+
+        $className = explode('::', $effectiveFunction, 2)[0];
+        $magicContract = ContractParser::parseMagicMethod($className, $magicMethodName);
+
+        if ($magicContract === null) {
+            return null;
+        }
+
+        $magicFunction = $className . '::' . $magicMethodName;
+
+        return self::validateMagicArguments($magicContract, $magicArgs, $magicFunction, $thisObj, $registry);
+    }
+
+    /**
+     * Initializes call stack frames or resolves inherited template bounds.
+     *
+     * @param array<string, TemplateTagValueNode> $templates
+     */
+    private static function initializeCallContext(string $effectiveFunction, ?object $thisObj, array $templates): void
+    {
+        if ($thisObj === null) {
+            TemplateManager::clearCallBindings($effectiveFunction, $templates);
+        } elseif (str_contains($effectiveFunction, '::')) {
+            $declaringClass = explode('::', $effectiveFunction, 2)[0];
+            TemplateManager::resolveInheritedTemplates($thisObj, $declaringClass);
+        }
+    }
+
+    /**
+     * Pre-infers generic template parameters from array arguments before callback wrapping.
+     *
+     * @param array<string, TypeNode> $types
+     * @param array<string, mixed> $vars
+     * @param array<string, TemplateTagValueNode> $templates
+     */
+    private static function preInferGenericArrayTemplates(
+        array $types,
+        array $vars,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates
+    ): void {
+        foreach ($types as $paramName => $typeNode) {
+            if (! \array_key_exists($paramName, $vars) || ! \is_array($vars[$paramName]) || \count($vars[$paramName]) === 0) {
+                continue;
+            }
+
+            $arrVal = $vars[$paramName];
+            $sampleKey = array_key_first($arrVal);
+            $sampleItem = reset($arrVal);
+
+            self::inferFromTypeNode($typeNode, $sampleKey, $sampleItem, $effectiveFunction, $thisObj, $templates);
+        }
+    }
+
+    /**
+     * Extracts and binds template parameters from GenericTypeNode or ArrayTypeNode.
+     *
+     * @param array<string, TemplateTagValueNode> $templates
+     */
+    private static function inferFromTypeNode(
+        TypeNode $typeNode,
+        mixed $sampleKey,
+        mixed $sampleItem,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates
+    ): void {
+        if ($typeNode instanceof GenericTypeNode) {
+            $baseType = strtolower($typeNode->type->name);
+            if (! \in_array($baseType, ['array', 'list', 'iterable', 'traversable'], true)) {
+                return;
+            }
+
+            $genericCount = \count($typeNode->genericTypes);
+            if ($genericCount === 1 && $typeNode->genericTypes[0] instanceof IdentifierTypeNode) {
+                self::bindTemplateIfUnbound($typeNode->genericTypes[0]->name, $sampleItem, $effectiveFunction, $thisObj, $templates);
+            } elseif ($genericCount >= 2) {
+                if ($typeNode->genericTypes[0] instanceof IdentifierTypeNode) {
+                    self::bindTemplateIfUnbound($typeNode->genericTypes[0]->name, $sampleKey, $effectiveFunction, $thisObj, $templates);
+                }
+                if ($typeNode->genericTypes[1] instanceof IdentifierTypeNode) {
+                    self::bindTemplateIfUnbound($typeNode->genericTypes[1]->name, $sampleItem, $effectiveFunction, $thisObj, $templates);
+                }
+            }
+        } elseif ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof IdentifierTypeNode) {
+            self::bindTemplateIfUnbound($typeNode->type->name, $sampleItem, $effectiveFunction, $thisObj, $templates);
+        }
+    }
+
+    /**
+     * Binds a template parameter if it is not already bound in the current scope.
+     *
+     * @param array<string, TemplateTagValueNode> $templates
+     */
+    private static function bindTemplateIfUnbound(
+        string $templateName,
+        mixed $sampleValue,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates
+    ): void {
+        if (isset($templates[$templateName]) && ! TemplateManager::isBound($effectiveFunction, $thisObj, $templateName)) {
+            TemplateManager::bindTemplate($effectiveFunction, $thisObj, $templateName, TemplateManager::inferTypeFromValue($sampleValue));
+        }
+    }
+
+    /**
+     * Unified single-parameter validation pipeline.
+     *
+     * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TypeNode> $aliases
+     * @param array<string, TypeNode> $boundTemplates
+     * @param array<string, TemplateTagValueNode> $declaredTemplates
+     */
+    private static function validateSingleParam(
+        string $paramName,
+        TypeNode $typeNode,
+        mixed $val,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates,
+        array $aliases,
+        array $boundTemplates,
+        array $declaredTemplates,
+        TypeValidatorRegistry $registry
+    ): ?ErrorMessage {
+        if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
+            $typeNode = $aliases[$typeNode->name];
+        }
+
+        $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+
+        if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
+            $typeNode = $aliases[$typeNode->name];
+        }
+
+        $isClassStringT = ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates));
+
+        $isBareTemplate = ($typeNode instanceof IdentifierTypeNode && isset($templates[$typeNode->name]))
+            || ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof IdentifierTypeNode && isset($templates[$typeNode->type->name]));
+
+        $shouldSkipTemplateSub = $isBareTemplate || $isClassStringT;
+
+        if (! $shouldSkipTemplateSub && (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0)) {
+            $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
+            $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+        }
+
+        if ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates)) {
+            return self::resolveClassStringTemplate($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates);
+        }
+
+        if (self::getTemplateName($typeNode, $templates) !== null) {
+            return self::resolveTemplateParam($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $registry);
+        }
+
+        return $registry->validate($val, $typeNode, $effectiveFunction . '(): Argument $' . $paramName);
+    }
+
+    /**
      * @param array{return: ?TypeNode, parameters: array<int, array{name: string, type: ?TypeNode, isVariadic: bool, isOptional: bool}>, aliases: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>} $magicContract
      * @param array<int|string, mixed> $args
      */
-    private static function validateMagicArguments(array $magicContract, array $args, string $function, ?object $thisObj, TypeValidatorRegistry $registry): ?ErrorMessage
-    {
+    private static function validateMagicArguments(
+        array $magicContract,
+        array $args,
+        string $function,
+        ?object $thisObj,
+        TypeValidatorRegistry $registry
+    ): ?ErrorMessage {
         $templates = $magicContract['templates'];
         $aliases = $magicContract['aliases'];
         $parameters = $magicContract['parameters'];
 
-        if ($thisObj !== null) {
-            $declaringClass = explode('::', $function, 2)[0];
-            TemplateManager::resolveInheritedTemplates($thisObj, $declaringClass);
-        } else {
-            TemplateManager::clearCallBindings($function, $templates);
-        }
+        self::initializeCallContext($function, $thisObj, $templates);
 
         $argValues = array_values($args);
         $argKeys = array_keys($args);
+
+        $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+        $declaredTemplates = $templates;
 
         foreach ($parameters as $index => $p) {
             $paramName = $p['name'];
@@ -256,34 +367,19 @@ final class ParamChecker
                 continue;
             }
 
-            if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
-                $typeNode = $aliases[$typeNode->name];
-            }
-            $typeNode = SpecialTypeResolver::resolve($typeNode, $function, $thisObj);
-            if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
-                $typeNode = $aliases[$typeNode->name];
-            }
+            $err = self::validateSingleParam(
+                $paramName,
+                $typeNode,
+                $val,
+                $function,
+                $thisObj,
+                $templates,
+                $aliases,
+                $boundTemplates,
+                $declaredTemplates,
+                $registry
+            );
 
-            if ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates)) {
-                $sampleVal = $isVariadic && \is_array($val) ? ($val[0] ?? null) : $val;
-                $err = self::resolveClassStringTemplate($typeNode, $sampleVal, $paramName, $function, $thisObj, $templates);
-                if ($err !== null) {
-                    return $err;
-                }
-
-                continue;
-            }
-
-            if (self::getTemplateName($typeNode, $templates) !== null) {
-                $err = self::resolveTemplateParam($typeNode, $val, $paramName, $function, $thisObj, $templates, $registry);
-                if ($err !== null) {
-                    return $err;
-                }
-
-                continue;
-            }
-
-            $err = $registry->validate($val, $typeNode, $function . '(): Argument $' . $paramName);
             if ($err !== null) {
                 return $err;
             }
@@ -306,8 +402,14 @@ final class ParamChecker
     /**
      * @param array<string, TemplateTagValueNode> $templates
      */
-    private static function resolveClassStringTemplate(GenericTypeNode $typeNode, mixed $val, string $paramName, string $function, ?object $thisObj, array $templates): ?ErrorMessage
-    {
+    private static function resolveClassStringTemplate(
+        GenericTypeNode $typeNode,
+        mixed $val,
+        string $paramName,
+        string $function,
+        ?object $thisObj,
+        array $templates
+    ): ?ErrorMessage {
         /** @var IdentifierTypeNode $innerType */
         $innerType = $typeNode->genericTypes[0];
         $templateName = $innerType->name;
@@ -362,8 +464,15 @@ final class ParamChecker
     /**
      * @param array<string, TemplateTagValueNode> $templates
      */
-    private static function resolveTemplateParam(TypeNode $typeNode, mixed $val, string $paramName, string $function, ?object $thisObj, array $templates, TypeValidatorRegistry $registry): ?ErrorMessage
-    {
+    private static function resolveTemplateParam(
+        TypeNode $typeNode,
+        mixed $val,
+        string $paramName,
+        string $function,
+        ?object $thisObj,
+        array $templates,
+        TypeValidatorRegistry $registry
+    ): ?ErrorMessage {
         $templateName = self::getTemplateName($typeNode, $templates);
         if ($templateName === null || ! isset($templates[$templateName])) {
             return null;

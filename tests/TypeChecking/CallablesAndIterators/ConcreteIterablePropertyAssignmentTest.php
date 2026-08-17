@@ -15,7 +15,8 @@ describe('Concrete Traversable & Iterable Property Assignments (Shopware Bug Rep
             $config->setStyleFiles($files);
 
             expect($config->getStyleFiles())->toBeInstanceOf(ConcreteFileCollection::class)
-                ->and($config->getStyleFiles())->toBe($files);
+                ->and($config->getStyleFiles())->toBe($files)
+            ;
         });
 
         test('does not wrap concrete collection when method has explicit @param ConcreteFileCollection docblock', function () {
@@ -26,7 +27,8 @@ describe('Concrete Traversable & Iterable Property Assignments (Shopware Bug Rep
             $config->setStyleFilesWithDocblock($files);
 
             expect($config->styleFiles)->toBeInstanceOf(ConcreteFileCollection::class)
-                ->and($config->styleFiles)->toBe($files);
+                ->and($config->styleFiles)->toBe($files)
+            ;
         });
 
         test('does not wrap concrete collection when method has explicit @return ConcreteFileCollection docblock', function () {
@@ -38,7 +40,8 @@ describe('Concrete Traversable & Iterable Property Assignments (Shopware Bug Rep
             $returned = $config->getStyleFilesWithDocblock();
 
             expect($returned)->toBeInstanceOf(ConcreteFileCollection::class)
-                ->and($returned)->toBe($files);
+                ->and($returned)->toBe($files)
+            ;
         });
     });
 
@@ -50,7 +53,8 @@ describe('Concrete Traversable & Iterable Property Assignments (Shopware Bug Rep
             $config = new PluginConfiguration($files);
 
             expect($config->promotedFiles)->toBeInstanceOf(ConcreteFileCollection::class)
-                ->and($config->promotedFiles)->toBe($files);
+                ->and($config->promotedFiles)->toBe($files)
+            ;
         });
 
         test('handles nullable concrete collection parameter cleanly', function () {
