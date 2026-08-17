@@ -99,7 +99,8 @@ describe('TemplateSubstitutor Unit Tests', function () {
         $result = TemplateSubstitutor::substitute($callableNode, $bound);
 
         expect($result)->toBeInstanceOf(CallableTypeNode::class)
-            ->and((string) $result)->toBe('callable(int $item): int');
+            ->and((string) $result)->toBe('callable(int $item): int')
+        ;
     });
 
     test('substitutes template placeholders in ConditionalTypeNode & ConditionalTypeForParameterNode', function () {
