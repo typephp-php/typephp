@@ -229,9 +229,7 @@ final class TemplateManager
     public static function bindTemplate(string $function, ?object $thisObj, string $templateName, TypeNode $inferredType): void
     {
         if ($thisObj !== null) {
-            if (self::$instanceTemplateBindings === null) {
-                self::$instanceTemplateBindings = new WeakMap();
-            }
+            self::$instanceTemplateBindings ??= new WeakMap();
             $bindings = self::$instanceTemplateBindings[$thisObj] ?? [];
             $bindings[$templateName] = $inferredType;
             self::$instanceTemplateBindings[$thisObj] = $bindings;
@@ -254,11 +252,7 @@ final class TemplateManager
             $className = \get_class($instance);
         }
 
-        if (! is_a($instance, $className)) {
-            return null;
-        }
-
-        if (! ClassNameValidator::isValid($className) || (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className))) {
+        if (! is_a($instance, $className) || ! ClassNameValidator::isValid($className) || (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className))) {
             return null;
         }
 
@@ -266,77 +260,111 @@ final class TemplateManager
 
         try {
             $ref = new \ReflectionClass($className);
-            $classHierarchy = HierarchyResolver::getClassHierarchy($ref);
+            [$templates, $classVariances] = self::collectHierarchyTemplatesAndVariances($ref);
 
-            [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
-
-            $templates = [];
-            $classVariances = [];
-
-            // Collect template parameters across the entire class/interface hierarchy with priority!
-            foreach ($classHierarchy as $hierClass) {
-                $classDoc = $hierClass->getDocComment();
-                if ($classDoc !== false) {
-                    $classTokens = new TokenIterator($lexer->tokenize($classDoc));
-                    $classPhpDocNode = $phpDocParser->parse($classTokens);
-
-                    $hierTemplates = DocblockExtractor::extractTemplates($classPhpDocNode);
-                    $hierVariances = DocblockExtractor::extractTemplateVariances($classPhpDocNode);
-
-                    foreach ($hierTemplates as $tName => $tagNode) {
-                        if (! isset($templates[$tName])) {
-                            $templates[$tName] = $tagNode;
-                            $classVariances[$tName] = match ($hierVariances[$tName] ?? 'invariant') {
-                                'covariant' => GenericTypeNode::VARIANCE_COVARIANT,
-                                'contravariant' => GenericTypeNode::VARIANCE_CONTRAVARIANT,
-                                default => GenericTypeNode::VARIANCE_INVARIANT,
-                            };
-                        }
-                    }
-                }
-            }
-
-            if (self::$instanceTemplateBindings === null) {
-                self::$instanceTemplateBindings = new WeakMap();
-            }
-
+            self::$instanceTemplateBindings ??= new WeakMap();
             $templateList = array_values($templates);
 
             foreach ($templateList as $index => $templateTag) {
-                if (isset($typeNode->genericTypes[$index])) {
-                    $expectedTypeNode = $typeNode->genericTypes[$index];
-
-                    $usageVariance = $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT;
-                    $declaredVariance = $classVariances[$templateTag->name] ?? GenericTypeNode::VARIANCE_INVARIANT;
-
-                    $variance = ($usageVariance !== GenericTypeNode::VARIANCE_INVARIANT)
-                        ? $usageVariance
-                        : $declaredVariance;
-
-                    $templateName = $templateTag->name;
-                    $existingBindings = self::$instanceTemplateBindings[$instance] ?? [];
-
-                    if (isset($existingBindings[$templateName])) {
-                        $existingTypeNode = $existingBindings[$templateName];
-
-                        $valid = self::checkVariance($existingTypeNode, $expectedTypeNode, $variance);
-
-                        if (! $valid) {
-                            return ErrorFactory::createError(
-                                $context . " expects {$className}<{$variance} {$expectedTypeNode}>, but {$className}<{$existingTypeNode}> was given"
-                            );
-                        }
-                    }
-
-                    if ($forceBind || ! isset($existingBindings[$templateName])) {
-                        $bindings = self::$instanceTemplateBindings[$instance] ?? [];
-                        $bindings[$templateName] = $expectedTypeNode;
-                        self::$instanceTemplateBindings[$instance] = $bindings;
-                    }
+                $err = self::bindSingleTemplateArgument($instance, $className, $typeNode, $index, $templateTag, $classVariances, $context, $forceBind);
+                if ($err !== null) {
+                    return $err;
                 }
             }
         } catch (\Throwable $e) {
             // Silently ignore reflection or parsing errors
+        }
+
+        return null;
+    }
+
+    /**
+     * @param \ReflectionClass<object> $ref
+     *
+     * @return array{0: array<string, TemplateTagValueNode>, 1: array<string, string>}
+     */
+    private static function collectHierarchyTemplatesAndVariances(\ReflectionClass $ref): array
+    {
+        $classHierarchy = HierarchyResolver::getClassHierarchy($ref);
+        [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
+
+        $templates = [];
+        $classVariances = [];
+
+        foreach ($classHierarchy as $hierClass) {
+            $classDoc = $hierClass->getDocComment();
+            if ($classDoc === false) {
+                continue;
+            }
+
+            $classTokens = new TokenIterator($lexer->tokenize($classDoc));
+            $classPhpDocNode = $phpDocParser->parse($classTokens);
+
+            $hierTemplates = DocblockExtractor::extractTemplates($classPhpDocNode);
+            $hierVariances = DocblockExtractor::extractTemplateVariances($classPhpDocNode);
+
+            foreach ($hierTemplates as $tName => $tagNode) {
+                if (! isset($templates[$tName])) {
+                    $templates[$tName] = $tagNode;
+                    $classVariances[$tName] = match ($hierVariances[$tName] ?? 'invariant') {
+                        'covariant' => GenericTypeNode::VARIANCE_COVARIANT,
+                        'contravariant' => GenericTypeNode::VARIANCE_CONTRAVARIANT,
+                        default => GenericTypeNode::VARIANCE_INVARIANT,
+                    };
+                }
+            }
+        }
+
+        return [$templates, $classVariances];
+    }
+
+    /**
+     * @param array<string, string> $classVariances
+     */
+    private static function bindSingleTemplateArgument(
+        object $instance,
+        string $className,
+        GenericTypeNode $typeNode,
+        int $index,
+        TemplateTagValueNode $templateTag,
+        array $classVariances,
+        string $context,
+        bool $forceBind
+    ): ?ErrorMessage {
+        if (! isset($typeNode->genericTypes[$index])) {
+            return null;
+        }
+
+        if (self::$instanceTemplateBindings === null) {
+            self::$instanceTemplateBindings = new WeakMap();
+        }
+
+        $expectedTypeNode = $typeNode->genericTypes[$index];
+        $usageVariance = $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT;
+        $declaredVariance = $classVariances[$templateTag->name] ?? GenericTypeNode::VARIANCE_INVARIANT;
+
+        $variance = ($usageVariance !== GenericTypeNode::VARIANCE_INVARIANT)
+            ? $usageVariance
+            : $declaredVariance;
+
+        $templateName = $templateTag->name;
+        $existingBindings = self::$instanceTemplateBindings[$instance] ?? [];
+
+        if (isset($existingBindings[$templateName])) {
+            $existingTypeNode = $existingBindings[$templateName];
+            $valid = self::checkVariance($existingTypeNode, $expectedTypeNode, $variance);
+
+            if (! $valid) {
+                return ErrorFactory::createError(
+                    $context . " expects {$className}<{$variance} {$expectedTypeNode}>, but {$className}<{$existingTypeNode}> was given"
+                );
+            }
+        }
+
+        if ($forceBind || ! isset($existingBindings[$templateName])) {
+            $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+            $bindings[$templateName] = $expectedTypeNode;
+            self::$instanceTemplateBindings[$instance] = $bindings;
         }
 
         return null;
@@ -353,7 +381,6 @@ final class TemplateManager
         try {
             $ref = new \ReflectionClass($actualClassName);
             $classHierarchy = HierarchyResolver::getClassHierarchy($ref);
-
             [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
 
             foreach ($classHierarchy as $hierClass) {
@@ -363,17 +390,7 @@ final class TemplateManager
                     continue;
                 }
 
-                $docsToInspect = [];
-
-                $classDoc = $hierClass->getDocComment();
-                if ($classDoc !== false) {
-                    $docsToInspect[] = $classDoc;
-                }
-
-                $traitDocs = SpecialTypeResolver::getClassTraitUseDocs($hierClass->getName());
-                foreach ($traitDocs as $tDoc) {
-                    $docsToInspect[] = $tDoc;
-                }
+                $docsToInspect = self::collectDocsForClassHierarchyMember($hierClass);
 
                 foreach ($docsToInspect as $rawDoc) {
                     $classTokens = new TokenIterator($lexer->tokenize($rawDoc));
@@ -386,60 +403,99 @@ final class TemplateManager
                         }
                     }
 
-                    // Extract all @extends, @implements, @use and their @template-*, @phpstan-*, @psalm-* variations
                     $inheritedTags = DocblockExtractor::getInheritedTags($classPhpDocNode);
 
                     foreach ($inheritedTags as $inheritedTag) {
                         $genericTypeNode = $inheritedTag->type;
                         if ($genericTypeNode instanceof GenericTypeNode) {
-                            $parentName = SpecialTypeResolver::resolveFqcn($genericTypeNode->type->name, $hierClass);
-
-                            $isHierarchyMember = is_a($actualClassName, $parentName, true) || trait_exists($parentName);
-
-                            if (ClassNameValidator::isValid($parentName) && $isHierarchyMember) {
-                                if (! class_exists($parentName) && ! interface_exists($parentName) && ! trait_exists($parentName)) {
-                                    continue;
-                                }
-
-                                $parentRef = new \ReflectionClass($parentName);
-                                $parentDoc = $parentRef->getDocComment();
-
-                                if ($parentDoc !== false) {
-                                    $parentTokens = new TokenIterator($lexer->tokenize($parentDoc));
-                                    $parentPhpDocNode = $phpDocParser->parse($parentTokens);
-
-                                    $parentTemplateNames = [];
-                                    foreach ($parentPhpDocNode->getTags() as $tag) {
-                                        if ($tag->value instanceof TemplateTagValueNode) {
-                                            $parentTemplateNames[] = $tag->value->name;
-                                        }
-                                    }
-
-                                    $bindings = self::$instanceTemplateBindings[$instance] ?? [];
-                                    foreach ($parentTemplateNames as $idx => $templateName) {
-                                        if (isset($genericTypeNode->genericTypes[$idx])) {
-                                            $resolved = self::resolveTypeNodeAst($genericTypeNode->genericTypes[$idx], $hierClass);
-
-                                            if ($resolved instanceof IdentifierTypeNode && isset($declaredTemplateNames[$resolved->name])) {
-                                                continue;
-                                            }
-
-                                            $bindings[$templateName] = $resolved;
-                                        }
-                                    }
-
-                                    if (self::$instanceTemplateBindings === null) {
-                                        self::$instanceTemplateBindings = new WeakMap();
-                                    }
-                                    self::$instanceTemplateBindings[$instance] = $bindings;
-                                }
-                            }
+                            self::bindInheritedGenericTag($genericTypeNode, $hierClass, $declaredTemplateNames, $instance, $actualClassName);
                         }
                     }
                 }
             }
         } catch (\Throwable $e) {
             // Silently ignore reflection or parsing errors
+        }
+    }
+
+    /**
+     * @param \ReflectionClass<object> $hierClass
+     *
+     * @return array<int, string>
+     */
+    private static function collectDocsForClassHierarchyMember(\ReflectionClass $hierClass): array
+    {
+        $docs = [];
+
+        $classDoc = $hierClass->getDocComment();
+        if ($classDoc !== false) {
+            $docs[] = $classDoc;
+        }
+
+        foreach (SpecialTypeResolver::getClassTraitUseDocs($hierClass->getName()) as $tDoc) {
+            $docs[] = $tDoc;
+        }
+
+        return $docs;
+    }
+
+    /**
+     * @param \ReflectionClass<object> $hierClass
+     * @param array<string, bool> $declaredTemplateNames
+     */
+    private static function bindInheritedGenericTag(
+        GenericTypeNode $genericTypeNode,
+        \ReflectionClass $hierClass,
+        array $declaredTemplateNames,
+        object $instance,
+        string $actualClassName
+    ): void {
+        $parentName = SpecialTypeResolver::resolveFqcn($genericTypeNode->type->name, $hierClass);
+        $isHierarchyMember = is_a($actualClassName, $parentName, true) || trait_exists($parentName);
+
+        if (! ClassNameValidator::isValid($parentName) || ! $isHierarchyMember) {
+            return;
+        }
+
+        if (! class_exists($parentName) && ! interface_exists($parentName) && ! trait_exists($parentName)) {
+            return;
+        }
+
+        try {
+            $parentRef = new \ReflectionClass($parentName);
+            $parentDoc = $parentRef->getDocComment();
+
+            if ($parentDoc === false) {
+                return;
+            }
+
+            [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
+            $parentTokens = new TokenIterator($lexer->tokenize($parentDoc));
+            $parentPhpDocNode = $phpDocParser->parse($parentTokens);
+
+            $parentTemplateNames = array_keys(DocblockExtractor::extractTemplates($parentPhpDocNode));
+
+            if (self::$instanceTemplateBindings === null) {
+                self::$instanceTemplateBindings = new WeakMap();
+            }
+
+            $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+
+            foreach ($parentTemplateNames as $idx => $templateName) {
+                if (isset($genericTypeNode->genericTypes[$idx])) {
+                    $resolved = self::resolveTypeNodeAst($genericTypeNode->genericTypes[$idx], $hierClass);
+
+                    if ($resolved instanceof IdentifierTypeNode && isset($declaredTemplateNames[$resolved->name])) {
+                        continue;
+                    }
+
+                    $bindings[$templateName] = $resolved;
+                }
+            }
+
+            self::$instanceTemplateBindings[$instance] = $bindings;
+        } catch (\Throwable $e) {
+            // Silently ignore reflection errors
         }
     }
 
@@ -451,112 +507,56 @@ final class TemplateManager
         $existingStr = (string) $existing;
         $expectedStr = (string) $expected;
 
-        if ($existingStr === $expectedStr) {
-            return true;
-        }
-
-        if ($variance === GenericTypeNode::VARIANCE_BIVARIANT || $expectedStr === 'mixed') {
+        if ($existingStr === $expectedStr || $variance === GenericTypeNode::VARIANCE_BIVARIANT || $expectedStr === 'mixed') {
             return true;
         }
 
         if ($expected instanceof UnionTypeNode) {
-            if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
-                foreach ($expected->types as $unionVariant) {
-                    if (self::checkVariance($existing, $unionVariant, $variance)) {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
-                foreach ($expected->types as $unionVariant) {
-                    if (! self::checkVariance($existing, $unionVariant, $variance)) {
-                        return false;
-                    }
-                }
-
-                return true;
-            }
+            return self::checkExpectedUnionVariance($existing, $expected, $variance);
         }
 
         if ($existing instanceof UnionTypeNode) {
-            if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
-                foreach ($existing->types as $existingVariant) {
-                    if (! self::checkVariance($existingVariant, $expected, $variance)) {
-                        return false;
-                    }
-                }
-
-                return true;
-            }
-
-            if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
-                foreach ($existing->types as $existingVariant) {
-                    if (self::checkVariance($existingVariant, $expected, $variance)) {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
+            return self::checkExistingUnionVariance($existing, $expected, $variance);
         }
 
         if ($expected instanceof IntersectionTypeNode) {
-            if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
-                foreach ($expected->types as $intersectionMember) {
-                    if (! self::checkVariance($existing, $intersectionMember, $variance)) {
-                        return false;
-                    }
-                }
-
-                return true;
-            }
-
-            if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
-                foreach ($expected->types as $intersectionMember) {
-                    if (self::checkVariance($existing, $intersectionMember, $variance)) {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
+            return self::checkExpectedIntersectionVariance($existing, $expected, $variance);
         }
 
         if ($existing instanceof IntersectionTypeNode) {
-            if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
-                foreach ($existing->types as $existingMember) {
-                    if (self::checkVariance($existingMember, $expected, $variance)) {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
-                foreach ($existing->types as $existingMember) {
-                    if (! self::checkVariance($existingMember, $expected, $variance)) {
-                        return false;
-                    }
-                }
-
-                return true;
-            }
+            return self::checkExistingIntersectionVariance($existing, $expected, $variance);
         }
 
         if ($existing instanceof GenericTypeNode && $expected instanceof GenericTypeNode) {
-            if (! is_a($existing->type->name, $expected->type->name, true)) {
-                return false;
+            return self::checkNestedGenericVariance($existing, $expected);
+        }
+
+        if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
+            return self::isSubclass($existingStr, $expectedStr);
+        }
+
+        if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
+            return self::isSubclass($expectedStr, $existingStr);
+        }
+
+        return false;
+    }
+
+    private static function checkExpectedUnionVariance(TypeNode $existing, UnionTypeNode $expected, string $variance): bool
+    {
+        if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
+            foreach ($expected->types as $unionVariant) {
+                if (self::checkVariance($existing, $unionVariant, $variance)) {
+                    return true;
+                }
             }
 
-            foreach ($expected->genericTypes as $idx => $expectedInner) {
-                $existingInner = $existing->genericTypes[$idx] ?? new IdentifierTypeNode('mixed');
-                $innerVariance = $expected->variances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
+            return false;
+        }
 
-                if (! self::checkVariance($existingInner, $expectedInner, $innerVariance)) {
+        if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
+            foreach ($expected->types as $unionVariant) {
+                if (! self::checkVariance($existing, $unionVariant, $variance)) {
                     return false;
                 }
             }
@@ -564,20 +564,106 @@ final class TemplateManager
             return true;
         }
 
-        $isSubclass = function (string $sub, string $super): bool {
-            if (ClassNameValidator::isValid($sub) && ClassNameValidator::isValid($super) && (class_exists($sub) || interface_exists($sub)) && (class_exists($super) || interface_exists($super))) {
-                return is_a($sub, $super, true);
+        return false;
+    }
+
+    private static function checkExistingUnionVariance(UnionTypeNode $existing, TypeNode $expected, string $variance): bool
+    {
+        if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
+            foreach ($existing->types as $existingVariant) {
+                if (! self::checkVariance($existingVariant, $expected, $variance)) {
+                    return false;
+                }
             }
 
-            return false;
-        };
-
-        if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
-            return $isSubclass($existingStr, $expectedStr);
+            return true;
         }
 
         if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
-            return $isSubclass($expectedStr, $existingStr);
+            foreach ($existing->types as $existingVariant) {
+                if (self::checkVariance($existingVariant, $expected, $variance)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return false;
+    }
+
+    private static function checkExpectedIntersectionVariance(TypeNode $existing, IntersectionTypeNode $expected, string $variance): bool
+    {
+        if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
+            foreach ($expected->types as $intersectionMember) {
+                if (! self::checkVariance($existing, $intersectionMember, $variance)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
+            foreach ($expected->types as $intersectionMember) {
+                if (self::checkVariance($existing, $intersectionMember, $variance)) {
+                    return true;
+                }
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static function checkExistingIntersectionVariance(IntersectionTypeNode $existing, TypeNode $expected, string $variance): bool
+    {
+        if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
+            foreach ($existing->types as $existingMember) {
+                if (self::checkVariance($existingMember, $expected, $variance)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
+            foreach ($existing->types as $existingMember) {
+                if (! self::checkVariance($existingMember, $expected, $variance)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static function checkNestedGenericVariance(GenericTypeNode $existing, GenericTypeNode $expected): bool
+    {
+        if (! is_a($existing->type->name, $expected->type->name, true)) {
+            return false;
+        }
+
+        foreach ($expected->genericTypes as $idx => $expectedInner) {
+            $existingInner = $existing->genericTypes[$idx] ?? new IdentifierTypeNode('mixed');
+            $innerVariance = $expected->variances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
+
+            if (! self::checkVariance($existingInner, $expectedInner, $innerVariance)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static function isSubclass(string $sub, string $super): bool
+    {
+        if (ClassNameValidator::isValid($sub) && ClassNameValidator::isValid($super) && (class_exists($sub) || interface_exists($sub)) && (class_exists($super) || interface_exists($super))) {
+            return is_a($sub, $super, true);
         }
 
         return false;

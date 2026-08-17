@@ -51,7 +51,8 @@ describe('ContractParser Unit Tests', function () {
             expect($contract1)->toBeArray()
                 ->and($contract1['types'])->toHaveKey('id')
                 ->and($contract1['return'])->not()->toBeNull()
-                ->and($contract1)->toBe($contract2);
+                ->and($contract1)->toBe($contract2)
+            ;
         });
 
         test('parses standalone global/namespaced functions', function () {
@@ -63,7 +64,8 @@ describe('ContractParser Unit Tests', function () {
                 ->and($contract['types'])->toHaveKey('percentage')
                 ->and((string) $contract['types']['price'])->toBe('positive-int')
                 ->and($contract['return'])->not()->toBeNull()
-                ->and((string) $contract['return'])->toBe('positive-int');
+                ->and((string) $contract['return'])->toBe('positive-int')
+            ;
         });
 
         test('returns empty contract array for non-existent classes or functions', function () {
@@ -72,7 +74,8 @@ describe('ContractParser Unit Tests', function () {
             expect($contract['types'])->toBeEmpty()
                 ->and($contract['templates'])->toBeEmpty()
                 ->and($contract['return'])->toBeNull()
-                ->and($contract['aliases'])->toBeEmpty();
+                ->and($contract['aliases'])->toBeEmpty()
+            ;
         });
 
         test('returns class-level templates and aliases when class has no requested method', function () {
@@ -82,7 +85,8 @@ describe('ContractParser Unit Tests', function () {
 
             expect($contract['types'])->toBeEmpty()
                 ->and($contract['aliases'])->toHaveKey('LocalId')
-                ->and($contract['aliases'])->toHaveKey('LocalRecordShape');
+                ->and($contract['aliases'])->toHaveKey('LocalRecordShape')
+            ;
         });
 
         test('falls back to property @var docblock for constructor property promotion', function () {
@@ -90,7 +94,8 @@ describe('ContractParser Unit Tests', function () {
             $contract = ContractParser::parse($target);
 
             expect($contract['types'])->toHaveKey('strings')
-                ->and($contract['types']['strings'])->toBeInstanceOf(ArrayTypeNode::class);
+                ->and($contract['types']['strings'])->toBeInstanceOf(ArrayTypeNode::class)
+            ;
         });
     });
 
@@ -101,14 +106,16 @@ describe('ContractParser Unit Tests', function () {
 
             $staticProp = ContractParser::parseProperty(ConfiguredProperty::class, 'staticTitle');
             expect($staticProp)->toBeInstanceOf(IdentifierTypeNode::class)
-                ->and($staticProp->name)->toBe('string');
+                ->and($staticProp->name)->toBe('string')
+            ;
         });
 
         test('parses interface property docblocks', function () {
             $readOnlyProp = ContractParser::parseProperty(HookedInterfaceImplementation::class, 'readOnlyProp');
 
             expect($readOnlyProp)->not()->toBeNull()
-                ->and((string) $readOnlyProp)->toBe('positive-int');
+                ->and((string) $readOnlyProp)->toBe('positive-int')
+            ;
         });
 
         test('parses class-level magic @property docblocks', function () {
@@ -126,7 +133,8 @@ describe('ContractParser Unit Tests', function () {
             $inheritedRole = ContractParser::parseProperty(ChildMagicPropertyFixture::class, 'magicRole');
 
             expect($inheritedRole)->not()->toBeNull()
-                ->and((string) $inheritedRole)->toContain('admin');
+                ->and((string) $inheritedRole)->toContain('admin')
+            ;
         });
 
         test('returns null for un-annotated properties or non-existent classes', function () {
@@ -149,7 +157,8 @@ describe('ContractParser Unit Tests', function () {
                 ->and((string) $method['return'])->toBe('positive-int')
                 ->and($method['parameters'])->toHaveCount(2)
                 ->and($method['parameters'][0]['name'])->toBe('id')
-                ->and((string) $method['parameters'][0]['type'])->toBe('positive-int');
+                ->and((string) $method['parameters'][0]['type'])->toBe('positive-int')
+            ;
 
             $variadicMethod = ContractParser::parseMagicMethod(MagicMethodFixture::class, 'fetchList');
             expect($variadicMethod['parameters'][0]['isVariadic'])->toBeTrue();
@@ -179,7 +188,8 @@ describe('ContractParser Unit Tests', function () {
             expect($aliases)->toHaveKey('LocalId')
                 ->and($aliases)->toHaveKey('LocalStatus')
                 ->and($aliases)->toHaveKey('LocalRecordShape')
-                ->and((string) $aliases['LocalId'])->toBe('positive-int');
+                ->and((string) $aliases['LocalId'])->toBe('positive-int')
+            ;
         });
 
         test('returns empty array for non-existent classes', function () {
@@ -218,7 +228,8 @@ describe('ContractParser Unit Tests', function () {
 
             expect($result)->toBeInstanceOf(CallableTypeNode::class)
                 ->and((string) $result)->toContain('positive-int')
-                ->and((string) $result)->toContain('non-empty-string');
+                ->and((string) $result)->toContain('non-empty-string')
+            ;
         });
 
         test('substitutes target and offset aliases in OffsetAccessTypeNode', function () {
@@ -227,7 +238,8 @@ describe('ContractParser Unit Tests', function () {
 
             expect($result)->toBeInstanceOf(OffsetAccessTypeNode::class)
                 ->and((string) $result->type)->toBe('positive-int')
-                ->and((string) $result->offset)->toBe('non-empty-string');
+                ->and((string) $result->offset)->toBe('non-empty-string')
+            ;
         });
 
         test('substitutes inner type aliases in ArrayTypeNode (UserId[] -> positive-int[])', function () {
@@ -235,7 +247,8 @@ describe('ContractParser Unit Tests', function () {
             $result = ContractParser::substituteAliases($arrNode, $this->aliases);
 
             expect($result)->toBeInstanceOf(ArrayTypeNode::class)
-                ->and((string) $result)->toBe('positive-int[]');
+                ->and((string) $result)->toBe('positive-int[]')
+            ;
         });
 
         test('substitutes base and generic argument aliases in GenericTypeNode (Collection<UserId>)', function () {
@@ -243,7 +256,8 @@ describe('ContractParser Unit Tests', function () {
             $result = ContractParser::substituteAliases($genericNode, $this->aliases);
 
             expect($result)->toBeInstanceOf(GenericTypeNode::class)
-                ->and((string) $result)->toContain('positive-int');
+                ->and((string) $result)->toContain('positive-int')
+            ;
         });
 
         test('substitutes inner type aliases in NullableTypeNode (?UserId -> ?positive-int)', function () {
@@ -251,7 +265,8 @@ describe('ContractParser Unit Tests', function () {
             $result = ContractParser::substituteAliases($nullableNode, $this->aliases);
 
             expect($result)->toBeInstanceOf(NullableTypeNode::class)
-                ->and((string) $result)->toBe('?positive-int');
+                ->and((string) $result)->toBe('?positive-int')
+            ;
         });
 
         test('substitutes member type aliases in UnionTypeNode (UserId|UserName)', function () {
@@ -260,7 +275,8 @@ describe('ContractParser Unit Tests', function () {
 
             expect($result)->toBeInstanceOf(UnionTypeNode::class)
                 ->and((string) $result)->toContain('positive-int')
-                ->and((string) $result)->toContain('non-empty-string');
+                ->and((string) $result)->toContain('non-empty-string')
+            ;
         });
 
         test('substitutes member type aliases in IntersectionTypeNode (UserId&UserName)', function () {
@@ -269,7 +285,8 @@ describe('ContractParser Unit Tests', function () {
 
             expect($result)->toBeInstanceOf(IntersectionTypeNode::class)
                 ->and((string) $result)->toContain('positive-int')
-                ->and((string) $result)->toContain('non-empty-string');
+                ->and((string) $result)->toContain('non-empty-string')
+            ;
         });
 
         test('substitutes field and unsealed type aliases in ArrayShapeNode', function () {
@@ -283,7 +300,8 @@ describe('ContractParser Unit Tests', function () {
             expect($result)->toBeInstanceOf(ArrayShapeNode::class)
                 ->and((string) $result->items[0]->valueType)->toBe('positive-int')
                 ->and((string) $result->unsealedType?->keyType)->toBe('positive-int')
-                ->and((string) $result->unsealedType?->valueType)->toBe('non-empty-string');
+                ->and((string) $result->unsealedType?->valueType)->toBe('non-empty-string')
+            ;
         });
 
         test('substitutes property value aliases in ObjectShapeNode', function () {
