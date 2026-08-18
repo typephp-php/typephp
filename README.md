@@ -30,17 +30,17 @@ When a type contract fails, web exception handlers (**Laravel Ignition, Symfony 
 
 ### Web Framework Trace (Laravel Ignition)
 <p align="center">
-  <img src="docs/public/laravel-error-screen.png" alt="Laravel Ignition Exception Trace" width="100%">
+  <img src=".github/assets/laravel-error-screen.png" alt="Laravel Ignition Exception Trace" width="100%">
 </p>
 
 ### Web Framework Trace (Symfony ErrorHandler)
 <p align="center">
-  <img src="docs/public/symfony-error-screen.png" alt="Symfony ErrorHandler Exception Trace" width="100%">
+  <img src=".github/assets/symfony-error-screen.png" alt="Symfony ErrorHandler Exception Trace" width="100%">
 </p>
 
 ### CLI Test Runner Trace (Pest PHP)
 <p align="center">
-  <img src="docs/public/pest-error-screen.png" alt="Pest CLI Exception Trace" width="100%">
+  <img src=".github/assets/pest-error-screen.png" alt="Pest CLI Exception Trace" width="100%">
 </p>
 
 ---
@@ -142,10 +142,11 @@ All the documentation lives on the [typephp-php.github.io/typephp website](https
 * [Quick Start Guide](https://typephp-php.github.io/typephp/getting-started/quick-start)
 * [Configuration Guide](https://typephp-php.github.io/typephp/getting-started/configuration)
 * [CLI Commands Reference](https://typephp-php.github.io/typephp/getting-started/cli-commands)
+* [Runtime Generics (Flagship)](https://typephp-php.github.io/typephp/generics/basics-and-bounds)
 * [Enforcement Boundaries: Function Contracts](https://typephp-php.github.io/typephp/core-concepts/function-contracts)
-* [Runtime Generics & Bounds](https://typephp-php.github.io/typephp/generics/generics-and-bounds)
 * [Supported Types: Arrays & Shapes](https://typephp-php.github.io/typephp/supported-types/arrays-and-shapes)
 * [Architecture: How It Works](https://typephp-php.github.io/typephp/advanced/how-it-works)
+* [Official Blog & Announcements](https://typephp-php.github.io/typephp/blog/)
 * [Troubleshooting & FAQ](https://typephp-php.github.io/typephp/troubleshooting)
 
 ## Inspiration

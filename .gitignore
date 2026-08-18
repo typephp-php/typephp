@@ -1,9 +1,6 @@
 /vendor
 /.vscode
 /var
-/node_modules
-docs/.vitepress/cache
-docs/.vitepress/dist
 /manual-tests
 composer.lock
 index.php
