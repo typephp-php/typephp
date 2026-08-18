@@ -18,9 +18,9 @@
 
 TypePHP is a transparent, pure-PHP runtime type checker. You don't have to refactor a single line of your codebase, set up complex build toolchains, or compile C-extensions. Simply run your existing code, and TypePHP will enforce your extended PHPDoc contracts (generics, array shapes, `key-of`/`value-of` extractions, and scalar refinements) dynamically at runtime.
 
-**[Read the full TypePHP documentation »](https://typephp-php.github.io/typephp/)**
+**[Read the full TypePHP documentation »](https://typephp-php.github.io/docs/)**
 
-**[Quick Start Guide »](https://typephp-php.github.io/typephp/getting-started/quick-start)**
+**[Quick Start Guide »](https://typephp-php.github.io/docs/getting-started/quick-start)**
 
 ---
 
@@ -136,18 +136,18 @@ $service->connect(['driver' => 'pdo_invalid']);
 
 ## Documentation
 
-All the documentation lives on the [typephp-php.github.io/typephp website](https://typephp-php.github.io/typephp/):
+All the documentation lives on the **[typephp-php.github.io/docs website](https://typephp-php.github.io/docs/)**:
 
-* [Getting Started & Installation Guide](https://typephp-php.github.io/typephp/getting-started/installation)
-* [Quick Start Guide](https://typephp-php.github.io/typephp/getting-started/quick-start)
-* [Configuration Guide](https://typephp-php.github.io/typephp/getting-started/configuration)
-* [CLI Commands Reference](https://typephp-php.github.io/typephp/getting-started/cli-commands)
-* [Runtime Generics (Flagship)](https://typephp-php.github.io/typephp/generics/basics-and-bounds)
-* [Enforcement Boundaries: Function Contracts](https://typephp-php.github.io/typephp/core-concepts/function-contracts)
-* [Supported Types: Arrays & Shapes](https://typephp-php.github.io/typephp/supported-types/arrays-and-shapes)
-* [Architecture: How It Works](https://typephp-php.github.io/typephp/advanced/how-it-works)
-* [Official Blog & Announcements](https://typephp-php.github.io/typephp/blog/)
-* [Troubleshooting & FAQ](https://typephp-php.github.io/typephp/troubleshooting)
+* [Getting Started & Installation Guide](https://typephp-php.github.io/docs/getting-started/installation)
+* [Quick Start Guide](https://typephp-php.github.io/docs/getting-started/quick-start)
+* [Configuration Guide](https://typephp-php.github.io/docs/getting-started/configuration)
+* [CLI Commands Reference](https://typephp-php.github.io/docs/getting-started/cli-commands)
+* [Runtime Generics (Flagship)](https://typephp-php.github.io/docs/generics/basics-and-bounds)
+* [Enforcement Boundaries: Function Contracts](https://typephp-php.github.io/docs/core-concepts/function-contracts)
+* [Supported Types: Arrays & Shapes](https://typephp-php.github.io/docs/supported-types/arrays-and-shapes)
+* [Architecture: How It Works](https://typephp-php.github.io/docs/advanced/how-it-works)
+* [Official Blog & Announcements](https://typephp-php.github.io/docs/blog/)
+* [Troubleshooting & FAQ](https://typephp-php.github.io/docs/troubleshooting)
 
 ## Inspiration
 
