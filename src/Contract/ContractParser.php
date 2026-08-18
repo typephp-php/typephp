@@ -559,6 +559,7 @@ final class ContractParser
         $baseParamNames = [];
         $baseParamSet = [];
         $baseParamVariadic = [];
+        $isConstructor = ($ref->getName() === '__construct');
 
         foreach ($baseParams as $idx => $p) {
             $baseParamNames[$idx] = $p->getName();
@@ -597,7 +598,13 @@ final class ContractParser
             $paramTags = DocblockExtractor::getParamTags($phpDocNode);
 
             foreach ($paramTags as $paramName => $paramTag) {
-                $targetParamName = self::resolveTargetParamName($paramName, $baseParamSet, $baseParamNames, $hierNameToIndex);
+                $targetParamName = self::resolveTargetParamName(
+                    $paramName,
+                    $baseParamSet,
+                    $baseParamNames,
+                    $hierNameToIndex,
+                    $isConstructor
+                );
 
                 if ($targetParamName !== null && ! isset($types[$targetParamName])) {
                     $type = $paramTag->type;
@@ -631,10 +638,15 @@ final class ContractParser
         string $paramName,
         array $baseParamSet,
         array $baseParamNames,
-        array $hierNameToIndex
+        array $hierNameToIndex,
+        bool $isConstructor = false
     ): ?string {
         if (isset($baseParamSet[$paramName])) {
             return $paramName;
+        }
+
+        if ($isConstructor) {
+            return null;
         }
 
         $paramIndex = $hierNameToIndex[$paramName] ?? null;
