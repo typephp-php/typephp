@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Internal;
 
 use TypePHP\Contract\ContractParser;
+use TypePHP\Contract\FileFilter;
 use TypePHP\Contract\HierarchyResolver;
 use TypePHP\Extension\ExtensionInterface;
 use TypePHP\Extension\ExtensionManager;
@@ -22,10 +23,73 @@ final class Config
      */
     private static ?array $cachedConfig = null;
 
-    /**
-     * Cached absolute project root path.
-     */
     private static ?string $projectRoot = null;
+
+    private static bool $enabled = true;
+
+    private static bool $params = true;
+
+    private static bool $returns = true;
+
+    private static bool $magicProperties = true;
+
+    private static bool $magicMethods = true;
+
+    private static bool $respectIgnoreTags = true;
+
+    public static function isEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$enabled;
+    }
+
+    public static function isParamsEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$params;
+    }
+
+    public static function isReturnsEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$returns;
+    }
+
+    public static function isMagicPropertiesEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$magicProperties;
+    }
+
+    public static function isMagicMethodsEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$magicMethods;
+    }
+
+    public static function isRespectIgnoreTagsEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$respectIgnoreTags;
+    }
 
     /**
      * Locates the project root directory by searching upwards for vendor/autoload.php or composer.json.
@@ -124,6 +188,8 @@ final class Config
         /** @var array<string, mixed> $mergedConfig */
         $mergedConfig = array_replace_recursive($defaultConfig, $userConfig);
 
+        self::syncFlags($mergedConfig);
+
         return self::$cachedConfig = $mergedConfig;
     }
 
@@ -138,8 +204,10 @@ final class Config
         $mergedConfig = array_replace_recursive(self::get(), $config);
 
         self::$cachedConfig = $mergedConfig;
+        self::syncFlags($mergedConfig);
 
         ContractParser::reset();
+        FileFilter::reset();
     }
 
     /**
@@ -149,9 +217,31 @@ final class Config
     {
         self::$cachedConfig = null;
         self::$projectRoot = null;
+        self::$enabled = true;
+        self::$params = true;
+        self::$returns = true;
+        self::$magicProperties = true;
+        self::$magicMethods = true;
+        self::$respectIgnoreTags = true;
 
         ContractParser::reset();
         TemplateManager::reset();
         HierarchyResolver::reset();
+        FileFilter::reset();
+    }
+
+    /**
+     * Synchronizes cached static boolean flags for fast O(1) checking.
+     *
+     * @param array<string, mixed> $config
+     */
+    private static function syncFlags(array $config): void
+    {
+        self::$enabled = (bool) ($config['enabled'] ?? true);
+        self::$params = (bool) ($config['params'] ?? true);
+        self::$returns = (bool) ($config['returns'] ?? true);
+        self::$magicProperties = (bool) ($config['magic_properties'] ?? true);
+        self::$magicMethods = (bool) ($config['magic_methods'] ?? true);
+        self::$respectIgnoreTags = (bool) ($config['respect_ignore_tags'] ?? true);
     }
 }

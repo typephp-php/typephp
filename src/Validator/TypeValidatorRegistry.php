@@ -33,6 +33,14 @@ final class TypeValidatorRegistry
      */
     private static ?\WeakMap $validatedObjectCache = null;
 
+    /**
+     * Resets the validated object cache. Useful for test isolation.
+     */
+    public static function reset(): void
+    {
+        self::$validatedObjectCache = null;
+    }
+
     public function __construct()
     {
         $this->validators = [
@@ -53,10 +61,13 @@ final class TypeValidatorRegistry
      */
     public function validate(mixed $value, TypeNode $node, string $context): ?ErrorMessage
     {
+        $isObj = \is_object($value);
+        $nodeKey = null;
+
         // Object Validation Memoization Optimization (O(1) lookup for repeated object checks)
-        if (\is_object($value)) {
+        if ($isObj) {
             self::$validatedObjectCache ??= new \WeakMap();
-            $nodeKey = (string) $node;
+            $nodeKey = ($node instanceof IdentifierTypeNode) ? $node->name : (string) $node;
 
             if (isset(self::$validatedObjectCache[$value][$nodeKey])) {
                 return null;
@@ -70,9 +81,9 @@ final class TypeValidatorRegistry
 
         $err = $validator->validate($value, $node, $context, $this);
 
-        if ($err === null && \is_object($value)) {
+        if ($err === null && $isObj && $nodeKey !== null) {
             $cache = self::$validatedObjectCache[$value] ?? [];
-            $cache[(string) $node] = true;
+            $cache[$nodeKey] = true;
             self::$validatedObjectCache[$value] = $cache;
         }
 

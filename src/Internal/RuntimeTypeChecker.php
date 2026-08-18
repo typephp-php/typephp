@@ -6,6 +6,7 @@ namespace TypePHP\Internal;
 
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use TypePHP\Contract\ContractParser;
 use TypePHP\Internal\Checker\GeneratorChecker;
 use TypePHP\Internal\Checker\InlineChecker;
 use TypePHP\Internal\Checker\ParamChecker;
@@ -27,7 +28,7 @@ final class RuntimeTypeChecker
      */
     public static function isEnabled(): bool
     {
-        return (bool) (Config::get()['enabled'] ?? true);
+        return Config::isEnabled();
     }
 
     /**
@@ -35,7 +36,7 @@ final class RuntimeTypeChecker
      */
     public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false): ?ErrorMessage
     {
-        if (! self::isEnabled()) {
+        if (! Config::isEnabled()) {
             return null;
         }
 
@@ -47,7 +48,7 @@ final class RuntimeTypeChecker
      */
     public static function checkVariable(mixed $value, string $typeString, string $varName, string $file): mixed
     {
-        if (! self::isEnabled()) {
+        if (! Config::isEnabled()) {
             return $value;
         }
 
@@ -59,7 +60,7 @@ final class RuntimeTypeChecker
      */
     public static function checkProperty(mixed $value, mixed $objectOrClass, string $propName, string $file): mixed
     {
-        if (! self::isEnabled()) {
+        if (! Config::isEnabled()) {
             return $value;
         }
 
@@ -73,14 +74,15 @@ final class RuntimeTypeChecker
      */
     public static function setupScope(string $function, array $vars, object|string|null $thisOrClass = null): ErrorMessage|ScopeCleaner|null
     {
-        if (! self::isEnabled()) {
+        if (! Config::isEnabled()) {
             return null;
         }
 
         $err = self::checkParams($function, $vars, $thisOrClass);
 
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+
         if ($err !== null) {
-            $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
             if ($thisObj === null) {
                 TemplateManager::popCallFrame($function);
             }
@@ -88,9 +90,14 @@ final class RuntimeTypeChecker
             return $err;
         }
 
-        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        if ($thisObj !== null) {
+            return null;
+        }
 
-        return $thisObj === null ? new ScopeCleaner($function) : null;
+        $contract = ContractParser::parse($function);
+        $hasTemplates = \count($contract['templates'] ?? []) > 0;
+
+        return $hasTemplates ? new ScopeCleaner($function) : null;
     }
 
     /**
@@ -100,7 +107,7 @@ final class RuntimeTypeChecker
      */
     public static function checkParams(string $function, array $vars, object|string|null $thisOrClass = null): ?ErrorMessage
     {
-        if (! self::isEnabled()) {
+        if (! Config::isEnabled()) {
             return null;
         }
 
@@ -114,7 +121,7 @@ final class RuntimeTypeChecker
      */
     public static function checkReturn(string $function, mixed $value, object|string|null $thisOrClass = null, array $vars = []): mixed
     {
-        if (! self::isEnabled()) {
+        if (! Config::isEnabled()) {
             return $value;
         }
 
@@ -126,7 +133,7 @@ final class RuntimeTypeChecker
      */
     public static function checkSend(string $function, mixed $sendValue, object|string|null $thisOrClass = null): mixed
     {
-        if (! self::isEnabled()) {
+        if (! Config::isEnabled()) {
             return $sendValue;
         }
 
@@ -138,7 +145,7 @@ final class RuntimeTypeChecker
      */
     public static function checkYield(string $function, mixed $key, mixed $value, object|string|null $thisOrClass = null): mixed
     {
-        if (! self::isEnabled()) {
+        if (! Config::isEnabled()) {
             return $value;
         }
 
@@ -150,7 +157,7 @@ final class RuntimeTypeChecker
      */
     public static function wrapCallable(string $function, string $paramName, mixed $callable, object|string|null $thisOrClass = null): mixed
     {
-        if (! self::isEnabled()) {
+        if (! Config::isEnabled()) {
             return $callable;
         }
 
@@ -162,7 +169,7 @@ final class RuntimeTypeChecker
      */
     public static function wrapIterable(string $function, string $paramName, mixed $iterable, object|string|null $thisOrClass = null): mixed
     {
-        if (! self::isEnabled()) {
+        if (! Config::isEnabled()) {
             return $iterable;
         }
 

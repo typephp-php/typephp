@@ -37,7 +37,7 @@ final class ReturnChecker
         TypeValidatorRegistry $registry,
         callable $wrapIterableCallback
     ): mixed {
-        if (! (bool) (Config::get()['returns'] ?? true)) {
+        if (! Config::isReturnsEnabled()) {
             return $value;
         }
 
@@ -98,12 +98,25 @@ final class ReturnChecker
             $traitAliases = HierarchyResolver::getTraitAliases($targetClass);
 
             if (\count($traitAliases) > 0) {
-                $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
-                foreach ($trace as $frame) {
-                    $frameFunc = $frame['function'];
-                    $frameClass = $frame['class'] ?? '';
-                    if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
-                        return $targetClass . '::' . $frameFunc;
+                $isPotentialAlias = isset($traitAliases[$methodName]);
+                if (! $isPotentialAlias) {
+                    foreach ($traitAliases as $originalTarget) {
+                        if (str_ends_with($originalTarget, '::' . $methodName)) {
+                            $isPotentialAlias = true;
+
+                            break;
+                        }
+                    }
+                }
+
+                if ($isPotentialAlias) {
+                    $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
+                    foreach ($trace as $frame) {
+                        $frameFunc = $frame['function'];
+                        $frameClass = $frame['class'] ?? '';
+                        if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
+                            return $targetClass . '::' . $frameFunc;
+                        }
                     }
                 }
             }
@@ -126,7 +139,7 @@ final class ReturnChecker
         callable $wrapIterableCallback
     ): mixed {
         $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
-        if (! $isMagicCall || ! (bool) (Config::get()['magic_methods'] ?? true)) {
+        if (! $isMagicCall || ! Config::isMagicMethodsEnabled()) {
             return null;
         }
 

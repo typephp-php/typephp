@@ -27,6 +27,21 @@ use TypePHP\Resolver\SpecialTypeResolver;
 final class DocblockExtractor
 {
     /**
+     * In-memory cache for normalized and parsed PhpDocNode ASTs keyed by raw docblock string.
+     *
+     * @var array<string, PhpDocNode>
+     */
+    private static array $docParseCache = [];
+
+    /**
+     * Resets the parsed docblock cache. Useful for test isolation.
+     */
+    public static function reset(): void
+    {
+        self::$docParseCache = [];
+    }
+
+    /**
      * Returns shared static instances of PHPStan's PhpDocParser and Lexer.
      *
      * @return array{PhpDocParser, Lexer}
@@ -50,15 +65,19 @@ final class DocblockExtractor
     }
 
     /**
-     * Normalizes and parses a PHPDoc doccomment string into an AST PhpDocNode.
+     * Normalizes and parses a PHPDoc doccomment string into an AST PhpDocNode with in-memory memoization.
      */
     public static function parseDocString(string $doc): PhpDocNode
     {
-        $doc = DocblockNormalizer::normalize($doc);
-        [$phpDocParser, $lexer] = self::getParserComponents();
-        $tokens = new TokenIterator($lexer->tokenize($doc));
+        if (isset(self::$docParseCache[$doc])) {
+            return self::$docParseCache[$doc];
+        }
 
-        return $phpDocParser->parse($tokens);
+        $normalized = DocblockNormalizer::normalize($doc);
+        [$phpDocParser, $lexer] = self::getParserComponents();
+        $tokens = new TokenIterator($lexer->tokenize($normalized));
+
+        return self::$docParseCache[$doc] = $phpDocParser->parse($tokens);
     }
 
     /**

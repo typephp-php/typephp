@@ -13,6 +13,43 @@ use TypePHP\Internal\Config;
 final class FileFilter
 {
     /**
+     * In-memory cache of boolean exclusion results keyed by normalized file path.
+     *
+     * @var array<string, bool>
+     */
+    private static array $pathFilterCache = [];
+
+    /**
+     * Pre-compiled include regex patterns and match lengths.
+     *
+     * @var array<int, array{len: int, regex: string}>|null
+     */
+    private static ?array $compiledIncludes = null;
+
+    /**
+     * Pre-compiled exclude regex patterns and match lengths.
+     *
+     * @var array<int, array{len: int, regex: string}>|null
+     */
+    private static ?array $compiledExcludes = null;
+
+    /**
+     * Cached normalized cache directory path.
+     */
+    private static ?string $cachedCacheDir = null;
+
+    /**
+     * Resets the path decision cache and pre-compiled regex patterns. Useful for test isolation.
+     */
+    public static function reset(): void
+    {
+        self::$pathFilterCache = [];
+        self::$compiledIncludes = null;
+        self::$compiledExcludes = null;
+        self::$cachedCacheDir = null;
+    }
+
+    /**
      * Determines whether a given file path is excluded from contract inheritance.
      * Non-PHP files and excluded paths return true.
      */
@@ -24,16 +61,54 @@ final class FileFilter
 
         $normalizedPath = str_replace('\\', '/', $fileName);
 
+        if (isset(self::$pathFilterCache[$normalizedPath])) {
+            return self::$pathFilterCache[$normalizedPath];
+        }
+
         // Non-PHP files are always excluded from PHPDoc contract processing
         if (! str_ends_with(strtolower($normalizedPath), '.php')) {
-            return true;
+            return self::$pathFilterCache[$normalizedPath] = true;
         }
 
-        $normalizedCacheDir = rtrim(str_replace('\\', '/', CacheManager::getCacheDir()), '/') . '/';
-        if (str_starts_with($normalizedPath, $normalizedCacheDir)) {
-            return true;
+        if (self::$cachedCacheDir === null) {
+            self::$cachedCacheDir = rtrim(str_replace('\\', '/', CacheManager::getCacheDir()), '/') . '/';
         }
 
+        if (str_starts_with($normalizedPath, self::$cachedCacheDir)) {
+            return self::$pathFilterCache[$normalizedPath] = true;
+        }
+
+        if (self::$compiledIncludes === null || self::$compiledExcludes === null) {
+            self::compilePatterns();
+        }
+
+        $longestIncludeMatch = 0;
+        /** @var array<int, array{len: int, regex: string}> $includes */
+        $includes = self::$compiledIncludes;
+        foreach ($includes as $compiled) {
+            if (preg_match($compiled['regex'], $normalizedPath) === 1) {
+                $longestIncludeMatch = max($longestIncludeMatch, $compiled['len']);
+            }
+        }
+
+        $longestExcludeMatch = 0;
+        /** @var array<int, array{len: int, regex: string}> $excludes */
+        $excludes = self::$compiledExcludes;
+        foreach ($excludes as $compiled) {
+            if (preg_match($compiled['regex'], $normalizedPath) === 1) {
+                $longestExcludeMatch = max($longestExcludeMatch, $compiled['len']);
+            }
+        }
+
+        // Equal specificity tie-breaker: Exclude wins!
+        return self::$pathFilterCache[$normalizedPath] = ($longestExcludeMatch >= $longestIncludeMatch);
+    }
+
+    /**
+     * Compiles configured include and exclude globs into regex patterns once per configuration lifecycle.
+     */
+    private static function compilePatterns(): void
+    {
         $config = Config::get();
         /** @var array<mixed> $includes */
         $includes = \is_array($config['include'] ?? null) ? $config['include'] : ['**'];
@@ -42,30 +117,27 @@ final class FileFilter
 
         $baseDir = Config::getProjectRoot();
 
-        $longestIncludeMatch = 0;
+        self::$compiledIncludes = [];
         foreach ($includes as $pattern) {
-            if (! \is_string($pattern)) {
-                continue;
-            }
-            $regex = self::compileGlobToRegex($pattern, $baseDir);
-            if (preg_match($regex, $normalizedPath) === 1) {
-                $longestIncludeMatch = max($longestIncludeMatch, \strlen(trim($pattern)));
+            if (\is_string($pattern)) {
+                $trimmed = trim($pattern);
+                self::$compiledIncludes[] = [
+                    'len' => \strlen($trimmed),
+                    'regex' => self::compileGlobToRegex($trimmed, $baseDir),
+                ];
             }
         }
 
-        $longestExcludeMatch = 0;
+        self::$compiledExcludes = [];
         foreach ($excludes as $pattern) {
-            if (! \is_string($pattern)) {
-                continue;
-            }
-            $regex = self::compileGlobToRegex($pattern, $baseDir);
-            if (preg_match($regex, $normalizedPath) === 1) {
-                $longestExcludeMatch = max($longestExcludeMatch, \strlen(trim($pattern)));
+            if (\is_string($pattern)) {
+                $trimmed = trim($pattern);
+                self::$compiledExcludes[] = [
+                    'len' => \strlen($trimmed),
+                    'regex' => self::compileGlobToRegex($trimmed, $baseDir),
+                ];
             }
         }
-
-        // Equal specificity tie-breaker: Exclude wins!
-        return $longestExcludeMatch >= $longestIncludeMatch;
     }
 
     /**
