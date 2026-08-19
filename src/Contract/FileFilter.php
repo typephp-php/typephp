@@ -20,16 +20,16 @@ final class FileFilter
     private static array $pathFilterCache = [];
 
     /**
-     * Pre-compiled include regex patterns and match lengths.
+     * Pre-compiled include regex patterns, raw patterns, and match lengths.
      *
-     * @var array<int, array{len: int, regex: string}>|null
+     * @var array<int, array{pattern: string, len: int, regex: string}>|null
      */
     private static ?array $compiledIncludes = null;
 
     /**
-     * Pre-compiled exclude regex patterns and match lengths.
+     * Pre-compiled exclude regex patterns, raw patterns, and match lengths.
      *
-     * @var array<int, array{len: int, regex: string}>|null
+     * @var array<int, array{pattern: string, len: int, regex: string}>|null
      */
     private static ?array $compiledExcludes = null;
 
@@ -83,16 +83,26 @@ final class FileFilter
         }
 
         $longestIncludeMatch = 0;
-        /** @var array<int, array{len: int, regex: string}> $includes */
+        $isVendorPath = str_contains($normalizedPath, '/vendor/');
+
+        /** @var array<int, array{pattern: string, len: int, regex: string}> $includes */
         $includes = self::$compiledIncludes;
         foreach ($includes as $compiled) {
+            $isExplicitVendorInclude = str_starts_with($compiled['pattern'], 'vendor/');
+            $isWildcard = ($compiled['pattern'] === '*' || $compiled['pattern'] === '**');
+
+            // Application include rules (like src/**, src/Core/**) never match inside vendor directories
+            if ($isVendorPath && ! $isExplicitVendorInclude && ! $isWildcard) {
+                continue;
+            }
+
             if (preg_match($compiled['regex'], $normalizedPath) === 1) {
                 $longestIncludeMatch = max($longestIncludeMatch, $compiled['len']);
             }
         }
 
         $longestExcludeMatch = 0;
-        /** @var array<int, array{len: int, regex: string}> $excludes */
+        /** @var array<int, array{pattern: string, len: int, regex: string}> $excludes */
         $excludes = self::$compiledExcludes;
         foreach ($excludes as $compiled) {
             if (preg_match($compiled['regex'], $normalizedPath) === 1) {
@@ -122,6 +132,7 @@ final class FileFilter
             if (\is_string($pattern)) {
                 $trimmed = trim($pattern);
                 self::$compiledIncludes[] = [
+                    'pattern' => $trimmed,
                     'len' => \strlen($trimmed),
                     'regex' => self::compileGlobToRegex($trimmed, $baseDir),
                 ];
@@ -133,6 +144,7 @@ final class FileFilter
             if (\is_string($pattern)) {
                 $trimmed = trim($pattern);
                 self::$compiledExcludes[] = [
+                    'pattern' => $trimmed,
                     'len' => \strlen($trimmed),
                     'regex' => self::compileGlobToRegex($trimmed, $baseDir),
                 ];
@@ -153,10 +165,10 @@ final class FileFilter
 
         if ($isAbsolute) {
             $pattern = '^' . $regex . '$';
-        } elseif (str_starts_with($glob, '**')) {
-            $pattern = '.*' . substr($regex, 4) . '$';
+        } elseif ($glob === '*' || $glob === '**' || str_starts_with($glob, '**')) {
+            $pattern = '.*' . ($glob === '*' || $glob === '**' ? '' : substr($regex, 4)) . '$';
         } else {
-            $pattern = '^' . preg_quote($baseDir . '/', '#') . $regex . '$';
+            $pattern = '(^' . preg_quote($baseDir . '/', '#') . '|^.*\/)' . $regex . '$';
         }
 
         return '#' . $pattern . '#i';

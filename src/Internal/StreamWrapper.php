@@ -451,10 +451,10 @@ final class StreamWrapper implements StreamWrapperInterface
 
         if ($isAbsolute) {
             $pattern = '^' . $regex . '$';
-        } elseif (str_starts_with($glob, '**')) {
-            $pattern = '.*' . substr($regex, 4) . '$';
+        } elseif ($glob === '*' || $glob === '**' || str_starts_with($glob, '**')) {
+            $pattern = '.*' . ($glob === '*' || $glob === '**' ? '' : substr($regex, 4)) . '$';
         } else {
-            $pattern = '^' . preg_quote(self::$baseDir . '/', '#') . $regex . '$';
+            $pattern = '(^' . preg_quote(self::$baseDir . '/', '#') . '|^.*\/)' . $regex . '$';
         }
 
         return '#' . $pattern . '#i';
@@ -522,7 +522,17 @@ final class StreamWrapper implements StreamWrapperInterface
         }
 
         $longestIncludeMatch = 0;
+        $isVendorPath = str_contains($normalizedPath, '/vendor/');
+
         foreach (self::$includeRawPatterns as $pattern => $regex) {
+            $isExplicitVendorInclude = str_starts_with($pattern, 'vendor/');
+            $isWildcard = ($pattern === '*' || $pattern === '**');
+
+            // Application include rules (like src/**, src/Core/**) never match inside vendor directories
+            if ($isVendorPath && ! $isExplicitVendorInclude && ! $isWildcard) {
+                continue;
+            }
+
             if (preg_match($regex, $normalizedPath) === 1) {
                 $longestIncludeMatch = max($longestIncludeMatch, \strlen($pattern));
             }
