@@ -36,9 +36,7 @@ describe('Vendor Path Isolation & Whitelisting (Shopware Doctrine DBAL Reproduct
         StreamWrapper::register();
 
         $projectRoot = Config::getProjectRoot();
-
         $vendorDoctrineFile = str_replace('\\', '/', $projectRoot . '/vendor/doctrine/dbal/src/Schema/AbstractNamedObject.php');
-        
         $appFile = str_replace('\\', '/', $projectRoot . '/app/Services/UserService.php');
 
         expect(FileFilter::isFileExcluded($vendorDoctrineFile))->toBeTrue()
@@ -94,5 +92,30 @@ describe('Vendor Path Isolation & Whitelisting (Shopware Doctrine DBAL Reproduct
         $vendorFile = str_replace('\\', '/', $projectRoot . '/vendor/doctrine/dbal/src/Core/Table.php');
 
         expect(FileFilter::isFileExcluded($vendorFile))->toBeTrue();
+    });
+
+    test('differentiates application folders from identical vendor folder names (e.g. lib/** in app vs lib/** in vendor)', function () {
+        Config::set([
+            'include' => [
+                'lib/**', 
+                'modules/**',
+            ],
+            'exclude' => [
+                'vendor/**',
+            ],
+        ]);
+
+        StreamWrapper::register();
+        $projectRoot = Config::getProjectRoot();
+
+        $appLibFile = str_replace('\\', '/', $projectRoot . '/lib/Services/PaymentProcessor.php');
+        $vendorLibFile = str_replace('\\', '/', $projectRoot . '/vendor/dompdf/php-font-lib/lib/Font.php');
+        expect(FileFilter::isFileExcluded($appLibFile))->toBeFalse();
+        expect(FileFilter::isFileExcluded($vendorLibFile))->toBeTrue();
+
+        $refMethod = new ReflectionMethod(StreamWrapper::class, 'isApplicationFile');
+        expect($refMethod->invoke(null, $appLibFile, $appLibFile))->toBeTrue()
+            ->and($refMethod->invoke(null, $vendorLibFile, $vendorLibFile))->toBeFalse()
+        ;
     });
 });
