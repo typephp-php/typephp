@@ -156,7 +156,7 @@ final class FileFilter
         } elseif (str_starts_with($glob, '**')) {
             $pattern = '.*' . substr($regex, 4) . '$';
         } else {
-            $pattern = '(^' . preg_quote($baseDir . '/', '#') . '|^.*\/)' . $regex . '$';
+            $pattern = '^' . preg_quote($baseDir . '/', '#') . $regex . '$';
         }
 
         return '#' . $pattern . '#i';

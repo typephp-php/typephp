@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use TypePHP\Contract\FileFilter;
+use TypePHP\Internal\Config;
 use TypePHP\Internal\StreamWrapper;
 
 describe('StreamWrapper Unit Tests', function () {
@@ -52,5 +54,33 @@ PHP;
         expect($transformed)->toContain('RuntimeTypeChecker::checkYield')
             ->and($transformed)->toContain('RuntimeTypeChecker::checkSend')
         ;
+    });
+
+   test('strictly isolates vendor files with nested src directories when application includes specific src subpackages', function () {
+        Config::set([
+            'include' => [
+                'src/**',
+                'src/Core/**',         
+                'src/Storefront/**',
+                'src/Administration/**',
+            ],
+            'exclude' => [
+                'vendor/**',          
+                'storage/**',
+                'var/**',
+                'cache/**',
+            ],
+        ]);
+
+        $projectRoot = Config::getProjectRoot();
+
+        $vendorFile = str_replace('\\', '/', $projectRoot . '/vendor/doctrine/dbal/src/Core/Table.php');
+        $appFile = str_replace('\\', '/', $projectRoot . '/src/Core/Framework/Util.php');
+
+        expect(FileFilter::isFileExcluded($vendorFile))->toBeTrue()
+            ->and(FileFilter::isFileExcluded($appFile))->toBeFalse()
+        ;
+
+        Config::reset();
     });
 });
