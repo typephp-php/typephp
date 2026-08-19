@@ -119,7 +119,7 @@ final class CacheManager
                     $transformed = StreamWrapper::transformSource($source, $file);
                     $cacheDir = self::getCacheDir();
                     if (! is_dir($cacheDir)) {
-                        @mkdir($cacheDir, 0777, true);
+                        @mkdir($cacheDir, 0777, recursive: true);
                     }
                     file_put_contents($cachedFile, $transformed);
                     $cached++;

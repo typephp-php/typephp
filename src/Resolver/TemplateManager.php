@@ -258,7 +258,7 @@ final class TemplateManager
     public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false): ?ErrorMessage
     {
         $className = $typeNode->type->name;
-        if (\in_array(strtolower($className), ['self', 'static', '$this'], true)) {
+        if (\in_array(strtolower($className), ['self', 'static', '$this'], strict: true)) {
             $className = \get_class($instance);
         }
 
@@ -461,7 +461,7 @@ final class TemplateManager
         string $actualClassName
     ): void {
         $parentName = SpecialTypeResolver::resolveFqcn($genericTypeNode->type->name, $hierClass);
-        $isHierarchyMember = is_a($actualClassName, $parentName, true) || trait_exists($parentName);
+        $isHierarchyMember = is_a($actualClassName, $parentName, allow_string: true) || trait_exists($parentName);
 
         if (! ClassNameValidator::isValid($parentName) || ! $isHierarchyMember) {
             return;
@@ -654,7 +654,7 @@ final class TemplateManager
 
     private static function checkNestedGenericVariance(GenericTypeNode $existing, GenericTypeNode $expected): bool
     {
-        if (! is_a($existing->type->name, $expected->type->name, true)) {
+        if (! is_a($existing->type->name, $expected->type->name, allow_string: true)) {
             return false;
         }
 
@@ -673,7 +673,7 @@ final class TemplateManager
     private static function isSubclass(string $sub, string $super): bool
     {
         if (ClassNameValidator::isValid($sub) && ClassNameValidator::isValid($super) && (class_exists($sub) || interface_exists($sub)) && (class_exists($super) || interface_exists($super))) {
-            return is_a($sub, $super, true);
+            return is_a($sub, $super, allow_string: true);
         }
 
         return false;
@@ -695,7 +695,7 @@ final class TemplateManager
             }
 
             if ($typeNode instanceof GenericTypeNode) {
-                self::bindInstanceFromNode($instance, $typeNode, '', true);
+                self::bindInstanceFromNode($instance, $typeNode, '', forceBind: true);
             }
         } catch (\Throwable $e) {
             // Silently ignore malformed docblock strings

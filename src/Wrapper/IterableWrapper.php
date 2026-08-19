@@ -63,7 +63,7 @@ final class IterableWrapper
         }
 
         $standardIterables = ['iterable', 'traversable', 'iterator', 'generator'];
-        if (! \in_array($baseName, $standardIterables, true)) {
+        if (! \in_array($baseName, $standardIterables, strict: true)) {
             return $iterable;
         }
 

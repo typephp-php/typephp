@@ -24,7 +24,7 @@ final class ExtensionManager
         $uniqueExtensions = array_unique($configuredExtensions);
 
         foreach ($uniqueExtensions as $extensionClass) {
-            if (\is_string($extensionClass) && class_exists($extensionClass) && is_a($extensionClass, ExtensionInterface::class, true)) {
+            if (\is_string($extensionClass) && class_exists($extensionClass) && is_a($extensionClass, ExtensionInterface::class, allow_string: true)) {
                 /** @var ExtensionInterface $instance */
                 $instance = new $extensionClass();
                 $config = $instance->getConfig();

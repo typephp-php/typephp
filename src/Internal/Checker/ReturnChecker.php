@@ -230,7 +230,7 @@ final class ReturnChecker
             }
 
             $genericIterables = ['iterable', 'traversable', 'iterator', 'generator'];
-            if (\in_array($baseName, $genericIterables, true)) {
+            if (\in_array($baseName, $genericIterables, strict: true)) {
                 return $wrapIterableCallback($function, 'return', $value);
             }
         }
@@ -314,7 +314,7 @@ final class ReturnChecker
             $isTargetMatch = ClassNameValidator::isValid($subStr) && ClassNameValidator::isValid($targetStr) &&
                 (class_exists($subStr) || interface_exists($subStr)) &&
                 (class_exists($targetStr) || interface_exists($targetStr)) &&
-                is_a($subStr, $targetStr, true);
+                is_a($subStr, $targetStr, allow_string: true);
         }
 
         if ($node->negated) {

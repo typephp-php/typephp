@@ -25,7 +25,7 @@ final class RunCommand implements CommandInterface
                 $givenTargetCandidate = $arg;
                 $ext = strtolower(pathinfo($arg, PATHINFO_EXTENSION));
 
-                if ($ext !== '' && ! \in_array($ext, self::VALID_PHP_EXTENSIONS, true)) {
+                if ($ext !== '' && ! \in_array($ext, self::VALID_PHP_EXTENSIONS, strict: true)) {
                     fwrite($errorStream, "\n  " . $c(' TYPEPHP ', 'badge_red') . ' ' . $c('Error', 'bold') . "\n\n");
                     fwrite($errorStream, '  ' . $c('✗', 'red') . ' Target file ' . $c('"' . $arg . '"', 'bold') . " is not a PHP script file. TypePHP can only execute PHP files.\n\n");
 

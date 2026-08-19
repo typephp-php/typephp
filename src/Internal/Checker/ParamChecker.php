@@ -227,7 +227,7 @@ final class ParamChecker
     ): void {
         if ($typeNode instanceof GenericTypeNode) {
             $baseType = strtolower($typeNode->type->name);
-            if (! \in_array($baseType, ['array', 'list', 'iterable', 'traversable'], true)) {
+            if (! \in_array($baseType, ['array', 'list', 'iterable', 'traversable'], strict: true)) {
                 return;
             }
 
@@ -438,7 +438,7 @@ final class ParamChecker
                 $boundName = $resolvedBound instanceof IdentifierTypeNode ? $resolvedBound->name : (string) $resolvedBound;
                 $lowerBound = strtolower($boundName);
 
-                if ($lowerBound !== 'object' && $lowerBound !== 'mixed' && ! is_a($val, $boundName, true)) {
+                if ($lowerBound !== 'object' && $lowerBound !== 'mixed' && ! is_a($val, $boundName, allow_string: true)) {
                     return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a class-string of ' . $boundName . ", '" . $val . "' given");
                 }
             }
@@ -448,7 +448,7 @@ final class ParamChecker
             $expectedTypeNode = TemplateManager::getBoundType($function, $thisObj, $templateName);
             $targetClass = $expectedTypeNode instanceof IdentifierTypeNode ? $expectedTypeNode->name : (string) $expectedTypeNode;
 
-            if (! \is_string($val) || ! is_a($val, $targetClass, true)) {
+            if (! \is_string($val) || ! is_a($val, $targetClass, allow_string: true)) {
                 $valStr = TypeFormatter::formatGivenValue($val);
 
                 return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' must be a class-string of ' . $targetClass . ', ' . $valStr . ' given');

@@ -439,7 +439,7 @@ final class StreamWrapper implements StreamWrapperInterface
         $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 3);
         $callerFunc = strtolower($trace[2]['function'] ?? '');
 
-        return \in_array($callerFunc, ['file_get_contents', 'file', 'readfile', 'highlight_file', 'show_source', 'token_get_all'], true);
+        return \in_array($callerFunc, ['file_get_contents', 'file', 'readfile', 'highlight_file', 'show_source', 'token_get_all'], strict: true);
     }
 
     /**
@@ -500,7 +500,7 @@ final class StreamWrapper implements StreamWrapperInterface
     {
         $cacheDir = self::$cacheDir;
         if (! is_dir($cacheDir)) {
-            self::silent(fn () => mkdir($cacheDir, 0777, true));
+            self::silent(fn () => mkdir($cacheDir, 0777, recursive: true));
         }
 
         $cachedFile = CacheManager::getCachedFilePath($resolvedPath);

@@ -245,7 +245,7 @@ final class SpecialTypeResolver
 
         if ($node instanceof IdentifierTypeNode) {
             $lower = strtolower($node->name);
-            if (\in_array($lower, ['self', 'static', 'parent', '$this'], true)) {
+            if (\in_array($lower, ['self', 'static', 'parent', '$this'], strict: true)) {
                 return clone $node;
             }
 

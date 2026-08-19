@@ -34,7 +34,7 @@ final class FunctionContractInjector
         }
 
         $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
-        $isMagicLifecycle = $isClassMethod && \in_array($methodName, ['__construct', '__destruct', '__clone'], true);
+        $isMagicLifecycle = $isClassMethod && \in_array($methodName, ['__construct', '__destruct', '__clone'], strict: true);
 
         $hasParam = $isClassMethod || str_contains($docText, '@param') || str_contains($docText, '@phpstan-param') || str_contains($docText, '@psalm-param');
         $hasReturn = ! $isMagicLifecycle && ($isClassMethod || str_contains($docText, '@return') || str_contains($docText, '@phpstan-return') || str_contains($docText, '@psalm-return'));
@@ -162,7 +162,7 @@ final class FunctionContractInjector
             ['stmts' => [$throwStmt]]
         );
 
-        $ifStmt->setAttribute('typephp_injected', true);
+        $ifStmt->setAttribute('typephp_injected', value: true);
 
         return $ifStmt;
     }
@@ -196,7 +196,7 @@ final class FunctionContractInjector
                         )
                     )
                 );
-                $expr->setAttribute('typephp_injected', true);
+                $expr->setAttribute('typephp_injected', value: true);
                 $wrappers[] = $expr;
             }
         }
@@ -253,10 +253,10 @@ final class FunctionContractInjector
             ),
             ['stmts' => [self::buildTypeErrorThrowStmt(new Node\Expr\Variable('__typephpRet'))]]
         );
-        $ifStmt->setAttribute('typephp_injected', true);
+        $ifStmt->setAttribute('typephp_injected', value: true);
 
         $retStmt = new Node\Stmt\Return_(null);
-        $retStmt->setAttribute('typephp_injected', true);
+        $retStmt->setAttribute('typephp_injected', value: true);
 
         return [$ifStmt, $retStmt];
     }
@@ -389,7 +389,7 @@ final class FunctionContractInjector
                         return null;
                     }
 
-                    $n->setAttribute('typephp_wrapped', true);
+                    $n->setAttribute('typephp_wrapped', value: true);
 
                     return FunctionContractInjector::buildWrappedYieldNode($n, $this->thisArg);
                 }
@@ -399,7 +399,7 @@ final class FunctionContractInjector
                         return null;
                     }
 
-                    $n->setAttribute('typephp_wrapped', true);
+                    $n->setAttribute('typephp_wrapped', value: true);
 
                     $n->expr = new Node\Expr\FuncCall(
                         new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::wrapIterable'),
@@ -469,7 +469,7 @@ final class FunctionContractInjector
                 $newStmts = array_merge($newStmts, self::buildVoidReturnGuard($checkCall));
             } else {
                 $retStmt = new Node\Stmt\Return_(self::buildTernaryReturnExpr($checkCall));
-                $retStmt->setAttribute('typephp_injected', true);
+                $retStmt->setAttribute('typephp_injected', value: true);
                 $newStmts[] = $retStmt;
             }
         }

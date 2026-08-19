@@ -36,7 +36,8 @@
         "phpstan/phpstan-strict-rules": "^2.0",
         "phpstan/extension-installer": "^1.4",
         "vimeo/psalm": "^6.16",
-        "carthage-software/mago": "^1.47"
+        "carthage-software/mago": "^1.47",
+        "rector/rector": "^2.6"
     },
     "bin": [
         "bin/typephp"
@@ -72,6 +73,12 @@
         ],
         "mago": [
             "./vendor/bin/mago analyze"
+        ],
+        "rector": [
+            "./vendor/bin/rector process"
+        ],
+        "rector:dry": [
+            "./vendor/bin/rector process --dry-run"
         ]
     },
     "minimum-stability": "dev",

@@ -15,8 +15,8 @@ final class CliFormatter
     {
         if (! self::$vt100Initialized) {
             if (\function_exists('sapi_windows_vt100_support')) {
-                @sapi_windows_vt100_support(STDOUT, true);
-                @sapi_windows_vt100_support(STDERR, true);
+                @sapi_windows_vt100_support(STDOUT, enable: true);
+                @sapi_windows_vt100_support(STDERR, enable: true);
             }
             self::$vt100Initialized = true;
         }
