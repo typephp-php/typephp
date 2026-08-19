@@ -56,16 +56,16 @@ PHP;
         ;
     });
 
-   test('strictly isolates vendor files with nested src directories when application includes specific src subpackages', function () {
+    test('strictly isolates vendor files with nested src directories when application includes specific src subpackages', function () {
         Config::set([
             'include' => [
                 'src/**',
-                'src/Core/**',         
+                'src/Core/**',
                 'src/Storefront/**',
                 'src/Administration/**',
             ],
             'exclude' => [
-                'vendor/**',          
+                'vendor/**',
                 'storage/**',
                 'var/**',
                 'cache/**',

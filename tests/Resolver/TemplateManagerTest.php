@@ -231,7 +231,8 @@ describe('TemplateManager Unit Tests', function () {
             $variances = TemplateManager::getTemplateVariances($producer);
 
             expect($variances)->toHaveKey('T')
-                ->and($variances['T'])->toBe('covariant');
+                ->and($variances['T'])->toBe('covariant')
+            ;
         });
     });
 });

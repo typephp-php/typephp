@@ -39,7 +39,8 @@ describe('ParamChecker Unit Tests', function () {
             $err = ParamChecker::checkParams($target, ['id' => -5], new UserService(), $registry);
 
             expect($err)->toBeInstanceOf(ErrorMessage::class)
-                ->and($err->getMessage())->toContain('positive-int');
+                ->and($err->getMessage())->toContain('positive-int')
+            ;
         });
 
         test('handles omitted optional parameters gracefully without error', function () {
@@ -91,7 +92,8 @@ describe('ParamChecker Unit Tests', function () {
             ], $service, $registry);
 
             expect($err)->toBeInstanceOf(ErrorMessage::class)
-                ->and($err->getMessage())->toContain("['b']");
+                ->and($err->getMessage())->toContain("['b']")
+            ;
         });
 
         test('pre-infers template T from list<T> parameter', function () {
@@ -105,7 +107,8 @@ describe('ParamChecker Unit Tests', function () {
             ], $service, $registry);
 
             expect($err)->toBeInstanceOf(ErrorMessage::class)
-                ->and($err->getMessage())->toContain('[1]');
+                ->and($err->getMessage())->toContain('[1]')
+            ;
         });
     });
 
@@ -159,7 +162,8 @@ describe('ParamChecker Unit Tests', function () {
             ], null, $registry);
 
             expect($err)->toBeInstanceOf(ErrorMessage::class)
-                ->and($err->getMessage())->toContain('must be a class-string of Countable');
+                ->and($err->getMessage())->toContain('must be a class-string of Countable')
+            ;
         });
 
         test('returns ErrorMessage when class-string is not a valid class name', function () {
@@ -171,7 +175,8 @@ describe('ParamChecker Unit Tests', function () {
             ], null, $registry);
 
             expect($err)->toBeInstanceOf(ErrorMessage::class)
-                ->and($err->getMessage())->toContain('must be a valid class-string');
+                ->and($err->getMessage())->toContain('must be a valid class-string')
+            ;
         });
     });
 
@@ -192,7 +197,8 @@ describe('ParamChecker Unit Tests', function () {
                 'arguments' => [-5, 'Alice'],
             ], $fixture, $registry);
             expect($invalidErr)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalidErr->getMessage())->toContain('positive-int');
+                ->and($invalidErr->getMessage())->toContain('positive-int')
+            ;
         });
 
         test('validates variadic parameters on dynamic static @method calls routed via __callStatic', function () {
@@ -210,7 +216,8 @@ describe('ParamChecker Unit Tests', function () {
                 'arguments' => [1, 2, 'invalid_int'],
             ], MagicMethodFixture::class, $registry);
             expect($invalidErr)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalidErr->getMessage())->toContain('$items[2]');
+                ->and($invalidErr->getMessage())->toContain('$items[2]')
+            ;
         });
     });
 

@@ -711,7 +711,7 @@ final class ContractParser
 
         if ($node instanceof CallableTypeNode) {
             $parameters = array_map(
-                fn(CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
                     self::substituteAliases($param->type, $aliases),
                     $param->isReference,
                     $param->isVariadic,
@@ -745,7 +745,7 @@ final class ContractParser
         if ($node instanceof GenericTypeNode) {
             $genericType = self::substituteAliases($node->type, $aliases);
             $genericTypes = array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->genericTypes
             );
 
@@ -762,14 +762,14 @@ final class ContractParser
 
         if ($node instanceof UnionTypeNode) {
             return new UnionTypeNode(array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->types
             ));
         }
 
         if ($node instanceof IntersectionTypeNode) {
             return new IntersectionTypeNode(array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->types
             ));
         }

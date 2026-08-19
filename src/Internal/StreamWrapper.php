@@ -54,6 +54,17 @@ final class StreamWrapper implements StreamWrapperInterface
     private static string $cacheDir = '';
 
     /**
+     * Resets the compiled pattern cache. Useful for test isolation.
+     */
+    public static function reset(): void
+    {
+        self::$isInitialized = false;
+        self::$includeRawPatterns = [];
+        self::$excludeRawPatterns = [];
+        self::$baseDir = '';
+    }
+
+    /**
      * @param array<string, mixed> $config
      */
     public static function register(array $config = []): void
@@ -515,20 +526,32 @@ final class StreamWrapper implements StreamWrapperInterface
             return false;
         }
 
-        // Unconditionally prevent double-parsing cached files!
         $normalizedCacheDir = rtrim(str_replace('\\', '/', self::$cacheDir), '/') . '/';
         if (str_starts_with($normalizedPath, $normalizedCacheDir)) {
             return false;
         }
 
-        $longestIncludeMatch = 0;
         $isVendorPath = str_contains($normalizedPath, '/vendor/');
+        if ($isVendorPath) {
+            $hasExplicitVendorWhitelist = false;
+            foreach (self::$includeRawPatterns as $pattern => $regex) {
+                if (str_starts_with($pattern, 'vendor/') && preg_match($regex, $normalizedPath) === 1) {
+                    $hasExplicitVendorWhitelist = true;
 
+                    break;
+                }
+            }
+
+            if (! $hasExplicitVendorWhitelist) {
+                return false;
+            }
+        }
+
+        $longestIncludeMatch = 0;
         foreach (self::$includeRawPatterns as $pattern => $regex) {
             $isExplicitVendorInclude = str_starts_with($pattern, 'vendor/');
             $isWildcard = ($pattern === '*' || $pattern === '**');
 
-            // Application include rules (like src/**, src/Core/**) never match inside vendor directories
             if ($isVendorPath && ! $isExplicitVendorInclude && ! $isWildcard) {
                 continue;
             }

@@ -23,6 +23,9 @@ final class Config
      */
     private static ?array $cachedConfig = null;
 
+    /**
+     * Cached absolute project root path.
+     */
     private static ?string $projectRoot = null;
 
     private static bool $enabled = true;
@@ -208,6 +211,7 @@ final class Config
 
         ContractParser::reset();
         FileFilter::reset();
+        StreamWrapper::reset();
     }
 
     /**
@@ -228,6 +232,7 @@ final class Config
         TemplateManager::reset();
         HierarchyResolver::reset();
         FileFilter::reset();
+        StreamWrapper::reset();
     }
 
     /**
