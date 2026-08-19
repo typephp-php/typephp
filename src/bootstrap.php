@@ -11,7 +11,8 @@ if (class_exists(TypePHP::class) && ! \defined('TYPEPHP_BOOTED')) {
     $isDisabledConst = \defined('TYPEPHP_DISABLE') && TYPEPHP_DISABLE;
 
     $argv = $_SERVER['argv'] ?? null;
-    $allArgs = \is_array($argv) ? implode(' ', array_map('strval', $argv)) : '';
+    $stringArgs = \is_array($argv) ? array_filter($argv, 'is_string') : [];
+    $allArgs = implode(' ', $stringArgs);
     $script = (isset($_SERVER['SCRIPT_NAME']) && \is_string($_SERVER['SCRIPT_NAME'])) ? $_SERVER['SCRIPT_NAME'] : '';
 
     $normalized = str_replace('\\', '/', strtolower($allArgs . ' ' . $script));
