@@ -31,7 +31,7 @@ jobs:
         with:
           php-version: ${{ matrix.php }}
           extensions: dom, mbstring, zip, libxml, json, tokenizer, fileinfo
-          coverage: none
+          coverage: ${{ matrix.os == 'ubuntu-latest' && matrix.php == '8.5' && 'pcov' || 'none' }}
 
       - name: Install Dependencies
         uses: ramsey/composer-install@v3
@@ -42,5 +42,17 @@ jobs:
         run: ./vendor/bin/phpstan analyse --no-progress
         if: matrix.os == 'ubuntu-latest' && matrix.php == '8.3'
 
+      - name: Run Test Suite with Coverage (Pest)
+        run: ./vendor/bin/pest --coverage --coverage-clover=clover.xml
+        if: matrix.os == 'ubuntu-latest' && matrix.php == '9.0'
+
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: matrix.os == 'ubuntu-latest' && matrix.php == '9.0'
+        with:
+          files: clover.xml
+          fail_ci_if_error: false
+
       - name: Run Test Suite (Pest)
         run: ./vendor/bin/pest --compact
+        if: "! (matrix.os == 'ubuntu-latest' && matrix.php == '8.5')"
