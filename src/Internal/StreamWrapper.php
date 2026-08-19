@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal;
 
+require_once __DIR__ . '/PathMatcher.php';
+
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\CloningVisitor;
 use PhpParser\ParserFactory;

@@ -37,7 +37,8 @@
         "phpstan/extension-installer": "^1.4",
         "vimeo/psalm": "^6.16",
         "carthage-software/mago": "^1.47",
-        "rector/rector": "^2.6"
+        "rector/rector": "^2.6",
+        "friendsofphp/php-cs-fixer": "^3.95"
     },
     "bin": [
         "bin/typephp"
