@@ -82,16 +82,31 @@ final class FileFilter
             self::compilePatterns();
         }
 
-        $longestIncludeMatch = 0;
         $isVendorPath = str_contains($normalizedPath, '/vendor/');
+        if ($isVendorPath) {
+            $hasExplicitVendorWhitelist = false;
+            /** @var array<int, array{pattern: string, len: int, regex: string}> $includes */
+            $includes = self::$compiledIncludes;
+            foreach ($includes as $compiled) {
+                if (str_starts_with($compiled['pattern'], 'vendor/') && preg_match($compiled['regex'], $normalizedPath) === 1) {
+                    $hasExplicitVendorWhitelist = true;
 
+                    break;
+                }
+            }
+
+            if (! $hasExplicitVendorWhitelist) {
+                return self::$pathFilterCache[$normalizedPath] = true; // Instantly exclude!
+            }
+        }
+
+        $longestIncludeMatch = 0;
         /** @var array<int, array{pattern: string, len: int, regex: string}> $includes */
         $includes = self::$compiledIncludes;
         foreach ($includes as $compiled) {
             $isExplicitVendorInclude = str_starts_with($compiled['pattern'], 'vendor/');
             $isWildcard = ($compiled['pattern'] === '*' || $compiled['pattern'] === '**');
 
-            // Application include rules (like src/**, src/Core/**) never match inside vendor directories
             if ($isVendorPath && ! $isExplicitVendorInclude && ! $isWildcard) {
                 continue;
             }
