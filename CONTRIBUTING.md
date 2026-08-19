@@ -12,7 +12,7 @@ To ensure consistency across the codebase, this repository requires the followin
 
 1. **Fork and Branch**: Fork the repository and create a feature branch from `main`.
 2. **Dependencies**: Install development tools using `composer install`.
-3. **Coding Standards**: This project follows strict PSR-12 standards. Laravel Pint is the sole authority for code formatting:
+3. **Linting & Code Formatting Authority (Laravel Pint)**: This project follows strict PSR-12 standards. Laravel Pint is the **sole authoritative linter and formatter** for the entire codebase:
    ```bash
    ./vendor/bin/pint
    ```
@@ -28,10 +28,11 @@ To ensure consistency across the codebase, this repository requires the followin
 
 ---
 
-## Static Analysis & Tooling Interoperability Policy
+## Tooling Authority & Interoperability Policy
 
-* **PHPStan is the Primary Authority**: PHPStan configured at Level MAX is the official gatekeeper for type safety and code quality in TypePHP. All contributions must pass PHPStan checks.
-* **Tooling Interoperability (Psalm, Mago, etc.)**: Secondary analyzers and linters (such as Psalm and Mago) are integrated into the test environment solely for **interoperability verification** and ensuring that TypePHP's stream wrapper and AST transformations stand down properly and do not deadlock or conflict with external static analysis engines.
+* **Laravel Pint is the Authoritative Linter & Formatter**: All code styling and linting rules are defined strictly in `pint.json`. No external style linter overrides Pint.
+* **PHPStan is the Authoritative Static Analyzer**: PHPStan configured at Level MAX is the official gatekeeper for type safety and code quality in TypePHP. All contributions must pass PHPStan checks without errors.
+* **Tooling Interoperability (Psalm, Mago, Rector, PHP-CS-Fixer, etc.)**: Secondary analyzers and tools (such as Psalm, Mago, Rector, and PHP-CS-Fixer) are integrated into the test environment solely for **interoperability verification** and ensuring that TypePHP's runtime stream wrapper and AST transformations stand down properly and do not deadlock or conflict with external static analysis engines.
 
 ---
 
