@@ -47,11 +47,114 @@ describe('Vendor Path Isolation & Whitelisting (Shopware Doctrine DBAL Reproduct
         ;
     });
 
+    test('excludes relative vendor paths starting with vendor/ (without leading slash)', function () {
+        Config::set([
+            'include' => [
+                'src/**',
+                'app/**',
+                'tests/**',
+            ],
+            'exclude' => [
+                'vendor/**',
+                'storage/**',
+                'var/**',
+                'cache/**',
+            ],
+        ]);
+
+        StreamWrapper::register();
+
+        $relativeVendorFile = 'vendor/doctrine/dbal/src/Schema/AbstractNamedObject.php';
+        $relativeAppFile = 'src/Core/Framework/Util.php';
+
+        expect(FileFilter::isFileExcluded($relativeVendorFile))->toBeTrue()
+            ->and(FileFilter::isFileExcluded($relativeAppFile))->toBeFalse()
+        ;
+
+        $refMethod = new ReflectionMethod(StreamWrapper::class, 'isApplicationFile');
+        expect($refMethod->invoke(null, $relativeVendorFile, $relativeVendorFile))->toBeFalse()
+            ->and($refMethod->invoke(null, $relativeAppFile, $relativeAppFile))->toBeTrue()
+        ;
+    });
+
+    test('excludes composer relative traversal paths (vendor/composer/../doctrine/dbal/src/...)', function () {
+        Config::set([
+            'include' => [
+                'src/**',
+                'app/**',
+                'tests/**',
+            ],
+            'exclude' => [
+                'vendor/**',
+            ],
+        ]);
+
+        StreamWrapper::register();
+
+        $composerTraversalFile = 'vendor/composer/../doctrine/dbal/src/Schema/Column.php';
+
+        expect(FileFilter::isFileExcluded($composerTraversalFile))->toBeTrue();
+
+        $refMethod = new ReflectionMethod(StreamWrapper::class, 'isApplicationFile');
+        expect($refMethod->invoke(null, $composerTraversalFile, $composerTraversalFile))->toBeFalse();
+    });
+
+    test('excludes Windows relative paths starting with vendor\\', function () {
+        Config::set([
+            'include' => [
+                'src/**',
+            ],
+            'exclude' => [
+                'vendor/**',
+            ],
+        ]);
+
+        StreamWrapper::register();
+
+        $windowsRelativeVendor = 'vendor\\doctrine\\dbal\\src\\Schema\\Column.php';
+        $windowsRelativeApp = 'src\\Core\\Framework\\Util.php';
+
+        expect(FileFilter::isFileExcluded($windowsRelativeVendor))->toBeTrue()
+            ->and(FileFilter::isFileExcluded($windowsRelativeApp))->toBeFalse()
+        ;
+
+        $refMethod = new ReflectionMethod(StreamWrapper::class, 'isApplicationFile');
+        expect($refMethod->invoke(null, $windowsRelativeVendor, $windowsRelativeVendor))->toBeFalse()
+            ->and($refMethod->invoke(null, $windowsRelativeApp, $windowsRelativeApp))->toBeTrue()
+        ;
+    });
+
+    test('src/** include pattern strictly matches project root src/ and does not match arbitrary nested src folders', function () {
+        Config::set([
+            'include' => [
+                'src/**',
+            ],
+            'exclude' => [
+                'vendor/**',
+            ],
+        ]);
+
+        StreamWrapper::register();
+
+        $projectRoot = Config::getProjectRoot();
+        $rootSrcFile = str_replace('\\', '/', $projectRoot . '/src/Service.php');
+        $nestedSrcFile = str_replace('\\', '/', $projectRoot . '/packages/custom-tool/src/Helper.php');
+
+        expect(FileFilter::isFileExcluded($rootSrcFile))->toBeFalse()
+            ->and(FileFilter::isFileExcluded($nestedSrcFile))->toBeTrue()
+        ;
+
+        $refMethod = new ReflectionMethod(StreamWrapper::class, 'isApplicationFile');
+        expect($refMethod->invoke(null, $rootSrcFile, $rootSrcFile))->toBeTrue()
+            ->and($refMethod->invoke(null, $nestedSrcFile, $nestedSrcFile))->toBeFalse()
+        ;
+    });
+
     test('allows explicitly whitelisted vendor packages while strictly excluding all other vendor files', function () {
         Config::set([
             'include' => [
                 'src/**',
-                'vendor/my-org/whitelisted-package/**', 
+                'vendor/my-org/whitelisted-package/**',
             ],
             'exclude' => [
                 'vendor/**',
@@ -78,7 +181,7 @@ describe('Vendor Path Isolation & Whitelisting (Shopware Doctrine DBAL Reproduct
         Config::set([
             'include' => [
                 'src/**',
-                'src/Core/Framework/**', 
+                'src/Core/Framework/**',
                 'src/Core/Content/**',
             ],
             'exclude' => [

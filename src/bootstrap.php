@@ -10,7 +10,18 @@ if (class_exists(TypePHP::class) && ! \defined('TYPEPHP_BOOTED')) {
     $isDisabledEnv = getenv('TYPEPHP_DISABLE') !== false && filter_var(getenv('TYPEPHP_DISABLE'), FILTER_VALIDATE_BOOLEAN);
     $isDisabledConst = \defined('TYPEPHP_DISABLE') && TYPEPHP_DISABLE;
 
-    if (! $isDisabledEnv && ! $isDisabledConst) {
+    $argv = $_SERVER['argv'] ?? null;
+    $script = '';
+    if (\is_array($argv) && isset($argv[0]) && \is_string($argv[0])) {
+        $script = $argv[0];
+    } elseif (isset($_SERVER['SCRIPT_NAME']) && \is_string($_SERVER['SCRIPT_NAME'])) {
+        $script = $_SERVER['SCRIPT_NAME'];
+    }
+
+    $normalizedScript = str_replace('\\', '/', strtolower($script));
+    $isStaticAnalysis = str_contains($normalizedScript, 'phpstan') || str_contains($normalizedScript, 'psalm');
+
+    if (! $isDisabledEnv && ! $isDisabledConst && ! $isStaticAnalysis) {
         TypePHP::boot();
     }
 }

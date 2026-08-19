@@ -82,7 +82,7 @@ final class FileFilter
             self::compilePatterns();
         }
 
-        $isVendorPath = str_contains($normalizedPath, '/vendor/');
+        $isVendorPath = str_starts_with($normalizedPath, 'vendor/') || str_contains($normalizedPath, '/vendor/');
         if ($isVendorPath) {
             $hasExplicitVendorWhitelist = false;
             /** @var array<int, array{pattern: string, len: int, regex: string}> $includes */
@@ -183,7 +183,7 @@ final class FileFilter
         } elseif ($glob === '*' || $glob === '**' || str_starts_with($glob, '**')) {
             $pattern = '.*' . ($glob === '*' || $glob === '**' ? '' : substr($regex, 4)) . '$';
         } else {
-            $pattern = '(^' . preg_quote($baseDir . '/', '#') . '|^.*\/)' . $regex . '$';
+            $pattern = '(^' . preg_quote($baseDir . '/', '#') . '|^)' . $regex . '$';
         }
 
         return '#' . $pattern . '#i';

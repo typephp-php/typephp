@@ -465,7 +465,7 @@ final class StreamWrapper implements StreamWrapperInterface
         } elseif ($glob === '*' || $glob === '**' || str_starts_with($glob, '**')) {
             $pattern = '.*' . ($glob === '*' || $glob === '**' ? '' : substr($regex, 4)) . '$';
         } else {
-            $pattern = '(^' . preg_quote(self::$baseDir . '/', '#') . '|^.*\/)' . $regex . '$';
+            $pattern = '(^' . preg_quote(self::$baseDir . '/', '#') . '|^)' . $regex . '$';
         }
 
         return '#' . $pattern . '#i';
@@ -509,7 +509,7 @@ final class StreamWrapper implements StreamWrapperInterface
     private static function isApplicationFile(string $path, string|false $resolvedPath): bool
     {
         if (! Config::isEnabled()) {
-            return false; // TypePHP is globally disabled!
+            return false;
         }
 
         if (! str_ends_with($path, '.php') || $resolvedPath === false) {
@@ -517,13 +517,32 @@ final class StreamWrapper implements StreamWrapperInterface
         }
 
         $normalizedPath = str_replace('\\', '/', $resolvedPath);
-
-        // Prevent parsing TypePHP's own source code
+        $normalizedRawPath = str_replace('\\', '/', $path);
         $parentDir = realpath(__DIR__ . '/..');
-        $libSrcDir = $parentDir !== false ? str_replace('\\', '/', $parentDir) : '';
+        $libSrcDir = $parentDir !== false ? rtrim(str_replace('\\', '/', $parentDir), '/') . '/' : '';
 
-        if ($libSrcDir !== '' && str_starts_with($normalizedPath, $libSrcDir)) {
+        if ($libSrcDir !== '' && str_contains($libSrcDir, '/vendor/') && str_starts_with($normalizedPath, $libSrcDir)) {
             return false;
+        }
+
+        if ($libSrcDir !== '' && ! str_contains($libSrcDir, '/vendor/')) {
+            $typePhpInternalDirs = [
+                $libSrcDir . 'Internal/',
+                $libSrcDir . 'Contract/',
+                $libSrcDir . 'Command/',
+                $libSrcDir . 'Validator/',
+                $libSrcDir . 'Wrapper/',
+                $libSrcDir . 'Resolver/',
+                $libSrcDir . 'Extension/',
+                $libSrcDir . 'Exception/',
+                $libSrcDir . 'TypePHP.php',
+                $libSrcDir . 'bootstrap.php',
+            ];
+            foreach ($typePhpInternalDirs as $internalDir) {
+                if (str_starts_with($normalizedPath, $internalDir)) {
+                    return false;
+                }
+            }
         }
 
         $normalizedCacheDir = rtrim(str_replace('\\', '/', self::$cacheDir), '/') . '/';
@@ -531,11 +550,15 @@ final class StreamWrapper implements StreamWrapperInterface
             return false;
         }
 
-        $isVendorPath = str_contains($normalizedPath, '/vendor/');
+        $isVendorPath = str_starts_with($normalizedPath, 'vendor/')
+            || str_contains($normalizedPath, '/vendor/')
+            || str_starts_with($normalizedRawPath, 'vendor/')
+            || str_contains($normalizedRawPath, '/vendor/');
+
         if ($isVendorPath) {
             $hasExplicitVendorWhitelist = false;
             foreach (self::$includeRawPatterns as $pattern => $regex) {
-                if (str_starts_with($pattern, 'vendor/') && preg_match($regex, $normalizedPath) === 1) {
+                if (str_starts_with($pattern, 'vendor/') && (preg_match($regex, $normalizedPath) === 1 || preg_match($regex, $normalizedRawPath) === 1)) {
                     $hasExplicitVendorWhitelist = true;
 
                     break;
@@ -556,7 +579,7 @@ final class StreamWrapper implements StreamWrapperInterface
                 continue;
             }
 
-            if (preg_match($regex, $normalizedPath) === 1) {
+            if (preg_match($regex, $normalizedPath) === 1 || preg_match($regex, $normalizedRawPath) === 1) {
                 $longestIncludeMatch = max($longestIncludeMatch, \strlen($pattern));
             }
         }
@@ -567,7 +590,7 @@ final class StreamWrapper implements StreamWrapperInterface
 
         $longestExcludeMatch = 0;
         foreach (self::$excludeRawPatterns as $pattern => $regex) {
-            if (preg_match($regex, $normalizedPath) === 1) {
+            if (preg_match($regex, $normalizedPath) === 1 || preg_match($regex, $normalizedRawPath) === 1) {
                 $longestExcludeMatch = max($longestExcludeMatch, \strlen($pattern));
             }
         }
