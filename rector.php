@@ -12,4 +12,5 @@ return RectorConfig::configure()
     ->withoutParallel()
     ->withRules([
         AddNameToBooleanArgumentRector::class,
-    ]);
+    ])
+;
