@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace TypePHP;
 
+require_once __DIR__ . '/Internal/PathMatcher.php';
+require_once __DIR__ . '/Internal/Config.php';
+require_once __DIR__ . '/Internal/CacheManager.php';
+
 if (class_exists(TypePHP::class) && ! \defined('TYPEPHP_BOOTED')) {
     \define('TYPEPHP_BOOTED', true);
 

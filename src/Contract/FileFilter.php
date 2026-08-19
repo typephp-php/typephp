@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace TypePHP\Contract;
 
-use TypePHP\Internal\CacheManager;
 use TypePHP\Internal\Config;
+use TypePHP\Internal\PathMatcher;
 
 /**
  * @internal Checks file paths against vendor directories, file extensions, and user-configured include/exclude globs.
@@ -20,33 +20,12 @@ final class FileFilter
     private static array $pathFilterCache = [];
 
     /**
-     * Pre-compiled include regex patterns, raw patterns, and match lengths.
-     *
-     * @var array<int, array{pattern: string, len: int, regex: string}>|null
-     */
-    private static ?array $compiledIncludes = null;
-
-    /**
-     * Pre-compiled exclude regex patterns, raw patterns, and match lengths.
-     *
-     * @var array<int, array{pattern: string, len: int, regex: string}>|null
-     */
-    private static ?array $compiledExcludes = null;
-
-    /**
-     * Cached normalized cache directory path.
-     */
-    private static ?string $cachedCacheDir = null;
-
-    /**
      * Resets the path decision cache and pre-compiled regex patterns. Useful for test isolation.
      */
     public static function reset(): void
     {
         self::$pathFilterCache = [];
-        self::$compiledIncludes = null;
-        self::$compiledExcludes = null;
-        self::$cachedCacheDir = null;
+        PathMatcher::reset();
     }
 
     /**
@@ -59,7 +38,7 @@ final class FileFilter
             return false;
         }
 
-        $normalizedPath = str_replace('\\', '/', $fileName);
+        $normalizedPath = PathMatcher::normalizePath($fileName);
 
         if (isset(self::$pathFilterCache[$normalizedPath])) {
             return self::$pathFilterCache[$normalizedPath];
@@ -70,122 +49,18 @@ final class FileFilter
             return self::$pathFilterCache[$normalizedPath] = true;
         }
 
-        if (self::$cachedCacheDir === null) {
-            self::$cachedCacheDir = rtrim(str_replace('\\', '/', CacheManager::getCacheDir()), '/') . '/';
-        }
-
-        if (str_starts_with($normalizedPath, self::$cachedCacheDir)) {
+        if (PathMatcher::isCachePath($normalizedPath)) {
             return self::$pathFilterCache[$normalizedPath] = true;
         }
 
-        if (self::$compiledIncludes === null || self::$compiledExcludes === null) {
-            self::compilePatterns();
-        }
-
-        $isVendorPath = str_starts_with($normalizedPath, 'vendor/') || str_contains($normalizedPath, '/vendor/');
-        if ($isVendorPath) {
-            $hasExplicitVendorWhitelist = false;
-            /** @var array<int, array{pattern: string, len: int, regex: string}> $includes */
-            $includes = self::$compiledIncludes;
-            foreach ($includes as $compiled) {
-                if (str_starts_with($compiled['pattern'], 'vendor/') && preg_match($compiled['regex'], $normalizedPath) === 1) {
-                    $hasExplicitVendorWhitelist = true;
-
-                    break;
-                }
-            }
-
-            if (! $hasExplicitVendorWhitelist) {
-                return self::$pathFilterCache[$normalizedPath] = true; // Instantly exclude!
-            }
-        }
-
-        $longestIncludeMatch = 0;
-        /** @var array<int, array{pattern: string, len: int, regex: string}> $includes */
-        $includes = self::$compiledIncludes;
-        foreach ($includes as $compiled) {
-            $isExplicitVendorInclude = str_starts_with($compiled['pattern'], 'vendor/');
-            $isWildcard = ($compiled['pattern'] === '*' || $compiled['pattern'] === '**');
-
-            if ($isVendorPath && ! $isExplicitVendorInclude && ! $isWildcard) {
-                continue;
-            }
-
-            if (preg_match($compiled['regex'], $normalizedPath) === 1) {
-                $longestIncludeMatch = max($longestIncludeMatch, $compiled['len']);
-            }
-        }
-
-        $longestExcludeMatch = 0;
-        /** @var array<int, array{pattern: string, len: int, regex: string}> $excludes */
-        $excludes = self::$compiledExcludes;
-        foreach ($excludes as $compiled) {
-            if (preg_match($compiled['regex'], $normalizedPath) === 1) {
-                $longestExcludeMatch = max($longestExcludeMatch, $compiled['len']);
-            }
-        }
-
-        // Equal specificity tie-breaker: Exclude wins!
-        return self::$pathFilterCache[$normalizedPath] = ($longestExcludeMatch >= $longestIncludeMatch);
-    }
-
-    /**
-     * Compiles configured include and exclude globs into regex patterns once per configuration lifecycle.
-     */
-    private static function compilePatterns(): void
-    {
         $config = Config::get();
-        /** @var array<mixed> $includes */
+        /** @var array<int, string> $includes */
         $includes = \is_array($config['include'] ?? null) ? $config['include'] : ['**'];
-        /** @var array<mixed> $excludes */
+        /** @var array<int, string> $excludes */
         $excludes = \is_array($config['exclude'] ?? null) ? $config['exclude'] : ['vendor/**', 'storage/**', 'var/**', 'cache/**'];
 
-        $baseDir = Config::getProjectRoot();
+        $isIncluded = PathMatcher::isPathIncluded($normalizedPath, $includes, $excludes, $fileName);
 
-        self::$compiledIncludes = [];
-        foreach ($includes as $pattern) {
-            if (\is_string($pattern)) {
-                $trimmed = trim($pattern);
-                self::$compiledIncludes[] = [
-                    'pattern' => $trimmed,
-                    'len' => \strlen($trimmed),
-                    'regex' => self::compileGlobToRegex($trimmed, $baseDir),
-                ];
-            }
-        }
-
-        self::$compiledExcludes = [];
-        foreach ($excludes as $pattern) {
-            if (\is_string($pattern)) {
-                $trimmed = trim($pattern);
-                self::$compiledExcludes[] = [
-                    'pattern' => $trimmed,
-                    'len' => \strlen($trimmed),
-                    'regex' => self::compileGlobToRegex($trimmed, $baseDir),
-                ];
-            }
-        }
-    }
-
-    /**
-     * Converts a glob pattern into an absolute regex pattern.
-     */
-    private static function compileGlobToRegex(string $glob, string $baseDir): string
-    {
-        $glob = str_replace('\\', '/', trim($glob));
-        $isAbsolute = str_starts_with($glob, '/') || (bool) preg_match('#^[a-zA-Z]:/#', $glob);
-
-        $regex = preg_quote($glob, '#');
-        $regex = str_replace(['\*\*', '\*'], ['.*', '[^/]*'], $regex);
-
-        if ($isAbsolute) {
-            $pattern = '^' . $regex . '$';
-        } elseif ($glob === '*' || $glob === '**' || str_starts_with($glob, '**')) {
-            $pattern = '.*' . ($glob === '*' || $glob === '**' ? '' : substr($regex, 4)) . '$';
-        } else {
-            $pattern = '(^' . preg_quote($baseDir . '/', '#') . '|^)' . $regex . '$';
-        }
-
-        return '#' . $pattern . '#i';
+        return self::$pathFilterCache[$normalizedPath] = ! $isIncluded;
     }
 }

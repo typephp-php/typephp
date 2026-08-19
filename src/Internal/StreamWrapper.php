@@ -33,20 +33,6 @@ final class StreamWrapper implements StreamWrapperInterface
      */
     private $dirHandle = null;
 
-    /**
-     * @var array<string, string>
-     */
-    private static array $includeRawPatterns = [];
-
-    /**
-     * @var array<string, string>
-     */
-    private static array $excludeRawPatterns = [];
-
-    private static string $baseDir = '';
-
-    private static bool $isInitialized = false;
-
     private static bool $isRegistered = false;
 
     private static bool $cacheEnabled = true;
@@ -58,10 +44,7 @@ final class StreamWrapper implements StreamWrapperInterface
      */
     public static function reset(): void
     {
-        self::$isInitialized = false;
-        self::$includeRawPatterns = [];
-        self::$excludeRawPatterns = [];
-        self::$baseDir = '';
+        PathMatcher::reset();
     }
 
     /**
@@ -71,30 +54,8 @@ final class StreamWrapper implements StreamWrapperInterface
     {
         $resolvedConfig = array_replace_recursive(Config::get(), $config);
 
-        if (! self::$isInitialized || \count($config) > 0) {
-            self::$baseDir = Config::getProjectRoot();
-
-            /** @var array<int, string> $includes */
-            $includes = \is_array($resolvedConfig['include'] ?? null) ? $resolvedConfig['include'] : ['**'];
-
-            /** @var array<int, string> $excludes */
-            $excludes = \is_array($resolvedConfig['exclude'] ?? null) ? $resolvedConfig['exclude'] : ['vendor/**', 'storage/**', 'var/**', 'cache/**'];
-
-            self::$includeRawPatterns = [];
-            foreach ($includes as $pattern) {
-                self::$includeRawPatterns[trim($pattern)] = self::compileGlobToRegex($pattern);
-            }
-
-            self::$excludeRawPatterns = [];
-            foreach ($excludes as $pattern) {
-                self::$excludeRawPatterns[trim($pattern)] = self::compileGlobToRegex($pattern);
-            }
-
-            self::$cacheEnabled = (bool) ($resolvedConfig['cache'] ?? true);
-            self::$cacheDir = CacheManager::getCacheDir();
-
-            self::$isInitialized = true;
-        }
+        self::$cacheEnabled = (bool) ($resolvedConfig['cache'] ?? true);
+        self::$cacheDir = CacheManager::getCacheDir();
 
         if (! self::$isRegistered) {
             stream_wrapper_unregister('file');
@@ -450,28 +411,6 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Converts a glob pattern into an absolute regex pattern for path matching.
-     */
-    private static function compileGlobToRegex(string $glob): string
-    {
-        $glob = str_replace('\\', '/', trim($glob));
-        $isAbsolute = str_starts_with($glob, '/') || (bool) preg_match('#^[a-zA-Z]:/#', $glob);
-
-        $regex = preg_quote($glob, '#');
-        $regex = str_replace(['\*\*', '\*'], ['.*', '[^/]*'], $regex);
-
-        if ($isAbsolute) {
-            $pattern = '^' . $regex . '$';
-        } elseif ($glob === '*' || $glob === '**' || str_starts_with($glob, '**')) {
-            $pattern = '.*' . ($glob === '*' || $glob === '**' ? '' : substr($regex, 4)) . '$';
-        } else {
-            $pattern = '(^' . preg_quote(self::$baseDir . '/', '#') . '|^)' . $regex . '$';
-        }
-
-        return '#' . $pattern . '#i';
-    }
-
-    /**
      * Executes a callback while temporarily suppressing PHP error and warning handlers.
      *
      * @template T
@@ -516,87 +455,23 @@ final class StreamWrapper implements StreamWrapperInterface
             return false;
         }
 
-        $normalizedPath = str_replace('\\', '/', $resolvedPath);
-        $normalizedRawPath = str_replace('\\', '/', $path);
-        $parentDir = realpath(__DIR__ . '/..');
-        $libSrcDir = $parentDir !== false ? rtrim(str_replace('\\', '/', $parentDir), '/') . '/' : '';
+        $normalizedPath = PathMatcher::normalizePath($resolvedPath);
 
-        if ($libSrcDir !== '' && str_contains($libSrcDir, '/vendor/') && str_starts_with($normalizedPath, $libSrcDir)) {
+        if (PathMatcher::isLibraryInternal($normalizedPath)) {
             return false;
         }
 
-        if ($libSrcDir !== '' && ! str_contains($libSrcDir, '/vendor/')) {
-            $typePhpInternalDirs = [
-                $libSrcDir . 'Internal/',
-                $libSrcDir . 'Contract/',
-                $libSrcDir . 'Command/',
-                $libSrcDir . 'Validator/',
-                $libSrcDir . 'Wrapper/',
-                $libSrcDir . 'Resolver/',
-                $libSrcDir . 'Extension/',
-                $libSrcDir . 'Exception/',
-                $libSrcDir . 'TypePHP.php',
-                $libSrcDir . 'bootstrap.php',
-            ];
-            foreach ($typePhpInternalDirs as $internalDir) {
-                if (str_starts_with($normalizedPath, $internalDir)) {
-                    return false;
-                }
-            }
-        }
-
-        $normalizedCacheDir = rtrim(str_replace('\\', '/', self::$cacheDir), '/') . '/';
-        if (str_starts_with($normalizedPath, $normalizedCacheDir)) {
+        if (PathMatcher::isCachePath($normalizedPath)) {
             return false;
         }
 
-        $isVendorPath = str_starts_with($normalizedPath, 'vendor/')
-            || str_contains($normalizedPath, '/vendor/')
-            || str_starts_with($normalizedRawPath, 'vendor/')
-            || str_contains($normalizedRawPath, '/vendor/');
+        $config = Config::get();
+        /** @var array<int, string> $includes */
+        $includes = \is_array($config['include'] ?? null) ? $config['include'] : ['**'];
+        /** @var array<int, string> $excludes */
+        $excludes = \is_array($config['exclude'] ?? null) ? $config['exclude'] : ['vendor/**', 'storage/**', 'var/**', 'cache/**'];
 
-        if ($isVendorPath) {
-            $hasExplicitVendorWhitelist = false;
-            foreach (self::$includeRawPatterns as $pattern => $regex) {
-                if (str_starts_with($pattern, 'vendor/') && (preg_match($regex, $normalizedPath) === 1 || preg_match($regex, $normalizedRawPath) === 1)) {
-                    $hasExplicitVendorWhitelist = true;
-
-                    break;
-                }
-            }
-
-            if (! $hasExplicitVendorWhitelist) {
-                return false;
-            }
-        }
-
-        $longestIncludeMatch = 0;
-        foreach (self::$includeRawPatterns as $pattern => $regex) {
-            $isExplicitVendorInclude = str_starts_with($pattern, 'vendor/');
-            $isWildcard = ($pattern === '*' || $pattern === '**');
-
-            if ($isVendorPath && ! $isExplicitVendorInclude && ! $isWildcard) {
-                continue;
-            }
-
-            if (preg_match($regex, $normalizedPath) === 1 || preg_match($regex, $normalizedRawPath) === 1) {
-                $longestIncludeMatch = max($longestIncludeMatch, \strlen($pattern));
-            }
-        }
-
-        if ($longestIncludeMatch === 0) {
-            return false;
-        }
-
-        $longestExcludeMatch = 0;
-        foreach (self::$excludeRawPatterns as $pattern => $regex) {
-            if (preg_match($regex, $normalizedPath) === 1 || preg_match($regex, $normalizedRawPath) === 1) {
-                $longestExcludeMatch = max($longestExcludeMatch, \strlen($pattern));
-            }
-        }
-
-        // Equal specificity tie-breaker: Exclude wins!
-        return $longestIncludeMatch > $longestExcludeMatch;
+        return PathMatcher::isPathIncluded($normalizedPath, $includes, $excludes, $path);
     }
 
     private function openMemoryStream(string $resolvedPath): bool
