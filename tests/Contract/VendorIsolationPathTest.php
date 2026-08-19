@@ -53,7 +53,7 @@ describe('Vendor Path Isolation & Whitelisting (Shopware Doctrine DBAL Reproduct
         Config::set([
             'include' => [
                 'src/**',
-                'vendor/my-org/whitelisted-package/**', 
+                'vendor/my-org/whitelisted-package/**',
             ],
             'exclude' => [
                 'vendor/**',
@@ -80,7 +80,7 @@ describe('Vendor Path Isolation & Whitelisting (Shopware Doctrine DBAL Reproduct
         Config::set([
             'include' => [
                 'src/**',
-                'src/Core/Framework/**', 
+                'src/Core/Framework/**',
                 'src/Core/Content/**',
             ],
             'exclude' => [
@@ -97,7 +97,7 @@ describe('Vendor Path Isolation & Whitelisting (Shopware Doctrine DBAL Reproduct
     test('differentiates application folders from identical vendor folder names (e.g. lib/** in app vs lib/** in vendor)', function () {
         Config::set([
             'include' => [
-                'lib/**', 
+                'lib/**',
                 'modules/**',
             ],
             'exclude' => [
