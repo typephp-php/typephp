@@ -240,7 +240,8 @@ describe('ParamChecker Unit Tests', function () {
                 'userRole' => 'admin',
             ], $service, $registry);
             expect($invalidErr)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalidErr->getMessage())->toContain('positive-int');
+                ->and($invalidErr->getMessage())->toContain('positive-int')
+            ;
         });
     });
 });

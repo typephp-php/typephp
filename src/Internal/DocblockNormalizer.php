@@ -43,7 +43,7 @@ final class DocblockNormalizer
                 $shapeBody = $matches[2];
 
                 $lower = strtolower(ltrim($className, '\\'));
-                if (\in_array($lower, self::BUILTIN_SHAPE_KEYWORDS, true)) {
+                if (\in_array($lower, self::BUILTIN_SHAPE_KEYWORDS, strict: true)) {
                     return $matches[0];
                 }
 

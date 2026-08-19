@@ -7,3 +7,9 @@
 /phpunit.xml          export-ignore
 /pint.json            export-ignore
 /typephp.php          export-ignore
+/mago.toml            export-ignore
+/psalm.xml            export-ignore
+/.php-cs-fixer.dist.php     export-ignore
+/codecov.yml          export-ignore
+/rector.php           export-ignore
+/typephp.php           export-ignore

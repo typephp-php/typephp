@@ -71,7 +71,7 @@ final class PropertyHookInjector
                     NodeBuilder::createTernaryThrowExpr($checkCall)
                 )
             );
-            $paramCheckStmt->setAttribute('typephp_injected', true);
+            $paramCheckStmt->setAttribute('typephp_injected', value: true);
             array_unshift($hook->body, $paramCheckStmt);
         } elseif ($hook->body instanceof Node\Expr) {
             $hook->body = self::buildExpressionSetHookTernary($checkCall, $hook->body);

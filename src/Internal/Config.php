@@ -211,6 +211,7 @@ final class Config
 
         ContractParser::reset();
         FileFilter::reset();
+        PathMatcher::reset();
         StreamWrapper::reset();
     }
 
@@ -232,6 +233,7 @@ final class Config
         TemplateManager::reset();
         HierarchyResolver::reset();
         FileFilter::reset();
+        PathMatcher::reset();
         StreamWrapper::reset();
     }
 

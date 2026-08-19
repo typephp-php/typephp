@@ -54,7 +54,7 @@ final class CallableWrapper
         if (\is_array($callable) && $typeNode !== null) {
             $innerCallableTypeNode = null;
 
-            if ($typeNode instanceof GenericTypeNode && \in_array(strtolower($typeNode->type->name), ['list', 'array', 'iterable'], true)) {
+            if ($typeNode instanceof GenericTypeNode && \in_array(strtolower($typeNode->type->name), ['list', 'array', 'iterable'], strict: true)) {
                 $innerCallableTypeNode = $typeNode->genericTypes[1] ?? $typeNode->genericTypes[0] ?? null;
             } elseif ($typeNode instanceof ArrayTypeNode) {
                 $innerCallableTypeNode = $typeNode->type;

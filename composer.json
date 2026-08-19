@@ -34,7 +34,11 @@
         "pestphp/pest": "^2.0 || ^3.0 || ^4.0",
         "phpstan/phpstan": "^2.1",
         "phpstan/phpstan-strict-rules": "^2.0",
-        "phpstan/extension-installer": "^1.4"
+        "phpstan/extension-installer": "^1.4",
+        "vimeo/psalm": "^6.16",
+        "carthage-software/mago": "^1.47",
+        "rector/rector": "^2.6",
+        "friendsofphp/php-cs-fixer": "^3.95"
     },
     "bin": [
         "bin/typephp"
@@ -62,8 +66,20 @@
         "test": [
             "./vendor/bin/pest --colors"
         ],
-        "analyse": [
-            "./vendor/bin/phpstan analyse"
+        "analyze": [
+            "./vendor/bin/phpstan analyze"
+        ],
+        "psalm": [
+            "./vendor/bin/psalm"
+        ],
+        "mago": [
+            "./vendor/bin/mago analyze"
+        ],
+        "rector": [
+            "./vendor/bin/rector process"
+        ],
+        "rector:dry": [
+            "./vendor/bin/rector process --dry-run"
         ]
     },
     "minimum-stability": "dev",

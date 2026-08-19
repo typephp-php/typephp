@@ -226,7 +226,8 @@ describe('ReturnChecker Unit Tests', function () {
             );
 
             expect($result)->toBe($files)
-                ->and($wrappedCalled)->toBeFalse();
+                ->and($wrappedCalled)->toBeFalse()
+            ;
         });
     });
 });

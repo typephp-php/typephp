@@ -106,7 +106,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                                     NodeBuilder::createTernaryThrowExpr($checkCall, $dVar['expr']->getStartLine())
                                 )
                             );
-                            $checkStmt->setAttribute('typephp_injected', true);
+                            $checkStmt->setAttribute('typephp_injected', value: true);
                             $checkStmts[] = $checkStmt;
                         }
                     }
@@ -166,7 +166,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                 return null;
             }
 
-            $node->setAttribute('typephp_wrapped', true);
+            $node->setAttribute('typephp_wrapped', value: true);
 
             return new Node\Expr\FuncCall(
                 new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::cloneInstance'),

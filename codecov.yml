@@ -1,0 +1,12 @@
+coverage:
+  status:
+    project:
+      default:
+        enabled: false
+    patch:
+      default:
+        enabled: false
+
+comment:
+  layout: "reach,diff,flags,files,footer"
+  behavior: default

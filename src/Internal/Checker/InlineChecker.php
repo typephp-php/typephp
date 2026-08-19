@@ -124,7 +124,7 @@ final class InlineChecker
 
             $checkGenerics = (bool) ($config['generics'] ?? true);
             if ($typeNode instanceof GenericTypeNode && $checkGenerics && \is_object($value)) {
-                $err = TemplateManager::bindInstanceFromNode($value, $typeNode, $context, true);
+                $err = TemplateManager::bindInstanceFromNode($value, $typeNode, $context, forceBind: true);
                 if ($err !== null) {
                     return $err;
                 }

@@ -130,7 +130,7 @@ final class GenericValidator implements TypeValidatorInterface
                     self::$enumKeyCache[$enumClass] = array_map(fn ($case) => $case->name, $enumClass::cases());
                 }
 
-                if (! \in_array($value, self::$enumKeyCache[$enumClass], true)) {
+                if (! \in_array($value, self::$enumKeyCache[$enumClass], strict: true)) {
                     return ErrorFactory::createError($context . " must be a key of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
                 }
 
@@ -148,7 +148,7 @@ final class GenericValidator implements TypeValidatorInterface
                 }
             }
 
-            if (! \in_array($value, $validKeys, true)) {
+            if (! \in_array($value, $validKeys, strict: true)) {
                 return ErrorFactory::createError($context . ' must be a key of the specified array shape, ' . TypeFormatter::formatGivenValue($value) . ' given');
             }
 
@@ -183,7 +183,7 @@ final class GenericValidator implements TypeValidatorInterface
             $constValue = $this->resolveConstantValue($fqcn, $constName);
 
             if (\is_array($constValue)) {
-                if (! \in_array($value, $constValue, true)) {
+                if (! \in_array($value, $constValue, strict: true)) {
                     return ErrorFactory::createError($context . " must be a value of $cacheKey, " . TypeFormatter::formatGivenValue($value) . ' given');
                 }
 
@@ -197,7 +197,7 @@ final class GenericValidator implements TypeValidatorInterface
                         self::$enumValueCache[$enumClass] = array_map(fn ($case) => $case->value, $enumClass::cases());
                     }
 
-                    if (! \in_array($value, self::$enumValueCache[$enumClass], true)) {
+                    if (! \in_array($value, self::$enumValueCache[$enumClass], strict: true)) {
                         return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
                     }
 
@@ -348,7 +348,7 @@ final class GenericValidator implements TypeValidatorInterface
         if ($targetClassNode instanceof IdentifierTypeNode) {
             $targetName = $targetClassNode->name;
             if (class_exists($targetName) || interface_exists($targetName) || trait_exists($targetName) || enum_exists($targetName)) {
-                if (! is_a($value, $targetName, true)) {
+                if (! is_a($value, $targetName, allow_string: true)) {
                     return ErrorFactory::createError($context . ' must be a class-string of ' . $targetName . ", '$value' given");
                 }
             }
@@ -375,7 +375,7 @@ final class GenericValidator implements TypeValidatorInterface
         $valueTypeNode = $node->genericTypes[0] ?? null;
         if ($valueTypeNode !== null) {
             foreach ($value as $k => $v) {
-                if ($valueTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valueTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], true)) {
+                if ($valueTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valueTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true)) {
                     $err = $this->validateObjectGeneric($v, $valueTypeNode, $context . '[' . $k . ']');
                     if ($err !== null) {
                         return $err;
@@ -415,7 +415,7 @@ final class GenericValidator implements TypeValidatorInterface
         if ($typesCount === 1) {
             $valTypeNode = $node->genericTypes[0];
             foreach ($value as $k => $v) {
-                if ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], true)) {
+                if ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true)) {
                     $err = $this->validateObjectGeneric($v, $valTypeNode, $context . '[' . $k . ']');
                     if ($err !== null) {
                         return $err;
@@ -436,7 +436,7 @@ final class GenericValidator implements TypeValidatorInterface
                     return $err;
                 }
 
-                if ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], true)) {
+                if ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true)) {
                     $err = $this->validateObjectGeneric($v, $valTypeNode, $context . "['" . $k . "']");
                     if ($err !== null) {
                         return $err;

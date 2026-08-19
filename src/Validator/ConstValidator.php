@@ -52,7 +52,7 @@ final class ConstValidator implements TypeValidatorInterface
             if (str_contains($pattern, '*')) {
                 $allowedValues = self::resolveWildcardConstantValues($className, $pattern);
 
-                if (! \in_array($value, $allowedValues, true)) {
+                if (! \in_array($value, $allowedValues, strict: true)) {
                     $fqcnPattern = $className !== '' ? "$className::$pattern" : $pattern;
 
                     return ErrorFactory::createError($context . " must be a valid constant matching $fqcnPattern, " . TypeFormatter::formatGivenValue($value) . ' given');

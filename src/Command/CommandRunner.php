@@ -25,10 +25,10 @@ final class CommandRunner
     {
         $c = [CliFormatter::class, 'color'];
 
-        $showHelp = \in_array('help', $args, true)
-            || \in_array('typephp:help', $args, true)
-            || \in_array('--help', $args, true)
-            || \in_array('-h', $args, true)
+        $showHelp = \in_array('help', $args, strict: true)
+            || \in_array('typephp:help', $args, strict: true)
+            || \in_array('--help', $args, strict: true)
+            || \in_array('-h', $args, strict: true)
             || $args === [];
 
         if ($showHelp) {
