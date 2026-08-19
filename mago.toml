@@ -1,0 +1,7 @@
+php-version = "8.1.0"
+
+[source]
+paths = ["src"]
+includes = []
+excludes = ["tests/**", "vendor/**", "storage/**", "var/**", "cache/**"]
+

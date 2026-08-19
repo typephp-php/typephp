@@ -34,7 +34,9 @@
         "pestphp/pest": "^2.0 || ^3.0 || ^4.0",
         "phpstan/phpstan": "^2.1",
         "phpstan/phpstan-strict-rules": "^2.0",
-        "phpstan/extension-installer": "^1.4"
+        "phpstan/extension-installer": "^1.4",
+        "vimeo/psalm": "^6.16",
+        "carthage-software/mago": "^1.47"
     },
     "bin": [
         "bin/typephp"
@@ -62,8 +64,14 @@
         "test": [
             "./vendor/bin/pest --colors"
         ],
-        "analyse": [
-            "./vendor/bin/phpstan analyse"
+        "analyze": [
+            "./vendor/bin/phpstan analyze"
+        ],
+        "psalm": [
+            "./vendor/bin/psalm"
+        ],
+        "mago": [
+            "./vendor/bin/mago analyze"
         ]
     },
     "minimum-stability": "dev",
