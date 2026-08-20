@@ -46,7 +46,7 @@ jobs:
         run: php bin/typephp cache:warm
 
       - name: Run Test Suite with Coverage (Pest)
-        run: ./vendor/bin/pest --coverage-clover=clover.xml
+        run: ./vendor/bin/pest --coverage-clover=clover.xml --compact
         if: matrix.os == 'ubuntu-latest' && matrix.php == '8.4'
 
       - name: Upload Coverage to Codecov
