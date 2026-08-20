@@ -34,7 +34,7 @@ final class FunctionContractInjector
         }
 
         $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
-        $isMagicLifecycle = $isClassMethod && \in_array($methodName, ['__construct', '__destruct', '__clone'], strict: true);
+        $isMagicLifecycle = $isClassMethod && \in_array($methodName, ['__construct', '__destruct', '__clone'], true);
 
         $hasParam = $isClassMethod || str_contains($docText, '@param') || str_contains($docText, '@phpstan-param') || str_contains($docText, '@psalm-param');
         $hasReturn = ! $isMagicLifecycle && ($isClassMethod || str_contains($docText, '@return') || str_contains($docText, '@phpstan-return') || str_contains($docText, '@psalm-return'));
@@ -45,6 +45,7 @@ final class FunctionContractInjector
 
         $thisArg = self::resolveThisArg($isClassMethod, $node);
         $isNativeVoid = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'void';
+        $needsReturnVars = str_contains($docText, ' is ') || (str_contains($docText, '@return') && str_contains($docText, '$'));
 
         $injectedStmts = [];
         if ($hasParam) {
@@ -54,10 +55,10 @@ final class FunctionContractInjector
         if ($hasReturn) {
             $node->stmts = self::isGenerator($node)
                 ? self::wrapGeneratorReturns($node->stmts, $thisArg)
-                : self::wrapNonGeneratorReturns($node->stmts, $thisArg, $isNativeVoid);
+                : self::wrapNonGeneratorReturns($node->stmts, $thisArg, $isNativeVoid, $needsReturnVars);
         }
 
-        $node->stmts = array_merge($injectedStmts, $node->stmts);
+        $node->stmts = [...$injectedStmts, ...$node->stmts];
     }
 
     private static function shouldSkipInjection(string $docText): bool
@@ -138,7 +139,7 @@ final class FunctionContractInjector
             str_contains($docText, 'iterable') || str_contains($docText, 'Traversable') || str_contains($docText, 'Generator') || str_contains($docText, 'Iterator')
         );
 
-        return array_merge($injectedStmts, $callableWrappers, $iterableWrappers);
+        return [...$injectedStmts, ...$callableWrappers, ...$iterableWrappers];
     }
 
     private static function buildSetupScopeStmt(Node\Expr $thisArg): Node\Stmt\If_
@@ -162,7 +163,7 @@ final class FunctionContractInjector
             ['stmts' => [$throwStmt]]
         );
 
-        $ifStmt->setAttribute('typephp_injected', value: true);
+        $ifStmt->setAttribute('typephp_injected', true);
 
         return $ifStmt;
     }
@@ -196,7 +197,7 @@ final class FunctionContractInjector
                         )
                     )
                 );
-                $expr->setAttribute('typephp_injected', value: true);
+                $expr->setAttribute('typephp_injected', true);
                 $wrappers[] = $expr;
             }
         }
@@ -228,15 +229,19 @@ final class FunctionContractInjector
         );
     }
 
-    public static function buildReturnCheckCall(Node\Expr $exprToWrap, Node\Expr $thisArg): Node\Expr\FuncCall
+    public static function buildReturnCheckCall(Node\Expr $exprToWrap, Node\Expr $thisArg, bool $needsReturnVars = false): Node\Expr\FuncCall
     {
+        $varsArg = $needsReturnVars
+            ? new Node\Expr\FuncCall(new Node\Name('get_defined_vars'))
+            : new Node\Expr\Array_();
+
         return new Node\Expr\FuncCall(
             new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkReturn'),
             [
                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
                 new Node\Arg($exprToWrap),
                 new Node\Arg($thisArg),
-                new Node\Arg(new Node\Expr\FuncCall(new Node\Name('get_defined_vars'))),
+                new Node\Arg($varsArg),
             ]
         );
     }
@@ -253,10 +258,10 @@ final class FunctionContractInjector
             ),
             ['stmts' => [self::buildTypeErrorThrowStmt(new Node\Expr\Variable('__typephpRet'))]]
         );
-        $ifStmt->setAttribute('typephp_injected', value: true);
+        $ifStmt->setAttribute('typephp_injected', true);
 
         $retStmt = new Node\Stmt\Return_(null);
-        $retStmt->setAttribute('typephp_injected', value: true);
+        $retStmt->setAttribute('typephp_injected', true);
 
         return [$ifStmt, $retStmt];
     }
@@ -389,7 +394,7 @@ final class FunctionContractInjector
                         return null;
                     }
 
-                    $n->setAttribute('typephp_wrapped', value: true);
+                    $n->setAttribute('typephp_wrapped', true);
 
                     return FunctionContractInjector::buildWrappedYieldNode($n, $this->thisArg);
                 }
@@ -399,7 +404,7 @@ final class FunctionContractInjector
                         return null;
                     }
 
-                    $n->setAttribute('typephp_wrapped', value: true);
+                    $n->setAttribute('typephp_wrapped', true);
 
                     $n->expr = new Node\Expr\FuncCall(
                         new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::wrapIterable'),
@@ -427,13 +432,14 @@ final class FunctionContractInjector
      *
      * @return array<Node\Stmt>
      */
-    private static function wrapNonGeneratorReturns(array $stmts, Node\Expr $thisArg, bool $isNativeVoid): array
+    private static function wrapNonGeneratorReturns(array $stmts, Node\Expr $thisArg, bool $isNativeVoid, bool $needsReturnVars = false): array
     {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class ($thisArg, $isNativeVoid) extends NodeVisitorAbstract {
+        $traverser->addVisitor(new class ($thisArg, $isNativeVoid, $needsReturnVars) extends NodeVisitorAbstract {
             public function __construct(
                 private Node\Expr $thisArg,
-                private bool $isNativeVoid
+                private bool $isNativeVoid,
+                private bool $needsReturnVars
             ) {
             }
 
@@ -445,7 +451,7 @@ final class FunctionContractInjector
 
                 if ($n instanceof Node\Stmt\Return_) {
                     $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
-                    $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg);
+                    $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
 
                     if ($this->isNativeVoid) {
                         return FunctionContractInjector::buildVoidReturnGuard($checkCall);
@@ -463,13 +469,13 @@ final class FunctionContractInjector
 
         $lastStmt = end($newStmts);
         if (! $lastStmt instanceof Node\Stmt\Return_ && ! ($lastStmt instanceof Node\Stmt\Expression && $lastStmt->expr instanceof Node\Expr\Throw_)) {
-            $checkCall = self::buildReturnCheckCall(new Node\Expr\ConstFetch(new Node\Name('null')), $thisArg);
+            $checkCall = self::buildReturnCheckCall(new Node\Expr\ConstFetch(new Node\Name('null')), $thisArg, $needsReturnVars);
 
             if ($isNativeVoid) {
-                $newStmts = array_merge($newStmts, self::buildVoidReturnGuard($checkCall));
+                $newStmts = [...$newStmts, ...self::buildVoidReturnGuard($checkCall)];
             } else {
                 $retStmt = new Node\Stmt\Return_(self::buildTernaryReturnExpr($checkCall));
-                $retStmt->setAttribute('typephp_injected', value: true);
+                $retStmt->setAttribute('typephp_injected', true);
                 $newStmts[] = $retStmt;
             }
         }

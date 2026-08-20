@@ -27,6 +27,19 @@ use TypePHP\Validator\TypeValidatorRegistry;
 final class ParamChecker
 {
     /**
+     * Resets the effective function cache. Useful for test isolation.
+     */
+    public static function reset(): void
+    {
+        self::$effectiveFunctionCache = [];
+    }
+
+    /**
+     * @var array<string, string>
+     */
+    private static array $effectiveFunctionCache = [];
+
+    /**
      * @param array<string, mixed> $vars
      */
     public static function checkParams(
@@ -98,7 +111,7 @@ final class ParamChecker
     }
 
     /**
-     * Resolves the actual runtime class name vs trait name and matches any active trait aliases.
+     * Resolves the actual runtime class name vs trait name with $O(1)$ memoization.
      */
     private static function resolveEffectiveFunction(string $function, object|string|null $thisOrClass, ?object $thisObj): string
     {
@@ -106,15 +119,21 @@ final class ParamChecker
             return $function;
         }
 
-        [$classOrTrait, $methodName] = explode('::', $function, 2);
-        $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : null);
+        $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : '');
+        $cacheKey = $function . '|' . $actualClassName;
 
-        $effectiveFunction = ($actualClassName !== null && $actualClassName !== $classOrTrait)
+        if (isset(self::$effectiveFunctionCache[$cacheKey])) {
+            return self::$effectiveFunctionCache[$cacheKey];
+        }
+
+        [$classOrTrait, $methodName] = explode('::', $function, 2);
+
+        $effectiveFunction = ($actualClassName !== '' && $actualClassName !== $classOrTrait)
             ? $actualClassName . '::' . $methodName
             : $function;
 
         if ($thisObj !== null) {
-            $targetClass = $actualClassName ?? $classOrTrait;
+            $targetClass = $actualClassName !== '' ? $actualClassName : $classOrTrait;
             $traitAliases = HierarchyResolver::getTraitAliases($targetClass);
 
             if (\count($traitAliases) > 0) {
@@ -135,14 +154,14 @@ final class ParamChecker
                         $frameFunc = $frame['function'];
                         $frameClass = $frame['class'] ?? '';
                         if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
-                            return $targetClass . '::' . $frameFunc;
+                            return self::$effectiveFunctionCache[$cacheKey] = $targetClass . '::' . $frameFunc;
                         }
                     }
                 }
             }
         }
 
-        return $effectiveFunction;
+        return self::$effectiveFunctionCache[$cacheKey] = $effectiveFunction;
     }
 
     /**

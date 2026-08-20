@@ -9,6 +9,8 @@ use TypePHP\Contract\FileFilter;
 use TypePHP\Contract\HierarchyResolver;
 use TypePHP\Extension\ExtensionInterface;
 use TypePHP\Extension\ExtensionManager;
+use TypePHP\Internal\Checker\ParamChecker;
+use TypePHP\Internal\Checker\ReturnChecker;
 use TypePHP\Resolver\TemplateManager;
 
 /**
@@ -210,6 +212,8 @@ final class Config
         self::syncFlags($mergedConfig);
 
         ContractParser::reset();
+        ParamChecker::reset();
+        ReturnChecker::reset();
         FileFilter::reset();
         PathMatcher::reset();
         StreamWrapper::reset();
@@ -230,6 +234,8 @@ final class Config
         self::$respectIgnoreTags = true;
 
         ContractParser::reset();
+        ParamChecker::reset();
+        ReturnChecker::reset();
         TemplateManager::reset();
         HierarchyResolver::reset();
         FileFilter::reset();
