@@ -30,7 +30,7 @@ final class ContractParser
     /**
      * Cache for resolved contract metadata.
      *
-     * @var array<string, array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>}>
+     * @var array<string, array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>}>
      */
     private static array $cache = [];
 
@@ -64,7 +64,7 @@ final class ContractParser
     /**
      * Parses PHPDoc contracts for a function or class method.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>}
+     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>}
      */
     public static function parse(string $function): array
     {
@@ -83,25 +83,26 @@ final class ContractParser
                         $ref = $refClass->getMethod($methodName);
                         $contract = self::parseMethod($ref);
                     } else {
-                        $templates = [];
+                        $classTemplates = [];
                         $aliases = [];
-                        self::parseClassLevelDocs($refClass, $templates, $aliases);
+                        self::parseClassLevelDocs($refClass, $classTemplates, $aliases);
                         $contract = [
                             'types' => [],
-                            'templates' => $templates,
+                            'templates' => [],
+                            'classTemplates' => $classTemplates,
                             'return' => null,
                             'aliases' => $aliases,
                         ];
                     }
                 } else {
-                    $contract = ['types' => [], 'templates' => [], 'return' => null, 'aliases' => []];
+                    $contract = ['types' => [], 'templates' => [], 'classTemplates' => [], 'return' => null, 'aliases' => []];
                 }
             } else {
                 $ref = new \ReflectionFunction($function);
                 $contract = self::parseFunction($ref);
             }
         } catch (\ReflectionException $e) {
-            $contract = ['types' => [], 'templates' => [], 'return' => null, 'aliases' => []];
+            $contract = ['types' => [], 'templates' => [], 'classTemplates' => [], 'return' => null, 'aliases' => []];
         }
 
         return self::$cache[$function] = $contract;
@@ -161,8 +162,8 @@ final class ContractParser
             }
 
             $aliases = [];
-            $templates = [];
-            self::parseClassLevelDocs($declaringClass, $templates, $aliases);
+            $classTemplates = [];
+            self::parseClassLevelDocs($declaringClass, $classTemplates, $aliases);
 
             if (! $isMagicProperty) {
                 $phpDocNode = DocblockExtractor::parseDocString($doc);
@@ -276,8 +277,8 @@ final class ContractParser
             }
 
             $aliases = [];
-            $templates = [];
-            self::parseClassLevelDocs($declaringClass, $templates, $aliases);
+            $classTemplates = [];
+            self::parseClassLevelDocs($declaringClass, $classTemplates, $aliases);
 
             $phpDocNode = DocblockExtractor::parseDocString($doc);
             DocblockExtractor::extractAliases($phpDocNode, $aliases, $declaringClass);
@@ -294,7 +295,7 @@ final class ContractParser
                 'return' => $resolvedReturn,
                 'parameters' => $resolvedParams,
                 'aliases' => $aliases,
-                'templates' => $templates,
+                'templates' => $classTemplates,
             ];
         } catch (\Throwable $e) {
             return self::$magicMethodCache[$cacheKey] = null;
@@ -415,8 +416,8 @@ final class ContractParser
             /** @var class-string<object> $className */
             $refClass = new \ReflectionClass($className);
             $aliases = [];
-            $templates = [];
-            self::parseClassLevelDocs($refClass, $templates, $aliases);
+            $classTemplates = [];
+            self::parseClassLevelDocs($refClass, $classTemplates, $aliases);
 
             return $aliases;
         } catch (\Throwable $e) {
@@ -427,17 +428,18 @@ final class ContractParser
     /**
      * Orchestrates parsing for class methods across the inheritance hierarchy.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>}
+     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>}
      */
     private static function parseMethod(\ReflectionMethod $ref): array
     {
         $types = [];
-        $templates = [];
+        $methodTemplates = [];
+        $classTemplates = [];
         $returnType = null;
         $aliases = [];
 
-        self::parseClassLevelDocs($ref->getDeclaringClass(), $templates, $aliases);
-        self::parseMethodHierarchyDocs($ref, $types, $templates, $returnType, $aliases);
+        self::parseClassLevelDocs($ref->getDeclaringClass(), $classTemplates, $aliases);
+        self::parseMethodHierarchyDocs($ref, $types, $methodTemplates, $returnType, $aliases);
 
         if ($ref->getName() === '__construct') {
             self::applyConstructorPromotionFallback($ref, $types);
@@ -445,7 +447,8 @@ final class ContractParser
 
         return [
             'types' => $types,
-            'templates' => $templates,
+            'templates' => $methodTemplates,
+            'classTemplates' => $classTemplates,
             'return' => $returnType,
             'aliases' => $aliases,
         ];
@@ -454,7 +457,7 @@ final class ContractParser
     /**
      * Orchestrates parsing for standalone global or namespaced functions.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>}
+     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>}
      */
     private static function parseFunction(\ReflectionFunction $ref): array
     {
@@ -468,6 +471,7 @@ final class ContractParser
             return [
                 'types' => [],
                 'templates' => [],
+                'classTemplates' => [],
                 'return' => null,
                 'aliases' => [],
             ];
@@ -505,6 +509,7 @@ final class ContractParser
         return [
             'types' => $types,
             'templates' => $templates,
+            'classTemplates' => [],
             'return' => $returnType,
             'aliases' => $aliases,
         ];
@@ -543,7 +548,6 @@ final class ContractParser
 
     /**
      * Resolves method-level docblocks (@param, @return, @template, aliases) up the method hierarchy.
-     * Prioritizes @phpstan-param and @psalm-param over standard @param tags.
      *
      * @param \ReflectionMethod $ref
      * @param array<string, TypeNode> $types

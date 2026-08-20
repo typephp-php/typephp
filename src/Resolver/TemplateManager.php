@@ -27,7 +27,7 @@ use TypePHP\Internal\ErrorMessage;
 use WeakMap;
 
 /**
- * @internal Manages generic template bindings for object instances (via WeakMap) and static call stack frames.
+ * @internal Manages generic template bindings for object instances (via WeakMap) and static/method call stack frames.
  */
 final class TemplateManager
 {
@@ -108,6 +108,8 @@ final class TemplateManager
      */
     public static function getBoundTemplates(string $function, ?object $thisObj, array $templates): array
     {
+        $bindings = [];
+
         if ($thisObj !== null) {
             if (self::$pendingCloneSource !== null && ! isset(self::$instanceTemplateBindings[$thisObj])) {
                 self::copyInstanceBindings(self::$pendingCloneSource, $thisObj);
@@ -118,17 +120,18 @@ final class TemplateManager
             }
 
             if (isset(self::$instanceTemplateBindings[$thisObj])) {
-                return self::$instanceTemplateBindings[$thisObj];
+                $bindings = self::$instanceTemplateBindings[$thisObj];
             }
         }
 
         if (self::hasCallFrame($function)) {
             $topFrame = end(self::$callStackBindings[$function]);
-
-            return $topFrame !== false ? $topFrame : [];
+            if ($topFrame !== false) {
+                $bindings = [...$bindings, ...$topFrame];
+            }
         }
 
-        return [];
+        return $bindings;
     }
 
     /**
@@ -186,6 +189,13 @@ final class TemplateManager
      */
     public static function isBound(string $function, ?object $thisObj, string $templateName): bool
     {
+        if (self::hasCallFrame($function)) {
+            $topFrame = end(self::$callStackBindings[$function]);
+            if ($topFrame !== false && isset($topFrame[$templateName])) {
+                return true;
+            }
+        }
+
         if ($thisObj !== null) {
             if (self::$pendingCloneSource !== null && ! isset(self::$instanceTemplateBindings[$thisObj])) {
                 self::copyInstanceBindings(self::$pendingCloneSource, $thisObj);
@@ -198,12 +208,6 @@ final class TemplateManager
             return isset(self::$instanceTemplateBindings[$thisObj][$templateName]);
         }
 
-        if (self::hasCallFrame($function)) {
-            $topFrame = end(self::$callStackBindings[$function]);
-
-            return isset($topFrame[$templateName]);
-        }
-
         return false;
     }
 
@@ -212,6 +216,13 @@ final class TemplateManager
      */
     public static function getBoundType(string $function, ?object $thisObj, string $templateName): ?TypeNode
     {
+        if (self::hasCallFrame($function)) {
+            $topFrame = end(self::$callStackBindings[$function]);
+            if ($topFrame !== false && isset($topFrame[$templateName])) {
+                return $topFrame[$templateName];
+            }
+        }
+
         if ($thisObj !== null) {
             if (self::$pendingCloneSource !== null && ! isset(self::$instanceTemplateBindings[$thisObj])) {
                 self::copyInstanceBindings(self::$pendingCloneSource, $thisObj);
@@ -222,12 +233,6 @@ final class TemplateManager
             }
 
             return self::$instanceTemplateBindings[$thisObj][$templateName] ?? null;
-        }
-
-        if (self::hasCallFrame($function)) {
-            $topFrame = end(self::$callStackBindings[$function]);
-
-            return $topFrame[$templateName] ?? null;
         }
 
         return null;
@@ -258,7 +263,7 @@ final class TemplateManager
     public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false): ?ErrorMessage
     {
         $className = $typeNode->type->name;
-        if (\in_array(strtolower($className), ['self', 'static', '$this'], strict: true)) {
+        if (\in_array(strtolower($className), ['self', 'static', '$this'], true)) {
             $className = \get_class($instance);
         }
 
@@ -461,7 +466,7 @@ final class TemplateManager
         string $actualClassName
     ): void {
         $parentName = SpecialTypeResolver::resolveFqcn($genericTypeNode->type->name, $hierClass);
-        $isHierarchyMember = is_a($actualClassName, $parentName, allow_string: true) || trait_exists($parentName);
+        $isHierarchyMember = is_a($actualClassName, $parentName, true) || trait_exists($parentName);
 
         if (! ClassNameValidator::isValid($parentName) || ! $isHierarchyMember) {
             return;
@@ -654,7 +659,7 @@ final class TemplateManager
 
     private static function checkNestedGenericVariance(GenericTypeNode $existing, GenericTypeNode $expected): bool
     {
-        if (! is_a($existing->type->name, $expected->type->name, allow_string: true)) {
+        if (! is_a($existing->type->name, $expected->type->name, true)) {
             return false;
         }
 
@@ -673,7 +678,7 @@ final class TemplateManager
     private static function isSubclass(string $sub, string $super): bool
     {
         if (ClassNameValidator::isValid($sub) && ClassNameValidator::isValid($super) && (class_exists($sub) || interface_exists($sub)) && (class_exists($super) || interface_exists($super))) {
-            return is_a($sub, $super, allow_string: true);
+            return is_a($sub, $super, true);
         }
 
         return false;
@@ -695,7 +700,7 @@ final class TemplateManager
             }
 
             if ($typeNode instanceof GenericTypeNode) {
-                self::bindInstanceFromNode($instance, $typeNode, '', forceBind: true);
+                self::bindInstanceFromNode($instance, $typeNode, '', true);
             }
         } catch (\Throwable $e) {
             // Silently ignore malformed docblock strings

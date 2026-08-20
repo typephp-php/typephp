@@ -99,11 +99,11 @@ final class GeneratorChecker
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $templates = $contract['templates'] ?? [];
-        $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+        $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $allTemplates);
 
-        if (\count($boundTemplates) > 0 || \count($templates) > 0) {
-            $returnTypeNode = TemplateSubstitutor::substitute($returnTypeNode, $boundTemplates, $templates);
+        if (\count($boundTemplates) > 0 || \count($allTemplates) > 0) {
+            $returnTypeNode = TemplateSubstitutor::substitute($returnTypeNode, $boundTemplates, $allTemplates);
             $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
         }
 

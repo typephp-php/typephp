@@ -111,7 +111,7 @@ describe('Generic Callables (@template T with callable(T): T)', function () {
             expect($result)->toBe(['alpha' => 'alpha:10', 'beta' => 'beta:20']);
 
             expect(fn () => $service->mapWithKey($combiner, [0 => 10]))
-                ->toThrow(TypeError::class, 'key')
+                ->toThrow(TypeError::class, '$k')
             ;
         });
 

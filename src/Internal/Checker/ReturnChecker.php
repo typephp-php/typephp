@@ -64,6 +64,8 @@ final class ReturnChecker
             return $value;
         }
 
+        $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+
         return self::evaluateReturn(
             $returnTypeNode,
             $value,
@@ -71,7 +73,7 @@ final class ReturnChecker
             $thisObj,
             $vars,
             $contract['aliases'] ?? [],
-            $contract['templates'] ?? [],
+            $allTemplates,
             $registry,
             $wrapIterableCallback
         );
@@ -230,7 +232,7 @@ final class ReturnChecker
             }
 
             $genericIterables = ['iterable', 'traversable', 'iterator', 'generator'];
-            if (\in_array($baseName, $genericIterables, strict: true)) {
+            if (\in_array($baseName, $genericIterables, true)) {
                 return $wrapIterableCallback($function, 'return', $value);
             }
         }
@@ -314,7 +316,7 @@ final class ReturnChecker
             $isTargetMatch = ClassNameValidator::isValid($subStr) && ClassNameValidator::isValid($targetStr) &&
                 (class_exists($subStr) || interface_exists($subStr)) &&
                 (class_exists($targetStr) || interface_exists($targetStr)) &&
-                is_a($subStr, $targetStr, allow_string: true);
+                is_a($subStr, $targetStr, true);
         }
 
         if ($node->negated) {
