@@ -83,6 +83,7 @@ final class ErrorFactory
      * Filters out internal TypePHP frames from the raw stack trace.
      *
      * @param list<array<string, mixed>> $trace
+     *
      * @return list<array<string, mixed>>
      */
     private static function filterTrace(

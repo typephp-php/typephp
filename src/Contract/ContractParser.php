@@ -668,7 +668,8 @@ final class ContractParser
     }
 
     /**
-     * Falls back to property @var docblocks for constructor promoted parameters if un-annotated.
+     * Falls back to property @var docblocks for constructor parameters if un-annotated,
+     * ensuring scalar constructor parameters are never overridden by conflicting object property types.
      *
      * @param \ReflectionMethod $ref
      * @param array<string, TypeNode> $types
@@ -687,6 +688,22 @@ final class ContractParser
                 if ($propDoc !== false) {
                     $propType = DocblockExtractor::extractTypeFromPropertyDoc($propDoc, $paramName);
                     if ($propType !== null) {
+                        if ($p->hasType()) {
+                            $nativeType = $p->getType();
+                            if ($nativeType instanceof \ReflectionNamedType) {
+                                $nativeName = strtolower($nativeType->getName());
+                                $propTypeStr = strtolower((string) $propType);
+
+                                if (
+                                    $nativeType->isBuiltin()
+                                    && ! \in_array($nativeName, ['array', 'iterable', 'mixed'], true)
+                                    && ! \in_array($propTypeStr, [$nativeName, 'mixed'], true)
+                                ) {
+                                    continue;
+                                }
+                            }
+                        }
+
                         $isVariadic = $p->isVariadic();
                         if ($isVariadic) {
                             $propType = new ArrayTypeNode($propType);
