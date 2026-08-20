@@ -519,18 +519,6 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Determines if the current stream_open call is directly for reading file contents
-     * rather than PHP engine's require/include execution.
-     */
-    private static function isReadOnlyCall(): bool
-    {
-        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 3);
-        $callerFunc = strtolower($trace[2]['function'] ?? '');
-
-        return \in_array($callerFunc, ['file_get_contents', 'file', 'readfile', 'highlight_file', 'show_source', 'token_get_all'], true);
-    }
-
-    /**
      * Executes a callback while temporarily suppressing PHP error and warning handlers.
      *
      * @template T
