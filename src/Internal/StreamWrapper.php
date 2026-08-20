@@ -64,6 +64,20 @@ final class StreamWrapper implements StreamWrapperInterface
     private static array $appFileDecisionCache = [];
 
     /**
+     * Fast-lookup table for read-only source view functions.
+     *
+     * @var array<string, true>
+     */
+    private const READ_ONLY_FUNCTIONS = [
+        'file_get_contents' => true,
+        'file' => true,
+        'readfile' => true,
+        'highlight_file' => true,
+        'show_source' => true,
+        'token_get_all' => true,
+    ];
+
+    /**
      * Resets all internal caches.
      */
     public static function reset(): void
@@ -219,6 +233,10 @@ final class StreamWrapper implements StreamWrapperInterface
             return $this->openDirectHandle($normalizedResolved, $mode);
         }
 
+        if (self::isReadOnlyCall()) {
+            return $this->openDirectHandle($normalizedResolved, $mode);
+        }
+
         self::unregister();
 
         $success = self::$cacheEnabled
@@ -228,6 +246,20 @@ final class StreamWrapper implements StreamWrapperInterface
         self::register();
 
         return $success;
+    }
+
+    /**
+     * Determines if the stream_open call is for reading raw file contents/snippets
+     * (e.g. error screen renderers) rather than PHP engine execution.
+     */
+    private static function isReadOnlyCall(): bool
+    {
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 3);
+
+        $caller1 = strtolower($trace[1]['function'] ?? '');
+        $caller2 = strtolower($trace[2]['function'] ?? '');
+
+        return isset(self::READ_ONLY_FUNCTIONS[$caller1]) || isset(self::READ_ONLY_FUNCTIONS[$caller2]);
     }
 
     /**
@@ -378,7 +410,6 @@ final class StreamWrapper implements StreamWrapperInterface
         if (isset(self::$statCache[$normalized])) {
             return self::$statCache[$normalized];
         }
-
 
         if (isset(self::$staticNegativeStatCache[$normalized])) {
             return false;
