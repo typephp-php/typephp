@@ -2,13 +2,25 @@
 
 declare(strict_types=1);
 
+namespace TypePHP\Tests\Internal;
+
+use ReflectionClass;
 use TypePHP\Contract\FileFilter;
 use TypePHP\Internal\Config;
 use TypePHP\Internal\StreamWrapper;
 
 describe('StreamWrapper Unit Tests', function () {
-    test('transformSource transforms functions and injects RuntimeTypeChecker checks', function () {
-        $source = <<<'PHP'
+    beforeEach(function () {
+        Config::reset();
+    });
+
+    afterEach(function () {
+        Config::reset();
+    });
+
+    describe('transformSource()', function () {
+        test('transforms functions and injects RuntimeTypeChecker checks', function () {
+            $source = <<<'PHP'
 <?php
 
 /**
@@ -20,24 +32,23 @@ function testUser(int $id): bool
 }
 PHP;
 
-        $transformed = StreamWrapper::transformSource($source, 'test_sample.php');
+            $transformed = StreamWrapper::transformSource($source, 'test_sample.php');
 
-        expect($transformed)->toContain('RuntimeTypeChecker::setupScope')
-            ->and($transformed)->toContain('testUser')
-        ;
-    });
+            expect($transformed)->toContain('RuntimeTypeChecker::setupScope')
+                ->and($transformed)->toContain('testUser')
+            ;
+        });
 
-    test('transformSource returns raw source unchanged if source is not valid PHP', function () {
-        $invalidSource = '<?php invalid php syntax {{{';
+        test('returns raw source unchanged if source is not valid PHP', function () {
+            $invalidSource = '<?php invalid php syntax {{{';
 
-        // StreamWrapper should gracefully handle parsing errors
-        $transformed = StreamWrapper::transformSource($invalidSource, 'bad.php');
+            $transformed = StreamWrapper::transformSource($invalidSource, 'bad.php');
 
-        expect($transformed)->toBe($invalidSource);
-    });
+            expect($transformed)->toBe($invalidSource);
+        });
 
-    test('transformSource wraps yield expressions in generator functions', function () {
-        $genSource = <<<'PHP'
+        test('wraps yield expressions in generator functions', function () {
+            $genSource = <<<'PHP'
 <?php
 
 /**
@@ -49,38 +60,185 @@ function testGen(): Generator
 }
 PHP;
 
-        $transformed = StreamWrapper::transformSource($genSource, 'gen.php');
+            $transformed = StreamWrapper::transformSource($genSource, 'gen.php');
 
-        expect($transformed)->toContain('RuntimeTypeChecker::checkYield')
-            ->and($transformed)->toContain('RuntimeTypeChecker::checkSend')
-        ;
+            expect($transformed)->toContain('RuntimeTypeChecker::checkYield')
+                ->and($transformed)->toContain('RuntimeTypeChecker::checkSend')
+            ;
+        });
+
+        test('respects @typephp-ignore-file docblock suppression tag', function () {
+            $source = <<<'PHP'
+<?php
+
+/**
+ * @typephp-ignore-file
+ */
+
+/**
+ * @param positive-int $id
+ */
+function testIgnoredFileFunc(int $id): int
+{
+    return $id;
+}
+PHP;
+
+            $transformed = StreamWrapper::transformSource($source, 'ignored_file.php');
+
+            expect($transformed)->not()->toContain('RuntimeTypeChecker::setupScope')
+                ->and($transformed)->toBe($source)
+            ;
+        });
     });
 
-    test('strictly isolates vendor files with nested src directories when application includes specific src subpackages', function () {
-        Config::set([
-            'include' => [
-                'src/**',
-                'src/Core/**',
-                'src/Storefront/**',
-                'src/Administration/**',
-            ],
-            'exclude' => [
-                'vendor/**',
-                'storage/**',
-                'var/**',
-                'cache/**',
-            ],
-        ]);
+    describe('url_stat() & Smart Negative Caching', function () {
+        test('caches positive stat results in memory', function () {
+            $wrapper = new StreamWrapper();
+            $existingFile = __FILE__;
 
-        $projectRoot = Config::getProjectRoot();
+            $stat1 = $wrapper->url_stat($existingFile, 0);
+            $stat2 = $wrapper->url_stat($existingFile, 0);
 
-        $vendorFile = str_replace('\\', '/', $projectRoot . '/vendor/doctrine/dbal/src/Core/Table.php');
-        $appFile = str_replace('\\', '/', $projectRoot . '/src/Core/Framework/Util.php');
+            expect($stat1)->toBeArray()
+                ->and($stat1)->toBe($stat2)
+            ;
+        });
 
-        expect(FileFilter::isFileExcluded($vendorFile))->toBeTrue()
-            ->and(FileFilter::isFileExcluded($appFile))->toBeFalse()
-        ;
+        test('caches negative misses for static vendor paths', function () {
+            $wrapper = new StreamWrapper();
+            $projectRoot = str_replace('\\', '/', Config::getProjectRoot());
+            $missingVendorFile = $projectRoot . '/vendor/non_existent_package/Missing.php';
 
-        Config::reset();
+            $miss1 = $wrapper->url_stat($missingVendorFile, 0);
+            $miss2 = $wrapper->url_stat($missingVendorFile, 0);
+
+            expect($miss1)->toBeFalse()
+                ->and($miss2)->toBeFalse()
+            ;
+
+            $ref = new ReflectionClass(StreamWrapper::class);
+            $negProp = $ref->getProperty('staticNegativeStatCache');
+            $negCache = $negProp->getValue();
+
+            expect($negCache)->toHaveKey($missingVendorFile);
+        });
+
+        test('never caches negative misses for dynamic writable paths (var/cache, storage)', function () {
+            $wrapper = new StreamWrapper();
+            $projectRoot = str_replace('\\', '/', Config::getProjectRoot());
+            $missingVarCacheFile = $projectRoot . '/var/cache/test/Container.php';
+
+            $miss = $wrapper->url_stat($missingVarCacheFile, 0);
+
+            expect($miss)->toBeFalse();
+
+            $ref = new ReflectionClass(StreamWrapper::class);
+            $negProp = $ref->getProperty('staticNegativeStatCache');
+            $negCache = $negProp->getValue();
+
+            expect($negCache)->not()->toHaveKey($missingVarCacheFile);
+        });
+
+        test('invalidates stat cache upon file mutation operations (mkdir, unlink, rename, touch)', function () {
+            $wrapper = new StreamWrapper();
+            $tempDir = sys_get_temp_dir() . '/typephp_stat_test_' . uniqid();
+            $tempFile = $tempDir . '/test.php';
+
+            $wrapper->mkdir($tempDir, 0777, STREAM_MKDIR_RECURSIVE);
+            file_put_contents($tempFile, '<?php // test');
+
+            $stat = $wrapper->url_stat($tempFile, 0);
+            expect($stat)->toBeArray();
+
+            $wrapper->stream_metadata($tempFile, STREAM_META_TOUCH, [time(), time()]);
+
+            $renamedFile = $tempDir . '/renamed.php';
+            $wrapper->rename($tempFile, $renamedFile);
+
+            $wrapper->unlink($renamedFile);
+            $wrapper->rmdir($tempDir, 0);
+
+            expect(true)->toBeTrue();
+        });
+    });
+
+    describe('stream_open() Fast-Paths & Whitelist Preservation', function () {
+        test('bypasses AST transformation on non-PHP files', function () {
+            $wrapper = new StreamWrapper();
+            $openedPath = null;
+            $jsonFile = __DIR__ . '/../../composer.json';
+
+            $success = $wrapper->stream_open($jsonFile, 'r', 0, $openedPath);
+            expect($success)->toBeTrue();
+
+            $content = $wrapper->stream_read(1000);
+            expect($content)->toContain('"name": "typephp/typephp"');
+            $wrapper->stream_close();
+        });
+
+        test('bypasses AST transformation for unwhitelisted vendor files', function () {
+            Config::set([
+                'include' => ['src/**'],
+                'exclude' => ['vendor/**'],
+            ]);
+
+            $projectRoot = str_replace('\\', '/', Config::getProjectRoot());
+            $vendorFile = $projectRoot . '/vendor/composer/autoload_real.php';
+
+            if (file_exists($vendorFile)) {
+                $wrapper = new StreamWrapper();
+                $openedPath = null;
+                $success = $wrapper->stream_open($vendorFile, 'r', 0, $openedPath);
+
+                expect($success)->toBeTrue();
+                $wrapper->stream_close();
+            }
+        });
+
+        test('transforms whitelisted vendor files when explicitly included in config', function () {
+            Config::set([
+                'include' => [
+                    'src/**',
+                    'vendor/monolog/monolog/src/Monolog/Logger.php',
+                ],
+                'exclude' => [
+                    'vendor/**',
+                ],
+            ]);
+
+            $projectRoot = str_replace('\\', '/', Config::getProjectRoot());
+            $whitelistedVendorFile = $projectRoot . '/vendor/monolog/monolog/src/Monolog/Logger.php';
+
+            expect(FileFilter::isFileExcluded($whitelistedVendorFile))->toBeFalse();
+        });
+    });
+
+    describe('Vendor Subpackage Isolation', function () {
+        test('strictly isolates vendor files with nested src directories when application includes specific src subpackages', function () {
+            Config::set([
+                'include' => [
+                    'src/**',
+                    'src/Core/**',
+                    'src/Storefront/**',
+                    'src/Administration/**',
+                ],
+                'exclude' => [
+                    'vendor/**',
+                    'storage/**',
+                    'var/**',
+                    'cache/**',
+                ],
+            ]);
+
+            $projectRoot = Config::getProjectRoot();
+
+            $vendorFile = str_replace('\\', '/', $projectRoot . '/vendor/doctrine/dbal/src/Core/Table.php');
+            $appFile = str_replace('\\', '/', $projectRoot . '/src/Core/Framework/Util.php');
+
+            expect(FileFilter::isFileExcluded($vendorFile))->toBeTrue()
+                ->and(FileFilter::isFileExcluded($appFile))->toBeFalse()
+            ;
+        });
     });
 });

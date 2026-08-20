@@ -24,6 +24,13 @@ final class PathMatcher
     private static array $compiledExcludesCache = [];
 
     /**
+     * Cache for include prefix lookup decisions.
+     *
+     * @var array<string, bool>
+     */
+    private static array $includePrefixCache = [];
+
+    /**
      * Cached normalized cache directory path.
      */
     private static ?string $cachedCacheDir = null;
@@ -40,6 +47,7 @@ final class PathMatcher
     {
         self::$compiledIncludesCache = [];
         self::$compiledExcludesCache = [];
+        self::$includePrefixCache = [];
         self::$cachedCacheDir = null;
         self::$cachedLibSrcDir = null;
     }
@@ -82,8 +90,6 @@ final class PathMatcher
 
     /**
      * Determines whether a path belongs to TypePHP's own internal engine source files.
-     * In vendor mode: skips the entire library package.
-     * In development mode: skips only actual internal subdirectories, allowing test fixtures to be tested.
      */
     public static function isLibraryInternal(string $normalizedPath): bool
     {
@@ -123,6 +129,80 @@ final class PathMatcher
         }
 
         return false;
+    }
+
+    /**
+     * Fast-checks if an include glob list contains any pattern matching a given prefix.
+     *
+     * @param array<int, string> $includes
+     */
+    public static function hasIncludeMatchingPrefix(string $prefix, array $includes): bool
+    {
+        $cacheKey = $prefix . '|' . implode(',', $includes);
+        if (isset(self::$includePrefixCache[$cacheKey])) {
+            return self::$includePrefixCache[$cacheKey];
+        }
+
+        foreach ($includes as $inc) {
+            if (\is_string($inc)) {
+                $norm = str_replace('\\', '/', trim($inc));
+                if (str_starts_with($norm, $prefix) || str_contains($norm, '/' . $prefix)) {
+                    return self::$includePrefixCache[$cacheKey] = true;
+                }
+            }
+        }
+
+        return self::$includePrefixCache[$cacheKey] = false;
+    }
+
+    /**
+     * Determines whether a directory path is a dynamic writable cache/log directory.
+     */
+    public static function isDynamicWritablePath(string $normalizedPath): bool
+    {
+        return str_contains($normalizedPath, '/var/cache/') || str_starts_with($normalizedPath, 'var/cache/')
+            || str_contains($normalizedPath, '/var/log/') || str_starts_with($normalizedPath, 'var/log/')
+            || str_contains($normalizedPath, '/storage/') || str_starts_with($normalizedPath, 'storage/')
+            || str_contains($normalizedPath, '/cache/') || str_starts_with($normalizedPath, 'cache/');
+    }
+
+    /**
+     * High-speed $O(1)$ string pre-filter to determine if a raw path can possibly be included,
+     * while respecting user whitelists for vendor, var, and storage directories.
+     */
+    public static function mayPathBeIncluded(string $normalizedPath): bool
+    {
+        if (str_contains($normalizedPath, '/node_modules/') || str_starts_with($normalizedPath, 'node_modules/')) {
+            return false;
+        }
+
+        if (self::isCachePath($normalizedPath)) {
+            return false;
+        }
+
+        $config = Config::get();
+        /** @var array<int, string> $includes */
+        $includes = \is_array($config['include'] ?? null) ? $config['include'] : ['**'];
+
+        if (str_contains($normalizedPath, '/vendor/') || str_starts_with($normalizedPath, 'vendor/')) {
+            if (! self::hasIncludeMatchingPrefix('vendor/', $includes)) {
+                return false;
+            }
+        }
+
+        if (str_contains($normalizedPath, '/var/') || str_starts_with($normalizedPath, 'var/')) {
+            if (! self::hasIncludeMatchingPrefix('var/', $includes)) {
+                return false;
+            }
+        }
+
+        if (str_contains($normalizedPath, '/storage/') || str_starts_with($normalizedPath, 'storage/')) {
+            if (! self::hasIncludeMatchingPrefix('storage/', $includes)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
