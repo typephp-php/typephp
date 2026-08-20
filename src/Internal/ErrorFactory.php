@@ -56,9 +56,7 @@ final class ErrorFactory
         $message = $e->getMessage();
         $isCallSite = self::isCallSiteError(strtolower($message));
 
-        /** @var array<int, array<string, mixed>> $rawTrace */
-        $rawTrace = $e->getTrace();
-        $filteredTrace = self::filterTrace($rawTrace, $isCallSite, $targetFile, $targetLine);
+        $filteredTrace = self::filterTrace($e->getTrace(), $isCallSite, $targetFile, $targetLine);
 
         $sanitizedMessage = self::sanitizeMessage($message, $targetFile, $targetLine);
 
@@ -84,9 +82,8 @@ final class ErrorFactory
     /**
      * Filters out internal TypePHP frames from the raw stack trace.
      *
-     * @param array<int, array<string, mixed>> $trace
-     *
-     * @return array<int, array<string, mixed>>
+     * @param list<array<string, mixed>> $trace
+     * @return list<array<string, mixed>>
      */
     private static function filterTrace(
         array $trace,
@@ -113,10 +110,10 @@ final class ErrorFactory
 
             $filtered[] = $frame;
 
-            if ($isCallSite && $targetFile === null && isset($frame['file'], $frame['line'])) {
-                $targetFile = (string) $frame['file'];
+            if ($isCallSite && $targetFile === null && isset($frame['file'], $frame['line']) && \is_string($frame['file']) && \is_int($frame['line'])) {
+                $targetFile = $frame['file'];
                 if ($targetLine === null) {
-                    $targetLine = (int) $frame['line'];
+                    $targetLine = $frame['line'];
                 }
             }
         }
@@ -161,7 +158,7 @@ final class ErrorFactory
     /**
      * Uses reflection on base \Error to mutate private properties safely.
      *
-     * @param array<int, array<string, mixed>> $filteredTrace
+     * @param list<array<string, mixed>> $filteredTrace
      */
     private static function mutateException(
         TypeError $e,
