@@ -80,24 +80,19 @@ final class RuntimeTypeChecker
 
         $err = self::checkParams($function, $vars, $thisOrClass);
 
-        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $contract = ContractParser::parse($function);
+        $methodTemplates = $contract['templates'] ?? [];
+        $hasMethodTemplates = \count($methodTemplates) > 0;
 
         if ($err !== null) {
-            if ($thisObj === null) {
+            if ($hasMethodTemplates) {
                 TemplateManager::popCallFrame($function);
             }
 
             return $err;
         }
 
-        if ($thisObj !== null) {
-            return null;
-        }
-
-        $contract = ContractParser::parse($function);
-        $hasTemplates = \count($contract['templates'] ?? []) > 0;
-
-        return $hasTemplates ? new ScopeCleaner($function) : null;
+        return $hasMethodTemplates ? new ScopeCleaner($function) : null;
     }
 
     /**

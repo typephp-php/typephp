@@ -52,14 +52,24 @@ final class ParamChecker
             return null;
         }
 
-        $templates = $contract['templates'];
+        $methodTemplates = $contract['templates'];
+        $classTemplates = $contract['classTemplates'] ?? [];
         $aliases = $contract['aliases'];
 
-        self::initializeCallContext($effectiveFunction, $thisObj, $templates);
-        self::preInferGenericArrayTemplates($contract['types'], $vars, $effectiveFunction, $thisObj, $templates);
+        if (\count($methodTemplates) > 0) {
+            TemplateManager::clearCallBindings($effectiveFunction, $methodTemplates);
+        }
 
-        $boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $templates);
-        $declaredTemplates = $templates;
+        if ($thisObj !== null && \count($classTemplates) > 0 && str_contains($effectiveFunction, '::')) {
+            $declaringClass = explode('::', $effectiveFunction, 2)[0];
+            TemplateManager::resolveInheritedTemplates($thisObj, $declaringClass);
+        }
+
+        $allTemplates = [...$classTemplates, ...$methodTemplates];
+        self::preInferGenericArrayTemplates($contract['types'], $vars, $effectiveFunction, $thisObj, $allTemplates);
+
+        $boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates);
+        $declaredTemplates = $allTemplates;
 
         foreach ($contract['types'] as $paramName => $typeNode) {
             if (! \array_key_exists($paramName, $vars)) {
@@ -72,7 +82,7 @@ final class ParamChecker
                 $vars[$paramName],
                 $effectiveFunction,
                 $thisObj,
-                $templates,
+                $allTemplates,
                 $aliases,
                 $boundTemplates,
                 $declaredTemplates,
@@ -171,21 +181,6 @@ final class ParamChecker
     }
 
     /**
-     * Initializes call stack frames or resolves inherited template bounds.
-     *
-     * @param array<string, TemplateTagValueNode> $templates
-     */
-    private static function initializeCallContext(string $effectiveFunction, ?object $thisObj, array $templates): void
-    {
-        if ($thisObj === null && \count($templates) > 0) {
-            TemplateManager::clearCallBindings($effectiveFunction, $templates);
-        } elseif ($thisObj !== null && str_contains($effectiveFunction, '::')) {
-            $declaringClass = explode('::', $effectiveFunction, 2)[0];
-            TemplateManager::resolveInheritedTemplates($thisObj, $declaringClass);
-        }
-    }
-
-    /**
      * Pre-infers generic template parameters from array arguments before callback wrapping.
      *
      * @param array<string, TypeNode> $types
@@ -227,7 +222,7 @@ final class ParamChecker
     ): void {
         if ($typeNode instanceof GenericTypeNode) {
             $baseType = strtolower($typeNode->type->name);
-            if (! \in_array($baseType, ['array', 'list', 'iterable', 'traversable'], strict: true)) {
+            if (! \in_array($baseType, ['array', 'list', 'iterable', 'traversable'], true)) {
                 return;
             }
 
@@ -259,8 +254,13 @@ final class ParamChecker
         ?object $thisObj,
         array $templates
     ): void {
-        if (isset($templates[$templateName]) && ! TemplateManager::isBound($effectiveFunction, $thisObj, $templateName)) {
-            TemplateManager::bindTemplate($effectiveFunction, $thisObj, $templateName, TemplateManager::inferTypeFromValue($sampleValue));
+        $contract = ContractParser::parse($effectiveFunction);
+        $classTemplates = $contract['classTemplates'] ?? [];
+        $isClassLevelTemplate = isset($classTemplates[$templateName]);
+        $targetObj = $isClassLevelTemplate ? $thisObj : null;
+
+        if (isset($templates[$templateName]) && ! TemplateManager::isBound($effectiveFunction, $targetObj, $templateName)) {
+            TemplateManager::bindTemplate($effectiveFunction, $targetObj, $templateName, TemplateManager::inferTypeFromValue($sampleValue));
         }
     }
 
@@ -331,8 +331,6 @@ final class ParamChecker
         $templates = $magicContract['templates'];
         $aliases = $magicContract['aliases'];
         $parameters = $magicContract['parameters'];
-
-        self::initializeCallContext($function, $thisObj, $templates);
 
         $argValues = array_values($args);
         $argKeys = array_keys($args);
@@ -428,7 +426,12 @@ final class ParamChecker
         $templateName = $innerType->name;
         $templateNode = $templates[$templateName];
 
-        if (! TemplateManager::isBound($function, $thisObj, $templateName)) {
+        $contract = ContractParser::parse($function);
+        $classTemplates = $contract['classTemplates'] ?? [];
+        $isClassLevelTemplate = isset($classTemplates[$templateName]);
+        $targetObj = $isClassLevelTemplate ? $thisObj : null;
+
+        if (! TemplateManager::isBound($function, $targetObj, $templateName)) {
             if (! \is_string($val) || ! ClassNameValidator::isValid($val) || (! class_exists($val) && ! interface_exists($val) && ! trait_exists($val) && ! enum_exists($val))) {
                 return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($val) . ' given');
             }
@@ -438,17 +441,17 @@ final class ParamChecker
                 $boundName = $resolvedBound instanceof IdentifierTypeNode ? $resolvedBound->name : (string) $resolvedBound;
                 $lowerBound = strtolower($boundName);
 
-                if ($lowerBound !== 'object' && $lowerBound !== 'mixed' && ! is_a($val, $boundName, allow_string: true)) {
+                if ($lowerBound !== 'object' && $lowerBound !== 'mixed' && ! is_a($val, $boundName, true)) {
                     return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a class-string of ' . $boundName . ", '" . $val . "' given");
                 }
             }
 
-            TemplateManager::bindTemplate($function, $thisObj, $templateName, new IdentifierTypeNode($val));
+            TemplateManager::bindTemplate($function, $targetObj, $templateName, new IdentifierTypeNode($val));
         } else {
-            $expectedTypeNode = TemplateManager::getBoundType($function, $thisObj, $templateName);
+            $expectedTypeNode = TemplateManager::getBoundType($function, $targetObj, $templateName);
             $targetClass = $expectedTypeNode instanceof IdentifierTypeNode ? $expectedTypeNode->name : (string) $expectedTypeNode;
 
-            if (! \is_string($val) || ! is_a($val, $targetClass, allow_string: true)) {
+            if (! \is_string($val) || ! is_a($val, $targetClass, true)) {
                 $valStr = TypeFormatter::formatGivenValue($val);
 
                 return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' must be a class-string of ' . $targetClass . ', ' . $valStr . ' given');
@@ -494,7 +497,12 @@ final class ParamChecker
         $templateNode = $templates[$templateName];
         $isVariadic = $typeNode instanceof ArrayTypeNode;
 
-        if (! TemplateManager::isBound($function, $thisObj, $templateName)) {
+        $contract = ContractParser::parse($function);
+        $classTemplates = $contract['classTemplates'] ?? [];
+        $isClassLevelTemplate = isset($classTemplates[$templateName]);
+        $targetObj = $isClassLevelTemplate ? $thisObj : null;
+
+        if (! TemplateManager::isBound($function, $targetObj, $templateName)) {
             $sampleVal = ($isVariadic && \is_array($val)) ? ($val[0] ?? null) : $val;
             $inferredType = TemplateManager::inferTypeFromValue($sampleVal);
 
@@ -506,7 +514,7 @@ final class ParamChecker
                 }
             }
 
-            TemplateManager::bindTemplate($function, $thisObj, $templateName, $inferredType);
+            TemplateManager::bindTemplate($function, $targetObj, $templateName, $inferredType);
 
             if ($isVariadic && \is_array($val)) {
                 foreach ($val as $idx => $item) {
@@ -517,7 +525,7 @@ final class ParamChecker
                 }
             }
         } else {
-            $expectedTypeNode = TemplateManager::getBoundType($function, $thisObj, $templateName);
+            $expectedTypeNode = TemplateManager::getBoundType($function, $targetObj, $templateName);
             if ($expectedTypeNode === null) {
                 return null;
             }
