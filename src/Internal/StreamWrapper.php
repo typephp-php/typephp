@@ -42,9 +42,9 @@ final class StreamWrapper implements StreamWrapperInterface
     private static string $cacheDir = '';
 
     /**
-     * In-memory cache for url_stat to avoid 100,000+ unregister/register cycles on file_exists/is_file.
+     * In-memory cache for positive url_stat results.
      *
-     * @var array<string, array<int|string, int>|false>
+     * @var array<string, array<int|string, int>>
      */
     private static array $statCache = [];
 
@@ -338,13 +338,14 @@ final class StreamWrapper implements StreamWrapperInterface
 
     /**
      * High-speed stat resolution with $O(1)$ memoization cache.
+     * Never caches false (negative lookups) so newly created directories and files are immediately discovered.
      *
      * @return array<int|string, int>|false
      */
     public function url_stat(string $path, int $flags): array|false
     {
         $normalized = str_replace('\\', '/', $path);
-        if (\array_key_exists($normalized, self::$statCache)) {
+        if (isset(self::$statCache[$normalized])) {
             return self::$statCache[$normalized];
         }
 
@@ -353,11 +354,19 @@ final class StreamWrapper implements StreamWrapperInterface
         $result = self::silent(fn () => stat($path));
         self::register();
 
-        return self::$statCache[$normalized] = $result;
+        // Only cache positive results (existing files/dirs)
+        if ($result !== false) {
+            self::$statCache[$normalized] = $result;
+        }
+
+        return $result;
     }
 
     public function stream_metadata(string $path, int $option, mixed $value): bool
     {
+        $normalized = str_replace('\\', '/', $path);
+        unset(self::$statCache[$normalized]);
+
         self::unregister();
         $result = false;
         if ($option === STREAM_META_TOUCH) {
@@ -419,6 +428,9 @@ final class StreamWrapper implements StreamWrapperInterface
 
     public function mkdir(string $path, int $mode, int $options): bool
     {
+        $normalized = str_replace('\\', '/', $path);
+        unset(self::$statCache[$normalized]);
+
         self::unregister();
         $result = (bool) self::silent(fn () => mkdir($path, $mode, (bool) ($options & STREAM_MKDIR_RECURSIVE)));
         self::register();
@@ -428,6 +440,9 @@ final class StreamWrapper implements StreamWrapperInterface
 
     public function rmdir(string $path, int $options): bool
     {
+        $normalized = str_replace('\\', '/', $path);
+        unset(self::$statCache[$normalized]);
+
         self::unregister();
         $result = (bool) self::silent(fn () => rmdir($path));
         self::register();
