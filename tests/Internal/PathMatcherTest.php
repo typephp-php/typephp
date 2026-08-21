@@ -11,10 +11,12 @@ use TypePHP\Internal\PathMatcher;
 describe('PathMatcher Unit Tests', function () {
     beforeEach(function () {
         Config::reset();
+        PathMatcher::reset();
     });
 
     afterEach(function () {
         Config::reset();
+        PathMatcher::reset();
     });
 
     describe('normalizePath()', function () {
@@ -85,6 +87,91 @@ describe('PathMatcher Unit Tests', function () {
                 ->and(PathMatcher::isLibraryInternal($bootstrapFile))->toBeTrue()
                 ->and(PathMatcher::isLibraryInternal($mockAppFile))->toBeFalse()
             ;
+        });
+    });
+
+    describe('hasIncludeMatchingPrefix()', function () {
+        test('detects when include list has patterns starting with prefix', function () {
+            $includes = ['src/**', 'vendor/my-org/my-pkg/**', 'app/**'];
+
+            expect(PathMatcher::hasIncludeMatchingPrefix('vendor/', $includes))->toBeTrue()
+                ->and(PathMatcher::hasIncludeMatchingPrefix('src/', $includes))->toBeTrue()
+                ->and(PathMatcher::hasIncludeMatchingPrefix('var/', $includes))->toBeFalse()
+                ->and(PathMatcher::hasIncludeMatchingPrefix('storage/', $includes))->toBeFalse()
+            ;
+        });
+
+        test('detects scoped or subpath prefixes in include list', function () {
+            $includes = ['packages/custom/var/plugins/**'];
+
+            expect(PathMatcher::hasIncludeMatchingPrefix('var/', $includes))->toBeTrue();
+        });
+    });
+
+    describe('isDynamicWritablePath()', function () {
+        test('identifies dynamic writable cache and log directories', function () {
+            expect(PathMatcher::isDynamicWritablePath('/var/www/var/cache/prod/Container.php'))->toBeTrue()
+                ->and(PathMatcher::isDynamicWritablePath('var/cache/test/app.php'))->toBeTrue()
+                ->and(PathMatcher::isDynamicWritablePath('var/log/dev.log'))->toBeTrue()
+                ->and(PathMatcher::isDynamicWritablePath('/project/storage/framework/views/123.php'))->toBeTrue()
+                ->and(PathMatcher::isDynamicWritablePath('storage/logs/laravel.log'))->toBeTrue()
+                ->and(PathMatcher::isDynamicWritablePath('/tmp/cache/item.php'))->toBeTrue()
+            ;
+        });
+
+        test('returns false for static read-only directories', function () {
+            expect(PathMatcher::isDynamicWritablePath('/var/www/src/Core/Service.php'))->toBeFalse()
+                ->and(PathMatcher::isDynamicWritablePath('/var/www/vendor/doctrine/dbal/Column.php'))->toBeFalse()
+                ->and(PathMatcher::isDynamicWritablePath('tests/Unit/SampleTest.php'))->toBeFalse()
+            ;
+        });
+    });
+
+    describe('mayPathBeIncluded() Fast-Path String Pre-Filter', function () {
+        test('rejects node_modules and TypePHP cache unconditionally', function () {
+            $cacheDir = PathMatcher::normalizePath(CacheManager::getCacheDir());
+
+            expect(PathMatcher::mayPathBeIncluded('/var/www/node_modules/vue/index.js'))->toBeFalse()
+                ->and(PathMatcher::mayPathBeIncluded('node_modules/package/file.php'))->toBeFalse()
+                ->and(PathMatcher::mayPathBeIncluded($cacheDir . '/v0.1_test.php'))->toBeFalse()
+            ;
+        });
+
+        test('rejects unwhitelisted vendor, var, and storage paths when config does not include them', function () {
+            try {
+                Config::set([
+                    'include' => ['src/**', 'app/**'],
+                ]);
+
+                expect(PathMatcher::mayPathBeIncluded('vendor/monolog/monolog/src/Logger.php'))->toBeFalse()
+                    ->and(PathMatcher::mayPathBeIncluded('/var/www/vendor/symfony/console/App.php'))->toBeFalse()
+                    ->and(PathMatcher::mayPathBeIncluded('/var/www/var/cache/Container.php'))->toBeFalse()
+                    ->and(PathMatcher::mayPathBeIncluded('storage/framework/views/1.php'))->toBeFalse()
+                ;
+            } finally {
+                Config::reset();
+            }
+        });
+
+        test('permits vendor, var, or storage paths when explicitly whitelisted in include config', function () {
+            try {
+                Config::set([
+                    'include' => [
+                        'src/**',
+                        'vendor/my-org/my-package/**',
+                        'var/plugins/**',
+                        'storage/custom/**',
+                    ],
+                ]);
+
+                expect(PathMatcher::mayPathBeIncluded('vendor/my-org/my-package/src/Service.php'))->toBeTrue()
+                    ->and(PathMatcher::mayPathBeIncluded('/var/www/var/plugins/Plugin.php'))->toBeTrue()
+                    ->and(PathMatcher::mayPathBeIncluded('storage/custom/Handler.php'))->toBeTrue()
+                    ->and(PathMatcher::mayPathBeIncluded('src/App/Controller.php'))->toBeTrue()
+                ;
+            } finally {
+                Config::reset();
+            }
         });
     });
 
@@ -185,8 +272,9 @@ describe('PathMatcher Unit Tests', function () {
     });
 
     describe('reset()', function () {
-        test('clears internal pattern and directory caches cleanly', function () {
+        test('clears internal pattern, prefix, and directory caches cleanly', function () {
             PathMatcher::normalizePath('test/path');
+            PathMatcher::hasIncludeMatchingPrefix('vendor/', ['vendor/**']);
             PathMatcher::isCachePath('some/path');
 
             PathMatcher::reset();

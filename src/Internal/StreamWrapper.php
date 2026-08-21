@@ -49,6 +49,14 @@ final class StreamWrapper implements StreamWrapperInterface
     private static array $statCache = [];
 
     /**
+     * In-memory cache for static-path negative misses only (e.g. vendor).
+     * Never stores negative misses for dynamic paths (var/cache, storage).
+     *
+     * @var array<string, true>
+     */
+    private static array $staticNegativeStatCache = [];
+
+    /**
      * In-memory cache for isApplicationFile path decisions.
      *
      * @var array<string, bool>
@@ -56,11 +64,26 @@ final class StreamWrapper implements StreamWrapperInterface
     private static array $appFileDecisionCache = [];
 
     /**
+     * Fast-lookup table for read-only source view functions.
+     *
+     * @var array<string, true>
+     */
+    private const READ_ONLY_FUNCTIONS = [
+        'file_get_contents' => true,
+        'file' => true,
+        'readfile' => true,
+        'highlight_file' => true,
+        'show_source' => true,
+        'token_get_all' => true,
+    ];
+
+    /**
      * Resets all internal caches.
      */
     public static function reset(): void
     {
         self::$statCache = [];
+        self::$staticNegativeStatCache = [];
         self::$appFileDecisionCache = [];
         PathMatcher::reset();
     }
@@ -171,26 +194,47 @@ final class StreamWrapper implements StreamWrapperInterface
      */
     public function stream_open(string $path, string $mode, int $options, ?string &$openedPath): bool
     {
-        // Fast-path: non-PHP files are never transformed
+        if ($mode !== 'r' && $mode !== 'rb' && $mode !== 'rt') {
+            return $this->openDirectHandle($path, $mode);
+        }
+
         if (! str_ends_with(strtolower($path), '.php')) {
             return $this->openDirectHandle($path, $mode);
         }
 
-        // Fast-path: unwhitelisted vendor files are never transformed
-        $normalizedRaw = str_replace('\\', '/', $path);
-        if (str_contains($normalizedRaw, '/vendor/') || str_starts_with($normalizedRaw, 'vendor/')) {
+        if (! Config::isEnabled()) {
             return $this->openDirectHandle($path, $mode);
         }
 
+        $normalizedRaw = str_replace('\\', '/', $path);
+
+        if (! PathMatcher::mayPathBeIncluded($normalizedRaw)) {
+            return $this->openDirectHandle($path, $mode);
+        }
+
+        if (isset(self::$appFileDecisionCache[$normalizedRaw])) {
+            if (! self::$appFileDecisionCache[$normalizedRaw]) {
+                return $this->openDirectHandle($path, $mode);
+            }
+        }
+
         self::unregister();
-        $exists = self::silent(fn () => file_exists($path));
-        $resolvedPath = $exists ? realpath($path) : '';
+        $exists = (bool) self::silent(fn () => file_exists($path));
+        $resolvedPath = $exists ? self::silent(fn () => realpath($path)) : false;
         self::register();
 
-        $isAppFile = $exists && ! self::isReadOnlyCall() && self::isApplicationFile($path, $resolvedPath);
+        if (! $exists || $resolvedPath === false) {
+            return $this->openDirectHandle($path, $mode);
+        }
 
-        if (! $isAppFile || $resolvedPath === false) {
-            return $this->openDirectHandle(($resolvedPath !== false && $resolvedPath !== '') ? $resolvedPath : $path, $mode);
+        $normalizedResolved = str_replace('\\', '/', $resolvedPath);
+
+        if (! self::isApplicationFile($path, $resolvedPath)) {
+            return $this->openDirectHandle($normalizedResolved, $mode);
+        }
+
+        if (self::isReadOnlyCall()) {
+            return $this->openDirectHandle($normalizedResolved, $mode);
         }
 
         self::unregister();
@@ -202,6 +246,20 @@ final class StreamWrapper implements StreamWrapperInterface
         self::register();
 
         return $success;
+    }
+
+    /**
+     * Determines if the stream_open call is for reading raw file contents/snippets
+     * (e.g. error screen renderers) rather than PHP engine execution.
+     */
+    private static function isReadOnlyCall(): bool
+    {
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 3);
+
+        $caller1 = strtolower($trace[1]['function'] ?? '');
+        $caller2 = strtolower($trace[2]['function'] ?? '');
+
+        return isset(self::READ_ONLY_FUNCTIONS[$caller1]) || isset(self::READ_ONLY_FUNCTIONS[$caller2]);
     }
 
     /**
@@ -338,15 +396,23 @@ final class StreamWrapper implements StreamWrapperInterface
 
     /**
      * High-speed stat resolution with $O(1)$ memoization cache.
-     * Never caches false (negative lookups) so newly created directories and files are immediately discovered.
+     * Caches positive stat hits.
+     * Only caches negative misses for STATIC directories (vendor, tests).
+     * NEVER caches negative misses for dynamic writable paths (var/cache, storage),
+     * guaranteeing Symfony/Shopware cache creation is detected immediately.
      *
      * @return array<int|string, int>|false
      */
     public function url_stat(string $path, int $flags): array|false
     {
         $normalized = str_replace('\\', '/', $path);
+
         if (isset(self::$statCache[$normalized])) {
             return self::$statCache[$normalized];
+        }
+
+        if (isset(self::$staticNegativeStatCache[$normalized])) {
+            return false;
         }
 
         self::unregister();
@@ -354,9 +420,12 @@ final class StreamWrapper implements StreamWrapperInterface
         $result = self::silent(fn () => stat($path));
         self::register();
 
-        // Only cache positive results (existing files/dirs)
         if ($result !== false) {
             self::$statCache[$normalized] = $result;
+        } else {
+            if (! PathMatcher::isDynamicWritablePath($normalized)) {
+                self::$staticNegativeStatCache[$normalized] = true;
+            }
         }
 
         return $result;
@@ -365,7 +434,7 @@ final class StreamWrapper implements StreamWrapperInterface
     public function stream_metadata(string $path, int $option, mixed $value): bool
     {
         $normalized = str_replace('\\', '/', $path);
-        unset(self::$statCache[$normalized]);
+        unset(self::$statCache[$normalized], self::$staticNegativeStatCache[$normalized]);
 
         self::unregister();
         $result = false;
@@ -429,10 +498,10 @@ final class StreamWrapper implements StreamWrapperInterface
     public function mkdir(string $path, int $mode, int $options): bool
     {
         $normalized = str_replace('\\', '/', $path);
-        unset(self::$statCache[$normalized]);
+        unset(self::$statCache[$normalized], self::$staticNegativeStatCache[$normalized]);
 
         self::unregister();
-        $result = (bool) self::silent(fn () => mkdir($path, $mode, (bool) ($options & STREAM_MKDIR_RECURSIVE)));
+        $result = (bool) self::silent(fn () => mkdir($path, $mode, ($options & STREAM_MKDIR_RECURSIVE) !== 0));
         self::register();
 
         return $result;
@@ -441,7 +510,7 @@ final class StreamWrapper implements StreamWrapperInterface
     public function rmdir(string $path, int $options): bool
     {
         $normalized = str_replace('\\', '/', $path);
-        unset(self::$statCache[$normalized]);
+        unset(self::$statCache[$normalized], self::$staticNegativeStatCache[$normalized]);
 
         self::unregister();
         $result = (bool) self::silent(fn () => rmdir($path));
@@ -453,7 +522,7 @@ final class StreamWrapper implements StreamWrapperInterface
     public function unlink(string $path): bool
     {
         $normalized = str_replace('\\', '/', $path);
-        unset(self::$statCache[$normalized]);
+        unset(self::$statCache[$normalized], self::$staticNegativeStatCache[$normalized]);
 
         self::unregister();
         $result = (bool) self::silent(fn () => unlink($path));
@@ -466,25 +535,18 @@ final class StreamWrapper implements StreamWrapperInterface
     {
         $normFrom = str_replace('\\', '/', $pathFrom);
         $normTo = str_replace('\\', '/', $pathTo);
-        unset(self::$statCache[$normFrom], self::$statCache[$normTo]);
+        unset(
+            self::$statCache[$normFrom],
+            self::$statCache[$normTo],
+            self::$staticNegativeStatCache[$normFrom],
+            self::$staticNegativeStatCache[$normTo]
+        );
 
         self::unregister();
         $result = (bool) self::silent(fn () => rename($pathFrom, $pathTo));
         self::register();
 
         return $result;
-    }
-
-    /**
-     * Determines if the current stream_open call is directly for reading file contents
-     * rather than PHP engine's require/include execution.
-     */
-    private static function isReadOnlyCall(): bool
-    {
-        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 3);
-        $callerFunc = strtolower($trace[2]['function'] ?? '');
-
-        return \in_array($callerFunc, ['file_get_contents', 'file', 'readfile', 'highlight_file', 'show_source', 'token_get_all'], true);
     }
 
     /**
