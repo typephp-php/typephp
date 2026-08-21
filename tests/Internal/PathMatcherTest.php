@@ -138,32 +138,40 @@ describe('PathMatcher Unit Tests', function () {
         });
 
         test('rejects unwhitelisted vendor, var, and storage paths when config does not include them', function () {
-            Config::set([
-                'include' => ['src/**', 'app/**'],
-            ]);
+            try {
+                Config::set([
+                    'include' => ['src/**', 'app/**'],
+                ]);
 
-            expect(PathMatcher::mayPathBeIncluded('vendor/monolog/monolog/src/Logger.php'))->toBeFalse()
-                ->and(PathMatcher::mayPathBeIncluded('/var/www/vendor/symfony/console/App.php'))->toBeFalse()
-                ->and(PathMatcher::mayPathBeIncluded('/var/www/var/cache/Container.php'))->toBeFalse()
-                ->and(PathMatcher::mayPathBeIncluded('storage/framework/views/1.php'))->toBeFalse()
-            ;
+                expect(PathMatcher::mayPathBeIncluded('vendor/monolog/monolog/src/Logger.php'))->toBeFalse()
+                    ->and(PathMatcher::mayPathBeIncluded('/var/www/vendor/symfony/console/App.php'))->toBeFalse()
+                    ->and(PathMatcher::mayPathBeIncluded('/var/www/var/cache/Container.php'))->toBeFalse()
+                    ->and(PathMatcher::mayPathBeIncluded('storage/framework/views/1.php'))->toBeFalse()
+                ;
+            } finally {
+                Config::reset();
+            }
         });
 
         test('permits vendor, var, or storage paths when explicitly whitelisted in include config', function () {
-            Config::set([
-                'include' => [
-                    'src/**',
-                    'vendor/my-org/my-package/**',
-                    'var/plugins/**',
-                    'storage/custom/**',
-                ],
-            ]);
+            try {
+                Config::set([
+                    'include' => [
+                        'src/**',
+                        'vendor/my-org/my-package/**',
+                        'var/plugins/**',
+                        'storage/custom/**',
+                    ],
+                ]);
 
-            expect(PathMatcher::mayPathBeIncluded('vendor/my-org/my-package/src/Service.php'))->toBeTrue()
-                ->and(PathMatcher::mayPathBeIncluded('/var/www/var/plugins/Plugin.php'))->toBeTrue()
-                ->and(PathMatcher::mayPathBeIncluded('storage/custom/Handler.php'))->toBeTrue()
-                ->and(PathMatcher::mayPathBeIncluded('src/App/Controller.php'))->toBeTrue()
-            ;
+                expect(PathMatcher::mayPathBeIncluded('vendor/my-org/my-package/src/Service.php'))->toBeTrue()
+                    ->and(PathMatcher::mayPathBeIncluded('/var/www/var/plugins/Plugin.php'))->toBeTrue()
+                    ->and(PathMatcher::mayPathBeIncluded('storage/custom/Handler.php'))->toBeTrue()
+                    ->and(PathMatcher::mayPathBeIncluded('src/App/Controller.php'))->toBeTrue()
+                ;
+            } finally {
+                Config::reset();
+            }
         });
     });
 

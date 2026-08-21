@@ -164,6 +164,10 @@ PHP;
     });
 
     describe('stream_open() Fast-Paths & Whitelist Preservation', function () {
+        afterEach(function () {
+            Config::reset();
+        });
+
         test('bypasses AST transformation on non-PHP files', function () {
             $wrapper = new StreamWrapper();
             $openedPath = null;
@@ -178,67 +182,83 @@ PHP;
         });
 
         test('bypasses AST transformation for unwhitelisted vendor files', function () {
-            Config::set([
-                'include' => ['src/**'],
-                'exclude' => ['vendor/**'],
-            ]);
+            try {
+                Config::set([
+                    'include' => ['src/**'],
+                    'exclude' => ['vendor/**'],
+                ]);
 
-            $projectRoot = str_replace('\\', '/', Config::getProjectRoot());
-            $vendorFile = $projectRoot . '/vendor/composer/autoload_real.php';
+                $projectRoot = str_replace('\\', '/', Config::getProjectRoot());
+                $vendorFile = $projectRoot . '/vendor/composer/autoload_real.php';
 
-            if (file_exists($vendorFile)) {
-                $wrapper = new StreamWrapper();
-                $openedPath = null;
-                $success = $wrapper->stream_open($vendorFile, 'r', 0, $openedPath);
+                if (file_exists($vendorFile)) {
+                    $wrapper = new StreamWrapper();
+                    $openedPath = null;
+                    $success = $wrapper->stream_open($vendorFile, 'r', 0, $openedPath);
 
-                expect($success)->toBeTrue();
-                $wrapper->stream_close();
+                    expect($success)->toBeTrue();
+                    $wrapper->stream_close();
+                }
+            } finally {
+                Config::reset();
             }
         });
 
         test('transforms whitelisted vendor files when explicitly included in config', function () {
-            Config::set([
-                'include' => [
-                    'src/**',
-                    'vendor/monolog/monolog/src/Monolog/Logger.php',
-                ],
-                'exclude' => [
-                    'vendor/**',
-                ],
-            ]);
+            try {
+                Config::set([
+                    'include' => [
+                        'src/**',
+                        'vendor/monolog/monolog/src/Monolog/Logger.php',
+                    ],
+                    'exclude' => [
+                        'vendor/**',
+                    ],
+                ]);
 
-            $projectRoot = str_replace('\\', '/', Config::getProjectRoot());
-            $whitelistedVendorFile = $projectRoot . '/vendor/monolog/monolog/src/Monolog/Logger.php';
+                $projectRoot = str_replace('\\', '/', Config::getProjectRoot());
+                $whitelistedVendorFile = $projectRoot . '/vendor/monolog/monolog/src/Monolog/Logger.php';
 
-            expect(FileFilter::isFileExcluded($whitelistedVendorFile))->toBeFalse();
+                expect(FileFilter::isFileExcluded($whitelistedVendorFile))->toBeFalse();
+            } finally {
+                Config::reset();
+            }
         });
     });
 
     describe('Vendor Subpackage Isolation', function () {
+        afterEach(function () {
+            Config::reset();
+        });
+
         test('strictly isolates vendor files with nested src directories when application includes specific src subpackages', function () {
-            Config::set([
-                'include' => [
-                    'src/**',
-                    'src/Core/**',
-                    'src/Storefront/**',
-                    'src/Administration/**',
-                ],
-                'exclude' => [
-                    'vendor/**',
-                    'storage/**',
-                    'var/**',
-                    'cache/**',
-                ],
-            ]);
+            try {
+                Config::set([
+                    'include' => [
+                        'src/**',
+                        'src/Core/**',
+                        'src/Storefront/**',
+                        'src/Administration/**',
+                    ],
+                    'exclude' => [
+                        'vendor/**',
+                        'storage/**',
+                        'var/**',
+                        'cache/**',
+                    ],
+                ]);
 
-            $projectRoot = Config::getProjectRoot();
+                $projectRoot = Config::getProjectRoot();
 
-            $vendorFile = str_replace('\\', '/', $projectRoot . '/vendor/doctrine/dbal/src/Core/Table.php');
-            $appFile = str_replace('\\', '/', $projectRoot . '/src/Core/Framework/Util.php');
+                $vendorFile = str_replace('\\', '/', $projectRoot . '/vendor/doctrine/dbal/src/Core/Table.php');
+                $appFile = str_replace('\\', '/', $projectRoot . '/src/Core/Framework/Util.php');
 
-            expect(FileFilter::isFileExcluded($vendorFile))->toBeTrue()
-                ->and(FileFilter::isFileExcluded($appFile))->toBeFalse()
-            ;
+                expect(FileFilter::isFileExcluded($vendorFile))->toBeTrue()
+                    ->and(FileFilter::isFileExcluded($appFile))->toBeFalse()
+                ;
+            } finally {
+                Config::reset();
+            }
         });
     });
 });
