@@ -549,6 +549,13 @@ final class ParamChecker
                 return null;
             }
 
+            if ($expectedTypeNode instanceof IdentifierTypeNode && $expectedTypeNode->name === $templateName) {
+                $inferredType = TemplateManager::inferTypeFromValue($val);
+                TemplateManager::bindTemplate($function, $targetObj, $templateName, $inferredType);
+
+                return null;
+            }
+
             if ($isVariadic && \is_array($val)) {
                 foreach ($val as $idx => $item) {
                     $err = $registry->validate($item, $expectedTypeNode, $function . '(): Argument $' . $paramName . '[' . $idx . '] (template ' . $templateName . ' = ' . $expectedTypeNode . ')');

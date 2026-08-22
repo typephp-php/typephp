@@ -352,11 +352,21 @@ final class TemplateManager
             return null;
         }
 
+        $expectedTypeNode = $typeNode->genericTypes[$index];
+
+        if ($expectedTypeNode instanceof IdentifierTypeNode) {
+            $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($expectedTypeNode->name);
+            $isRealType = class_exists($expectedTypeNode->name) || interface_exists($expectedTypeNode->name) || enum_exists($expectedTypeNode->name) || trait_exists($expectedTypeNode->name);
+
+            if (! $isBuiltIn && ! $isRealType) {
+                return null;
+            }
+        }
+
         if (self::$instanceTemplateBindings === null) {
             self::$instanceTemplateBindings = new WeakMap();
         }
 
-        $expectedTypeNode = $typeNode->genericTypes[$index];
         $usageVariance = $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT;
         $declaredVariance = $classVariances[$templateTag->name] ?? GenericTypeNode::VARIANCE_INVARIANT;
 
@@ -505,8 +515,17 @@ final class TemplateManager
                 if (isset($genericTypeNode->genericTypes[$idx])) {
                     $resolved = self::resolveTypeNodeAst($genericTypeNode->genericTypes[$idx], $hierClass);
 
-                    if ($resolved instanceof IdentifierTypeNode && isset($declaredTemplateNames[$resolved->name])) {
-                        continue;
+                    if ($resolved instanceof IdentifierTypeNode) {
+                        $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($resolved->name);
+                        $isRealType = class_exists($resolved->name) || interface_exists($resolved->name) || enum_exists($resolved->name) || trait_exists($resolved->name);
+
+                        if (! $isBuiltIn && ! $isRealType) {
+                            continue;
+                        }
+
+                        if (isset($declaredTemplateNames[$resolved->name])) {
+                            continue;
+                        }
                     }
 
                     $bindings[$templateName] = $resolved;

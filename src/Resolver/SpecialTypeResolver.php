@@ -34,7 +34,9 @@ use TypePHP\Internal\ErrorMessage;
 use TypePHP\Internal\TypeFormatter;
 
 /**
- * @internal Resolves special type identifiers (self, static, parent, FQCNs) against Reflection or file contexts.
+ * Resolves special type identifiers (self, static, parent, FQCNs) against Reflection or file contexts.
+ *
+ * @internal
  */
 final class SpecialTypeResolver
 {
@@ -980,7 +982,7 @@ final class SpecialTypeResolver
     /**
      * Checks if a type name is a built-in PHP or PHPDoc type keyword.
      */
-    private static function isBuiltInTypeKeyword(string $name): bool
+    public static function isBuiltInTypeKeyword(string $name): bool
     {
         return isset(self::BUILTIN_TYPE_KEYWORDS[strtolower($name)]);
     }
