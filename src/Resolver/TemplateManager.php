@@ -360,6 +360,7 @@ final class TemplateManager
         $usageVariance = $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT;
         $declaredVariance = $classVariances[$templateTag->name] ?? GenericTypeNode::VARIANCE_INVARIANT;
 
+        // Return values are naturally in a covariant position under Liskov Substitution Principle
         $isReturnContext = str_contains($context, 'Return value');
 
         $variance = ($usageVariance !== GenericTypeNode::VARIANCE_INVARIANT)
@@ -799,7 +800,9 @@ final class TemplateManager
      */
     private static function getPhpDocParserComponents(): array
     {
+        /** @var PhpDocParser|null $phpDocParser */
         static $phpDocParser = null;
+        /** @var Lexer|null $lexer */
         static $lexer = null;
 
         if ($phpDocParser === null || $lexer === null) {
@@ -820,7 +823,9 @@ final class TemplateManager
      */
     private static function getTypeParserComponents(): array
     {
+        /** @var TypeParser|null $typeParser */
         static $typeParser = null;
+        /** @var Lexer|null $lexer */
         static $lexer = null;
 
         if ($typeParser === null || $lexer === null) {
