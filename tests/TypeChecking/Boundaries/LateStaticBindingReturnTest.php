@@ -20,15 +20,13 @@ describe('Late Static Binding Return Contracts (@return static)', function () {
         });
 
         test('throws TypeError when parent static factory method returns stdClass instead of late-static-bound child class', function () {
-            expect(fn () => UserEntityFactory::createWrongInstance())
-                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Services\UserEntityFactory')
-            ;
+            expect(fn() => UserEntityFactory::createWrongInstance())
+                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Services\UserEntityFactory');
         });
 
         test('throws TypeError when static factory method returns a sibling class instead of the called late-static class', function () {
-            expect(fn () => UserEntityFactory::createSibling())
-                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Services\UserEntityFactory')
-            ;
+            expect(fn() => UserEntityFactory::createSibling())
+                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Services\UserEntityFactory');
         });
     });
 
@@ -40,9 +38,8 @@ describe('Late Static Binding Return Contracts (@return static)', function () {
         });
 
         test('throws TypeError when 3rd-tier descendant returns an instance that violates the deepest child type', function () {
-            expect(fn () => GrandChildEntityFactory::createSibling())
-                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Services\GrandChildEntityFactory')
-            ;
+            expect(fn() => GrandChildEntityFactory::createSibling())
+                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Services\GrandChildEntityFactory');
         });
     });
 
@@ -56,9 +53,8 @@ describe('Late Static Binding Return Contracts (@return static)', function () {
         });
 
         test('throws TypeError when list contains an item violating late-static-bound type', function () {
-            expect(fn () => UserEntityFactory::createBadBatch())
-                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Services\UserEntityFactory')
-            ;
+            expect(fn() => UserEntityFactory::createBadBatch())
+                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Services\UserEntityFactory');
         });
     });
 
@@ -72,9 +68,8 @@ describe('Late Static Binding Return Contracts (@return static)', function () {
         test('throws TypeError when fluent instance method returns sibling instance', function () {
             $user = new UserEntityFactory();
 
-            expect(fn () => $user->withBadSetting())
-                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Services\UserEntityFactory')
-            ;
+            expect(fn() => $user->withBadSetting())
+                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Services\UserEntityFactory');
         });
     });
 
@@ -90,9 +85,8 @@ describe('Late Static Binding Return Contracts (@return static)', function () {
         });
 
         test('throws TypeError when generic static factory returns instance violating generic template T', function () {
-            expect(fn () => UserGenericFactory::ofBadItem(new Dog()))
-                ->toThrow(TypeError::class, 'UserGenericFactory<invariant TypePHP\Tests\Fixtures\Domain\Dog>, but TypePHP\Tests\Fixtures\Services\UserGenericFactory<stdClass> was returned')
-            ;
+            expect(fn() => UserGenericFactory::ofBadItem(new Dog()))
+                ->toThrow(TypeError::class, 'UserGenericFactory<covariant TypePHP\Tests\Fixtures\Domain\Dog>, but TypePHP\Tests\Fixtures\Services\UserGenericFactory<stdClass> was returned');
         });
 
         test('validates nested generic containers holding late-static instances (Producer<static<T>>)', function () {
@@ -109,9 +103,8 @@ describe('Late Static Binding Return Contracts (@return static)', function () {
             $dog = new Dog();
             $factory = new UserGenericFactory($dog);
 
-            expect(fn () => $factory->toBadProducer())
-                ->toThrow(TypeError::class, 'Producer<covariant TypePHP\Tests\Fixtures\Services\UserGenericFactory<TypePHP\Tests\Fixtures\Domain\Dog>>')
-            ;
+            expect(fn() => $factory->toBadProducer())
+                ->toThrow(TypeError::class, 'Producer<covariant TypePHP\Tests\Fixtures\Services\UserGenericFactory<TypePHP\Tests\Fixtures\Domain\Dog>>');
         });
     });
 
@@ -138,9 +131,8 @@ describe('Late Static Binding Return Contracts (@return static)', function () {
         });
 
         test('throws TypeError when array shape containing generic late-static instance violates inner shape contract', function () {
-            expect(fn () => UserGenericMap::toBadShape('user_1', new Dog()))
-                ->toThrow(TypeError::class, "Return value['count'] must be of type positive-int")
-            ;
+            expect(fn() => UserGenericMap::toBadShape('user_1', new Dog()))
+                ->toThrow(TypeError::class, "Return value['count'] must be of type positive-int");
         });
 
         test('throws TypeError on inline @var invariant generic mismatch when assigning static generic factory result', function () {

@@ -27,7 +27,9 @@ use TypePHP\Internal\ErrorMessage;
 use WeakMap;
 
 /**
- * @internal Manages generic template bindings for object instances (via WeakMap) and static/method call stack frames.
+ * Manages generic template bindings for object instances (via WeakMap) and static/method call stack frames.
+ *
+ * @internal
  */
 final class TemplateManager
 {
@@ -51,7 +53,7 @@ final class TemplateManager
     public static ?object $pendingCloneSource = null;
 
     /**
-     * Resets all static generic template bindings and call stack frames. Useful for test isolation.
+     * Resets all static generic template bindings and call stack frames.
      */
     public static function reset(): void
     {
@@ -358,9 +360,11 @@ final class TemplateManager
         $usageVariance = $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT;
         $declaredVariance = $classVariances[$templateTag->name] ?? GenericTypeNode::VARIANCE_INVARIANT;
 
+        $isReturnContext = str_contains($context, 'Return value');
+
         $variance = ($usageVariance !== GenericTypeNode::VARIANCE_INVARIANT)
             ? $usageVariance
-            : $declaredVariance;
+            : ($isReturnContext ? GenericTypeNode::VARIANCE_COVARIANT : $declaredVariance);
 
         $templateName = $templateTag->name;
         $existingBindings = self::$instanceTemplateBindings[$instance] ?? [];
