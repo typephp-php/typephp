@@ -51,7 +51,7 @@ describe('Namespace Resolution Strategies', function () {
         expect(testFullyQualifiedParam(new Dog()))->toBeTrue();
 
         expect(fn () => testFullyQualifiedParam(new Car()))
-            ->toThrow(\TypeError::class, 'TypePHP\Tests\Fixtures\Domain\Dog')
+            ->toThrow(TypeError::class, 'TypePHP\Tests\Fixtures\Domain\Dog')
         ;
     });
 
@@ -59,7 +59,7 @@ describe('Namespace Resolution Strategies', function () {
         expect(testShortImportedParam(new Dog()))->toBeTrue();
 
         expect(fn () => testShortImportedParam(new Car()))
-            ->toThrow(\TypeError::class, 'TypePHP\Tests\Fixtures\Domain\Dog')
+            ->toThrow(TypeError::class, 'TypePHP\Tests\Fixtures\Domain\Dog')
         ;
     });
 
@@ -67,7 +67,7 @@ describe('Namespace Resolution Strategies', function () {
         expect(testAliasedImportedParam(new Feline()))->toBeTrue();
 
         expect(fn () => testAliasedImportedParam(new Dog()))
-            ->toThrow(\TypeError::class, 'TypePHP\Tests\Fixtures\Domain\Cat')
+            ->toThrow(TypeError::class, 'TypePHP\Tests\Fixtures\Domain\Cat')
         ;
     });
 
@@ -75,7 +75,7 @@ describe('Namespace Resolution Strategies', function () {
         expect(testGlobalNativeClassParam(new DateTime()))->toBeTrue();
 
         expect(fn () => testGlobalNativeClassParam(new Dog()))
-            ->toThrow(\TypeError::class, 'DateTime')
+            ->toThrow(TypeError::class, 'DateTime')
         ;
     });
 });
