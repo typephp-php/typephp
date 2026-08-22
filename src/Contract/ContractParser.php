@@ -49,13 +49,21 @@ final class ContractParser
     private static array $magicMethodCache = [];
 
     /**
-     * Resets the contract and property caches. Useful for test isolation or config changes.
+     * In-memory cache for class-level templates and aliases per class name.
+     *
+     * @var array<string, array{templates: array<string, TemplateTagValueNode>, aliases: array<string, TypeNode>}>
+     */
+    private static array $classLevelDocCache = [];
+
+    /**
+     * Resets the contract, property, and class-level docblock caches.
      */
     public static function reset(): void
     {
         self::$cache = [];
         self::$propertyCache = [];
         self::$magicMethodCache = [];
+        self::$classLevelDocCache = [];
         DocblockExtractor::reset();
         FileFilter::reset();
         TypeValidatorRegistry::reset();
@@ -517,6 +525,7 @@ final class ContractParser
 
     /**
      * Resolves class-level docblocks (templates and aliases) up the class inheritance chain.
+     * Memoizes results in $classLevelDocCache per class name for O(1) performance across method calls.
      *
      * @param \ReflectionClass<object> $declaringClass
      * @param array<string, TemplateTagValueNode> $templates
@@ -524,6 +533,15 @@ final class ContractParser
      */
     private static function parseClassLevelDocs(\ReflectionClass $declaringClass, array &$templates, array &$aliases): void
     {
+        $className = $declaringClass->getName();
+        if (isset(self::$classLevelDocCache[$className])) {
+            $cached = self::$classLevelDocCache[$className];
+            $templates = $cached['templates'];
+            $aliases = $cached['aliases'];
+
+            return;
+        }
+
         $classHierarchy = HierarchyResolver::getClassHierarchy($declaringClass);
 
         foreach ($classHierarchy as $hierClass) {
@@ -544,6 +562,11 @@ final class ContractParser
                 DocblockExtractor::extractAliases($classPhpDocNode, $aliases, $hierClass);
             }
         }
+
+        self::$classLevelDocCache[$className] = [
+            'templates' => $templates,
+            'aliases' => $aliases,
+        ];
     }
 
     /**
