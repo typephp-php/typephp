@@ -89,6 +89,8 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
+     * Registers the stream wrapper for the native 'file://' protocol.
+     *
      * @param array<string, mixed> $config
      */
     public static function register(array $config = []): void
@@ -120,10 +122,10 @@ final class StreamWrapper implements StreamWrapperInterface
 
     /**
      * Transforms PHP source code by parsing AST, extracting metadata, applying ContractVisitor, and formatting output.
+     * Preserves exact line numbers to guarantee zero line-drift in debug stack traces.
      */
     public static function transformSource(string $source, string $filePath = ''): string
     {
-        // Respect per-file suppression tag unless respect_ignore_tags is false
         if (Config::isRespectIgnoreTagsEnabled() && (str_contains($source, '@typephp-ignore-file') || str_contains($source, '@typephp-disable-file'))) {
             return $source;
         }
@@ -150,14 +152,10 @@ final class StreamWrapper implements StreamWrapperInterface
 
         /** @var array<\PhpParser\Node\Stmt> $nodesToTraverse */
         $nodesToTraverse = $oldStmts;
-
-        /** @var array<\PhpParser\Node\Stmt> $newStmts */
         $newStmts = $traverser1->traverse($nodesToTraverse);
 
         $traverser2 = new NodeTraverser();
         $traverser2->addVisitor(new ContractVisitor());
-
-        /** @var array<\PhpParser\Node\Stmt> $newStmts */
         $newStmts = $traverser2->traverse($newStmts);
 
         $printer = new TypePHPPrinter();
@@ -184,13 +182,12 @@ final class StreamWrapper implements StreamWrapperInterface
             $transformed = preg_replace('/\/\*__TYPEPHP_INJECTED_END__\*\/[ \t]*\r?\n[ \t]*/', '/*__TYPEPHP_INJECTED_END__*/ ', $transformed, $drift) ?? $transformed;
         }
 
-        $transformed = str_replace(['/*__TYPEPHP_INJECTED_START__*/', '/*__TYPEPHP_INJECTED_END__*/'], '', $transformed);
-
-        return $transformed;
+        return str_replace(['/*__TYPEPHP_INJECTED_START__*/', '/*__TYPEPHP_INJECTED_END__*/'], '', $transformed);
     }
 
     /**
-     * Opens a file stream, intercepting application files for AST transformation.
+     * Opens a file stream, intercepting matching application files for AST transformation.
+     * Evaluates string fast-paths before checking file existence or unregistering the wrapper.
      */
     public function stream_open(string $path, string $mode, int $options, ?string &$openedPath): bool
     {
@@ -395,11 +392,13 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * High-speed stat resolution with $O(1)$ memoization cache.
-     * Caches positive stat hits.
-     * Only caches negative misses for STATIC directories (vendor, tests).
-     * NEVER caches negative misses for dynamic writable paths (var/cache, storage),
-     * guaranteeing Symfony/Shopware cache creation is detected immediately.
+     * High-speed stat resolution with dual-tier memoization caching:
+     *
+     * 1. Positive hit cache ($statCache): Caches stat arrays for existing files and directories.
+     * 2. Static negative cache ($staticNegativeStatCache): Caches false lookups strictly for static
+     *    read-only paths (e.g. vendor directories), eliminating thousands of duplicate C-level stat calls.
+     * 3. Dynamic writable bypass: Never caches false for dynamic directories (var/cache, storage),
+     *    ensuring framework cache warmers and runtime directory creation remain fully functional.
      *
      * @return array<int|string, int>|false
      */
