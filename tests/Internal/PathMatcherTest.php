@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Tests\Internal;
 
+use ReflectionClass;
 use TypePHP\Internal\CacheManager;
 use TypePHP\Internal\Config;
 use TypePHP\Internal\PathMatcher;
@@ -38,6 +39,33 @@ describe('PathMatcher Unit Tests', function () {
         });
     });
 
+    describe('canonicalizePath()', function () {
+        test('returns unchanged path when no dots or traversals exist', function () {
+            expect(PathMatcher::canonicalizePath('src/Services/UserService.php'))
+                ->toBe('src/Services/UserService.php');
+        });
+
+        test('collapses relative directory traversals (..) and current directory dots (.)', function () {
+            expect(PathMatcher::canonicalizePath('/var/www/vendor/composer/../doctrine/dbal/src/Schema.php'))
+                ->toBe('/var/www/vendor/doctrine/dbal/src/Schema.php')
+                ->and(PathMatcher::canonicalizePath('src/./Core/../Services/./UserService.php'))
+                ->toBe('src/Services/UserService.php')
+                ->and(PathMatcher::canonicalizePath('/app/./Controllers/../Models/User.php'))
+                ->toBe('/app/Models/User.php')
+            ;
+        });
+
+        test('handles leading root slashes and root directory boundaries', function () {
+            expect(PathMatcher::canonicalizePath('/../app/User.php'))
+                ->toBe('/app/User.php')
+                ->and(PathMatcher::canonicalizePath('../../../app/User.php'))
+                ->toBe('../../../app/User.php')
+                ->and(PathMatcher::canonicalizePath('/'))
+                ->toBe('/')
+            ;
+        });
+    });
+
     describe('isVendorPath()', function () {
         test('identifies absolute and relative vendor paths correctly', function () {
             expect(PathMatcher::isVendorPath('vendor/doctrine/dbal/src/Schema.php'))->toBeTrue()
@@ -49,6 +77,7 @@ describe('PathMatcher Unit Tests', function () {
         test('identifies vendor paths when raw path has Windows backslashes', function () {
             expect(PathMatcher::isVendorPath('vendor/foo/bar.php', 'vendor\\foo\\bar.php'))->toBeTrue()
                 ->and(PathMatcher::isVendorPath('C:/project/vendor/foo.php', 'C:\\project\\vendor\\foo.php'))->toBeTrue()
+                ->and(PathMatcher::isVendorPath('other/path.php', '/root/vendor/pkg/file.php'))->toBeTrue()
             ;
         });
 
@@ -79,14 +108,51 @@ describe('PathMatcher Unit Tests', function () {
 
             $internalFile = $projectRoot . '/src/Internal/RuntimeTypeChecker.php';
             $contractFile = $projectRoot . '/src/Contract/FileFilter.php';
+            $commandFile = $projectRoot . '/src/Command/RunCommand.php';
+            $validatorFile = $projectRoot . '/src/Validator/ArrayValidator.php';
+            $wrapperFile = $projectRoot . '/src/Wrapper/CallableWrapper.php';
+            $resolverFile = $projectRoot . '/src/Resolver/SpecialTypeResolver.php';
+            $extensionFile = $projectRoot . '/src/Extension/ExtensionManager.php';
+            $exceptionFile = $projectRoot . '/src/Exception/TypeError.php';
+            $entryFile = $projectRoot . '/src/TypePHP.php';
             $bootstrapFile = $projectRoot . '/src/bootstrap.php';
             $mockAppFile = $projectRoot . '/src/Service.php';
+            $externalFile = '/var/www/app/Models/User.php';
 
             expect(PathMatcher::isLibraryInternal($internalFile))->toBeTrue()
                 ->and(PathMatcher::isLibraryInternal($contractFile))->toBeTrue()
+                ->and(PathMatcher::isLibraryInternal($commandFile))->toBeTrue()
+                ->and(PathMatcher::isLibraryInternal($validatorFile))->toBeTrue()
+                ->and(PathMatcher::isLibraryInternal($wrapperFile))->toBeTrue()
+                ->and(PathMatcher::isLibraryInternal($resolverFile))->toBeTrue()
+                ->and(PathMatcher::isLibraryInternal($extensionFile))->toBeTrue()
+                ->and(PathMatcher::isLibraryInternal($exceptionFile))->toBeTrue()
+                ->and(PathMatcher::isLibraryInternal($entryFile))->toBeTrue()
                 ->and(PathMatcher::isLibraryInternal($bootstrapFile))->toBeTrue()
                 ->and(PathMatcher::isLibraryInternal($mockAppFile))->toBeFalse()
+                ->and(PathMatcher::isLibraryInternal($externalFile))->toBeFalse()
             ;
+        });
+
+        test('identifies internal paths when installed as a vendor dependency', function () {
+            $ref = new ReflectionClass(PathMatcher::class);
+            $prop = $ref->getProperty('cachedLibSrcDir');
+            $prop->setValue(null, '/var/www/project/vendor/typephp/typephp/src/');
+
+            $vendorInstalledFile = '/var/www/project/vendor/typephp/typephp/src/Internal/RuntimeTypeChecker.php';
+            $appFile = '/var/www/project/src/Service.php';
+
+            expect(PathMatcher::isLibraryInternal($vendorInstalledFile))->toBeTrue()
+                ->and(PathMatcher::isLibraryInternal($appFile))->toBeFalse()
+            ;
+        });
+
+        test('returns false when library directory cannot be resolved', function () {
+            $ref = new ReflectionClass(PathMatcher::class);
+            $prop = $ref->getProperty('cachedLibSrcDir');
+            $prop->setValue(null, '');
+
+            expect(PathMatcher::isLibraryInternal('/var/www/project/src/Service.php'))->toBeFalse();
         });
     });
 
@@ -106,6 +172,22 @@ describe('PathMatcher Unit Tests', function () {
 
             expect(PathMatcher::hasIncludeMatchingPrefix('var/', $includes))->toBeTrue();
         });
+
+        test('retrieves decision from in-memory cache on subsequent lookups', function () {
+            $includes = ['vendor/acme/**'];
+
+            expect(PathMatcher::hasIncludeMatchingPrefix('vendor/', $includes))->toBeTrue()
+                ->and(PathMatcher::hasIncludeMatchingPrefix('vendor/', $includes))->toBeTrue()
+            ;
+        });
+
+        test('ignores non-string or empty include patterns gracefully', function () {
+            $dirtyIncludes = [null, '', 123, 'src/**'];
+
+            expect(PathMatcher::hasIncludeMatchingPrefix('src/', $dirtyIncludes))->toBeTrue()
+                ->and(PathMatcher::hasIncludeMatchingPrefix('vendor/', $dirtyIncludes))->toBeFalse()
+            ;
+        });
     });
 
     describe('isDynamicWritablePath()', function () {
@@ -113,9 +195,11 @@ describe('PathMatcher Unit Tests', function () {
             expect(PathMatcher::isDynamicWritablePath('/var/www/var/cache/prod/Container.php'))->toBeTrue()
                 ->and(PathMatcher::isDynamicWritablePath('var/cache/test/app.php'))->toBeTrue()
                 ->and(PathMatcher::isDynamicWritablePath('var/log/dev.log'))->toBeTrue()
+                ->and(PathMatcher::isDynamicWritablePath('/var/www/var/log/error.log'))->toBeTrue()
                 ->and(PathMatcher::isDynamicWritablePath('/project/storage/framework/views/123.php'))->toBeTrue()
                 ->and(PathMatcher::isDynamicWritablePath('storage/logs/laravel.log'))->toBeTrue()
                 ->and(PathMatcher::isDynamicWritablePath('/tmp/cache/item.php'))->toBeTrue()
+                ->and(PathMatcher::isDynamicWritablePath('cache/opcache.php'))->toBeTrue()
             ;
         });
 
@@ -146,7 +230,9 @@ describe('PathMatcher Unit Tests', function () {
                 expect(PathMatcher::mayPathBeIncluded('vendor/monolog/monolog/src/Logger.php'))->toBeFalse()
                     ->and(PathMatcher::mayPathBeIncluded('/var/www/vendor/symfony/console/App.php'))->toBeFalse()
                     ->and(PathMatcher::mayPathBeIncluded('/var/www/var/cache/Container.php'))->toBeFalse()
+                    ->and(PathMatcher::mayPathBeIncluded('var/logs/app.log'))->toBeFalse()
                     ->and(PathMatcher::mayPathBeIncluded('storage/framework/views/1.php'))->toBeFalse()
+                    ->and(PathMatcher::mayPathBeIncluded('/var/www/storage/app/file.txt'))->toBeFalse()
                 ;
             } finally {
                 Config::reset();
@@ -178,10 +264,12 @@ describe('PathMatcher Unit Tests', function () {
     describe('compileGlobToRegex()', function () {
         test('compiles absolute glob patterns into exact anchored regex', function () {
             $baseDir = '/var/www/project';
-            $regex = PathMatcher::compileGlobToRegex('/var/www/project/src/**', $baseDir);
+            $regexUnix = PathMatcher::compileGlobToRegex('/var/www/project/src/**', $baseDir);
+            $regexWindows = PathMatcher::compileGlobToRegex('C:/project/src/**', $baseDir);
 
-            expect(preg_match($regex, '/var/www/project/src/Service.php'))->toBe(1)
-                ->and(preg_match($regex, '/var/www/other/src/Service.php'))->toBe(0)
+            expect(preg_match($regexUnix, '/var/www/project/src/Service.php'))->toBe(1)
+                ->and(preg_match($regexUnix, '/var/www/other/src/Service.php'))->toBe(0)
+                ->and(preg_match($regexWindows, 'C:/project/src/Service.php'))->toBe(1)
             ;
         });
 
@@ -193,6 +281,9 @@ describe('PathMatcher Unit Tests', function () {
 
             $singleStar = PathMatcher::compileGlobToRegex('*', $baseDir);
             expect(preg_match($singleStar, '/var/www/project/index.php'))->toBe(1);
+
+            $prefixDoubleStar = PathMatcher::compileGlobToRegex('**/*.php', $baseDir);
+            expect(preg_match($prefixDoubleStar, '/var/www/project/app/Model.php'))->toBe(1);
         });
 
         test('compiles relative globs strictly anchored to project root or relative start', function () {
@@ -239,6 +330,19 @@ describe('PathMatcher Unit Tests', function () {
             ;
         });
 
+        test('allows explicit vendor wildcard includes', function () {
+            $projectRoot = PathMatcher::normalizePath(Config::getProjectRoot());
+            $includes = ['src/**', 'vendor/**'];
+            $excludes = ['vendor/doctrine/**'];
+
+            $whitelistedVendor = $projectRoot . '/vendor/monolog/monolog/src/Logger.php';
+            $excludedVendor = $projectRoot . '/vendor/doctrine/dbal/src/Column.php';
+
+            expect(PathMatcher::isPathIncluded($whitelistedVendor, $includes, $excludes))->toBeTrue()
+                ->and(PathMatcher::isPathIncluded($excludedVendor, $includes, $excludes))->toBeFalse()
+            ;
+        });
+
         test('allows blacklisting a specific single file inside an included directory', function () {
             $projectRoot = PathMatcher::normalizePath(Config::getProjectRoot());
             $includes = ['src/**'];
@@ -261,12 +365,31 @@ describe('PathMatcher Unit Tests', function () {
             expect(PathMatcher::isPathIncluded($file, $includes, $excludes))->toBeFalse();
         });
 
+        test('returns false when no include pattern matches the path', function () {
+            $projectRoot = PathMatcher::normalizePath(Config::getProjectRoot());
+            $includes = ['src/**'];
+            $excludes = ['vendor/**'];
+
+            $unmatchedFile = $projectRoot . '/bin/console';
+            expect(PathMatcher::isPathIncluded($unmatchedFile, $includes, $excludes))->toBeFalse();
+        });
+
         test('handles relative paths without leading slash cleanly', function () {
             $includes = ['src/**', 'app/**'];
             $excludes = ['vendor/**'];
 
             expect(PathMatcher::isPathIncluded('src/Core/Util.php', $includes, $excludes, 'src/Core/Util.php'))->toBeTrue()
                 ->and(PathMatcher::isPathIncluded('vendor/doctrine/dbal/src/Column.php', $includes, $excludes, 'vendor/doctrine/dbal/src/Column.php'))->toBeFalse()
+            ;
+        });
+
+        test('accepts custom base directory as argument and retrieves compiled patterns from cache', function () {
+            $customBase = '/opt/custom/project';
+            $dirtyIncludes = ['src/**', null];
+            $dirtyExcludes = ['var/**', null];
+
+            expect(PathMatcher::isPathIncluded('/opt/custom/project/src/App.php', $dirtyIncludes, $dirtyExcludes, '', $customBase))->toBeTrue()
+                ->and(PathMatcher::isPathIncluded('/opt/custom/project/src/App.php', $dirtyIncludes, $dirtyExcludes, '', $customBase))->toBeTrue()
             ;
         });
     });

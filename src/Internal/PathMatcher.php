@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace TypePHP\Internal;
 
 /**
- * @internal Centralized utility for path normalization, glob compilation, vendor isolation, and specificity matching.
+ * Centralized utility for path normalization, glob compilation, vendor isolation, and specificity matching.
+ *
+ * @internal
  */
 final class PathMatcher
 {
@@ -41,7 +43,7 @@ final class PathMatcher
     private static ?string $cachedLibSrcDir = null;
 
     /**
-     * Resets compiled pattern and directory caches.
+     * Resets compiled pattern, prefix, and directory caches.
      */
     public static function reset(): void
     {
@@ -65,15 +67,59 @@ final class PathMatcher
     }
 
     /**
+     * Collapses relative directory traversals (..) into canonical paths.
+     * Preserves leading root slashes and root boundaries.
+     */
+    public static function canonicalizePath(string $path): string
+    {
+        $path = str_replace('\\', '/', $path);
+        if (! str_contains($path, '..') && ! str_contains($path, '/.')) {
+            return $path;
+        }
+
+        $parts = explode('/', $path);
+        $absolutes = [];
+
+        foreach ($parts as $part) {
+            if ($part === '.' || ($part === '' && \count($absolutes) > 0)) {
+                continue;
+            }
+
+            if ($part === '') {
+                $absolutes[] = '';
+
+                continue;
+            }
+
+            if ($part === '..') {
+                if (\count($absolutes) > 0 && end($absolutes) !== '..' && end($absolutes) !== '') {
+                    array_pop($absolutes);
+                } elseif (\count($absolutes) === 0 || end($absolutes) === '..') {
+                    $absolutes[] = '..';
+                }
+            } else {
+                $absolutes[] = $part;
+            }
+        }
+
+        if ($absolutes === ['']) {
+            return '/';
+        }
+
+        return implode('/', $absolutes);
+    }
+
+    /**
      * Determines whether a given path is located within a vendor directory.
      */
     public static function isVendorPath(string $normalizedPath, string $rawPath = ''): bool
     {
-        $normalizedRaw = self::normalizePath($rawPath);
+        $canon = self::canonicalizePath($normalizedPath);
+        $canonRaw = $rawPath !== '' ? self::canonicalizePath(self::normalizePath($rawPath)) : '';
 
-        return str_starts_with($normalizedPath, 'vendor/')
-            || str_contains($normalizedPath, '/vendor/')
-            || ($normalizedRaw !== '' && (str_starts_with($normalizedRaw, 'vendor/') || str_contains($normalizedRaw, '/vendor/')));
+        return str_starts_with($canon, 'vendor/')
+            || str_contains($canon, '/vendor/')
+            || ($canonRaw !== '' && (str_starts_with($canonRaw, 'vendor/') || str_contains($canonRaw, '/vendor/')));
     }
 
     /**
@@ -85,11 +131,11 @@ final class PathMatcher
             self::$cachedCacheDir = rtrim(self::normalizePath(CacheManager::getCacheDir()), '/') . '/';
         }
 
-        return str_starts_with($normalizedPath, self::$cachedCacheDir);
+        return str_starts_with(self::canonicalizePath($normalizedPath), self::$cachedCacheDir);
     }
 
     /**
-     * Determines whether a path belongs to TypePHP's own internal engine source files.
+     * Determines whether a path belongs to TypePHP's internal engine source files.
      */
     public static function isLibraryInternal(string $normalizedPath): bool
     {
@@ -103,11 +149,13 @@ final class PathMatcher
             return false;
         }
 
+        $canon = self::canonicalizePath($normalizedPath);
+
         if (str_contains($libSrcDir, '/vendor/')) {
-            return str_starts_with($normalizedPath, $libSrcDir);
+            return str_starts_with($canon, $libSrcDir);
         }
 
-        if (str_starts_with($normalizedPath, $libSrcDir)) {
+        if (str_starts_with($canon, $libSrcDir)) {
             $internalDirs = [
                 $libSrcDir . 'Internal/',
                 $libSrcDir . 'Contract/',
@@ -122,7 +170,7 @@ final class PathMatcher
             ];
 
             foreach ($internalDirs as $dir) {
-                if (str_starts_with($normalizedPath, $dir)) {
+                if (str_starts_with($canon, $dir)) {
                     return true;
                 }
             }
@@ -156,27 +204,30 @@ final class PathMatcher
     }
 
     /**
-     * Determines whether a directory path is a dynamic writable cache/log directory.
+     * Determines whether a directory path is a dynamic writable cache, log, or storage directory.
      */
     public static function isDynamicWritablePath(string $normalizedPath): bool
     {
-        return str_contains($normalizedPath, '/var/cache/') || str_starts_with($normalizedPath, 'var/cache/')
-            || str_contains($normalizedPath, '/var/log/') || str_starts_with($normalizedPath, 'var/log/')
-            || str_contains($normalizedPath, '/storage/') || str_starts_with($normalizedPath, 'storage/')
-            || str_contains($normalizedPath, '/cache/') || str_starts_with($normalizedPath, 'cache/');
+        $canon = self::canonicalizePath($normalizedPath);
+
+        return str_contains($canon, '/var/cache/') || str_starts_with($canon, 'var/cache/')
+            || str_contains($canon, '/var/log/') || str_starts_with($canon, 'var/log/')
+            || str_contains($canon, '/storage/') || str_starts_with($canon, 'storage/')
+            || str_contains($canon, '/cache/') || str_starts_with($canon, 'cache/');
     }
 
     /**
-     * High-speed $O(1)$ string pre-filter to determine if a raw path can possibly be included,
-     * while respecting user whitelists for vendor, var, and storage directories.
+     * High-speed string pre-filter to reject non-application paths before executing regex matching.
      */
     public static function mayPathBeIncluded(string $normalizedPath): bool
     {
-        if (str_contains($normalizedPath, '/node_modules/') || str_starts_with($normalizedPath, 'node_modules/')) {
+        $canon = self::canonicalizePath($normalizedPath);
+
+        if (str_contains($canon, '/node_modules/') || str_starts_with($canon, 'node_modules/')) {
             return false;
         }
 
-        if (self::isCachePath($normalizedPath)) {
+        if (self::isCachePath($canon)) {
             return false;
         }
 
@@ -184,19 +235,19 @@ final class PathMatcher
         /** @var array<int, string> $includes */
         $includes = \is_array($config['include'] ?? null) ? $config['include'] : ['**'];
 
-        if (str_contains($normalizedPath, '/vendor/') || str_starts_with($normalizedPath, 'vendor/')) {
+        if (str_contains($canon, '/vendor/') || str_starts_with($canon, 'vendor/')) {
             if (! self::hasIncludeMatchingPrefix('vendor/', $includes)) {
                 return false;
             }
         }
 
-        if (str_contains($normalizedPath, '/var/') || str_starts_with($normalizedPath, 'var/')) {
+        if (str_contains($canon, '/var/') || str_starts_with($canon, 'var/')) {
             if (! self::hasIncludeMatchingPrefix('var/', $includes)) {
                 return false;
             }
         }
 
-        if (str_contains($normalizedPath, '/storage/') || str_starts_with($normalizedPath, 'storage/')) {
+        if (str_contains($canon, '/storage/') || str_starts_with($canon, 'storage/')) {
             if (! self::hasIncludeMatchingPrefix('storage/', $includes)) {
                 return false;
             }
@@ -213,14 +264,19 @@ final class PathMatcher
         $glob = self::normalizePath(trim($glob));
         $isAbsolute = str_starts_with($glob, '/') || (bool) preg_match('#^[a-zA-Z]:/#', $glob);
 
-        $regex = preg_quote($glob, '#');
-        $regex = str_replace(['\*\*', '\*'], ['.*', '[^/]*'], $regex);
-
         if ($isAbsolute) {
+            $regex = preg_quote($glob, '#');
+            $regex = str_replace(['\*\*', '\*'], ['.*', '[^/]*'], $regex);
             $pattern = '^' . $regex . '$';
-        } elseif ($glob === '*' || $glob === '**' || str_starts_with($glob, '**')) {
-            $pattern = '.*' . ($glob === '*' || $glob === '**' ? '' : substr($regex, 4)) . '$';
+        } elseif ($glob === '*' || $glob === '**') {
+            $pattern = '.*$';
+        } elseif (str_starts_with($glob, '**/')) {
+            $subRegex = preg_quote(substr($glob, 3), '#');
+            $subRegex = str_replace(['\*\*', '\*'], ['.*', '[^/]*'], $subRegex);
+            $pattern = '(^|.*\/)' . $subRegex . '$';
         } else {
+            $regex = preg_quote($glob, '#');
+            $regex = str_replace(['\*\*', '\*'], ['.*', '[^/]*'], $regex);
             $pattern = '(^' . preg_quote($baseDir . '/', '#') . '|^)' . $regex . '$';
         }
 
@@ -241,7 +297,8 @@ final class PathMatcher
         ?string $baseDir = null
     ): bool {
         $baseDir = $baseDir !== null ? self::normalizePath($baseDir) : Config::getProjectRoot();
-        $normalizedRaw = self::normalizePath($rawPath);
+        $normalizedPath = self::canonicalizePath($normalizedPath);
+        $normalizedRaw = $rawPath !== '' ? self::canonicalizePath(self::normalizePath($rawPath)) : '';
 
         $includes = self::getCompiledPatterns($includeGlobs, $baseDir, 'include');
         $excludes = self::getCompiledPatterns($excludeGlobs, $baseDir, 'exclude');
@@ -250,7 +307,8 @@ final class PathMatcher
         if ($isVendor) {
             $hasExplicitVendorWhitelist = false;
             foreach ($includes as $compiled) {
-                if (str_starts_with($compiled['pattern'], 'vendor/') &&
+                if (
+                    str_starts_with($compiled['pattern'], 'vendor/') &&
                     (preg_match($compiled['regex'], $normalizedPath) === 1 || ($normalizedRaw !== '' && preg_match($compiled['regex'], $normalizedRaw) === 1))
                 ) {
                     $hasExplicitVendorWhitelist = true;
