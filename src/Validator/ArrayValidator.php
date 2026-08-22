@@ -38,7 +38,8 @@ final class ArrayValidator implements TypeValidatorInterface
         }
 
         foreach ($value as $k => $v) {
-            $err = $registry->validate($v, $arrayNode->type, $context . '[' . $k . ']');
+            $keyStr = (\is_scalar($k) || $k === null) ? (string) $k : get_debug_type($k);
+            $err = $registry->validate($v, $arrayNode->type, $context . '[' . $keyStr . ']');
             if ($err !== null) {
                 return $err;
             }
