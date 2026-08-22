@@ -91,7 +91,7 @@ describe('Late Static Binding Return Contracts (@return static)', function () {
 
         test('throws TypeError when generic static factory returns instance violating generic template T', function () {
             expect(fn () => UserGenericFactory::ofBadItem(new Dog()))
-                ->toThrow(TypeError::class, 'UserGenericFactory<invariant TypePHP\Tests\Fixtures\Domain\Dog>, but TypePHP\Tests\Fixtures\Services\UserGenericFactory<stdClass> was returned')
+                ->toThrow(TypeError::class, 'UserGenericFactory<covariant TypePHP\Tests\Fixtures\Domain\Dog>, but TypePHP\Tests\Fixtures\Services\UserGenericFactory<stdClass> was returned')
             ;
         });
 
