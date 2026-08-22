@@ -18,7 +18,9 @@ use TypePHP\Resolver\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**
- * @internal Wraps Traversable objects and Generators to evaluate key and value type constraints lazily during iteration.
+ * Wraps Traversable objects and Generators to evaluate key and value type constraints lazily during iteration.
+ *
+ * @internal
  */
 final class IterableWrapper
 {
@@ -38,13 +40,12 @@ final class IterableWrapper
         $contract = ContractParser::parse($function);
         $typeNode = ($paramName === 'return') ? ($contract['return'] ?? null) : ($contract['types'][$paramName] ?? null);
 
-        // If no docblock contract exists, never wrap!
         if ($typeNode === null) {
             return $iterable;
         }
 
         $aliases = $contract['aliases'] ?? [];
-        $templates = $contract['templates'] ?? [];
+        $templates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
@@ -54,7 +55,6 @@ final class IterableWrapper
             $typeNode = SpecialTypeResolver::resolve($typeNode, $function, $thisObj);
         }
 
-        // Only wrap generic iterable keywords, never concrete classes like FileCollection
         $baseName = '';
         if ($typeNode instanceof IdentifierTypeNode) {
             $baseName = strtolower(ltrim($typeNode->name, '\\'));
@@ -69,7 +69,6 @@ final class IterableWrapper
 
         [$keyTypeNode, $itemTypeNode] = self::extractKeyAndItemTypeNodes($typeNode, $aliases);
 
-        // If there are no inner type constraints to validate, never wrap!
         if ($keyTypeNode === null && $itemTypeNode === null) {
             return $iterable;
         }
@@ -77,7 +76,6 @@ final class IterableWrapper
         $prefix = ($paramName === 'return') ? "$function(): Return iterator" : "$function(): Iterator \$$paramName";
         $typeCheckCallback = self::createValidationCallback($registry, $keyTypeNode, $itemTypeNode, $prefix);
 
-        // Wrap delegated yield from arrays in a lazy generator
         if (\is_array($iterable)) {
             return self::wrapGenerator((function () use ($iterable) {
                 yield from $iterable;

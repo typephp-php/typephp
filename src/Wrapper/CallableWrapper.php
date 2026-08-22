@@ -19,7 +19,9 @@ use TypePHP\Resolver\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**
- * @internal Wraps callables to enforce argument and return type contracts dynamically at runtime.
+ * Wraps callables to enforce argument and return type contracts dynamically at runtime.
+ *
+ * @internal
  */
 final class CallableWrapper
 {
@@ -31,7 +33,7 @@ final class CallableWrapper
         $contract = ContractParser::parse($function);
         $typeNode = ($paramName === 'return') ? ($contract['return'] ?? null) : ($contract['types'][$paramName] ?? null);
         $aliases = $contract['aliases'] ?? [];
-        $templates = $contract['templates'] ?? [];
+        $templates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
 
         if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
             $typeNode = $aliases[$typeNode->name];

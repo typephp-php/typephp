@@ -2,9 +2,6 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Tests\Feature;
-
-use DateTime;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Cat as Feline;
 use TypePHP\Tests\Fixtures\Domain\Dog;

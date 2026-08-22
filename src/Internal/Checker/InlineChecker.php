@@ -29,7 +29,9 @@ use TypePHP\Validator\TypeValidatorRegistry;
 use TypePHP\Wrapper\CallableWrapper;
 
 /**
- * @internal Evaluates inline variable (@var) and class property validation rules.
+ * Evaluates inline variable (@var) and class property validation rules.
+ *
+ * @internal
  */
 final class InlineChecker
 {
@@ -243,8 +245,9 @@ final class InlineChecker
         $constructorTarget = $className . '::__construct';
         $contract = ContractParser::parse($constructorTarget);
 
-        $boundTemplates = TemplateManager::getBoundTemplates('none', $object, $contract['templates']);
-        $declaredTemplates = $contract['templates'];
+        $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        $boundTemplates = TemplateManager::getBoundTemplates('none', $object, $allTemplates);
+        $declaredTemplates = $allTemplates;
 
         if (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0) {
             $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);

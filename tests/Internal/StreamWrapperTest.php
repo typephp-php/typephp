@@ -2,9 +2,6 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Tests\Internal;
-
-use ReflectionClass;
 use TypePHP\Contract\FileFilter;
 use TypePHP\Internal\Config;
 use TypePHP\Internal\StreamWrapper;
