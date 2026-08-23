@@ -42,6 +42,8 @@ final class Config
 
     private static bool $respectIgnoreTags = true;
 
+    private static string $arrayValidation = 'full';
+
     public static function isEnabled(): bool
     {
         if (self::$cachedConfig === null) {
@@ -94,6 +96,24 @@ final class Config
         }
 
         return self::$respectIgnoreTags;
+    }
+
+    public static function isArrayValidationHybrid(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$arrayValidation === 'hybrid';
+    }
+
+    public static function getArrayValidationStrategy(): string
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$arrayValidation;
     }
 
     /**
@@ -158,6 +178,7 @@ final class Config
             'magic_properties' => true,
             'magic_methods' => true,
             'respect_ignore_tags' => true,
+            'array_validation' => 'full',
             'cache' => true,
             'cache_dir' => null,
             'inline_vars' => [
@@ -232,6 +253,7 @@ final class Config
         self::$magicProperties = true;
         self::$magicMethods = true;
         self::$respectIgnoreTags = true;
+        self::$arrayValidation = 'full';
 
         ContractParser::reset();
         ParamChecker::reset();
@@ -256,5 +278,6 @@ final class Config
         self::$magicProperties = (bool) ($config['magic_properties'] ?? true);
         self::$magicMethods = (bool) ($config['magic_methods'] ?? true);
         self::$respectIgnoreTags = (bool) ($config['respect_ignore_tags'] ?? true);
+        self::$arrayValidation = \is_string($config['array_validation'] ?? null) ? $config['array_validation'] : 'full';
     }
 }

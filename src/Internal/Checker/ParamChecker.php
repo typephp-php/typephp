@@ -61,7 +61,7 @@ final class ParamChecker
         }
 
         $contract = ContractParser::parse($effectiveFunction);
-        
+
         if (! $contract['hasParamContract']) {
             return null;
         }
