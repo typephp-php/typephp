@@ -112,6 +112,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Array Validation Strategy
+    |--------------------------------------------------------------------------
+    | Controls how collections (list<T>, array<K, V>, Type[]) are verified:
+    |
+    | - 'full'   : (Default / Strict) 100% exhaustive scan. Checks every single 
+    |             item in every array, guaranteeing every single offending item
+    |             is caught without exception.
+    |
+    | - 'hybrid' : (Beartype O(1) Mode) Fast boundary + random sampling on
+    |             arrays > 64 items. Ideal for massive production datasets.
+    */
+    'array_validation' => 'full',
+
+    /*
+    |--------------------------------------------------------------------------
     | Inline Variable Validation (@var $x = ...)
     |--------------------------------------------------------------------------
     | Fine-grained control over which type categories are enforced on local

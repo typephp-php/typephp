@@ -13,6 +13,7 @@ use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Internal\ClassNameValidator;
+use TypePHP\Internal\Config;
 use TypePHP\Internal\ErrorFactory;
 use TypePHP\Internal\ErrorMessage;
 use TypePHP\Internal\RuntimeTypeChecker;
@@ -361,7 +362,6 @@ final class GenericValidator implements TypeValidatorInterface
 
     /**
      * Validates sequential list structures (e.g. list<string> or non-empty-list<int>).
-     * Uses Beartype-style O(1) hybrid sampling for large lists (> 64 items).
      */
     private function validateList(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
     {
@@ -381,8 +381,7 @@ final class GenericValidator implements TypeValidatorInterface
         if ($valueTypeNode !== null && $count > 0) {
             $isComplexObjectGeneric = ($valueTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valueTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
 
-            // O(1) Beartype Hybrid Sampling for large lists (> 64 items)
-            if ($count > self::HYBRID_SAMPLE_THRESHOLD) {
+            if ($count > self::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 $sampleIndices = [0, $count - 1];
                 $samplesToTake = min(3, $count - 2);
                 for ($i = 0; $i < $samplesToTake; $i++) {
@@ -403,7 +402,6 @@ final class GenericValidator implements TypeValidatorInterface
                 return null;
             }
 
-            // Full O(n) scan for small/medium lists (<= 64 items)
             foreach ($value as $k => $v) {
                 $err = $isComplexObjectGeneric
                     ? $this->validateObjectGeneric($v, $valueTypeNode, '')
@@ -420,7 +418,6 @@ final class GenericValidator implements TypeValidatorInterface
 
     /**
      * Validates key-value array structures (e.g. array<string, int>).
-     * Uses Beartype-style O(1) hybrid sampling for large maps (> 64 items).
      */
     private function validateArray(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
     {
@@ -448,8 +445,7 @@ final class GenericValidator implements TypeValidatorInterface
         if ($typesCount === 1) {
             $valTypeNode = $node->genericTypes[0];
             $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
-
-            if ($count > self::HYBRID_SAMPLE_THRESHOLD) {
+            if ($count > self::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 $keys = array_keys($value);
                 $sampleKeys = [$keys[0], $keys[$count - 1]];
                 $samplesToTake = min(3, $count - 2);
@@ -485,7 +481,7 @@ final class GenericValidator implements TypeValidatorInterface
             $valTypeNode = $node->genericTypes[1];
             $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
 
-            if ($count > self::HYBRID_SAMPLE_THRESHOLD) {
+            if ($count > self::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 $keys = array_keys($value);
                 $sampleKeys = [$keys[0], $keys[$count - 1]];
                 $samplesToTake = min(3, $count - 2);

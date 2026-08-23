@@ -8,19 +8,20 @@ use Generator;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use Traversable;
+use TypePHP\Internal\Config;
 use TypePHP\Internal\ErrorFactory;
 use TypePHP\Internal\ErrorMessage;
 use TypePHP\Internal\TypeFormatter;
 
 /**
  * Validates array and Traversable collection instances against ArrayTypeNode ASTs (Type[]).
- * Implements a Beartype-inspired hybrid O(1) sampling algorithm for large collections.
+ * Supports both exhaustive O(n) verification and Beartype-style hybrid O(1) sampling.
  *
  * @internal
  */
 final class ArrayValidator implements TypeValidatorInterface
 {
-    private const HYBRID_SAMPLE_THRESHOLD = 64;
+    private const HYBRID_SAMPLE_THRESHOLD = 128;
 
     /**
      * Validates an array or Traversable collection against an ArrayTypeNode (Type[]).
@@ -46,7 +47,7 @@ final class ArrayValidator implements TypeValidatorInterface
                 return null;
             }
 
-            if ($count > self::HYBRID_SAMPLE_THRESHOLD) {
+            if ($count > self::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 return $this->validateArrayHybrid($value, $arrayNode, $context, $registry, $count);
             }
 
