@@ -24,11 +24,13 @@ final class ArrayShapeValidator implements TypeValidatorInterface
             return ErrorFactory::createError($context . ' must be of type array, ' . TypeFormatter::formatGivenValue($value) . ' given');
         }
 
-        /** @var ArrayShapeNode $node */
+        /** @var ArrayShapeNode $shapeNode */
+        $shapeNode = $node;
         $knownKeys = [];
         $nextAutoIndex = 0;
+        $matchedKeysCount = 0;
 
-        foreach ($node->items as $item) {
+        foreach ($shapeNode->items as $item) {
             $key = null;
 
             if ($item->keyName instanceof ConstExprStringNode) {
@@ -55,36 +57,49 @@ final class ArrayShapeValidator implements TypeValidatorInterface
                 continue;
             }
 
-            $err = $registry->validate($value[$key], $item->valueType, $context . "['" . $key . "']");
+            $matchedKeysCount++;
+
+            $err = $registry->validate($value[$key], $item->valueType, '');
             if ($err !== null) {
-                return $err;
+                return ErrorFactory::createError($context . "['" . $key . "']" . $err->getMessage());
             }
         }
 
-        $extraKeys = array_diff_key($value, $knownKeys);
+        $valueCount = \count($value);
 
-        if (\count($extraKeys) > 0) {
-            if ($node->sealed) {
-                $firstExtraKey = (string) array_key_first($extraKeys);
+        if ($valueCount === $matchedKeysCount) {
+            return null;
+        }
 
-                return ErrorFactory::createError($context . " contains unsealed unexpected key '$firstExtraKey'");
+        if ($shapeNode->sealed) {
+            foreach ($value as $k => $_) {
+                if (! isset($knownKeys[$k])) {
+                    return ErrorFactory::createError($context . " contains unsealed unexpected key '{$k}'");
+                }
             }
 
-            if ($node->unsealedType !== null) {
-                $unsealedKeyType = $node->unsealedType->keyType;
-                $unsealedValueType = $node->unsealedType->valueType;
+            return null;
+        }
 
-                foreach ($extraKeys as $k => $v) {
-                    if ($unsealedKeyType !== null) {
-                        $err = $registry->validate($k, $unsealedKeyType, $context . " extra key '$k'");
-                        if ($err !== null) {
-                            return $err;
-                        }
-                    }
-                    $err = $registry->validate($v, $unsealedValueType, $context . "['$k']");
+        if ($shapeNode->unsealedType !== null) {
+            $unsealedKeyType = $shapeNode->unsealedType->keyType;
+            $unsealedValueType = $shapeNode->unsealedType->valueType;
+
+            foreach ($value as $k => $v) {
+                if (isset($knownKeys[$k])) {
+                    continue;
+                }
+
+                if ($unsealedKeyType !== null) {
+                    $err = $registry->validate($k, $unsealedKeyType, '');
                     if ($err !== null) {
-                        return $err;
+                        return ErrorFactory::createError($context . " extra key '{$k}'" . $err->getMessage());
                     }
+                }
+
+                $err = $registry->validate($v, $unsealedValueType, '');
+                if ($err !== null) {
+                    return ErrorFactory::createError($context . "['{$k}']" . $err->getMessage());
                 }
             }
         }

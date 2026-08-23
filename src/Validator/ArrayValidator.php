@@ -14,11 +14,14 @@ use TypePHP\Internal\TypeFormatter;
 
 /**
  * Validates array and Traversable collection instances against ArrayTypeNode ASTs (Type[]).
+ * Implements a Beartype-inspired hybrid O(1) sampling algorithm for large collections.
  *
  * @internal
  */
 final class ArrayValidator implements TypeValidatorInterface
 {
+    private const HYBRID_SAMPLE_THRESHOLD = 64;
+
     /**
      * Validates an array or Traversable collection against an ArrayTypeNode (Type[]).
      * Accepts native arrays and Traversable objects (e.g. ArrayIterator, Symfony RewindableGenerator).
@@ -37,8 +40,76 @@ final class ArrayValidator implements TypeValidatorInterface
             return null;
         }
 
+        if (\is_array($value)) {
+            $count = \count($value);
+            if ($count === 0) {
+                return null;
+            }
+
+            if ($count > self::HYBRID_SAMPLE_THRESHOLD) {
+                return $this->validateArrayHybrid($value, $arrayNode, $context, $registry, $count);
+            }
+
+            foreach ($value as $k => $v) {
+                $err = $registry->validate($v, $arrayNode->type, '');
+                if ($err !== null) {
+                    $keyStr = (\is_scalar($k) || $k === null) ? (string) $k : get_debug_type($k);
+
+                    return ErrorFactory::createError($context . '[' . $keyStr . ']' . $err->getMessage());
+                }
+            }
+
+            return null;
+        }
+
         foreach ($value as $k => $v) {
             $err = $registry->validate($v, $arrayNode->type, '');
+            if ($err !== null) {
+                $keyStr = (\is_scalar($k) || $k === null) ? (string) $k : get_debug_type($k);
+
+                return ErrorFactory::createError($context . '[' . $keyStr . ']' . $err->getMessage());
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<mixed> $value
+     */
+    private function validateArrayHybrid(
+        array $value,
+        ArrayTypeNode $arrayNode,
+        string $context,
+        TypeValidatorRegistry $registry,
+        int $count
+    ): ?ErrorMessage {
+        if (array_is_list($value)) {
+            $sampleIndices = [0, $count - 1];
+            $samplesToTake = min(3, $count - 2);
+            for ($i = 0; $i < $samplesToTake; $i++) {
+                $sampleIndices[] = mt_rand(1, $count - 2);
+            }
+
+            foreach ($sampleIndices as $idx) {
+                $err = $registry->validate($value[$idx], $arrayNode->type, '');
+                if ($err !== null) {
+                    return ErrorFactory::createError($context . '[' . $idx . ']' . $err->getMessage());
+                }
+            }
+
+            return null;
+        }
+
+        $keys = array_keys($value);
+        $sampleKeys = [$keys[0], $keys[$count - 1]];
+        $samplesToTake = min(3, $count - 2);
+        for ($i = 0; $i < $samplesToTake; $i++) {
+            $sampleKeys[] = $keys[mt_rand(1, $count - 2)];
+        }
+
+        foreach ($sampleKeys as $k) {
+            $err = $registry->validate($value[$k], $arrayNode->type, '');
             if ($err !== null) {
                 $keyStr = (\is_scalar($k) || $k === null) ? (string) $k : get_debug_type($k);
 
