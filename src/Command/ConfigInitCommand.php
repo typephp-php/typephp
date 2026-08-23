@@ -87,6 +87,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Array Validation Strategy
+    |--------------------------------------------------------------------------
+    | Controls how collections (list<T>, array<K, V>, Type[]) are verified:
+    |
+    | - 'full'   : (Default / Strict) 100% exhaustive scan. Checks every single 
+    |             item in every array, guaranteeing every single offending item
+    |             is caught without exception.
+    |
+    | - 'hybrid' : (Beartype O(1) Mode) Fast boundary + random sampling on
+    |             arrays > 64 items. Ideal for massive production datasets.
+    */
+    'array_validation' => 'full',
+
+    /*
+    |--------------------------------------------------------------------------
     | Enable Caching & Cache Directory
     |--------------------------------------------------------------------------
     | When enabled, transformed PHP files are cached on disk for speed.
@@ -112,18 +127,14 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Array Validation Strategy
+    | Stub Files (DocBlock Overrides for Third-Party & Vendor Packages)
     |--------------------------------------------------------------------------
-    | Controls how collections (list<T>, array<K, V>, Type[]) are verified:
-    |
-    | - 'full'   : (Default / Strict) 100% exhaustive scan. Checks every single 
-    |             item in every array, guaranteeing every single offending item
-    |             is caught without exception.
-    |
-    | - 'hybrid' : (Beartype O(1) Mode) Fast boundary + random sampling on
-    |             arrays > 64 items. Ideal for massive production datasets.
+    | Path globs or specific file paths containing stub files (.stub, .stub.php, .php)
+    | that override inaccurate or missing DocBlocks in third-party vendor packages.
     */
-    'array_validation' => 'full',
+    'stubs' => [
+        // 'stubs/**',
+    ],
 
     /*
     |--------------------------------------------------------------------------
