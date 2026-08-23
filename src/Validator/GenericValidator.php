@@ -376,14 +376,14 @@ final class GenericValidator implements TypeValidatorInterface
         if ($valueTypeNode !== null) {
             foreach ($value as $k => $v) {
                 if ($valueTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valueTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true)) {
-                    $err = $this->validateObjectGeneric($v, $valueTypeNode, $context . '[' . $k . ']');
+                    $err = $this->validateObjectGeneric($v, $valueTypeNode, '');
                     if ($err !== null) {
-                        return $err;
+                        return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
                     }
                 } else {
-                    $err = $registry->validate($v, $valueTypeNode, $context . '[' . $k . ']');
+                    $err = $registry->validate($v, $valueTypeNode, '');
                     if ($err !== null) {
-                        return $err;
+                        return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
                     }
                 }
             }
@@ -416,14 +416,14 @@ final class GenericValidator implements TypeValidatorInterface
             $valTypeNode = $node->genericTypes[0];
             foreach ($value as $k => $v) {
                 if ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true)) {
-                    $err = $this->validateObjectGeneric($v, $valTypeNode, $context . '[' . $k . ']');
+                    $err = $this->validateObjectGeneric($v, $valTypeNode, '');
                     if ($err !== null) {
-                        return $err;
+                        return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
                     }
                 } else {
-                    $err = $registry->validate($v, $valTypeNode, $context . '[' . $k . ']');
+                    $err = $registry->validate($v, $valTypeNode, '');
                     if ($err !== null) {
-                        return $err;
+                        return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
                     }
                 }
             }
@@ -431,20 +431,20 @@ final class GenericValidator implements TypeValidatorInterface
             $keyTypeNode = $node->genericTypes[0];
             $valTypeNode = $node->genericTypes[1];
             foreach ($value as $k => $v) {
-                $err = $registry->validate($k, $keyTypeNode, $context . ' key');
+                $err = $registry->validate($k, $keyTypeNode, '');
                 if ($err !== null) {
-                    return $err;
+                    return ErrorFactory::createError($context . ' key' . $err->getMessage());
                 }
 
                 if ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true)) {
-                    $err = $this->validateObjectGeneric($v, $valTypeNode, $context . "['" . $k . "']");
+                    $err = $this->validateObjectGeneric($v, $valTypeNode, '');
                     if ($err !== null) {
-                        return $err;
+                        return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
                     }
                 } else {
-                    $err = $registry->validate($v, $valTypeNode, $context . "['" . $k . "']");
+                    $err = $registry->validate($v, $valTypeNode, '');
                     if ($err !== null) {
-                        return $err;
+                        return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
                     }
                 }
             }

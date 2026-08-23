@@ -49,7 +49,7 @@ final class FunctionContractInjector
 
         $injectedStmts = [];
         if ($hasParam) {
-            $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg, $isClassMethod);
+            $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg);
         }
 
         if ($hasReturn) {
@@ -120,35 +120,37 @@ final class FunctionContractInjector
     private static function buildParamInjections(
         array $params,
         string $docText,
-        Node\Expr $thisArg,
-        bool $isClassMethod
+        Node\Expr $thisArg
     ): array {
-        $injectedStmts = [self::buildSetupScopeStmt($thisArg)];
+        $injectedStmts = [self::buildSetupScopeStmt($params, $thisArg)];
 
-        $callableWrappers = self::buildParamWrappers(
-            $params,
-            '\TypePHP\Internal\RuntimeTypeChecker::wrapCallable',
-            $thisArg,
-            $isClassMethod || str_contains($docText, 'callable') || str_contains($docText, 'Closure')
-        );
-
-        $iterableWrappers = self::buildParamWrappers(
-            $params,
-            '\TypePHP\Internal\RuntimeTypeChecker::wrapIterable',
-            $thisArg,
-            str_contains($docText, 'iterable') || str_contains($docText, 'Traversable') || str_contains($docText, 'Generator') || str_contains($docText, 'Iterator')
-        );
+        $callableWrappers = self::buildCallableParamWrappers($params, $docText, $thisArg);
+        $iterableWrappers = self::buildIterableParamWrappers($params, $docText, $thisArg);
 
         return [...$injectedStmts, ...$callableWrappers, ...$iterableWrappers];
     }
 
-    private static function buildSetupScopeStmt(Node\Expr $thisArg): Node\Stmt\If_
+    /**
+     * @param array<Node\Param> $params
+     */
+    private static function buildSetupScopeStmt(array $params, Node\Expr $thisArg): Node\Stmt\If_
     {
+        $arrayItems = [];
+        foreach ($params as $param) {
+            if ($param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
+                $pName = $param->var->name;
+                $arrayItems[] = new Node\ArrayItem(
+                    new Node\Expr\Variable($pName),
+                    new Node\Scalar\String_($pName)
+                );
+            }
+        }
+
         $checkCall = new Node\Expr\FuncCall(
             new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::setupScope'),
             [
                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                new Node\Arg(new Node\Expr\FuncCall(new Node\Name('get_defined_vars'))),
+                new Node\Arg(new Node\Expr\Array_($arrayItems)),
                 new Node\Arg($thisArg),
             ]
         );
@@ -173,21 +175,17 @@ final class FunctionContractInjector
      *
      * @return array<Node\Stmt>
      */
-    private static function buildParamWrappers(array $params, string $wrapperFunc, Node\Expr $thisArg, bool $shouldWrap): array
+    private static function buildCallableParamWrappers(array $params, string $docText, Node\Expr $thisArg): array
     {
-        if (! $shouldWrap) {
-            return [];
-        }
-
         $wrappers = [];
         foreach ($params as $param) {
-            if ($param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
+            if (self::isCallableCandidate($param, $docText) && $param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
                 $paramName = $param->var->name;
                 $expr = new Node\Stmt\Expression(
                     new Node\Expr\Assign(
                         new Node\Expr\Variable($paramName),
                         new Node\Expr\FuncCall(
-                            new Node\Name($wrapperFunc),
+                            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::wrapCallable'),
                             [
                                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
                                 new Node\Arg(new Node\Scalar\String_($paramName)),
@@ -203,6 +201,114 @@ final class FunctionContractInjector
         }
 
         return $wrappers;
+    }
+
+    /**
+     * @param array<Node\Param> $params
+     *
+     * @return array<Node\Stmt>
+     */
+    private static function buildIterableParamWrappers(array $params, string $docText, Node\Expr $thisArg): array
+    {
+        $wrappers = [];
+        foreach ($params as $param) {
+            if (self::isIterableCandidate($param, $docText) && $param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
+                $paramName = $param->var->name;
+                $expr = new Node\Stmt\Expression(
+                    new Node\Expr\Assign(
+                        new Node\Expr\Variable($paramName),
+                        new Node\Expr\FuncCall(
+                            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::wrapIterable'),
+                            [
+                                new Node\Arg(new Node\Scalar\MagicConst\Method()),
+                                new Node\Arg(new Node\Scalar\String_($paramName)),
+                                new Node\Arg(new Node\Expr\Variable($paramName)),
+                                new Node\Arg($thisArg),
+                            ]
+                        )
+                    )
+                );
+                $expr->setAttribute('typephp_injected', true);
+                $wrappers[] = $expr;
+            }
+        }
+
+        return $wrappers;
+    }
+
+    private static function isCallableCandidate(Node\Param $param, string $docText): bool
+    {
+        if (
+            str_contains($docText, 'callable')
+            || str_contains($docText, 'Closure')
+            || str_contains($docText, 'pure-callable')
+            || str_contains($docText, 'static-closure')
+        ) {
+            return true;
+        }
+
+        if ($param->type instanceof Node\Identifier) {
+            return strtolower($param->type->name) === 'callable';
+        }
+
+        if ($param->type instanceof Node\Name) {
+            return strtolower($param->type->getLast()) === 'closure';
+        }
+
+        if ($param->type instanceof Node\UnionType || $param->type instanceof Node\IntersectionType) {
+            foreach ($param->type->types as $t) {
+                if ($t instanceof Node\Identifier && strtolower($t->name) === 'callable') {
+                    return true;
+                }
+                if ($t instanceof Node\Name && strtolower($t->getLast()) === 'closure') {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static function isIterableCandidate(Node\Param $param, string $docText): bool
+    {
+        if (
+            str_contains($docText, 'iterable')
+            || str_contains($docText, 'Traversable')
+            || str_contains($docText, 'Generator')
+            || str_contains($docText, 'Iterator')
+            || str_contains($docText, 'IteratorAggregate')
+        ) {
+            return true;
+        }
+
+        $iterableTypes = [
+            'iterable' => true,
+            'traversable' => true,
+            'generator' => true,
+            'iterator' => true,
+            'iteratoraggregate' => true,
+        ];
+
+        if ($param->type instanceof Node\Identifier) {
+            return isset($iterableTypes[strtolower($param->type->name)]);
+        }
+
+        if ($param->type instanceof Node\Name) {
+            return isset($iterableTypes[strtolower($param->type->getLast())]);
+        }
+
+        if ($param->type instanceof Node\UnionType || $param->type instanceof Node\IntersectionType) {
+            foreach ($param->type->types as $t) {
+                if ($t instanceof Node\Identifier && isset($iterableTypes[strtolower($t->name)])) {
+                    return true;
+                }
+                if ($t instanceof Node\Name && isset($iterableTypes[strtolower($t->getLast())])) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     public static function buildTypeErrorThrowStmt(Node\Expr $errorVar): Node\Stmt\Expression
