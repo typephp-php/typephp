@@ -19,11 +19,12 @@ use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Config;
+use TypePHP\Internal\StubManager;
 use TypePHP\Resolver\SpecialTypeResolver;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**
- * @internal Main orchestrator parsing and caching PHPDoc contracts (@param, @return, @template, @phpstan-type, @var).
+ * @internal Main orchestrator parsing and caching PHPDoc contracts (@param, @return, @template, @phpstan-type, @var, stubs).
  */
 final class ContractParser
 {
@@ -67,6 +68,7 @@ final class ContractParser
         DocblockExtractor::reset();
         FileFilter::reset();
         TypeValidatorRegistry::reset();
+        StubManager::reset();
     }
 
     /**
@@ -214,6 +216,12 @@ final class ContractParser
     {
         $current = $refClass;
         while ($current !== false) {
+            $className = $current->getName();
+            $stubDoc = StubManager::getPropertyDoc($className, $propertyName);
+            if ($stubDoc !== null) {
+                return ['doc' => $stubDoc, 'declaringClass' => $current];
+            }
+
             if ($current->hasProperty($propertyName)) {
                 $refProp = $current->getProperty($propertyName);
                 $doc = $refProp->getDocComment();
@@ -226,6 +234,12 @@ final class ContractParser
         }
 
         foreach ($refClass->getInterfaces() as $interface) {
+            $interfaceName = $interface->getName();
+            $stubDoc = StubManager::getPropertyDoc($interfaceName, $propertyName);
+            if ($stubDoc !== null) {
+                return ['doc' => $stubDoc, 'declaringClass' => $interface];
+            }
+
             if ($interface->hasProperty($propertyName)) {
                 $interfaceProp = $interface->getProperty($propertyName);
                 $doc = $interfaceProp->getDocComment();
@@ -248,13 +262,16 @@ final class ContractParser
         $classHierarchy = HierarchyResolver::getClassHierarchy($refClass);
 
         foreach ($classHierarchy as $hierClass) {
+            $className = $hierClass->getName();
             $fileName = $hierClass->getFileName();
-            if ($hierClass !== $refClass && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
+            $stubDoc = StubManager::getClassDoc($className);
+
+            if ($stubDoc === null && $hierClass !== $refClass && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
                 continue;
             }
 
-            $classDoc = $hierClass->getDocComment();
-            if ($classDoc !== false) {
+            $classDoc = $stubDoc ?? $hierClass->getDocComment();
+            if ($classDoc !== false && $classDoc !== null) {
                 $extractedType = DocblockExtractor::extractTypeFromClassPropertyDoc($classDoc, $propertyName);
                 if ($extractedType !== null) {
                     return [
@@ -338,13 +355,16 @@ final class ContractParser
         $classHierarchy = HierarchyResolver::getClassHierarchy($refClass);
 
         foreach ($classHierarchy as $hierClass) {
+            $className = $hierClass->getName();
             $fileName = $hierClass->getFileName();
-            if ($hierClass !== $refClass && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
+            $stubDoc = StubManager::getClassDoc($className);
+
+            if ($stubDoc === null && $hierClass !== $refClass && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
                 continue;
             }
 
-            $classDoc = $hierClass->getDocComment();
-            if ($classDoc !== false) {
+            $classDoc = $stubDoc ?? $hierClass->getDocComment();
+            if ($classDoc !== false && $classDoc !== null) {
                 $tag = DocblockExtractor::extractMagicMethodContract($classDoc, $methodName);
                 if ($tag !== null) {
                     return [
@@ -494,8 +514,11 @@ final class ContractParser
         $returnType = null;
         $aliases = [];
 
-        $doc = $ref->getDocComment();
-        if ($doc === false) {
+        $funcName = $ref->getName();
+        $stubDoc = StubManager::getFunctionDoc($funcName);
+        $doc = $stubDoc ?? $ref->getDocComment();
+
+        if ($doc === false || $doc === null) {
             return [
                 'types' => [],
                 'templates' => [],
@@ -549,7 +572,6 @@ final class ContractParser
 
     /**
      * Resolves class-level docblocks (templates and aliases) up the class inheritance chain.
-     * Memoizes results in $classLevelDocCache per class name for O(1) performance across method calls.
      *
      * @param \ReflectionClass<object> $declaringClass
      * @param array<string, TemplateTagValueNode> $templates
@@ -569,13 +591,16 @@ final class ContractParser
         $classHierarchy = HierarchyResolver::getClassHierarchy($declaringClass);
 
         foreach ($classHierarchy as $hierClass) {
+            $hierClassName = $hierClass->getName();
             $fileName = $hierClass->getFileName();
-            if (FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
+            $stubDoc = StubManager::getClassDoc($hierClassName);
+
+            if ($stubDoc === null && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
                 continue;
             }
 
-            $classDoc = $hierClass->getDocComment();
-            if ($classDoc !== false) {
+            $classDoc = $stubDoc ?? $hierClass->getDocComment();
+            if ($classDoc !== false && $classDoc !== null) {
                 $classPhpDocNode = DocblockExtractor::parseDocString($classDoc);
 
                 foreach (DocblockExtractor::extractTemplates($classPhpDocNode) as $name => $tag) {
@@ -624,14 +649,17 @@ final class ContractParser
 
         foreach ($hierarchy as $hierRef) {
             $isOriginal = ($hierRef === $ref);
+            $declaringClass = $hierRef->getDeclaringClass()->getName();
+            $methodName = $hierRef->getName();
+            $stubDoc = StubManager::getMethodDoc($declaringClass, $methodName);
 
             $fileName = $hierRef->getFileName();
-            if (! $isOriginal && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
+            if ($stubDoc === null && ! $isOriginal && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
                 continue;
             }
 
-            $doc = $hierRef->getDocComment();
-            if ($doc === false) {
+            $doc = $stubDoc ?? $hierRef->getDocComment();
+            if ($doc === false || $doc === null) {
                 continue;
             }
 
@@ -729,10 +757,13 @@ final class ContractParser
             $paramName = $p->getName();
 
             if (! isset($types[$paramName]) && $declaringClass->hasProperty($paramName)) {
-                $propertyRef = $declaringClass->getProperty($paramName);
-                $propDoc = $propertyRef->getDocComment();
+                $className = $declaringClass->getName();
+                $stubDoc = StubManager::getPropertyDoc($className, $paramName);
 
-                if ($propDoc !== false) {
+                $propertyRef = $declaringClass->getProperty($paramName);
+                $propDoc = $stubDoc ?? $propertyRef->getDocComment();
+
+                if ($propDoc !== false && $propDoc !== null) {
                     $propType = DocblockExtractor::extractTypeFromPropertyDoc($propDoc, $paramName);
                     if ($propType !== null) {
                         if ($p->hasType()) {

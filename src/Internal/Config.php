@@ -126,7 +126,6 @@ final class Config
             return self::$projectRoot;
         }
 
-        // Search upwards from this file (vendor/typephp/typephp/src/Internal -> project root)
         $dir = __DIR__;
         for ($i = 0; $i < 10; $i++) {
             if (file_exists($dir . '/vendor/autoload.php')) {
@@ -140,7 +139,6 @@ final class Config
             $dir = $parent;
         }
 
-        // Fallback: Search upwards from getcwd() (for monorepos or test runners)
         $cwd = getcwd();
         if ($cwd !== false) {
             $dir = $cwd;
@@ -192,6 +190,7 @@ final class Config
             'include' => ['src/**', 'app/**', 'internals/**', 'tests/**'],
             'exclude' => ['vendor/**', 'storage/**', 'var/**', 'cache/**'],
             'extensions' => [],
+            'stubs' => [],
         ];
 
         $projectRoot = self::getProjectRoot();
@@ -210,7 +209,11 @@ final class Config
         $configuredExtensions = \is_array($userConfig['extensions'] ?? null) ? $userConfig['extensions'] : [];
 
         $extensionIncludes = ExtensionManager::loadExtensionIncludes($configuredExtensions);
+        $extensionStubs = ExtensionManager::loadExtensionStubs($configuredExtensions);
+
         $defaultConfig['include'] = array_unique(array_merge($defaultConfig['include'], $extensionIncludes));
+        $defaultConfig['stubs'] = array_unique(array_merge($defaultConfig['stubs'], $extensionStubs));
+
         /** @var array<string, mixed> $mergedConfig */
         $mergedConfig = array_replace_recursive($defaultConfig, $userConfig);
 
@@ -229,6 +232,21 @@ final class Config
         /** @var array<string, mixed> $mergedConfig */
         $mergedConfig = array_replace_recursive(self::get(), $config);
 
+        if (isset($config['extensions']) && \is_array($config['extensions'])) {
+            /** @var array<int, class-string<ExtensionInterface>> $configuredExtensions */
+            $configuredExtensions = $config['extensions'];
+            $extensionIncludes = ExtensionManager::loadExtensionIncludes($configuredExtensions);
+            $extensionStubs = ExtensionManager::loadExtensionStubs($configuredExtensions);
+
+            /** @var array<int, string> $currentIncludes */
+            $currentIncludes = \is_array($mergedConfig['include'] ?? null) ? $mergedConfig['include'] : [];
+            /** @var array<int, string> $currentStubs */
+            $currentStubs = \is_array($mergedConfig['stubs'] ?? null) ? $mergedConfig['stubs'] : [];
+
+            $mergedConfig['include'] = array_unique(array_merge($currentIncludes, $extensionIncludes));
+            $mergedConfig['stubs'] = array_unique(array_merge($currentStubs, $extensionStubs));
+        }
+
         self::$cachedConfig = $mergedConfig;
         self::syncFlags($mergedConfig);
 
@@ -238,6 +256,7 @@ final class Config
         FileFilter::reset();
         PathMatcher::reset();
         StreamWrapper::reset();
+        StubManager::reset();
     }
 
     /**
@@ -263,6 +282,7 @@ final class Config
         FileFilter::reset();
         PathMatcher::reset();
         StreamWrapper::reset();
+        StubManager::reset();
     }
 
     /**
