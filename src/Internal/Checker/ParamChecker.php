@@ -61,7 +61,8 @@ final class ParamChecker
         }
 
         $contract = ContractParser::parse($effectiveFunction);
-        if (\count($contract['types']) === 0) {
+        
+        if (! $contract['hasParamContract']) {
             return null;
         }
 
@@ -111,7 +112,7 @@ final class ParamChecker
     }
 
     /**
-     * Resolves the actual runtime class name vs trait name with $O(1)$ memoization.
+     * Resolves the actual runtime class name vs trait name with O(1) memoization.
      */
     private static function resolveEffectiveFunction(string $function, object|string|null $thisOrClass, ?object $thisObj): string
     {

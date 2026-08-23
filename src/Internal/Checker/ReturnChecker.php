@@ -71,8 +71,12 @@ final class ReturnChecker
         }
 
         $contract = ContractParser::parse($effectiveFunction);
-        $returnTypeNode = $contract['return'] ?? null;
 
+        if (! ($contract['hasReturnContract'] ?? ($contract['return'] !== null))) {
+            return $value;
+        }
+
+        $returnTypeNode = $contract['return'];
         if ($returnTypeNode === null) {
             return $value;
         }
@@ -93,7 +97,7 @@ final class ReturnChecker
     }
 
     /**
-     * Resolves the actual runtime class name vs trait name with $O(1)$ memoization.
+     * Resolves the actual runtime class name vs trait name with O(1) memoization.
      */
     private static function resolveEffectiveFunction(string $function, object|string|null $thisOrClass, ?object $thisObj): string
     {

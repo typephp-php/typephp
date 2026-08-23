@@ -23,6 +23,30 @@ final class ObjectShapeValidator implements TypeValidatorInterface
 
         /** @var ObjectShapeNode $shapeNode */
         $shapeNode = $node;
+
+        if ($value instanceof \stdClass) {
+            foreach ($shapeNode->items as $item) {
+                $propName = (string) $item->keyName;
+
+                if (! property_exists($value, $propName) && ! isset($value->$propName)) {
+                    if (! $item->optional) {
+                        return ErrorFactory::createError($context . " is missing required property '$propName'");
+                    }
+
+                    continue;
+                }
+
+                $propValue = $value->$propName;
+
+                $err = $registry->validate($propValue, $item->valueType, '');
+                if ($err !== null) {
+                    return ErrorFactory::createError($context . "->{$propName}" . $err->getMessage());
+                }
+            }
+
+            return null;
+        }
+
         $refObject = new \ReflectionObject($value);
 
         foreach ($shapeNode->items as $item) {
@@ -53,9 +77,9 @@ final class ObjectShapeValidator implements TypeValidatorInterface
                 $propValue = $value->$propName;
             }
 
-            $err = $registry->validate($propValue, $item->valueType, $context . "->{$propName}");
+            $err = $registry->validate($propValue, $item->valueType, '');
             if ($err !== null) {
-                return $err;
+                return ErrorFactory::createError($context . "->{$propName}" . $err->getMessage());
             }
         }
 

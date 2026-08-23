@@ -30,7 +30,7 @@ final class ContractParser
     /**
      * Cache for resolved contract metadata.
      *
-     * @var array<string, array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>}>
+     * @var array<string, array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool}>
      */
     private static array $cache = [];
 
@@ -72,7 +72,7 @@ final class ContractParser
     /**
      * Parses PHPDoc contracts for a function or class method.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>}
+     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool}
      */
     public static function parse(string $function): array
     {
@@ -100,17 +100,35 @@ final class ContractParser
                             'classTemplates' => $classTemplates,
                             'return' => null,
                             'aliases' => $aliases,
+                            'hasParamContract' => false,
+                            'hasReturnContract' => false,
                         ];
                     }
                 } else {
-                    $contract = ['types' => [], 'templates' => [], 'classTemplates' => [], 'return' => null, 'aliases' => []];
+                    $contract = [
+                        'types' => [],
+                        'templates' => [],
+                        'classTemplates' => [],
+                        'return' => null,
+                        'aliases' => [],
+                        'hasParamContract' => false,
+                        'hasReturnContract' => false,
+                    ];
                 }
             } else {
                 $ref = new \ReflectionFunction($function);
                 $contract = self::parseFunction($ref);
             }
         } catch (\ReflectionException $e) {
-            $contract = ['types' => [], 'templates' => [], 'classTemplates' => [], 'return' => null, 'aliases' => []];
+            $contract = [
+                'types' => [],
+                'templates' => [],
+                'classTemplates' => [],
+                'return' => null,
+                'aliases' => [],
+                'hasParamContract' => false,
+                'hasReturnContract' => false,
+            ];
         }
 
         return self::$cache[$function] = $contract;
@@ -436,7 +454,7 @@ final class ContractParser
     /**
      * Orchestrates parsing for class methods across the inheritance hierarchy.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>}
+     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool}
      */
     private static function parseMethod(\ReflectionMethod $ref): array
     {
@@ -459,13 +477,15 @@ final class ContractParser
             'classTemplates' => $classTemplates,
             'return' => $returnType,
             'aliases' => $aliases,
+            'hasParamContract' => \count($types) > 0,
+            'hasReturnContract' => $returnType !== null,
         ];
     }
 
     /**
      * Orchestrates parsing for standalone global or namespaced functions.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>}
+     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool}
      */
     private static function parseFunction(\ReflectionFunction $ref): array
     {
@@ -482,6 +502,8 @@ final class ContractParser
                 'classTemplates' => [],
                 'return' => null,
                 'aliases' => [],
+                'hasParamContract' => false,
+                'hasReturnContract' => false,
             ];
         }
 
@@ -520,6 +542,8 @@ final class ContractParser
             'classTemplates' => [],
             'return' => $returnType,
             'aliases' => $aliases,
+            'hasParamContract' => \count($types) > 0,
+            'hasReturnContract' => $returnType !== null,
         ];
     }
 
