@@ -278,6 +278,6 @@ final class Config
         self::$magicProperties = (bool) ($config['magic_properties'] ?? true);
         self::$magicMethods = (bool) ($config['magic_methods'] ?? true);
         self::$respectIgnoreTags = (bool) ($config['respect_ignore_tags'] ?? true);
-        self::$arrayValidation = (string) ($config['array_validation'] ?? 'full');
+        self::$arrayValidation = \is_string($config['array_validation'] ?? null) ? $config['array_validation'] : 'full';
     }
 }

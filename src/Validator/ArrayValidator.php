@@ -21,13 +21,8 @@ use TypePHP\Internal\TypeFormatter;
  */
 final class ArrayValidator implements TypeValidatorInterface
 {
-    private const HYBRID_SAMPLE_THRESHOLD = 128;
+    private const HYBRID_SAMPLE_THRESHOLD = 64;
 
-    /**
-     * Validates an array or Traversable collection against an ArrayTypeNode (Type[]).
-     * Accepts native arrays and Traversable objects (e.g. ArrayIterator, Symfony RewindableGenerator).
-     * Bypasses eager iteration on Generator instances to prevent premature generator closure.
-     */
     public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
     {
         if (! \is_array($value) && ! ($value instanceof Traversable)) {
@@ -54,7 +49,7 @@ final class ArrayValidator implements TypeValidatorInterface
             foreach ($value as $k => $v) {
                 $err = $registry->validate($v, $arrayNode->type, '');
                 if ($err !== null) {
-                    $keyStr = (\is_scalar($k) || $k === null) ? (string) $k : get_debug_type($k);
+                    $keyStr = (string) $k;
 
                     return ErrorFactory::createError($context . '[' . $keyStr . ']' . $err->getMessage());
                 }
@@ -112,7 +107,7 @@ final class ArrayValidator implements TypeValidatorInterface
         foreach ($sampleKeys as $k) {
             $err = $registry->validate($value[$k], $arrayNode->type, '');
             if ($err !== null) {
-                $keyStr = (\is_scalar($k) || $k === null) ? (string) $k : get_debug_type($k);
+                $keyStr = (string) $k;
 
                 return ErrorFactory::createError($context . '[' . $keyStr . ']' . $err->getMessage());
             }
