@@ -52,7 +52,7 @@ final class IdentifierValidator implements TypeValidatorInterface
             'non-negative-float' => (\is_float($value) || \is_int($value)) && $value >= 0,
             'non-zero-float' => (\is_float($value) || \is_int($value)) && $value !== 0 && $value !== 0.0,
             'class-string' => \is_string($value)
-                && preg_match('/^[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff\\\\]*$/', $value) === 1
+                && ClassNameValidator::isValid($value)
                 && (class_exists($value) || interface_exists($value) || trait_exists($value) || enum_exists($value)),
             'interface-string' => \is_string($value) && interface_exists($value),
             'trait-string' => \is_string($value) && trait_exists($value),
