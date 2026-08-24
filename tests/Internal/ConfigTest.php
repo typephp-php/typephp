@@ -63,4 +63,38 @@ describe('Config Unit Tests', function () {
             ;
         }
     });
+
+    test('user include and exclude lists are replaced wholesale and do not leak default list entries', function () {
+        Config::set([
+            'include' => [
+                'src/**',
+            ],
+            'exclude' => [
+                'vendor/**',
+                'tests/**',
+                'var/**',
+            ],
+        ]);
+
+        $config = Config::get();
+
+        expect($config['include'])->toBe(['src/**'])
+            ->and($config['exclude'])->toBe(['vendor/**', 'tests/**', 'var/**'])
+        ;
+    });
+
+    test('inline_vars associative options are merged so single toggles can be overridden', function () {
+        Config::set([
+            'inline_vars' => [
+                'scalars' => false,
+            ],
+        ]);
+
+        $config = Config::get();
+
+        expect($config['inline_vars']['scalars'])->toBeFalse()
+            ->and($config['inline_vars']['properties'])->toBeTrue()
+            ->and($config['inline_vars']['generics'])->toBeTrue()
+        ;
+    });
 });

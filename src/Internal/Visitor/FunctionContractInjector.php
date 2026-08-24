@@ -64,7 +64,7 @@ final class FunctionContractInjector
     private static function hasParamContracts(string $docText, bool $isClassMethod): bool
     {
         if ($isClassMethod) {
-            return true; 
+            return true;
         }
 
         if (! str_contains($docText, '@param') && ! str_contains($docText, '@phpstan-param') && ! str_contains($docText, '@psalm-param') && ! str_contains($docText, '@template')) {
@@ -82,6 +82,7 @@ final class FunctionContractInjector
                 foreach ($unionParts as $part) {
                     if (strtolower(trim($part)) === 'mixed') {
                         $hasMixed = true;
+
                         break;
                     }
                 }
@@ -91,7 +92,7 @@ final class FunctionContractInjector
                 }
             }
 
-            return false; 
+            return false;
         }
 
         return false;
@@ -100,7 +101,7 @@ final class FunctionContractInjector
     private static function hasReturnContracts(string $docText, bool $isClassMethod): bool
     {
         if ($isClassMethod) {
-            return true; 
+            return true;
         }
 
         if (str_contains($docText, '@template') || str_contains($docText, '@phpstan-return') || str_contains($docText, '@psalm-return')) {

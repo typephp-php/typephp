@@ -10,7 +10,8 @@ namespace TypePHP\Internal;
 final class ClassNameValidator
 {
     /**
-     * Validates whether a given value is a syntactically valid PHP class, interface, trait, or enum identifier.
+     * Validates whether a given value is a syntactically valid PHP class, interface, trait, or enum identifier,
+     * or a valid anonymous class name registered in memory.
      * Handles fully-qualified names with leading backslashes.
      * Returns false for non-strings, empty strings, complex PHPDoc strings like "Producer<Dog>", "array{id: int}", or unions.
      */
@@ -18,6 +19,10 @@ final class ClassNameValidator
     {
         if (! \is_string($name) || $name === '') {
             return false;
+        }
+
+        if (str_contains($name, '@anonymous')) {
+            return class_exists($name, false);
         }
 
         $trimmed = ltrim($name, '\\');

@@ -303,7 +303,8 @@ PHP;
 
                 expect($readSource)->toBe($rawSource)
                     ->and($readSource)->not()->toContain('RuntimeTypeChecker::setupScope')
-                    ->and($readSource)->not()->toContain('RuntimeTypeChecker::checkReturn');
+                    ->and($readSource)->not()->toContain('RuntimeTypeChecker::checkReturn')
+                ;
 
                 $fp = fopen($testFile, 'r');
                 expect($fp)->not()->toBeFalse();
@@ -311,13 +312,14 @@ PHP;
                 fclose($fp);
 
                 expect($streamContent)->toBe($rawSource)
-                    ->and($streamContent)->not()->toContain('RuntimeTypeChecker::setupScope');
+                    ->and($streamContent)->not()->toContain('RuntimeTypeChecker::setupScope')
+                ;
 
                 require $testFile;
 
                 expect(\App\Test\sampleAction(42))->toBe('id_42');
 
-                expect(fn () => \App\Test\sampleAction(-5))
+                expect(fn() => \App\Test\sampleAction(-5))
                     ->toThrow(TypeError::class, 'positive-int');
             } finally {
                 if (file_exists($testFile)) {
@@ -344,7 +346,8 @@ PHP;
                 $bytesWritten = file_put_contents($testFile, $payload);
 
                 expect($bytesWritten)->toBe(\strlen($payload))
-                    ->and(file_get_contents($testFile))->toBe($payload);
+                    ->and(file_get_contents($testFile))->toBe($payload)
+                ;
             } finally {
                 if (file_exists($testFile)) {
                     @unlink($testFile);
@@ -358,21 +361,64 @@ PHP;
         test('stream_open options flag differentiates include (128) from normal read (0)', function () {
             StreamWrapper::register();
 
-            $wrapper = new StreamWrapper();
-            $openedPath = null;
-            $testFile = str_replace('\\', '/', realpath(__DIR__ . '/../../tests/Fixtures/Services/HelperService.php') ?: '');
+            $sysTemp = realpath(sys_get_temp_dir());
+            $baseTemp = str_replace('\\', '/', $sysTemp !== false ? $sysTemp : sys_get_temp_dir());
+            $tempDir = $baseTemp . '/typephp_stream_opt_' . uniqid();
+            mkdir($tempDir, 0777, true);
 
-            $wrapper->stream_open($testFile, 'r', 0, $openedPath);
-            $rawContent = $wrapper->stream_read(5000);
-            $wrapper->stream_close();
+            $canonicalDir = str_replace('\\', '/', realpath($tempDir) ?: $tempDir);
+            $testFile = $canonicalDir . '/DedicatedStreamTest.php';
 
-            expect($rawContent)->not()->toContain('RuntimeTypeChecker::setupScope');
+            $rawSource = <<<'PHP'
+<?php
 
-            $wrapper->stream_open($testFile, 'r', StreamWrapper::STREAM_OPEN_FOR_INCLUDE, $openedPath);
-            $transformedContent = $wrapper->stream_read(5000);
-            $wrapper->stream_close();
+declare(strict_types=1);
 
-            expect($transformedContent)->toContain('RuntimeTypeChecker::setupScope');
+namespace App\StreamTest;
+
+/**
+ * @param positive-int $id
+ */
+function dedicatedStreamAction(int $id): int
+{
+    return $id;
+}
+PHP;
+            file_put_contents($testFile, $rawSource);
+
+            try {
+                Config::set([
+                    'include' => [
+                        $canonicalDir . '/**',
+                    ],
+                    'exclude' => [
+                        'vendor/**',
+                    ],
+                ]);
+
+                $wrapper = new StreamWrapper();
+                $openedPath = null;
+
+                $wrapper->stream_open($testFile, 'r', 0, $openedPath);
+                $rawContent = $wrapper->stream_read(5000);
+                $wrapper->stream_close();
+
+                expect($rawContent)->not()->toContain('RuntimeTypeChecker::setupScope')
+                    ->and($rawContent)->toBe($rawSource);
+
+                $wrapper->stream_open($testFile, 'r', StreamWrapper::STREAM_OPEN_FOR_INCLUDE, $openedPath);
+                $transformedContent = $wrapper->stream_read(5000);
+                $wrapper->stream_close();
+
+                expect($transformedContent)->toContain('RuntimeTypeChecker::setupScope');
+            } finally {
+                if (file_exists($testFile)) {
+                    @unlink($testFile);
+                }
+                if (is_dir($tempDir)) {
+                    @rmdir($tempDir);
+                }
+            }
         });
     });
 });

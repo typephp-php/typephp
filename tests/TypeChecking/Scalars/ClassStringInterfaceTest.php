@@ -25,4 +25,17 @@ describe('class-string<Interface> Subtype Validation', function () {
             ->toThrow(TypeError::class, 'must be a class-string of Countable')
         ;
     });
+
+    test('accepts anonymous class implementing interface for class-string<Interface>', function () {
+        $anonCountable = new class () implements Countable {
+            public function count(): int
+            {
+                return 0;
+            }
+        };
+
+        expect(ClassStringFactoryContainer::makeCountable($anonCountable::class))
+            ->toBe($anonCountable::class)
+        ;
+    });
 });

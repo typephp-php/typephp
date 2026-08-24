@@ -17,14 +17,33 @@ final class CacheManager
     public const VERSION_PREFIX = 'v0.1_';
 
     /**
-     * Returns the absolute path to the cache directory.
+     * Returns the absolute path to the cache directory, isolating by system user if using temp dir.
      */
     public static function getCacheDir(): string
     {
         $config = Config::get();
         $dir = $config['cache_dir'] ?? null;
 
-        return \is_string($dir) ? $dir : (sys_get_temp_dir() . '/typephp-cache');
+        if (\is_string($dir) && $dir !== '') {
+            return $dir;
+        }
+
+        $username = getenv('USERNAME');
+        $userEnv = getenv('USER');
+
+        if (\function_exists('posix_geteuid')) {
+            $user = (string) posix_geteuid();
+        } elseif (\is_string($username) && $username !== '') {
+            $user = $username;
+        } elseif (\is_string($userEnv) && $userEnv !== '') {
+            $user = $userEnv;
+        } else {
+            $user = (string) getmyuid();
+        }
+
+        $userHash = hash('xxh128', 'typephp_' . $user);
+
+        return sys_get_temp_dir() . '/typephp-cache-' . $userHash;
     }
 
     /**
@@ -47,42 +66,82 @@ final class CacheManager
     }
 
     /**
+     * Ensures the cache directory exists securely with strict 0700 ownership.
+     */
+    public static function ensureSecureCacheDir(): bool
+    {
+        $cacheDir = self::getCacheDir();
+
+        if (is_link($cacheDir)) {
+            return false;
+        }
+
+        if (! is_dir($cacheDir)) {
+            if (! @mkdir($cacheDir, 0700, recursive: true) && ! is_dir($cacheDir)) {
+                return false;
+            }
+            @chmod($cacheDir, 0700);
+        }
+
+        if (\function_exists('posix_geteuid')) {
+            $owner = @fileowner($cacheDir);
+            if ($owner !== false && $owner !== posix_geteuid()) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Safely writes cached content atomically to avoid symlink traversal attacks.
+     */
+    public static function writeCachedFileSafely(string $cachedFile, string $transformed): bool
+    {
+        if (! self::ensureSecureCacheDir()) {
+            return false;
+        }
+
+        $cacheDir = \dirname($cachedFile);
+        $tmpFile = $cacheDir . '/.tmp_' . bin2hex(random_bytes(8));
+
+        if (@file_put_contents($tmpFile, $transformed, LOCK_EX) === false) {
+            return false;
+        }
+
+        @chmod($tmpFile, 0600);
+
+        if (! @rename($tmpFile, $cachedFile)) {
+            @unlink($tmpFile);
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Clears all cached transformed files from the cache directory.
      */
     public static function clear(): int
     {
-        $wasRegistered = StreamWrapper::isRegistered();
-        StreamWrapper::unregister();
-
         $cacheDir = self::getCacheDir();
 
-        if (! is_dir($cacheDir)) {
-            if ($wasRegistered) {
-                StreamWrapper::register();
-            }
-
+        if (! is_dir($cacheDir) || is_link($cacheDir)) {
             return 0;
         }
 
         $files = glob($cacheDir . '/*.php');
         if ($files === false || \count($files) === 0) {
-            if ($wasRegistered) {
-                StreamWrapper::register();
-            }
-
             return 0;
         }
 
         $count = 0;
         foreach ($files as $file) {
-            if (is_file($file)) {
+            if (is_file($file) && ! is_link($file)) {
                 @unlink($file);
                 $count++;
             }
-        }
-
-        if ($wasRegistered) {
-            StreamWrapper::register();
         }
 
         return $count;
@@ -117,12 +176,9 @@ final class CacheManager
                 $source = file_get_contents($file);
                 if ($source !== false) {
                     $transformed = StreamWrapper::transformSource($source, $file);
-                    $cacheDir = self::getCacheDir();
-                    if (! is_dir($cacheDir)) {
-                        @mkdir($cacheDir, 0777, recursive: true);
+                    if (self::writeCachedFileSafely($cachedFile, $transformed)) {
+                        $cached++;
                     }
-                    file_put_contents($cachedFile, $transformed);
-                    $cached++;
                     if ($progressCallback !== null) {
                         $progressCallback('cached', $file, $idx + 1, $total);
                     }
