@@ -263,10 +263,14 @@ PHP;
         test('file_get_contents() returns raw source code without AST transformation', function () {
             StreamWrapper::register();
 
-            $tempDir = sys_get_temp_dir() . '/typephp_raw_read_' . uniqid();
+            $sysTemp = realpath(sys_get_temp_dir());
+            $baseTemp = str_replace('\\', '/', $sysTemp !== false ? $sysTemp : sys_get_temp_dir());
+            $tempDir = $baseTemp . '/typephp_raw_read_' . uniqid();
             mkdir($tempDir, 0777, true);
 
-            $testFile = $tempDir . '/SampleService.php';
+            $canonicalDir = str_replace('\\', '/', realpath($tempDir) ?: $tempDir);
+            $testFile = $canonicalDir . '/SampleService.php';
+
             $rawSource = <<<'PHP'
 <?php
 
@@ -288,7 +292,10 @@ PHP;
             try {
                 Config::set([
                     'include' => [
-                        str_replace('\\', '/', $tempDir) . '/**',
+                        $canonicalDir . '/**',
+                    ],
+                    'exclude' => [
+                        'vendor/**',
                     ],
                 ]);
 
@@ -310,7 +317,7 @@ PHP;
 
                 expect(\App\Test\sampleAction(42))->toBe('id_42');
 
-                expect(fn() => \App\Test\sampleAction(-5))
+                expect(fn () => \App\Test\sampleAction(-5))
                     ->toThrow(TypeError::class, 'positive-int');
             } finally {
                 if (file_exists($testFile)) {
@@ -325,7 +332,9 @@ PHP;
         test('file_put_contents() writes data directly without stream interception', function () {
             StreamWrapper::register();
 
-            $tempDir = sys_get_temp_dir() . '/typephp_raw_write_' . uniqid();
+            $sysTemp = realpath(sys_get_temp_dir());
+            $baseTemp = str_replace('\\', '/', $sysTemp !== false ? $sysTemp : sys_get_temp_dir());
+            $tempDir = $baseTemp . '/typephp_raw_write_' . uniqid();
             mkdir($tempDir, 0777, true);
 
             $testFile = $tempDir . '/data_write.txt';
