@@ -206,16 +206,23 @@ final class Config
         }
 
         /** @var array<int, class-string<ExtensionInterface>> $configuredExtensions */
-        $configuredExtensions = \is_array($userConfig['extensions'] ?? null) ? $userConfig['extensions'] : [];
+        $configuredExtensions = \is_array($userConfig['extensions'] ?? null)
+            ? $userConfig['extensions']
+            : $defaultConfig['extensions'];
 
         $extensionIncludes = ExtensionManager::loadExtensionIncludes($configuredExtensions);
         $extensionStubs = ExtensionManager::loadExtensionStubs($configuredExtensions);
 
-        $defaultConfig['include'] = array_unique(array_merge($defaultConfig['include'], $extensionIncludes));
-        $defaultConfig['stubs'] = array_unique(array_merge($defaultConfig['stubs'], $extensionStubs));
+        $mergedConfig = self::mergeConfig($defaultConfig, $userConfig);
 
-        /** @var array<string, mixed> $mergedConfig */
-        $mergedConfig = array_replace_recursive($defaultConfig, $userConfig);
+        // Append extension whitelist includes and stubs
+        /** @var array<int, string> $currentIncludes */
+        $currentIncludes = \is_array($mergedConfig['include'] ?? null) ? $mergedConfig['include'] : [];
+        /** @var array<int, string> $currentStubs */
+        $currentStubs = \is_array($mergedConfig['stubs'] ?? null) ? $mergedConfig['stubs'] : [];
+
+        $mergedConfig['include'] = array_values(array_unique(array_merge($currentIncludes, $extensionIncludes)));
+        $mergedConfig['stubs'] = array_values(array_unique(array_merge($currentStubs, $extensionStubs)));
 
         self::syncFlags($mergedConfig);
 
@@ -229,8 +236,8 @@ final class Config
      */
     public static function set(array $config): void
     {
-        /** @var array<string, mixed> $mergedConfig */
-        $mergedConfig = array_replace_recursive(self::get(), $config);
+        $current = self::$cachedConfig ?? self::get();
+        $mergedConfig = self::mergeConfig($current, $config);
 
         if (isset($config['extensions']) && \is_array($config['extensions'])) {
             /** @var array<int, class-string<ExtensionInterface>> $configuredExtensions */
@@ -243,8 +250,8 @@ final class Config
             /** @var array<int, string> $currentStubs */
             $currentStubs = \is_array($mergedConfig['stubs'] ?? null) ? $mergedConfig['stubs'] : [];
 
-            $mergedConfig['include'] = array_unique(array_merge($currentIncludes, $extensionIncludes));
-            $mergedConfig['stubs'] = array_unique(array_merge($currentStubs, $extensionStubs));
+            $mergedConfig['include'] = array_values(array_unique(array_merge($currentIncludes, $extensionIncludes)));
+            $mergedConfig['stubs'] = array_values(array_unique(array_merge($currentStubs, $extensionStubs)));
         }
 
         self::$cachedConfig = $mergedConfig;
@@ -257,6 +264,38 @@ final class Config
         PathMatcher::reset();
         StreamWrapper::reset();
         StubManager::reset();
+    }
+
+    /**
+     * Merges user configuration over base defaults:
+     * - Associative dictionaries (inline_vars) are merged recursively.
+     * - Sequential lists (include, exclude, extensions, stubs) are REPLACED wholesale when defined.
+     * - Scalars / booleans / strings are overwritten.
+     *
+     * @param array<string, mixed> $base
+     * @param array<string, mixed> $overrides
+     *
+     * @return array<string, mixed>
+     */
+    private static function mergeConfig(array $base, array $overrides): array
+    {
+        $merged = $base;
+
+        foreach ($overrides as $key => $value) {
+            if ($key === 'inline_vars' && \is_array($value) && isset($base['inline_vars']) && \is_array($base['inline_vars'])) {
+                /** @var array<string, bool> $baseInlineVars */
+                $baseInlineVars = $base['inline_vars'];
+                /** @var array<string, bool> $overrideInlineVars */
+                $overrideInlineVars = $value;
+                $merged['inline_vars'] = array_merge($baseInlineVars, $overrideInlineVars);
+            } elseif (\in_array($key, ['include', 'exclude', 'extensions', 'stubs'], true) && \is_array($value)) {
+                $merged[$key] = array_values($value); 
+            } else {
+                $merged[$key] = $value;
+            }
+        }
+
+        return $merged;
     }
 
     /**

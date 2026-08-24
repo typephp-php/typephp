@@ -337,6 +337,7 @@ describe('Vendor Path Isolation & Whitelisting (Shopware Doctrine DBAL Reproduct
         Config::set([
             'include' => [
                 'src/**',
+                'app/**',
             ],
             'exclude' => [
                 'vendor/**',
