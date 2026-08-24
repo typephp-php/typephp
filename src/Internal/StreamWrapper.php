@@ -44,8 +44,6 @@ final class StreamWrapper implements StreamWrapperInterface
 
     private static bool $cacheEnabled = true;
 
-    private static string $cacheDir = '';
-
     /**
      * In-memory cache for positive url_stat results.
      *
@@ -103,7 +101,6 @@ final class StreamWrapper implements StreamWrapperInterface
         $resolvedConfig = array_replace_recursive(Config::get(), $config);
 
         self::$cacheEnabled = (bool) ($resolvedConfig['cache'] ?? true);
-        self::$cacheDir = CacheManager::getCacheDir();
 
         if (! self::$isRegistered) {
             stream_wrapper_unregister('file');
@@ -633,18 +630,27 @@ final class StreamWrapper implements StreamWrapperInterface
      */
     private function openCachedStream(string $resolvedPath, string $mode): bool
     {
-        $cacheDir = self::$cacheDir;
-        if (! is_dir($cacheDir)) {
-            self::silent(fn () => mkdir($cacheDir, 0777, true));
-        }
-
         $cachedFile = CacheManager::getCachedFilePath($resolvedPath);
 
-        if (! file_exists($cachedFile)) {
+        if (! CacheManager::ensureSecureCacheDir()) {
+            return $this->openMemoryStream($resolvedPath);
+        }
+
+        if (! file_exists($cachedFile) || is_link($cachedFile)) {
             $source = file_get_contents($resolvedPath);
-            if ($source !== false) {
-                $transformed = self::transformSource($source, $resolvedPath);
-                file_put_contents($cachedFile, $transformed);
+            if ($source === false) {
+                return false;
+            }
+            $transformed = self::transformSource($source, $resolvedPath);
+            if (! CacheManager::writeCachedFileSafely($cachedFile, $transformed)) {
+                return $this->openMemoryStream($resolvedPath);
+            }
+        }
+
+        if (\function_exists('posix_geteuid')) {
+            $owner = @fileowner($cachedFile);
+            if ($owner !== false && $owner !== posix_geteuid()) {
+                return $this->openMemoryStream($resolvedPath);
             }
         }
 
