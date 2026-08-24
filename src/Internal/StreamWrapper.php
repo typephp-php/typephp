@@ -19,6 +19,11 @@ use TypePHP\Resolver\SpecialTypeResolver;
 final class StreamWrapper implements StreamWrapperInterface
 {
     /**
+     * Bitmask constant passed by PHP's Zend Engine when a stream is opened by include/require.
+     */
+    public const STREAM_OPEN_FOR_INCLUDE = 128;
+
+    /**
      * Context resource provided by PHP stream subsystem.
      *
      * @var resource|null
@@ -195,6 +200,12 @@ final class StreamWrapper implements StreamWrapperInterface
             return $this->openDirectHandle($path, $mode);
         }
 
+        $isInclude = ($options & self::STREAM_OPEN_FOR_INCLUDE) !== 0;
+        if (! $isInclude) {
+            return $this->openDirectHandle($path, $mode);
+        }
+
+
         if (! str_ends_with(strtolower($path), '.php')) {
             return $this->openDirectHandle($path, $mode);
         }
@@ -204,20 +215,13 @@ final class StreamWrapper implements StreamWrapperInterface
         }
 
         $normalizedRaw = str_replace('\\', '/', $path);
-
         if (! PathMatcher::mayPathBeIncluded($normalizedRaw)) {
             return $this->openDirectHandle($path, $mode);
         }
 
-        if (isset(self::$appFileDecisionCache[$normalizedRaw])) {
-            if (! self::$appFileDecisionCache[$normalizedRaw]) {
-                return $this->openDirectHandle($path, $mode);
-            }
-        }
-
         self::unregister();
-        $exists = (bool) self::silent(fn () => file_exists($path));
-        $resolvedPath = $exists ? self::silent(fn () => realpath($path)) : false;
+        $exists = (bool) self::silent(fn() => file_exists($path));
+        $resolvedPath = $exists ? self::silent(fn() => realpath($path)) : false;
         self::register();
 
         if (! $exists || $resolvedPath === false) {
@@ -266,7 +270,7 @@ final class StreamWrapper implements StreamWrapperInterface
     {
         self::unregister();
         /** @var resource|false $handle */
-        $handle = self::silent(fn () => fopen($targetFile, $mode));
+        $handle = self::silent(fn() => fopen($targetFile, $mode));
         $this->handle = $handle !== false ? $handle : null;
         self::register();
 
@@ -416,7 +420,7 @@ final class StreamWrapper implements StreamWrapperInterface
 
         self::unregister();
         /** @var array<int|string, int>|false $result */
-        $result = self::silent(fn () => stat($path));
+        $result = self::silent(fn() => stat($path));
         self::register();
 
         if ($result !== false) {
@@ -442,11 +446,11 @@ final class StreamWrapper implements StreamWrapperInterface
             $valueArray = \is_array($value) ? $value : [];
             $time = $valueArray[0] ?? time();
             $atime = $valueArray[1] ?? $time;
-            $result = (bool) self::silent(fn () => touch($path, (int) $time, (int) $atime));
+            $result = (bool) self::silent(fn() => touch($path, (int) $time, (int) $atime));
         } elseif ($option === STREAM_META_ACCESS) {
             /** @var int $mode */
             $mode = \is_int($value) ? $value : 0777;
-            $result = (bool) self::silent(fn () => chmod($path, $mode));
+            $result = (bool) self::silent(fn() => chmod($path, $mode));
         }
         self::register();
 
@@ -457,7 +461,7 @@ final class StreamWrapper implements StreamWrapperInterface
     {
         self::unregister();
         /** @var resource|false $dh */
-        $dh = self::silent(fn () => opendir($path));
+        $dh = self::silent(fn() => opendir($path));
         $this->dirHandle = $dh !== false ? $dh : null;
         self::register();
 
@@ -500,7 +504,7 @@ final class StreamWrapper implements StreamWrapperInterface
         unset(self::$statCache[$normalized], self::$staticNegativeStatCache[$normalized]);
 
         self::unregister();
-        $result = (bool) self::silent(fn () => mkdir($path, $mode, ($options & STREAM_MKDIR_RECURSIVE) !== 0));
+        $result = (bool) self::silent(fn() => mkdir($path, $mode, ($options & STREAM_MKDIR_RECURSIVE) !== 0));
         self::register();
 
         return $result;
@@ -512,7 +516,7 @@ final class StreamWrapper implements StreamWrapperInterface
         unset(self::$statCache[$normalized], self::$staticNegativeStatCache[$normalized]);
 
         self::unregister();
-        $result = (bool) self::silent(fn () => rmdir($path));
+        $result = (bool) self::silent(fn() => rmdir($path));
         self::register();
 
         return $result;
@@ -524,7 +528,7 @@ final class StreamWrapper implements StreamWrapperInterface
         unset(self::$statCache[$normalized], self::$staticNegativeStatCache[$normalized]);
 
         self::unregister();
-        $result = (bool) self::silent(fn () => unlink($path));
+        $result = (bool) self::silent(fn() => unlink($path));
         self::register();
 
         return $result;
@@ -542,7 +546,7 @@ final class StreamWrapper implements StreamWrapperInterface
         );
 
         self::unregister();
-        $result = (bool) self::silent(fn () => rename($pathFrom, $pathTo));
+        $result = (bool) self::silent(fn() => rename($pathFrom, $pathTo));
         self::register();
 
         return $result;
@@ -559,7 +563,7 @@ final class StreamWrapper implements StreamWrapperInterface
      */
     private static function silent(callable $callback): mixed
     {
-        set_error_handler(fn () => true);
+        set_error_handler(fn() => true);
 
         try {
             return $callback();
@@ -632,7 +636,7 @@ final class StreamWrapper implements StreamWrapperInterface
     {
         $cacheDir = self::$cacheDir;
         if (! is_dir($cacheDir)) {
-            self::silent(fn () => mkdir($cacheDir, 0777, true));
+            self::silent(fn() => mkdir($cacheDir, 0777, true));
         }
 
         $cachedFile = CacheManager::getCachedFilePath($resolvedPath);

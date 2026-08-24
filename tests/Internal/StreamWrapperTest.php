@@ -258,4 +258,112 @@ PHP;
             }
         });
     });
+
+    describe('File Functions Non-Interference (STREAM_OPEN_FOR_INCLUDE)', function () {
+        test('file_get_contents() returns raw source code without AST transformation', function () {
+            StreamWrapper::register();
+
+            $tempDir = sys_get_temp_dir() . '/typephp_raw_read_' . uniqid();
+            mkdir($tempDir, 0777, true);
+
+            $testFile = $tempDir . '/SampleService.php';
+            $rawSource = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\Test;
+
+/**
+ * @param positive-int $id
+ * @return non-empty-string
+ */
+function sampleAction(int $id): string
+{
+    return "id_{$id}";
+}
+PHP;
+            file_put_contents($testFile, $rawSource);
+
+            try {
+                Config::set([
+                    'include' => [
+                        str_replace('\\', '/', $tempDir) . '/**',
+                    ],
+                ]);
+
+                $readSource = file_get_contents($testFile);
+
+                expect($readSource)->toBe($rawSource)
+                    ->and($readSource)->not()->toContain('RuntimeTypeChecker::setupScope')
+                    ->and($readSource)->not()->toContain('RuntimeTypeChecker::checkReturn');
+
+                $fp = fopen($testFile, 'r');
+                expect($fp)->not()->toBeFalse();
+                $streamContent = fread($fp, 5000);
+                fclose($fp);
+
+                expect($streamContent)->toBe($rawSource)
+                    ->and($streamContent)->not()->toContain('RuntimeTypeChecker::setupScope');
+
+                require $testFile;
+
+                expect(\App\Test\sampleAction(42))->toBe('id_42');
+
+                expect(fn() => \App\Test\sampleAction(-5))
+                    ->toThrow(TypeError::class, 'positive-int');
+            } finally {
+                if (file_exists($testFile)) {
+                    @unlink($testFile);
+                }
+                if (is_dir($tempDir)) {
+                    @rmdir($tempDir);
+                }
+            }
+        });
+
+        test('file_put_contents() writes data directly without stream interception', function () {
+            StreamWrapper::register();
+
+            $tempDir = sys_get_temp_dir() . '/typephp_raw_write_' . uniqid();
+            mkdir($tempDir, 0777, true);
+
+            $testFile = $tempDir . '/data_write.txt';
+            $payload = 'raw_unmodified_payload_12345';
+
+            try {
+                $bytesWritten = file_put_contents($testFile, $payload);
+
+                expect($bytesWritten)->toBe(\strlen($payload))
+                    ->and(file_get_contents($testFile))->toBe($payload);
+            } finally {
+                if (file_exists($testFile)) {
+                    @unlink($testFile);
+                }
+                if (is_dir($tempDir)) {
+                    @rmdir($tempDir);
+                }
+            }
+        });
+
+        test('stream_open options flag differentiates include (128) from normal read (0)', function () {
+            StreamWrapper::register();
+
+            $wrapper = new StreamWrapper();
+            $openedPath = null;
+            $testFile = str_replace('\\', '/', realpath(__DIR__ . '/../../tests/Fixtures/Services/HelperService.php') ?: '');
+
+            $wrapper->stream_open($testFile, 'r', 0, $openedPath);
+            $rawContent = $wrapper->stream_read(5000);
+            $wrapper->stream_close();
+
+            expect($rawContent)->not()->toContain('RuntimeTypeChecker::setupScope');
+
+            $wrapper->stream_open($testFile, 'r', StreamWrapper::STREAM_OPEN_FOR_INCLUDE, $openedPath);
+            $transformedContent = $wrapper->stream_read(5000);
+            $wrapper->stream_close();
+
+            expect($transformedContent)->toContain('RuntimeTypeChecker::setupScope');
+        });
+    });
 });
