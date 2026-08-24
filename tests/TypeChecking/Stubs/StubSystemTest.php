@@ -357,4 +357,61 @@ PHP;
             }
         }
     });
+
+    test('resolves @phpstan-import-type imported from a stubbed vendor class at runtime', function () {
+        $tempDir = sys_get_temp_dir() . '/typephp_stub_import_type_' . uniqid();
+        mkdir($tempDir, 0777, true);
+
+        $stubPath = $tempDir . '/SimulatedVendorParent.stub';
+        $stubContent = <<<'PHP'
+<?php
+
+namespace TypePHP\Tests\Fixtures\Liskov;
+
+/**
+ * @phpstan-type VendorConfig array{apiKey: non-empty-string, retries: positive-int}
+ */
+class SimulatedVendorParent
+{
+}
+PHP;
+        file_put_contents($stubPath, $stubContent);
+
+        try {
+            Config::set([
+                'stubs' => [
+                    str_replace('\\', '/', $tempDir) . '/**',
+                ],
+            ]);
+
+            $consumer = new class () {
+                /**
+                 * @phpstan-import-type VendorConfig from SimulatedVendorParent as AppConfig
+                 *
+                 * @param AppConfig $config
+                 */
+                public function initialize(array $config): bool
+                {
+                    return true;
+                }
+            };
+
+            expect($consumer->initialize(['apiKey' => 'sec_123', 'retries' => 3]))->toBeTrue();
+
+            expect(fn () => $consumer->initialize(['apiKey' => '', 'retries' => 3]))
+                ->toThrow(TypeError::class, "['apiKey'] must be of type non-empty-string")
+            ;
+
+            expect(fn () => $consumer->initialize(['apiKey' => 'sec_123', 'retries' => -1]))
+                ->toThrow(TypeError::class, "['retries'] must be of type positive-int")
+            ;
+        } finally {
+            if (file_exists($stubPath)) {
+                @unlink($stubPath);
+            }
+            if (is_dir($tempDir)) {
+                @rmdir($tempDir);
+            }
+        }
+    });
 });

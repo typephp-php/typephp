@@ -24,6 +24,7 @@ use TypePHP\Contract\HierarchyResolver;
 use TypePHP\Internal\ClassNameValidator;
 use TypePHP\Internal\ErrorFactory;
 use TypePHP\Internal\ErrorMessage;
+use TypePHP\Internal\StubManager;
 use WeakMap;
 
 /**
@@ -168,10 +169,11 @@ final class TemplateManager
         $className = \get_class($instance);
 
         try {
+            $stubDoc = StubManager::getClassDoc($className);
             $ref = new \ReflectionClass($className);
-            $classDoc = $ref->getDocComment();
+            $classDoc = $stubDoc ?? $ref->getDocComment();
 
-            if ($classDoc !== false) {
+            if ($classDoc !== false && $classDoc !== null) {
                 [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
 
                 $classTokens = new TokenIterator($lexer->tokenize($classDoc));
@@ -309,8 +311,11 @@ final class TemplateManager
         $classVariances = [];
 
         foreach ($classHierarchy as $hierClass) {
-            $classDoc = $hierClass->getDocComment();
-            if ($classDoc === false) {
+            $hierClassName = $hierClass->getName();
+            $stubDoc = StubManager::getClassDoc($hierClassName);
+            $classDoc = $stubDoc ?? $hierClass->getDocComment();
+
+            if ($classDoc === false || $classDoc === null) {
                 continue;
             }
 
@@ -402,7 +407,7 @@ final class TemplateManager
 
     /**
      * Resolves and binds parent class (@extends), interface (@implements), and trait (@use) template mappings.
-     * Respects Vendor Isolation by skipping docblocks from excluded vendor ancestor files.
+     * Respects Vendor Isolation by skipping docblocks from excluded vendor ancestor files unless stubbed.
      */
     public static function resolveInheritedTemplates(object $instance, string $targetClassName): void
     {
@@ -415,8 +420,10 @@ final class TemplateManager
 
             foreach ($classHierarchy as $hierClass) {
                 $fileName = $hierClass->getFileName();
+                $hierClassName = $hierClass->getName();
+                $stubDoc = StubManager::getClassDoc($hierClassName);
 
-                if ($hierClass->getName() !== $actualClassName && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
+                if ($stubDoc === null && $hierClass->getName() !== $actualClassName && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
                     continue;
                 }
 
@@ -457,8 +464,9 @@ final class TemplateManager
     {
         $docs = [];
 
-        $classDoc = $hierClass->getDocComment();
-        if ($classDoc !== false) {
+        $stubDoc = StubManager::getClassDoc($hierClass->getName());
+        $classDoc = $stubDoc ?? $hierClass->getDocComment();
+        if ($classDoc !== false && $classDoc !== null) {
             $docs[] = $classDoc;
         }
 
@@ -492,10 +500,11 @@ final class TemplateManager
         }
 
         try {
+            $stubDoc = StubManager::getClassDoc($parentName);
             $parentRef = new \ReflectionClass($parentName);
-            $parentDoc = $parentRef->getDocComment();
+            $parentDoc = $stubDoc ?? $parentRef->getDocComment();
 
-            if ($parentDoc === false) {
+            if ($parentDoc === false || $parentDoc === null) {
                 return;
             }
 

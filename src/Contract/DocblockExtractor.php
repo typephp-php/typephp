@@ -19,6 +19,7 @@ use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
 use TypePHP\Internal\ClassNameValidator;
 use TypePHP\Internal\DocblockNormalizer;
+use TypePHP\Internal\StubManager;
 use TypePHP\Resolver\SpecialTypeResolver;
 
 /**
@@ -345,10 +346,11 @@ final class DocblockExtractor
         }
 
         try {
+            $stubDoc = StubManager::getClassDoc($fqcn);
             $ref = new \ReflectionClass($fqcn);
-            $doc = $ref->getDocComment();
+            $doc = $stubDoc ?? $ref->getDocComment();
 
-            if ($doc !== false) {
+            if ($doc !== false && $doc !== null) {
                 $phpDocNode = self::parseDocString($doc);
 
                 $targetAliases = [];

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\PhpDocNode;
 use TypePHP\Contract\DocblockExtractor;
+use TypePHP\Tests\Fixtures\Services\HelperService;
 use TypePHP\Tests\Fixtures\Services\UserService;
 use TypePHP\Tests\Fixtures\Shopware\Metric\Type as MetricTypeEnum;
 use TypePHP\Tests\Fixtures\Types\NestedAliasChainedB;
@@ -251,5 +252,48 @@ DOC;
         $inherited = DocblockExtractor::getInheritedTags($node);
 
         expect($inherited)->toHaveCount(3);
+    });
+
+    test('resolves imported type aliases defined inside stub files', function () {
+        $tempDir = sys_get_temp_dir() . '/typephp_doc_stub_' . uniqid();
+        mkdir($tempDir, 0777, true);
+
+        $stubPath = $tempDir . '/HelperService.stub';
+        $stubContent = <<<'PHP'
+<?php
+
+namespace TypePHP\Tests\Fixtures\Services;
+
+/**
+ * @phpstan-type StubbedUserShape array{id: positive-int, username: non-empty-string}
+ */
+class HelperService
+{
+}
+PHP;
+        file_put_contents($stubPath, $stubContent);
+
+        try {
+            TypePHP\Internal\Config::set([
+                'stubs' => [
+                    str_replace('\\', '/', $tempDir) . '/**',
+                ],
+            ]);
+
+            $resolved = DocblockExtractor::resolveImportedTypeAlias(HelperService::class, 'StubbedUserShape');
+
+            expect($resolved)->not()->toBeNull()
+                ->and((string) $resolved)->toContain('positive-int')
+                ->and((string) $resolved)->toContain('non-empty-string')
+            ;
+        } finally {
+            if (file_exists($stubPath)) {
+                @unlink($stubPath);
+            }
+            if (is_dir($tempDir)) {
+                @rmdir($tempDir);
+            }
+            TypePHP\Internal\Config::reset();
+        }
     });
 });
