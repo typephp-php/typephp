@@ -319,9 +319,8 @@ PHP;
 
                 expect(\App\Test\sampleAction(42))->toBe('id_42');
 
-                expect(fn () => \App\Test\sampleAction(-5))
-                    ->toThrow(TypeError::class, 'positive-int')
-                ;
+                expect(fn() => \App\Test\sampleAction(-5))
+                    ->toThrow(TypeError::class, 'positive-int');
             } finally {
                 if (file_exists($testFile)) {
                     @unlink($testFile);
@@ -364,7 +363,7 @@ PHP;
 
             $wrapper = new StreamWrapper();
             $openedPath = null;
-            $testFile = str_replace('\\', '/', realpath(__DIR__ . '/../../tests/Fixtures/Services/HelperService.php') ?: '');
+            $testFile = str_replace('\\', '/', realpath(__DIR__ . '/../../tests/Fixtures/Services/BaseService.php') ?: '');
 
             $wrapper->stream_open($testFile, 'r', 0, $openedPath);
             $rawContent = $wrapper->stream_read(5000);
