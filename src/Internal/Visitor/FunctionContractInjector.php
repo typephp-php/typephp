@@ -64,7 +64,7 @@ final class FunctionContractInjector
     private static function hasParamContracts(string $docText, bool $isClassMethod): bool
     {
         if ($isClassMethod) {
-            return true;
+            return true; 
         }
 
         if (! str_contains($docText, '@param') && ! str_contains($docText, '@phpstan-param') && ! str_contains($docText, '@psalm-param') && ! str_contains($docText, '@template')) {
@@ -75,7 +75,7 @@ final class FunctionContractInjector
             return true;
         }
 
-        if (preg_match_all('/@param\s+([^\s$]+)/', $docText, $matches)) {
+        if ((int) preg_match_all('/@param\s+([^\s$]+)/', $docText, $matches) > 0) {
             foreach ($matches[1] as $typeStr) {
                 $unionParts = explode('|', $typeStr);
                 $hasMixed = false;
@@ -91,7 +91,7 @@ final class FunctionContractInjector
                 }
             }
 
-            return false;
+            return false; 
         }
 
         return false;
@@ -107,12 +107,12 @@ final class FunctionContractInjector
             return true;
         }
 
-        if (preg_match('/@return\s+([^\s$]+)/', $docText, $matches)) {
+        if (preg_match('/@return\s+([^\s$]+)/', $docText, $matches) === 1) {
             $returnTypeStr = $matches[1];
             $unionParts = explode('|', $returnTypeStr);
             foreach ($unionParts as $part) {
                 if (strtolower(trim($part)) === 'mixed') {
-                    return false; 
+                    return false; // Collapses to mixed
                 }
             }
 
