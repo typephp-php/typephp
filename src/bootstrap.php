@@ -4,26 +4,44 @@ declare(strict_types=1);
 
 namespace TypePHP;
 
+
 if (class_exists(TypePHP::class) && ! \defined('TYPEPHP_BOOTED')) {
     \define('TYPEPHP_BOOTED', true);
 
     $isDisabledEnv = getenv('TYPEPHP_DISABLE') !== false && filter_var(getenv('TYPEPHP_DISABLE'), FILTER_VALIDATE_BOOLEAN);
     $isDisabledConst = \defined('TYPEPHP_DISABLE') && TYPEPHP_DISABLE;
 
-    $argv = $_SERVER['argv'] ?? null;
-    $stringArgs = \is_array($argv) ? array_filter($argv, 'is_string') : [];
-    $allArgs = implode(' ', $stringArgs);
-    $script = (isset($_SERVER['SCRIPT_NAME']) && \is_string($_SERVER['SCRIPT_NAME'])) ? $_SERVER['SCRIPT_NAME'] : '';
+    $isTooling = false;
 
-    $normalized = str_replace('\\', '/', strtolower($allArgs . ' ' . $script));
+    if (isset($_SERVER['argv']) && \is_array($_SERVER['argv']) && \count($_SERVER['argv']) > 0) {
+        $candidate = $_SERVER['argv'][0];
 
-    $isTooling = str_contains($normalized, 'phpstan')
-        || str_contains($normalized, 'psalm')
-        || str_contains($normalized, 'php-cs-fixer')
-        || str_contains($normalized, 'pint')
-        || str_contains($normalized, 'rector')
-        || str_contains($normalized, 'mago')
-        || str_contains($normalized, 'composer');
+        if (\is_string($candidate)) {
+            $baseArg0 = strtolower(basename(str_replace('\\', '/', $candidate)));
+            if (\in_array($baseArg0, ['php', 'php.exe', 'php-cgi', 'php-fpm'], true) && isset($_SERVER['argv'][1]) && \is_string($_SERVER['argv'][1])) {
+                $candidate = $_SERVER['argv'][1];
+            }
+
+            $rawBinary = strtolower(basename(str_replace('\\', '/', $candidate)));
+            $binary = preg_replace('/\.(phar|bat|exe|cmd)$/i', '', $rawBinary) ?? $rawBinary;
+
+            $toolingBinaries = [
+                'phpstan' => true,
+                'psalm' => true,
+                'php-cs-fixer' => true,
+                'phpcs' => true,
+                'phpcbf' => true,
+                'pint' => true,
+                'rector' => true,
+                'mago' => true,
+                'composer' => true,
+                'deptrac' => true,
+                'phan' => true,
+            ];
+
+            $isTooling = isset($toolingBinaries[$binary]);
+        }
+    }
 
     if (! $isDisabledEnv && ! $isDisabledConst && ! $isTooling) {
         TypePHP::boot();
