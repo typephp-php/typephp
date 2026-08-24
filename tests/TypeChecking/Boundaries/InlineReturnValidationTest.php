@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use TypePHP\Internal\StreamWrapper;
+
 /**
  * Function with broad return type, but specific inline @var on return statement
  */
@@ -62,6 +64,24 @@ describe('Inline @var Validation on Direct Return Statements', function () {
     test('throws TypeError when closure return expression violates inline @var array shape', function () {
         expect(fn () => testInlineVarOnReturnInClosure())
             ->toThrow(TypeError::class, 'positive-int')
+        ;
+    });
+
+    test('inline @var on return statement is not double wrapped with checkReturn in AST', function () {
+        $source = <<<'PHP'
+<?php
+
+function sampleSingleWrapReturn(): string
+{
+    /** @var non-empty-string */
+    return 'hello_world';
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_single_wrap.php');
+
+        expect($transformed)->toContain('RuntimeTypeChecker::checkVariable')
+            ->and($transformed)->not()->toContain('checkReturn(__METHOD__, ($__typephpVal = \TypePHP\Internal\RuntimeTypeChecker::checkVariable')
         ;
     });
 });

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use TypePHP\Contract\ContractParser;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Services\VariadicPropertyService;
@@ -59,6 +60,17 @@ function testProcessIntKeyGenerator(iterable $items): array
     return $out;
 }
 
+/**
+ * Function with purely mixed parameters
+ *
+ * @param mixed $data
+ * @param mixed $meta
+ */
+function testPureMixedParamFunction(mixed $data, mixed $meta): bool
+{
+    return true;
+}
+
 describe('Function & Method Parameter Contracts', function () {
     test('inherits variadic constructor parameter contracts from property @var array docblocks without double-wrapping', function () {
         $service = new VariadicPropertyService(['tag1', 'tag2'], new Dog(), new Dog());
@@ -99,6 +111,16 @@ describe('Function & Method Parameter Contracts', function () {
         expect(fn () => new NonCpmStrings(['a', 'b', 'c', 1]))
             ->toThrow(TypeError::class, 'Argument $strings[3] must be of type string')
         ;
+    });
+
+    test('filters out pure mixed parameters so hasParamContract is false', function () {
+        $contract = ContractParser::parse('testPureMixedParamFunction');
+
+        expect($contract['types'])->toBeEmpty()
+            ->and($contract['hasParamContract'])->toBeFalse()
+        ;
+
+        expect(testPureMixedParamFunction('anything', 12345))->toBeTrue();
     });
 });
 
@@ -155,6 +177,7 @@ describe('Lazy Wrapped Iterable/Generator Parameter Contracts', function () {
         };
 
         expect(fn () => testProcessIntKeyGenerator($badKeyGenerator()))
-            ->toThrow(TypeError::class, 'Iterator $items key');
+            ->toThrow(TypeError::class, 'Iterator $items key')
+        ;
     });
 });

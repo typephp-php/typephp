@@ -550,7 +550,13 @@ final class ContractParser
                 $type = new ArrayTypeNode($type);
             }
             $substitutedType = self::substituteAliases($type, $aliases);
-            $types[$paramName] = SpecialTypeResolver::resolve($substitutedType, $ref);
+            $resolvedType = SpecialTypeResolver::resolve($substitutedType, $ref);
+
+            if ($resolvedType instanceof IdentifierTypeNode && strtolower($resolvedType->name) === 'mixed') {
+                continue;
+            }
+
+            $types[$paramName] = $resolvedType;
         }
 
         $returnTag = DocblockExtractor::getReturnTag($phpDocNode);
@@ -696,7 +702,13 @@ final class ContractParser
                         $type = new ArrayTypeNode($type);
                     }
                     $substitutedType = self::substituteAliases($type, $aliases);
-                    $types[$targetParamName] = SpecialTypeResolver::resolve($substitutedType, $hierRef);
+                    $resolvedType = SpecialTypeResolver::resolve($substitutedType, $hierRef);
+
+                    if ($resolvedType instanceof IdentifierTypeNode && strtolower($resolvedType->name) === 'mixed') {
+                        continue;
+                    }
+
+                    $types[$targetParamName] = $resolvedType;
                 }
             }
 
@@ -790,7 +802,11 @@ final class ContractParser
                         ) {
                             $propType = new ArrayTypeNode($propType);
                         }
-                        $types[$paramName] = self::substituteAliases($propType, []);
+                        $substitutedProp = self::substituteAliases($propType, []);
+                        if ($substitutedProp instanceof IdentifierTypeNode && strtolower($substitutedProp->name) === 'mixed') {
+                            continue;
+                        }
+                        $types[$paramName] = $substitutedProp;
                     }
                 }
             }
@@ -798,7 +814,7 @@ final class ContractParser
     }
 
     /**
-     * Recursively substitutes all type aliases inside a TypeNode AST.
+     * Recursively substitutes all type aliases inside a TypeNode AST and simplifies unions/intersections containing `mixed`.
      *
      * @param array<string, TypeNode> $aliases
      */
@@ -864,17 +880,39 @@ final class ContractParser
         }
 
         if ($node instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(
+            $types = array_map(
                 fn ($t) => self::substituteAliases($t, $aliases),
                 $node->types
-            ));
+            );
+
+            foreach ($types as $t) {
+                if ($t instanceof IdentifierTypeNode && strtolower($t->name) === 'mixed') {
+                    return new IdentifierTypeNode('mixed');
+                }
+            }
+
+            return new UnionTypeNode($types);
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(
+            $types = array_map(
                 fn ($t) => self::substituteAliases($t, $aliases),
                 $node->types
-            ));
+            );
+
+            $filtered = array_values(array_filter($types, function ($t) {
+                return ! ($t instanceof IdentifierTypeNode && strtolower($t->name) === 'mixed');
+            }));
+
+            if (\count($filtered) === 0) {
+                return new IdentifierTypeNode('mixed');
+            }
+
+            if (\count($filtered) === 1) {
+                return $filtered[0];
+            }
+
+            return new IntersectionTypeNode($filtered);
         }
 
         if ($node instanceof ArrayShapeNode) {

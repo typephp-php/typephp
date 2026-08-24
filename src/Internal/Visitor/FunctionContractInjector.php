@@ -36,8 +36,8 @@ final class FunctionContractInjector
         $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
         $isMagicLifecycle = $isClassMethod && \in_array($methodName, ['__construct', '__destruct', '__clone'], true);
 
-        $hasParam = $isClassMethod || str_contains($docText, '@param') || str_contains($docText, '@phpstan-param') || str_contains($docText, '@psalm-param');
-        $hasReturn = ! $isMagicLifecycle && ($isClassMethod || str_contains($docText, '@return') || str_contains($docText, '@phpstan-return') || str_contains($docText, '@psalm-return'));
+        $hasParam = self::hasParamContracts($docText, $isClassMethod);
+        $hasReturn = ! $isMagicLifecycle && self::hasReturnContracts($docText, $isClassMethod);
 
         if (! $hasParam && ! $hasReturn) {
             return;
@@ -59,6 +59,67 @@ final class FunctionContractInjector
         }
 
         $node->stmts = [...$injectedStmts, ...$node->stmts];
+    }
+
+    private static function hasParamContracts(string $docText, bool $isClassMethod): bool
+    {
+        if ($isClassMethod) {
+            return true; 
+        }
+
+        if (! str_contains($docText, '@param') && ! str_contains($docText, '@phpstan-param') && ! str_contains($docText, '@psalm-param') && ! str_contains($docText, '@template')) {
+            return false;
+        }
+
+        if (str_contains($docText, '@template') || str_contains($docText, '@phpstan-param') || str_contains($docText, '@psalm-param')) {
+            return true;
+        }
+
+        if ((int) preg_match_all('/@param\s+([^\s$]+)/', $docText, $matches) > 0) {
+            foreach ($matches[1] as $typeStr) {
+                $unionParts = explode('|', $typeStr);
+                $hasMixed = false;
+                foreach ($unionParts as $part) {
+                    if (strtolower(trim($part)) === 'mixed') {
+                        $hasMixed = true;
+                        break;
+                    }
+                }
+
+                if (! $hasMixed) {
+                    return true;
+                }
+            }
+
+            return false; 
+        }
+
+        return false;
+    }
+
+    private static function hasReturnContracts(string $docText, bool $isClassMethod): bool
+    {
+        if ($isClassMethod) {
+            return true; 
+        }
+
+        if (str_contains($docText, '@template') || str_contains($docText, '@phpstan-return') || str_contains($docText, '@psalm-return')) {
+            return true;
+        }
+
+        if (preg_match('/@return\s+([^\s$]+)/', $docText, $matches) === 1) {
+            $returnTypeStr = $matches[1];
+            $unionParts = explode('|', $returnTypeStr);
+            foreach ($unionParts as $part) {
+                if (strtolower(trim($part)) === 'mixed') {
+                    return false; // Collapses to mixed
+                }
+            }
+
+            return true;
+        }
+
+        return false;
     }
 
     private static function shouldSkipInjection(string $docText): bool
@@ -556,6 +617,10 @@ final class FunctionContractInjector
                 }
 
                 if ($n instanceof Node\Stmt\Return_) {
+                    if ($n->getAttribute('typephp_var_wrapped') === true) {
+                        return null;
+                    }
+
                     $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
                     $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
 
