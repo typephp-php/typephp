@@ -289,7 +289,7 @@ final class Config
                 $overrideInlineVars = $value;
                 $merged['inline_vars'] = array_merge($baseInlineVars, $overrideInlineVars);
             } elseif (\in_array($key, ['include', 'exclude', 'extensions', 'stubs'], true) && \is_array($value)) {
-                $merged[$key] = array_values($value); 
+                $merged[$key] = array_values($value);
             } else {
                 $merged[$key] = $value;
             }

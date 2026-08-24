@@ -36,7 +36,7 @@ describe('ClassNameValidator', function () {
     });
 
     test('accepts anonymous class names registered in memory', function () {
-        $anon = new class() {};
+        $anon = new class () {};
         expect(ClassNameValidator::isValid($anon::class))->toBeTrue();
     });
 });

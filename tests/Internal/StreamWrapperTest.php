@@ -303,7 +303,8 @@ PHP;
 
                 expect($readSource)->toBe($rawSource)
                     ->and($readSource)->not()->toContain('RuntimeTypeChecker::setupScope')
-                    ->and($readSource)->not()->toContain('RuntimeTypeChecker::checkReturn');
+                    ->and($readSource)->not()->toContain('RuntimeTypeChecker::checkReturn')
+                ;
 
                 $fp = fopen($testFile, 'r');
                 expect($fp)->not()->toBeFalse();
@@ -311,14 +312,16 @@ PHP;
                 fclose($fp);
 
                 expect($streamContent)->toBe($rawSource)
-                    ->and($streamContent)->not()->toContain('RuntimeTypeChecker::setupScope');
+                    ->and($streamContent)->not()->toContain('RuntimeTypeChecker::setupScope')
+                ;
 
                 require $testFile;
 
                 expect(\App\Test\sampleAction(42))->toBe('id_42');
 
                 expect(fn () => \App\Test\sampleAction(-5))
-                    ->toThrow(TypeError::class, 'positive-int');
+                    ->toThrow(TypeError::class, 'positive-int')
+                ;
             } finally {
                 if (file_exists($testFile)) {
                     @unlink($testFile);
@@ -344,7 +347,8 @@ PHP;
                 $bytesWritten = file_put_contents($testFile, $payload);
 
                 expect($bytesWritten)->toBe(\strlen($payload))
-                    ->and(file_get_contents($testFile))->toBe($payload);
+                    ->and(file_get_contents($testFile))->toBe($payload)
+                ;
             } finally {
                 if (file_exists($testFile)) {
                     @unlink($testFile);
