@@ -78,6 +78,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                     $effectiveVarName = ($varName !== '') ? $varName : 'return';
                     $checkCall = NodeBuilder::createVariableCheckCall($node->expr, $typeString, $effectiveVarName);
                     $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall, $node->getStartLine());
+                    $node->setAttribute('typephp_var_wrapped', true);
                 }
             }
         }

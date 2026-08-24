@@ -556,6 +556,10 @@ final class FunctionContractInjector
                 }
 
                 if ($n instanceof Node\Stmt\Return_) {
+                    if ($n->getAttribute('typephp_var_wrapped') === true) {
+                        return null;
+                    }
+
                     $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
                     $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
 

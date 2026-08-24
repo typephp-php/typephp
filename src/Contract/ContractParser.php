@@ -550,7 +550,13 @@ final class ContractParser
                 $type = new ArrayTypeNode($type);
             }
             $substitutedType = self::substituteAliases($type, $aliases);
-            $types[$paramName] = SpecialTypeResolver::resolve($substitutedType, $ref);
+            $resolvedType = SpecialTypeResolver::resolve($substitutedType, $ref);
+
+            if ($resolvedType instanceof IdentifierTypeNode && strtolower($resolvedType->name) === 'mixed') {
+                continue;
+            }
+
+            $types[$paramName] = $resolvedType;
         }
 
         $returnTag = DocblockExtractor::getReturnTag($phpDocNode);
@@ -696,7 +702,13 @@ final class ContractParser
                         $type = new ArrayTypeNode($type);
                     }
                     $substitutedType = self::substituteAliases($type, $aliases);
-                    $types[$targetParamName] = SpecialTypeResolver::resolve($substitutedType, $hierRef);
+                    $resolvedType = SpecialTypeResolver::resolve($substitutedType, $hierRef);
+
+                    if ($resolvedType instanceof IdentifierTypeNode && strtolower($resolvedType->name) === 'mixed') {
+                        continue;
+                    }
+
+                    $types[$targetParamName] = $resolvedType;
                 }
             }
 
@@ -790,7 +802,11 @@ final class ContractParser
                         ) {
                             $propType = new ArrayTypeNode($propType);
                         }
-                        $types[$paramName] = self::substituteAliases($propType, []);
+                        $substitutedProp = self::substituteAliases($propType, []);
+                        if ($substitutedProp instanceof IdentifierTypeNode && strtolower($substitutedProp->name) === 'mixed') {
+                            continue;
+                        }
+                        $types[$paramName] = $substitutedProp;
                     }
                 }
             }

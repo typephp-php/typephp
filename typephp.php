@@ -42,7 +42,7 @@ return [
     */
     'respect_ignore_tags' => true,
 
-      /*
+    /*
     |--------------------------------------------------------------------------
     | Enable Caching & Cache Directory
     |--------------------------------------------------------------------------
@@ -67,7 +67,7 @@ return [
         // \Acme\Domain\TypePHPExtension::class,
     ],
 
-     /*
+    /*
     |--------------------------------------------------------------------------
     | Array Validation Strategy
     |--------------------------------------------------------------------------
@@ -104,6 +104,17 @@ return [
         'scalars' => true,
         'arrays' => true,
         'objects' => true,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Stub Files (DocBlock Overrides for Third-Party & Vendor Packages)
+    |--------------------------------------------------------------------------
+    | Path globs or specific file paths containing stub files (.stub, .stub.php, .php)
+    | that override inaccurate or missing DocBlocks in third-party vendor packages.
+    */
+    'stubs' => [
+        // 'stubs/**',
     ],
 
     /*
