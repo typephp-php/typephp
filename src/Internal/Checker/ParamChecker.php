@@ -27,17 +27,17 @@ use TypePHP\Validator\TypeValidatorRegistry;
 final class ParamChecker
 {
     /**
+     * @var array<string, string>
+     */
+    private static array $effectiveFunctionCache = [];
+
+    /**
      * Resets the effective function cache. Useful for test isolation.
      */
     public static function reset(): void
     {
         self::$effectiveFunctionCache = [];
     }
-
-    /**
-     * @var array<string, string>
-     */
-    private static array $effectiveFunctionCache = [];
 
     /**
      * @param array<string, mixed> $vars
@@ -69,6 +69,20 @@ final class ParamChecker
         $methodTemplates = $contract['templates'];
         $classTemplates = $contract['classTemplates'] ?? [];
         $aliases = $contract['aliases'];
+        $hasGenerics = (\count($methodTemplates) > 0 || \count($classTemplates) > 0);
+
+        if (! $hasGenerics && \count($aliases) === 0) {
+            foreach ($contract['types'] as $paramName => $typeNode) {
+                if (\array_key_exists($paramName, $vars)) {
+                    $err = $registry->validate($vars[$paramName], $typeNode, $effectiveFunction . '(): Argument $' . $paramName);
+                    if ($err !== null) {
+                        return $err;
+                    }
+                }
+            }
+
+            return null;
+        }
 
         if (\count($methodTemplates) > 0) {
             TemplateManager::clearCallBindings($effectiveFunction, $methodTemplates);
@@ -80,7 +94,9 @@ final class ParamChecker
         }
 
         $allTemplates = [...$classTemplates, ...$methodTemplates];
-        self::preInferGenericArrayTemplates($contract['types'], $vars, $effectiveFunction, $thisObj, $allTemplates);
+        if (\count($allTemplates) > 0) {
+            self::preInferGenericArrayTemplates($contract['types'], $vars, $effectiveFunction, $thisObj, $allTemplates);
+        }
 
         $boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates);
         $declaredTemplates = $allTemplates;

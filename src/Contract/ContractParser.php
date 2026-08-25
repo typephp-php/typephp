@@ -69,6 +69,7 @@ final class ContractParser
         FileFilter::reset();
         TypeValidatorRegistry::reset();
         StubManager::reset();
+        SpecialTypeResolver::reset();
     }
 
     /**
@@ -811,10 +812,13 @@ final class ContractParser
                             $propType = new ArrayTypeNode($propType);
                         }
                         $substitutedProp = self::substituteAliases($propType, []);
-                        if ($substitutedProp instanceof IdentifierTypeNode && strtolower($substitutedProp->name) === 'mixed') {
+                        $resolvedProp = SpecialTypeResolver::resolve($substitutedProp, $ref);
+
+                        if ($resolvedProp instanceof IdentifierTypeNode && strtolower($resolvedProp->name) === 'mixed') {
                             continue;
                         }
-                        $types[$paramName] = $substitutedProp;
+
+                        $types[$paramName] = $resolvedProp;
                     }
                 }
             }

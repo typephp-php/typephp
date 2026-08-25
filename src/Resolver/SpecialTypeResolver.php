@@ -111,6 +111,13 @@ final class SpecialTypeResolver
     ];
 
     /**
+     * In-memory cache for Reflection instances per context string.
+     *
+     * @var array<string, \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod>
+     */
+    private static array $reflectionContextCache = [];
+
+    /**
      * In-memory cache of file import maps keyed by filename.
      *
      * @var array<string, array<string, string>>
@@ -130,6 +137,17 @@ final class SpecialTypeResolver
      * @var array<string, array<int, string>>
      */
     private static array $classTraitUseDocs = [];
+
+    /**
+     * Resets internal reflection and file caches. Useful for test isolation.
+     */
+    public static function reset(): void
+    {
+        self::$reflectionContextCache = [];
+        self::$fileUseImports = [];
+        self::$fileNamespaces = [];
+        self::$classTraitUseDocs = [];
+    }
 
     /**
      * Validates strict object identity ($value === $thisObj) when the return type node specifies $this.
@@ -170,7 +188,7 @@ final class SpecialTypeResolver
 
         if ($node instanceof GenericTypeNode) {
             $genericType = self::resolve($node->type, $context, $thisObj);
-            $innerTypes = array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->genericTypes);
+            $innerTypes = array_map(fn($t) => self::resolve($t, $context, $thisObj), $node->genericTypes);
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
@@ -224,11 +242,11 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->types));
+            return new UnionTypeNode(array_map(fn($t) => self::resolve($t, $context, $thisObj), $node->types));
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->types));
+            return new IntersectionTypeNode(array_map(fn($t) => self::resolve($t, $context, $thisObj), $node->types));
         }
 
         return $node;
@@ -262,7 +280,7 @@ final class SpecialTypeResolver
 
         if ($node instanceof GenericTypeNode) {
             $genericType = self::resolveForFile($node->type, $file);
-            $innerTypes = array_map(fn ($t) => self::resolveForFile($t, $file), $node->genericTypes);
+            $innerTypes = array_map(fn($t) => self::resolveForFile($t, $file), $node->genericTypes);
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
@@ -316,11 +334,11 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolveForFile($t, $file), $node->types));
+            return new UnionTypeNode(array_map(fn($t) => self::resolveForFile($t, $file), $node->types));
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolveForFile($t, $file), $node->types));
+            return new IntersectionTypeNode(array_map(fn($t) => self::resolveForFile($t, $file), $node->types));
         }
 
         return clone $node;
@@ -334,25 +352,36 @@ final class SpecialTypeResolver
     private static function getReflectionContext(\ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context): \ReflectionClass|\ReflectionFunction|\ReflectionMethod
     {
         if (\is_string($context)) {
+            if (isset(self::$reflectionContextCache[$context])) {
+                return self::$reflectionContextCache[$context];
+            }
+
             if (str_contains($context, '::')) {
                 [$className, $methodName] = explode('::', $context, 2);
 
                 if (class_exists($className) || interface_exists($className) || trait_exists($className) || enum_exists($className)) {
                     /** @var class-string<object> $className */
                     try {
-                        return new \ReflectionMethod($className, $methodName);
+                        return self::$reflectionContextCache[$context] = new \ReflectionMethod($className, $methodName);
                     } catch (\ReflectionException $e) {
-                        return new \ReflectionClass($className);
+                        return self::$reflectionContextCache[$context] = new \ReflectionClass($className);
                     }
                 }
 
                 /** @var class-string<object> $fallbackClass */
                 $fallbackClass = \stdClass::class;
 
-                return new \ReflectionClass($fallbackClass);
+                return self::$reflectionContextCache[$context] = new \ReflectionClass($fallbackClass);
             }
 
-            return new \ReflectionFunction($context);
+            try {
+                return self::$reflectionContextCache[$context] = new \ReflectionFunction($context);
+            } catch (\ReflectionException $e) {
+                /** @var class-string<object> $fallbackClass */
+                $fallbackClass = \stdClass::class;
+
+                return self::$reflectionContextCache[$context] = new \ReflectionClass($fallbackClass);
+            }
         }
 
         return $context;
@@ -689,8 +718,6 @@ final class SpecialTypeResolver
 
         return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $node->templateTypes);
     }
-
-    // --- Shared Utilities ---
 
     private static function extractOffsetKey(TypeNode $offsetType): string|int|null
     {
@@ -1046,6 +1073,7 @@ final class SpecialTypeResolver
                     }
                 } elseif ($stmt instanceof Stmt\Class_ && $stmt->name !== null) {
                     $className = $namespace !== '' ? $namespace . '\\' . $stmt->name->toString() : $stmt->name->toString();
+                    self::$classTraitUseDocs[$className] = [];
                     foreach ($stmt->stmts as $classStmt) {
                         if ($classStmt instanceof Stmt\TraitUse) {
                             $doc = $classStmt->getDocComment();

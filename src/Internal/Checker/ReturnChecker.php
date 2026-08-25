@@ -27,17 +27,17 @@ use TypePHP\Wrapper\CallableWrapper;
 final class ReturnChecker
 {
     /**
+     * @var array<string, string>
+     */
+    private static array $effectiveFunctionCache = [];
+
+    /**
      * Resets the effective function cache. Useful for test isolation.
      */
     public static function reset(): void
     {
         self::$effectiveFunctionCache = [];
     }
-
-    /**
-     * @var array<string, string>
-     */
-    private static array $effectiveFunctionCache = [];
 
     /**
      * @param array<string, mixed> $vars
@@ -220,6 +220,34 @@ final class ReturnChecker
         $err = SpecialTypeResolver::checkThisIdentity($returnTypeNode, $value, $thisObj, $function);
         if ($err !== null) {
             return $err;
+        }
+
+        $hasGenerics = (\count($templates) > 0);
+        $hasAliases = (\count($aliases) > 0);
+        $isConditional = ($returnTypeNode instanceof ConditionalTypeForParameterNode || $returnTypeNode instanceof ConditionalTypeNode);
+
+        if (! $hasGenerics && ! $hasAliases && ! $isConditional && ! ($returnTypeNode instanceof CallableTypeNode)) {
+            $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
+            $err = $registry->validate($value, $resolvedType, $function . '(): Return value');
+            if ($err !== null) {
+                return $err;
+            }
+
+            if ($value instanceof \Traversable) {
+                $baseName = '';
+                if ($resolvedType instanceof IdentifierTypeNode) {
+                    $baseName = strtolower(ltrim($resolvedType->name, '\\'));
+                } elseif ($resolvedType instanceof GenericTypeNode) {
+                    $baseName = strtolower(ltrim($resolvedType->type->name, '\\'));
+                }
+
+                $genericIterables = ['iterable', 'traversable', 'iterator', 'generator'];
+                if (\in_array($baseName, $genericIterables, true)) {
+                    return $wrapIterableCallback($function, 'return', $value);
+                }
+            }
+
+            return $value;
         }
 
         $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);

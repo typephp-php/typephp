@@ -11,6 +11,7 @@ use TypePHP\Extension\ExtensionInterface;
 use TypePHP\Extension\ExtensionManager;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
+use TypePHP\Resolver\SpecialTypeResolver;
 use TypePHP\Resolver\TemplateManager;
 
 /**
@@ -264,6 +265,7 @@ final class Config
         PathMatcher::reset();
         StreamWrapper::reset();
         StubManager::reset();
+        SpecialTypeResolver::reset();
     }
 
     /**
@@ -322,6 +324,7 @@ final class Config
         PathMatcher::reset();
         StreamWrapper::reset();
         StubManager::reset();
+        SpecialTypeResolver::reset();
     }
 
     /**
