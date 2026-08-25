@@ -49,7 +49,7 @@ final class ArrayValidator implements TypeValidatorInterface
             foreach ($value as $k => $v) {
                 $err = $registry->validate($v, $arrayNode->type, '');
                 if ($err !== null) {
-                    $keyStr = (string) $k;
+                    $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
 
                     return ErrorFactory::createError($context . '[' . $keyStr . ']' . $err->getMessage());
                 }
@@ -61,7 +61,9 @@ final class ArrayValidator implements TypeValidatorInterface
         foreach ($value as $k => $v) {
             $err = $registry->validate($v, $arrayNode->type, '');
             if ($err !== null) {
-                $keyStr = (\is_scalar($k) || $k === null) ? (string) $k : get_debug_type($k);
+                $keyStr = \is_string($k)
+                    ? "'" . $k . "'"
+                    : ((\is_scalar($k) || $k === null) ? (string) $k : get_debug_type($k));
 
                 return ErrorFactory::createError($context . '[' . $keyStr . ']' . $err->getMessage());
             }
@@ -107,7 +109,7 @@ final class ArrayValidator implements TypeValidatorInterface
         foreach ($sampleKeys as $k) {
             $err = $registry->validate($value[$k], $arrayNode->type, '');
             if ($err !== null) {
-                $keyStr = (string) $k;
+                $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
 
                 return ErrorFactory::createError($context . '[' . $keyStr . ']' . $err->getMessage());
             }

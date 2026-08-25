@@ -319,8 +319,9 @@ PHP;
 
                 expect(\App\Test\sampleAction(42))->toBe('id_42');
 
-                expect(fn() => \App\Test\sampleAction(-5))
-                    ->toThrow(TypeError::class, 'positive-int');
+                expect(fn () => \App\Test\sampleAction(-5))
+                    ->toThrow(TypeError::class, 'positive-int')
+                ;
             } finally {
                 if (file_exists($testFile)) {
                     @unlink($testFile);
@@ -404,7 +405,8 @@ PHP;
                 $wrapper->stream_close();
 
                 expect($rawContent)->not()->toContain('RuntimeTypeChecker::setupScope')
-                    ->and($rawContent)->toBe($rawSource);
+                    ->and($rawContent)->toBe($rawSource)
+                ;
 
                 $wrapper->stream_open($testFile, 'r', StreamWrapper::STREAM_OPEN_FOR_INCLUDE, $openedPath);
                 $transformedContent = $wrapper->stream_read(5000);

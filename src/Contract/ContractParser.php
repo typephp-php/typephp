@@ -546,7 +546,11 @@ final class ContractParser
         foreach (DocblockExtractor::getParamTags($phpDocNode) as $paramName => $paramTag) {
             $type = $paramTag->type;
             $isVariadic = $paramTag->isVariadic || ($baseParamVariadic[$paramName] ?? false);
-            if ($isVariadic) {
+            if (
+                $isVariadic
+                && ! ($type instanceof ArrayTypeNode)
+                && ! ($type instanceof GenericTypeNode && \in_array(strtolower($type->type->name), ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true))
+            ) {
                 $type = new ArrayTypeNode($type);
             }
             $substitutedType = self::substituteAliases($type, $aliases);
@@ -698,7 +702,11 @@ final class ContractParser
                 if ($targetParamName !== null && ! isset($types[$targetParamName])) {
                     $type = $paramTag->type;
                     $isVariadic = $paramTag->isVariadic || ($baseParamVariadic[$targetParamName] ?? false);
-                    if ($isVariadic) {
+                    if (
+                        $isVariadic
+                        && ! ($type instanceof ArrayTypeNode)
+                        && ! ($type instanceof GenericTypeNode && \in_array(strtolower($type->type->name), ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true))
+                    ) {
                         $type = new ArrayTypeNode($type);
                     }
                     $substitutedType = self::substituteAliases($type, $aliases);
@@ -798,7 +806,7 @@ final class ContractParser
                         if (
                             $isVariadic
                             && ! ($propType instanceof ArrayTypeNode)
-                            && ! ($propType instanceof GenericTypeNode && \in_array(strtolower($propType->type->name), ['array', 'list', 'iterable', 'traversable'], true))
+                            && ! ($propType instanceof GenericTypeNode && \in_array(strtolower($propType->type->name), ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true))
                         ) {
                             $propType = new ArrayTypeNode($propType);
                         }
