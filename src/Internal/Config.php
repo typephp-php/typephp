@@ -266,6 +266,7 @@ final class Config
         StreamWrapper::reset();
         StubManager::reset();
         SpecialTypeResolver::reset();
+        CacheManager::reset();
     }
 
     /**
@@ -325,6 +326,7 @@ final class Config
         StreamWrapper::reset();
         StubManager::reset();
         SpecialTypeResolver::reset();
+        CacheManager::reset();
     }
 
     /**

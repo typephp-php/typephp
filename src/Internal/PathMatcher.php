@@ -54,6 +54,7 @@ final class PathMatcher
         self::$includePrefixCache = [];
         self::$cachedCacheDir = null;
         self::$cachedLibSrcDir = null;
+        CacheManager::reset();
     }
 
     /**
@@ -236,6 +237,8 @@ final class PathMatcher
         $config = Config::get();
         /** @var array<int, string> $includes */
         $includes = \is_array($config['include'] ?? null) ? $config['include'] : ['**'];
+        /** @var array<int, string> $excludes */
+        $excludes = \is_array($config['exclude'] ?? null) ? $config['exclude'] : [];
 
         if (str_contains($canon, '/vendor/') || str_starts_with($canon, 'vendor/')) {
             if (! self::hasIncludeMatchingPrefix('vendor/', $includes)) {
@@ -251,6 +254,18 @@ final class PathMatcher
 
         if (str_contains($canon, '/storage/') || str_starts_with($canon, 'storage/')) {
             if (! self::hasIncludeMatchingPrefix('storage/', $includes)) {
+                return false;
+            }
+        }
+
+        if (str_contains($canon, '/tests/') || str_starts_with($canon, 'tests/')) {
+            if (! self::hasIncludeMatchingPrefix('tests/', $includes)) {
+                return false;
+            }
+        }
+
+        if (str_contains($canon, '/Migration/') || str_contains($canon, '/migration/')) {
+            if (self::hasIncludeMatchingPrefix('Migration', $excludes) || self::hasIncludeMatchingPrefix('migration', $excludes)) {
                 return false;
             }
         }
