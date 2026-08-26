@@ -102,6 +102,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Respect Native Parameter Nullability
+    |--------------------------------------------------------------------------
+    | When true (default), if a native PHP parameter explicitly declares
+    | nullable syntax (e.g. ?array $param = null), TypePHP permits null even
+    | if the DocBlock author omitted "|null" (e.g. @param string[] $param).
+    |
+    | Set to false for strict pedantic enforcement where DocBlocks are the
+    | absolute law and null is rejected unless explicitly typed in the DocBlock.
+    */
+    'respect_native_nullability' => true,
+
+    /*
+    |--------------------------------------------------------------------------
     | Enable Caching & Cache Directory
     |--------------------------------------------------------------------------
     | When enabled, transformed PHP files are cached on disk for speed.

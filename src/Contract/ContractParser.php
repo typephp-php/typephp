@@ -489,7 +489,7 @@ final class ContractParser
         self::parseMethodHierarchyDocs($ref, $types, $methodTemplates, $returnType, $aliases);
 
         if ($ref->getName() === '__construct') {
-            self::applyConstructorPromotionFallback($ref, $types);
+            self::applyConstructorPromotionFallback($ref, $types, $classTemplates);
         }
 
         return [
@@ -540,8 +540,10 @@ final class ContractParser
 
         $baseParams = $ref->getParameters();
         $baseParamVariadic = [];
+        $baseParamObjects = [];
         foreach ($baseParams as $p) {
             $baseParamVariadic[$p->getName()] = $p->isVariadic();
+            $baseParamObjects[$p->getName()] = $p;
         }
 
         foreach (DocblockExtractor::getParamTags($phpDocNode) as $paramName => $paramTag) {
@@ -554,6 +556,19 @@ final class ContractParser
             ) {
                 $type = new ArrayTypeNode($type);
             }
+
+            $pObj = $baseParamObjects[$paramName] ?? null;
+            $isTemplateType = ($type instanceof IdentifierTypeNode && isset($templates[$type->name]));
+            if (
+                Config::isRespectNativeNullabilityEnabled()
+                && $pObj !== null
+                && self::parameterExplicitlyAllowsNull($pObj)
+                && ! $isTemplateType
+                && ! self::typeContainsNull($type)
+            ) {
+                $type = new NullableTypeNode($type);
+            }
+
             $substitutedType = self::substituteAliases($type, $aliases);
             $resolvedType = SpecialTypeResolver::resolve($substitutedType, $ref);
 
@@ -650,12 +665,14 @@ final class ContractParser
         $baseParamNames = [];
         $baseParamSet = [];
         $baseParamVariadic = [];
+        $baseParamObjects = [];
         $isConstructor = ($ref->getName() === '__construct');
 
         foreach ($baseParams as $idx => $p) {
             $baseParamNames[$idx] = $p->getName();
             $baseParamSet[$p->getName()] = $idx;
             $baseParamVariadic[$p->getName()] = $p->isVariadic();
+            $baseParamObjects[$p->getName()] = $p;
         }
 
         foreach ($hierarchy as $hierRef) {
@@ -710,6 +727,19 @@ final class ContractParser
                     ) {
                         $type = new ArrayTypeNode($type);
                     }
+
+                    $pObj = $baseParamObjects[$targetParamName] ?? null;
+                    $isTemplateType = ($type instanceof IdentifierTypeNode && isset($templates[$type->name]));
+                    if (
+                        Config::isRespectNativeNullabilityEnabled()
+                        && $pObj !== null
+                        && self::parameterExplicitlyAllowsNull($pObj)
+                        && ! $isTemplateType
+                        && ! self::typeContainsNull($type)
+                    ) {
+                        $type = new NullableTypeNode($type);
+                    }
+
                     $substitutedType = self::substituteAliases($type, $aliases);
                     $resolvedType = SpecialTypeResolver::resolve($substitutedType, $hierRef);
 
@@ -769,8 +799,9 @@ final class ContractParser
      *
      * @param \ReflectionMethod $ref
      * @param array<string, TypeNode> $types
+     * @param array<string, TemplateTagValueNode> $classTemplates
      */
-    private static function applyConstructorPromotionFallback(\ReflectionMethod $ref, array &$types): void
+    private static function applyConstructorPromotionFallback(\ReflectionMethod $ref, array &$types, array $classTemplates = []): void
     {
         $declaringClass = $ref->getDeclaringClass();
 
@@ -811,6 +842,17 @@ final class ContractParser
                         ) {
                             $propType = new ArrayTypeNode($propType);
                         }
+
+                        $isTemplateType = ($propType instanceof IdentifierTypeNode && isset($classTemplates[$propType->name]));
+                        if (
+                            Config::isRespectNativeNullabilityEnabled()
+                            && self::parameterExplicitlyAllowsNull($p)
+                            && ! $isTemplateType
+                            && ! self::typeContainsNull($propType)
+                        ) {
+                            $propType = new NullableTypeNode($propType);
+                        }
+
                         $substitutedProp = self::substituteAliases($propType, []);
                         $resolvedProp = SpecialTypeResolver::resolve($substitutedProp, $ref);
 
@@ -823,6 +865,56 @@ final class ContractParser
                 }
             }
         }
+    }
+
+    /**
+     * Checks if a reflection parameter explicitly declares a nullable native typehint or default null value (excluding mixed).
+     */
+    private static function parameterExplicitlyAllowsNull(\ReflectionParameter $p): bool
+    {
+        if (! $p->hasType()) {
+            return $p->isDefaultValueAvailable() && $p->getDefaultValue() === null;
+        }
+
+        $type = $p->getType();
+        if ($type instanceof \ReflectionNamedType) {
+            $name = strtolower($type->getName());
+            if ($name === 'mixed') {
+                return false;
+            }
+
+            return $type->allowsNull();
+        }
+
+        if ($type instanceof \ReflectionUnionType) {
+            return $type->allowsNull();
+        }
+
+        return false;
+    }
+
+    /**
+     * Checks if a TypeNode already represents or contains null.
+     */
+    private static function typeContainsNull(TypeNode $node): bool
+    {
+        if ($node instanceof NullableTypeNode) {
+            return true;
+        }
+
+        if ($node instanceof IdentifierTypeNode && (\in_array(strtolower($node->name), ['null', 'mixed'], true))) {
+            return true;
+        }
+
+        if ($node instanceof UnionTypeNode) {
+            foreach ($node->types as $t) {
+                if (self::typeContainsNull($t)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
