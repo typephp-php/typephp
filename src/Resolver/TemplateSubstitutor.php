@@ -36,54 +36,68 @@ final class TemplateSubstitutor
             return $node;
         }
 
+        return self::substituteNode($node, $boundTemplates, $declaredTemplates, []);
+    }
+
+    /**
+     * @param array<string, TypeNode> $boundTemplates
+     * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param array<string, true> $visited
+     */
+    private static function substituteNode(
+        TypeNode $node,
+        array $boundTemplates,
+        array $declaredTemplates,
+        array $visited
+    ): TypeNode {
         if ($node instanceof IdentifierTypeNode) {
-            return self::substituteIdentifier($node, $boundTemplates, $declaredTemplates);
+            return self::substituteIdentifier($node, $boundTemplates, $declaredTemplates, $visited);
         }
 
         if ($node instanceof CallableTypeNode) {
-            return self::substituteCallable($node, $boundTemplates, $declaredTemplates);
+            return self::substituteCallable($node, $boundTemplates, $declaredTemplates, $visited);
         }
 
         if ($node instanceof ConditionalTypeNode) {
-            return self::substituteConditional($node, $boundTemplates, $declaredTemplates);
+            return self::substituteConditional($node, $boundTemplates, $declaredTemplates, $visited);
         }
 
         if ($node instanceof ConditionalTypeForParameterNode) {
-            return self::substituteParameterConditional($node, $boundTemplates, $declaredTemplates);
+            return self::substituteParameterConditional($node, $boundTemplates, $declaredTemplates, $visited);
         }
 
         if ($node instanceof ArrayTypeNode) {
-            return new ArrayTypeNode(self::substitute($node->type, $boundTemplates, $declaredTemplates));
+            return new ArrayTypeNode(self::substituteNode($node->type, $boundTemplates, $declaredTemplates, $visited));
         }
 
         if ($node instanceof GenericTypeNode) {
-            return self::substituteGeneric($node, $boundTemplates, $declaredTemplates);
+            return self::substituteGeneric($node, $boundTemplates, $declaredTemplates, $visited);
         }
 
         if ($node instanceof NullableTypeNode) {
-            return new NullableTypeNode(self::substitute($node->type, $boundTemplates, $declaredTemplates));
+            return new NullableTypeNode(self::substituteNode($node->type, $boundTemplates, $declaredTemplates, $visited));
         }
 
         if ($node instanceof UnionTypeNode) {
             return new UnionTypeNode(array_map(
-                fn ($t) => self::substitute($t, $boundTemplates, $declaredTemplates),
+                fn ($t) => self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited),
                 $node->types
             ));
         }
 
         if ($node instanceof IntersectionTypeNode) {
             return new IntersectionTypeNode(array_map(
-                fn ($t) => self::substitute($t, $boundTemplates, $declaredTemplates),
+                fn ($t) => self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited),
                 $node->types
             ));
         }
 
         if ($node instanceof ArrayShapeNode) {
-            return self::substituteArrayShape($node, $boundTemplates, $declaredTemplates);
+            return self::substituteArrayShape($node, $boundTemplates, $declaredTemplates, $visited);
         }
 
         if ($node instanceof ObjectShapeNode) {
-            return self::substituteObjectShape($node, $boundTemplates, $declaredTemplates);
+            return self::substituteObjectShape($node, $boundTemplates, $declaredTemplates, $visited);
         }
 
         return $node;
@@ -92,20 +106,28 @@ final class TemplateSubstitutor
     /**
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param array<string, true> $visited
      */
     private static function substituteIdentifier(
         IdentifierTypeNode $node,
         array $boundTemplates,
-        array $declaredTemplates
+        array $declaredTemplates,
+        array $visited
     ): TypeNode {
         if (isset($boundTemplates[$node->name])) {
             return $boundTemplates[$node->name];
         }
 
         if (isset($declaredTemplates[$node->name])) {
-            $templateTag = $declaredTemplates[$node->name];
+            if (isset($visited[$node->name])) {
+                return new IdentifierTypeNode('mixed');
+            }
+            $visited[$node->name] = true;
 
-            return $templateTag->default ?? $templateTag->bound ?? new IdentifierTypeNode('mixed');
+            $templateTag = $declaredTemplates[$node->name];
+            $fallback = $templateTag->default ?? $templateTag->bound ?? new IdentifierTypeNode('mixed');
+
+            return self::substituteNode($fallback, $boundTemplates, $declaredTemplates, $visited);
         }
 
         return $node;
@@ -114,15 +136,17 @@ final class TemplateSubstitutor
     /**
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param array<string, true> $visited
      */
     private static function substituteCallable(
         CallableTypeNode $node,
         array $boundTemplates,
-        array $declaredTemplates
+        array $declaredTemplates,
+        array $visited
     ): CallableTypeNode {
         $parameters = array_map(
             fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
-                self::substitute($param->type, $boundTemplates, $declaredTemplates),
+                self::substituteNode($param->type, $boundTemplates, $declaredTemplates, $visited),
                 $param->isReference,
                 $param->isVariadic,
                 $param->parameterName,
@@ -131,7 +155,7 @@ final class TemplateSubstitutor
             $node->parameters
         );
 
-        $returnType = self::substitute($node->returnType, $boundTemplates, $declaredTemplates);
+        $returnType = self::substituteNode($node->returnType, $boundTemplates, $declaredTemplates, $visited);
 
         return new CallableTypeNode(
             $node->identifier,
@@ -144,17 +168,19 @@ final class TemplateSubstitutor
     /**
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param array<string, true> $visited
      */
     private static function substituteConditional(
         ConditionalTypeNode $node,
         array $boundTemplates,
-        array $declaredTemplates
+        array $declaredTemplates,
+        array $visited
     ): ConditionalTypeNode {
         return new ConditionalTypeNode(
-            self::substitute($node->subjectType, $boundTemplates, $declaredTemplates),
-            self::substitute($node->targetType, $boundTemplates, $declaredTemplates),
-            self::substitute($node->if, $boundTemplates, $declaredTemplates),
-            self::substitute($node->else, $boundTemplates, $declaredTemplates),
+            self::substituteNode($node->subjectType, $boundTemplates, $declaredTemplates, $visited),
+            self::substituteNode($node->targetType, $boundTemplates, $declaredTemplates, $visited),
+            self::substituteNode($node->if, $boundTemplates, $declaredTemplates, $visited),
+            self::substituteNode($node->else, $boundTemplates, $declaredTemplates, $visited),
             $node->negated
         );
     }
@@ -162,17 +188,19 @@ final class TemplateSubstitutor
     /**
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param array<string, true> $visited
      */
     private static function substituteParameterConditional(
         ConditionalTypeForParameterNode $node,
         array $boundTemplates,
-        array $declaredTemplates
+        array $declaredTemplates,
+        array $visited
     ): ConditionalTypeForParameterNode {
         return new ConditionalTypeForParameterNode(
             $node->parameterName,
-            self::substitute($node->targetType, $boundTemplates, $declaredTemplates),
-            self::substitute($node->if, $boundTemplates, $declaredTemplates),
-            self::substitute($node->else, $boundTemplates, $declaredTemplates),
+            self::substituteNode($node->targetType, $boundTemplates, $declaredTemplates, $visited),
+            self::substituteNode($node->if, $boundTemplates, $declaredTemplates, $visited),
+            self::substituteNode($node->else, $boundTemplates, $declaredTemplates, $visited),
             $node->negated
         );
     }
@@ -180,15 +208,17 @@ final class TemplateSubstitutor
     /**
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param array<string, true> $visited
      */
     private static function substituteGeneric(
         GenericTypeNode $node,
         array $boundTemplates,
-        array $declaredTemplates
+        array $declaredTemplates,
+        array $visited
     ): GenericTypeNode {
-        $type = self::substitute($node->type, $boundTemplates, $declaredTemplates);
+        $type = self::substituteNode($node->type, $boundTemplates, $declaredTemplates, $visited);
         $genericTypes = array_map(
-            fn ($t) => self::substitute($t, $boundTemplates, $declaredTemplates),
+            fn ($t) => self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited),
             $node->genericTypes
         );
 
@@ -202,21 +232,23 @@ final class TemplateSubstitutor
     /**
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param array<string, true> $visited
      */
     private static function substituteArrayShape(
         ArrayShapeNode $node,
         array $boundTemplates,
-        array $declaredTemplates
+        array $declaredTemplates,
+        array $visited
     ): ArrayShapeNode {
         foreach ($node->items as $item) {
-            $item->valueType = self::substitute($item->valueType, $boundTemplates, $declaredTemplates);
+            $item->valueType = self::substituteNode($item->valueType, $boundTemplates, $declaredTemplates, $visited);
         }
 
         if ($node->unsealedType !== null) {
             if ($node->unsealedType->keyType !== null) {
-                $node->unsealedType->keyType = self::substitute($node->unsealedType->keyType, $boundTemplates, $declaredTemplates);
+                $node->unsealedType->keyType = self::substituteNode($node->unsealedType->keyType, $boundTemplates, $declaredTemplates, $visited);
             }
-            $node->unsealedType->valueType = self::substitute($node->unsealedType->valueType, $boundTemplates, $declaredTemplates);
+            $node->unsealedType->valueType = self::substituteNode($node->unsealedType->valueType, $boundTemplates, $declaredTemplates, $visited);
         }
 
         return $node;
@@ -225,14 +257,16 @@ final class TemplateSubstitutor
     /**
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param array<string, true> $visited
      */
     private static function substituteObjectShape(
         ObjectShapeNode $node,
         array $boundTemplates,
-        array $declaredTemplates
+        array $declaredTemplates,
+        array $visited
     ): ObjectShapeNode {
         foreach ($node->items as $item) {
-            $item->valueType = self::substitute($item->valueType, $boundTemplates, $declaredTemplates);
+            $item->valueType = self::substituteNode($item->valueType, $boundTemplates, $declaredTemplates, $visited);
         }
 
         return $node;

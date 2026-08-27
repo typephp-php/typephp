@@ -14,11 +14,12 @@ use TypePHP\TypePHP;
  *
  * @param positive-int $id
  * @param non-empty-string $name
+ *
  * @return array{id: positive-int, name: non-empty-string}
  */
 function fiberTaskWithContracts(int $id, string $name): array
 {
-    $step = Fiber::suspend("paused_at_step_1");
+    $step = Fiber::suspend('paused_at_step_1');
 
     return [
         'id' => $id,
@@ -34,7 +35,8 @@ function fiberTaskWithContracts(int $id, string $name): array
 function fiberTaskWithBadReturn(): int
 {
     Fiber::suspend();
-    return -99; 
+
+    return -99;
 }
 
 describe('PHP 8.1+ Fibers & Concurrent Coroutine Execution', function () {
@@ -47,7 +49,8 @@ describe('PHP 8.1+ Fibers & Concurrent Coroutine Execution', function () {
 
             $state1 = $fiber->start(42, 'Alice');
             expect($state1)->toBe('paused_at_step_1')
-                ->and($fiber->isSuspended())->toBeTrue();
+                ->and($fiber->isSuspended())->toBeTrue()
+            ;
 
             $fiber->resume('step_2');
 
@@ -55,7 +58,8 @@ describe('PHP 8.1+ Fibers & Concurrent Coroutine Execution', function () {
                 ->and($fiber->getReturn())->toBe([
                     'id' => 42,
                     'name' => 'Alice_step_2',
-                ]);
+                ])
+            ;
         });
 
         test('throws TypeError immediately when starting a fiber with invalid parameters', function () {
@@ -64,7 +68,8 @@ describe('PHP 8.1+ Fibers & Concurrent Coroutine Execution', function () {
             });
 
             expect(fn () => $fiber->start(-5, 'Alice'))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
         });
 
         test('throws TypeError upon fiber completion when return value violates contract', function () {
@@ -76,7 +81,8 @@ describe('PHP 8.1+ Fibers & Concurrent Coroutine Execution', function () {
             expect($fiber->isSuspended())->toBeTrue();
 
             expect(fn () => $fiber->resume())
-                ->toThrow(TypeError::class, 'Return value must be of type positive-int');
+                ->toThrow(TypeError::class, 'Return value must be of type positive-int')
+            ;
         });
     });
 
@@ -90,6 +96,7 @@ describe('PHP 8.1+ Fibers & Concurrent Coroutine Execution', function () {
                 Fiber::suspend($dogs);
 
                 $dogs->add(new Dog());
+
                 return $dogs;
             });
 
@@ -100,6 +107,7 @@ describe('PHP 8.1+ Fibers & Concurrent Coroutine Execution', function () {
 
                 Fiber::suspend($cats);
                 $cats->add(new Cat());
+
                 return $cats;
             });
 
@@ -109,10 +117,12 @@ describe('PHP 8.1+ Fibers & Concurrent Coroutine Execution', function () {
             $catCollection = $fiberCat->start();
 
             expect($dogCollection)->toBeInstanceOf(GenericCollection::class)
-                ->and(TypePHP::getGenericType($dogCollection))->toBe(Dog::class);
+                ->and(TypePHP::getGenericType($dogCollection))->toBe(Dog::class)
+            ;
 
             expect($catCollection)->toBeInstanceOf(GenericCollection::class)
-                ->and(TypePHP::getGenericType($catCollection))->toBe(Cat::class);
+                ->and(TypePHP::getGenericType($catCollection))->toBe(Cat::class)
+            ;
 
             $fiberDog->resume();
             $fiberCat->resume();
@@ -121,13 +131,16 @@ describe('PHP 8.1+ Fibers & Concurrent Coroutine Execution', function () {
             $finalCats = $fiberCat->getReturn();
 
             expect($finalDogs->count())->toBe(2)
-                ->and($finalCats->count())->toBe(2);
+                ->and($finalCats->count())->toBe(2)
+            ;
 
             expect(fn () => $dogCollection->add(new Cat()))
-                ->toThrow(TypeError::class, 'must be of type ' . Dog::class);
+                ->toThrow(TypeError::class, 'must be of type ' . Dog::class)
+            ;
 
             expect(fn () => $catCollection->add(new Dog()))
-                ->toThrow(TypeError::class, 'must be of type ' . Cat::class);
+                ->toThrow(TypeError::class, 'must be of type ' . Cat::class)
+            ;
         });
     });
 
@@ -156,7 +169,8 @@ describe('PHP 8.1+ Fibers & Concurrent Coroutine Execution', function () {
             foreach ($fibers as $id => $fiber) {
                 $status = $fiber->start($id);
                 expect($status)->toBe("fiber_{$id}_paused")
-                    ->and($fiber->isSuspended())->toBeTrue();
+                    ->and($fiber->isSuspended())->toBeTrue()
+                ;
             }
 
             foreach ($fibers as $id => $fiber) {
@@ -165,7 +179,8 @@ describe('PHP 8.1+ Fibers & Concurrent Coroutine Execution', function () {
 
                 expect($fiber->isTerminated())->toBeTrue()
                     ->and($data['user']['id'])->toBe($id)
-                    ->and($data['dog_count'])->toBe(1);
+                    ->and($data['dog_count'])->toBe(1)
+                ;
             }
         });
     });

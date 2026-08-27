@@ -17,15 +17,29 @@ final class CacheManager
     public const VERSION_PREFIX = 'v0.1_';
 
     /**
+     * Cached absolute cache directory path.
+     */
+    private static ?string $resolvedCacheDir = null;
+
+    public static function reset(): void
+    {
+        self::$resolvedCacheDir = null;
+    }
+
+    /**
      * Returns the absolute path to the cache directory, isolating by system user if using temp dir.
      */
     public static function getCacheDir(): string
     {
+        if (self::$resolvedCacheDir !== null) {
+            return self::$resolvedCacheDir;
+        }
+
         $config = Config::get();
         $dir = $config['cache_dir'] ?? null;
 
         if (\is_string($dir) && $dir !== '') {
-            return $dir;
+            return self::$resolvedCacheDir = $dir;
         }
 
         $username = getenv('USERNAME');
@@ -43,7 +57,7 @@ final class CacheManager
 
         $userHash = hash('xxh128', 'typephp_' . $user);
 
-        return sys_get_temp_dir() . '/typephp-cache-' . $userHash;
+        return self::$resolvedCacheDir = sys_get_temp_dir() . '/typephp-cache-' . $userHash;
     }
 
     /**

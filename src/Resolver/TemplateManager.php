@@ -579,6 +579,12 @@ final class TemplateManager
             return self::checkNestedGenericVariance($existing, $expected);
         }
 
+        if ($existing instanceof IdentifierTypeNode && $expected instanceof GenericTypeNode) {
+            if ($variance === GenericTypeNode::VARIANCE_COVARIANT && self::isSubclass($existing->name, $expected->type->name)) {
+                return true;
+            }
+        }
+
         if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
             return self::isSubclass($existingStr, $expectedStr);
         }
@@ -674,7 +680,7 @@ final class TemplateManager
                 }
             }
 
-            return false;
+            return true;
         }
 
         if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
@@ -710,8 +716,19 @@ final class TemplateManager
 
     private static function isSubclass(string $sub, string $super): bool
     {
-        if (ClassNameValidator::isValid($sub) && ClassNameValidator::isValid($super) && (class_exists($sub) || interface_exists($sub)) && (class_exists($super) || interface_exists($super))) {
-            return is_a($sub, $super, true);
+        $baseSub = ($pos = strpos($sub, '<')) !== false ? substr($sub, 0, $pos) : $sub;
+        $baseSuper = ($pos = strpos($super, '<')) !== false ? substr($super, 0, $pos) : $super;
+
+        $baseSub = ltrim(trim($baseSub), '\\');
+        $baseSuper = ltrim(trim($baseSuper), '\\');
+
+        if (
+            ClassNameValidator::isValid($baseSub)
+            && ClassNameValidator::isValid($baseSuper)
+            && (class_exists($baseSub) || interface_exists($baseSub) || trait_exists($baseSub) || enum_exists($baseSub))
+            && (class_exists($baseSuper) || interface_exists($baseSuper) || trait_exists($baseSuper) || enum_exists($baseSuper))
+        ) {
+            return is_a($baseSub, $baseSuper, true);
         }
 
         return false;

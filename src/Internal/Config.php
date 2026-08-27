@@ -43,6 +43,8 @@ final class Config
 
     private static bool $respectIgnoreTags = true;
 
+    private static bool $respectNativeNullability = true;
+
     private static string $arrayValidation = 'full';
 
     public static function isEnabled(): bool
@@ -97,6 +99,15 @@ final class Config
         }
 
         return self::$respectIgnoreTags;
+    }
+
+    public static function isRespectNativeNullabilityEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$respectNativeNullability;
     }
 
     public static function isArrayValidationHybrid(): bool
@@ -177,6 +188,7 @@ final class Config
             'magic_properties' => true,
             'magic_methods' => true,
             'respect_ignore_tags' => true,
+            'respect_native_nullability' => true,
             'array_validation' => 'full',
             'cache' => true,
             'cache_dir' => null,
@@ -216,7 +228,6 @@ final class Config
 
         $mergedConfig = self::mergeConfig($defaultConfig, $userConfig);
 
-        // Append extension whitelist includes and stubs
         /** @var array<int, string> $currentIncludes */
         $currentIncludes = \is_array($mergedConfig['include'] ?? null) ? $mergedConfig['include'] : [];
         /** @var array<int, string> $currentStubs */
@@ -266,6 +277,7 @@ final class Config
         StreamWrapper::reset();
         StubManager::reset();
         SpecialTypeResolver::reset();
+        CacheManager::reset();
     }
 
     /**
@@ -313,6 +325,7 @@ final class Config
         self::$magicProperties = true;
         self::$magicMethods = true;
         self::$respectIgnoreTags = true;
+        self::$respectNativeNullability = true;
         self::$arrayValidation = 'full';
 
         ContractParser::reset();
@@ -325,6 +338,7 @@ final class Config
         StreamWrapper::reset();
         StubManager::reset();
         SpecialTypeResolver::reset();
+        CacheManager::reset();
     }
 
     /**
@@ -340,6 +354,7 @@ final class Config
         self::$magicProperties = (bool) ($config['magic_properties'] ?? true);
         self::$magicMethods = (bool) ($config['magic_methods'] ?? true);
         self::$respectIgnoreTags = (bool) ($config['respect_ignore_tags'] ?? true);
+        self::$respectNativeNullability = (bool) ($config['respect_native_nullability'] ?? true);
         self::$arrayValidation = \is_string($config['array_validation'] ?? null) ? $config['array_validation'] : 'full';
     }
 }
