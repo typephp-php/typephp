@@ -52,8 +52,7 @@ describe('IteratorProxy Unit Tests', function () {
     test('forwards custom method calls to inner iterator via __call', function () {
         $inner = new ArrayIterator(['a' => 10]);
         $proxy = new IteratorProxy($inner, fn () => null);
-
-        // ArrayIterator has offsetExists
+        
         expect($proxy->offsetExists('a'))->toBeTrue()
             ->and($proxy->offsetExists('z'))->toBeFalse()
         ;

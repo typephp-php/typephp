@@ -21,7 +21,87 @@ TypePHP is a transparent, pure-PHP runtime type checker. You don't have to refac
 
 **[Read the full TypePHP documentation »](https://typephp-php.github.io/docs/)**
 
-**[Quick Start Guide »](https://typephp-php.github.io/docs/getting-started/quick-start)**
+---
+
+## Installation
+
+Install TypePHP as a development dependency via Composer:
+
+```bash
+composer require typephp/typephp --dev
+```
+
+*Note: TypePHP boots automatically via Composer's autoloader. No service providers, bootstrap edits, or framework configurations are required.*
+
+---
+
+## Quick Start
+
+### 1. Initialize Configuration (Optional)
+
+Generate a default `typephp.php` configuration file in your project root:
+
+```bash
+vendor/bin/typephp config:init
+```
+
+### 2. Write Standard DocBlocks
+
+Annotate your functions, methods, and classes with standard static analysis DocBlocks:
+
+```php
+namespace App\Services;
+
+class PaymentService
+{
+    /**
+     * @param positive-int $amount
+     * @param array{gateway: 'stripe'|'paypal', currency: non-empty-string} $options
+     * @return non-empty-string
+     */
+    public function charge(int $amount, array $options): string
+    {
+        return "Transaction successful";
+    }
+}
+```
+
+### 3. Run Your Application or Tests
+
+If your application runs through an entry point where `require 'vendor/autoload.php'` is declared (such as a web framework's `public/index.php`, CLI commands, or test runners like **Pest** and **PHPUnit**), **TypePHP runs automatically and transparently in the background**.
+
+Simply run your tests or use your local development server (**Laravel**, **Symfony**, **FrankenPHP**, **PHP-FPM**). TypePHP immediately intercepts and enforces all parameter, return, shape, and generic contracts in real time.
+
+---
+
+## Executing Standalone Scripts (CLI Runner)
+
+For standalone, single-execution PHP scripts that do not have an explicit autoloader entry point, run them directly with the TypePHP CLI binary:
+
+```bash
+vendor/bin/typephp script.php
+```
+
+---
+
+## Type-Checking Files Anywhere (`"*"` Wildcard Glob)
+
+By default, TypePHP checks standard application folders (`src/**`, `app/**`, `tests/**`). To type-check PHP files anywhere in your project root while still respecting your excluded folders, set the `"*"` wildcard glob in `typephp.php`:
+
+```php
+// typephp.php
+return [
+    'include' => [
+        '*', // Intercepts and type-checks PHP files anywhere in the project
+    ],
+    'exclude' => [
+        'vendor/**',
+        'storage/**',
+        'var/**',
+        'cache/**',
+    ],
+];
+```
 
 ---
 
@@ -150,17 +230,25 @@ All the documentation lives on the **[typephp-php.github.io/docs website](https:
 * [Official Blog & Announcements](https://typephp-php.github.io/docs/blog/)
 * [Troubleshooting & FAQ](https://typephp-php.github.io/docs/troubleshooting)
 
+---
+
 ## Inspiration
 
 TypePHP is conceptually inspired by Python's [Beartype](https://github.com/beartype/beartype), bringing transparent runtime type enforcement for type annotations to the PHP ecosystem without any decorators or attributes.
+
+---
 
 ## Sponsors
 
 Want to support the open-source development and maintenance of TypePHP? [Sponsor me on GitHub »](https://github.com/sponsors/rcalicdan)
 
+---
+
 ## Contributing
 
 Any contributions are welcome. Feel free to open issues or submit pull requests on GitHub.
+
+---
 
 ## License
 
