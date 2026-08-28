@@ -8,7 +8,10 @@ use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Contract\ContractParser;
 use TypePHP\Contract\HierarchyResolver;
 use TypePHP\Internal\ClassNameValidator;
@@ -256,6 +259,10 @@ final class ParamChecker
         ?object $thisObj,
         array $templates
     ): void {
+        if ($typeNode instanceof NullableTypeNode) {
+            $typeNode = $typeNode->type;
+        }
+
         if ($typeNode instanceof GenericTypeNode) {
             $baseType = strtolower($typeNode->type->name);
             if (! \in_array($baseType, ['array', 'list', 'iterable', 'traversable'], true)) {
@@ -474,27 +481,62 @@ final class ParamChecker
 
             if ($templateNode->bound !== null) {
                 $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
-                $boundName = $resolvedBound instanceof IdentifierTypeNode ? $resolvedBound->name : (string) $resolvedBound;
-                $lowerBound = strtolower($boundName);
+                if (! self::checkClassStringSatisfiesBound($val, $resolvedBound)) {
+                    $boundDisplay = (string) $resolvedBound;
 
-                if ($lowerBound !== 'object' && $lowerBound !== 'mixed' && ! is_a($val, $boundName, true)) {
-                    return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a class-string of ' . $boundName . ", '" . $val . "' given");
+                    return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a class-string of ' . $boundDisplay . ", '" . $val . "' given");
                 }
             }
 
             TemplateManager::bindTemplate($function, $targetObj, $templateName, new IdentifierTypeNode($val));
         } else {
             $expectedTypeNode = TemplateManager::getBoundType($function, $targetObj, $templateName);
-            $targetClass = $expectedTypeNode instanceof IdentifierTypeNode ? $expectedTypeNode->name : (string) $expectedTypeNode;
+            if ($expectedTypeNode !== null) {
+                if (! \is_string($val) || ! self::checkClassStringSatisfiesBound($val, $expectedTypeNode)) {
+                    $valStr = TypeFormatter::formatGivenValue($val);
+                    $targetDisplay = (string) $expectedTypeNode;
 
-            if (! \is_string($val) || ! is_a($val, $targetClass, true)) {
-                $valStr = TypeFormatter::formatGivenValue($val);
-
-                return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' must be a class-string of ' . $targetClass . ', ' . $valStr . ' given');
+                    return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' must be a class-string of ' . $targetDisplay . ', ' . $valStr . ' given');
+                }
             }
         }
 
         return null;
+    }
+
+    private static function checkClassStringSatisfiesBound(string $val, TypeNode $boundNode): bool
+    {
+        if ($boundNode instanceof IdentifierTypeNode) {
+            $boundName = $boundNode->name;
+            $lowerBound = strtolower($boundName);
+            if ($lowerBound === 'object' || $lowerBound === 'mixed') {
+                return true;
+            }
+
+            return is_a($val, $boundName, allow_string: true);
+        }
+
+        if ($boundNode instanceof UnionTypeNode) {
+            foreach ($boundNode->types as $unionType) {
+                if (self::checkClassStringSatisfiesBound($val, $unionType)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if ($boundNode instanceof IntersectionTypeNode) {
+            foreach ($boundNode->types as $intersectionType) {
+                if (! self::checkClassStringSatisfiesBound($val, $intersectionType)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        return true;
     }
 
     /**

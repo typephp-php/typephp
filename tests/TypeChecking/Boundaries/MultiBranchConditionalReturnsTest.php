@@ -5,6 +5,25 @@ declare(strict_types=1);
 use TypePHP\Tests\Fixtures\Conditionals\ConditionalReturnService;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 
+interface InheritedConditionalInterface
+{
+    /**
+     * @param bool $asInt
+     * @param mixed $value
+     *
+     * @return ($asInt is true ? positive-int : non-empty-string)
+     */
+    public function formatValue(bool $asInt, mixed $value): mixed;
+}
+
+class InheritedConditionalService implements InheritedConditionalInterface
+{
+    public function formatValue(bool $asInt, mixed $value): mixed
+    {
+        return $value;
+    }
+}
+
 describe('Multi-Branch Nested & Negated Conditional Return Types', function () {
     describe('Deep 4-Branch Parameter Conditionals', function () {
         test('evaluates int branch (positive-int) when format is "int"', function () {
@@ -12,9 +31,8 @@ describe('Multi-Branch Nested & Negated Conditional Return Types', function () {
 
             expect($service->formatByParameter('int', 42))->toBe(42);
 
-            expect(fn () => $service->formatByParameter('int', -10))
-                ->toThrow(TypeError::class, 'Return value must be of type positive-int')
-            ;
+            expect(fn() => $service->formatByParameter('int', -10))
+                ->toThrow(TypeError::class, 'Return value must be of type positive-int');
         });
 
         test('evaluates float branch (positive-float) when format is "float"', function () {
@@ -22,9 +40,8 @@ describe('Multi-Branch Nested & Negated Conditional Return Types', function () {
 
             expect($service->formatByParameter('float', 3.14))->toBe(3.14);
 
-            expect(fn () => $service->formatByParameter('float', -2.5))
-                ->toThrow(TypeError::class, 'Return value must be of type positive-float')
-            ;
+            expect(fn() => $service->formatByParameter('float', -2.5))
+                ->toThrow(TypeError::class, 'Return value must be of type positive-float');
         });
 
         test('evaluates bool branch when format is "bool"', function () {
@@ -32,9 +49,8 @@ describe('Multi-Branch Nested & Negated Conditional Return Types', function () {
 
             expect($service->formatByParameter('bool', true))->toBeTrue();
 
-            expect(fn () => $service->formatByParameter('bool', 'not_a_bool'))
-                ->toThrow(TypeError::class, 'Return value must be of type bool')
-            ;
+            expect(fn() => $service->formatByParameter('bool', 'not_a_bool'))
+                ->toThrow(TypeError::class, 'Return value must be of type bool');
         });
 
         test('evaluates list branch (list<positive-int>) when format is "list"', function () {
@@ -42,9 +58,8 @@ describe('Multi-Branch Nested & Negated Conditional Return Types', function () {
 
             expect($service->formatByParameter('list', [10, 20, 30]))->toBe([10, 20, 30]);
 
-            expect(fn () => $service->formatByParameter('list', [10, -5, 30]))
-                ->toThrow(TypeError::class, 'Return value[1] must be of type positive-int')
-            ;
+            expect(fn() => $service->formatByParameter('list', [10, -5, 30]))
+                ->toThrow(TypeError::class, 'Return value[1] must be of type positive-int');
         });
 
         test('evaluates final fallback branch (non-empty-string) when format is any other string', function () {
@@ -52,9 +67,8 @@ describe('Multi-Branch Nested & Negated Conditional Return Types', function () {
 
             expect($service->formatByParameter('text', 'hello_world'))->toBe('hello_world');
 
-            expect(fn () => $service->formatByParameter('text', ''))
-                ->toThrow(TypeError::class, 'Return value must be of type non-empty-string')
-            ;
+            expect(fn() => $service->formatByParameter('text', ''))
+                ->toThrow(TypeError::class, 'Return value must be of type non-empty-string');
         });
     });
 
@@ -72,9 +86,8 @@ describe('Multi-Branch Nested & Negated Conditional Return Types', function () {
             $service = new ConditionalReturnService();
             $dog = new Dog();
 
-            expect(fn () => $service->wrapOrReturn(true, $dog, $dog))
-                ->toThrow(TypeError::class, 'must be a list')
-            ;
+            expect(fn() => $service->wrapOrReturn(true, $dog, $dog))
+                ->toThrow(TypeError::class, 'must be a list');
         });
 
         test('returns single Dog instance when wrapInList is false', function () {
@@ -84,6 +97,18 @@ describe('Multi-Branch Nested & Negated Conditional Return Types', function () {
             $result = $service->wrapOrReturn(false, $dog, $dog);
             expect($result)->toBe($dog);
         });
+
+        test('child class inherits parameter conditional return without local DocBlock', function () {
+            $service = new InheritedConditionalService();
+
+            expect($service->formatValue(true, 42))->toBe(42);
+            expect($service->formatValue(false, 'hello'))->toBe('hello');
+
+            expect(fn() => $service->formatValue(true, -10))
+                ->toThrow(TypeError::class, 'positive-int');
+            expect(fn() => $service->formatValue(false, ''))
+                ->toThrow(TypeError::class, 'non-empty-string');
+        });
     });
 
     describe('Negated Parameter Conditionals ($flag is not true)', function () {
@@ -92,9 +117,8 @@ describe('Multi-Branch Nested & Negated Conditional Return Types', function () {
 
             expect($service->formatByNegation(false, 'active_status'))->toBe('active_status');
 
-            expect(fn () => $service->formatByNegation(false, ''))
-                ->toThrow(TypeError::class, 'Return value must be of type non-empty-string')
-            ;
+            expect(fn() => $service->formatByNegation(false, ''))
+                ->toThrow(TypeError::class, 'Return value must be of type non-empty-string');
         });
 
         test('evaluates positive-int branch when flag is true', function () {
@@ -102,9 +126,8 @@ describe('Multi-Branch Nested & Negated Conditional Return Types', function () {
 
             expect($service->formatByNegation(true, 100))->toBe(100);
 
-            expect(fn () => $service->formatByNegation(true, -50))
-                ->toThrow(TypeError::class, 'Return value must be of type positive-int')
-            ;
+            expect(fn() => $service->formatByNegation(true, -50))
+                ->toThrow(TypeError::class, 'Return value must be of type positive-int');
         });
     });
 });

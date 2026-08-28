@@ -45,7 +45,7 @@ final class FunctionContractInjector
 
         $thisArg = self::resolveThisArg($isClassMethod, $node);
         $isNativeVoid = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'void';
-        $needsReturnVars = str_contains($docText, ' is ') || (str_contains($docText, '@return') && str_contains($docText, '$'));
+        $needsReturnVars = $isClassMethod || str_contains($docText, ' is ') || (str_contains($docText, '@return') && str_contains($docText, '$'));
 
         $injectedStmts = [];
         if ($hasParam) {

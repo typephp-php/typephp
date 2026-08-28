@@ -754,7 +754,7 @@ final class SpecialTypeResolver
 
     private static function resolveConstantOffsetValue(string $fqcn, string $constName, string|int $offsetKey): ?TypeNode
     {
-        if ($fqcn !== '' && (class_exists($fqcn) || interface_exists($fqcn) || enum_exists($fqcn))) {
+        if ($fqcn !== '' && (class_exists($fqcn) || interface_exists($fqcn) || enum_exists($fqcn) || trait_exists($fqcn))) {
             try {
                 $refClass = new \ReflectionClass($fqcn);
                 if ($refClass->hasConstant($constName)) {
@@ -778,7 +778,7 @@ final class SpecialTypeResolver
 
     private static function resolveConstantKeyValue(string $fqcn, string $constName): ConstExprStringNode|ConstExprIntegerNode|null
     {
-        if (class_exists($fqcn) || interface_exists($fqcn) || enum_exists($fqcn)) {
+        if (class_exists($fqcn) || interface_exists($fqcn) || enum_exists($fqcn) || trait_exists($fqcn)) {
             try {
                 $refClass = new \ReflectionClass($fqcn);
                 if ($refClass->hasConstant($constName)) {
