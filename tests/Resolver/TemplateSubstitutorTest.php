@@ -220,4 +220,24 @@ describe('TemplateSubstitutor Unit Tests', function () {
 
         expect($result->name)->toBe('int');
     });
+
+    test('does not mutate original ArrayShapeNode AST in place during template substitution', function () {
+        $item = new ArrayShapeItemNode(
+            new ConstExprStringNode('id', ConstExprStringNode::SINGLE_QUOTED),
+            false,
+            new IdentifierTypeNode('T')
+        );
+        $shapeNode = ArrayShapeNode::createSealed([$item]);
+
+        $bound1 = ['T' => new IdentifierTypeNode('int')];
+        $result1 = TemplateSubstitutor::substitute($shapeNode, $bound1);
+
+        expect((string) $result1->items[0]->valueType)->toBe('int');
+        expect((string) $shapeNode->items[0]->valueType)->toBe('T');
+
+        $bound2 = ['T' => new IdentifierTypeNode('string')];
+        $result2 = TemplateSubstitutor::substitute($shapeNode, $bound2);
+
+        expect((string) $result2->items[0]->valueType)->toBe('string');
+    });
 });

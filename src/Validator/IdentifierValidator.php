@@ -21,8 +21,9 @@ final class IdentifierValidator implements TypeValidatorInterface
         /** @var IdentifierTypeNode $identifierNode */
         $identifierNode = $node;
         $name = $identifierNode->name;
+        $lower = strtolower($name);
 
-        $ok = match ($name) {
+        $ok = match ($lower) {
             'int', 'integer' => \is_int($value),
             'string' => \is_string($value),
             'float', 'double' => \is_float($value) || \is_int($value),
@@ -75,7 +76,7 @@ final class IdentifierValidator implements TypeValidatorInterface
             'open-resource' => \is_resource($value),
             'closed-resource' => ! \is_resource($value) && get_debug_type($value) === 'resource (closed)',
 
-            default => $this->validateCaseInsensitiveOrClass($value, $name),
+            default => $this->validateClassOrIgnore($value, $name),
         };
 
         if (! $ok) {
@@ -83,31 +84,6 @@ final class IdentifierValidator implements TypeValidatorInterface
         }
 
         return null;
-    }
-
-    private function validateCaseInsensitiveOrClass(mixed $value, string $name): bool
-    {
-        $lower = strtolower($name);
-
-        return match ($lower) {
-            'int', 'integer' => \is_int($value),
-            'string' => \is_string($value),
-            'float', 'double' => \is_float($value) || \is_int($value),
-            'bool', 'boolean' => \is_bool($value),
-            'array' => \is_array($value),
-            'list' => \is_array($value) && (\count($value) === 0 || array_is_list($value)),
-            'object', 'self', 'static', 'parent', '$this' => \is_object($value),
-            'callable', 'pure-callable' => \is_callable($value),
-            'iterable' => is_iterable($value),
-            'resource' => \is_resource($value),
-            'null' => $value === null,
-            'true' => $value === true,
-            'false' => $value === false,
-            'mixed' => true,
-            'scalar' => \is_scalar($value),
-            'void' => $value === null,
-            default => $this->validateClassOrIgnore($value, $name),
-        };
     }
 
     private function validateClassOrIgnore(mixed $value, string $name): bool

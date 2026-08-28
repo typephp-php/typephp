@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace TypePHP\Resolver;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeUnsealedTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
@@ -15,6 +17,7 @@ use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ObjectShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
@@ -240,18 +243,29 @@ final class TemplateSubstitutor
         array $declaredTemplates,
         array $visited
     ): ArrayShapeNode {
+        $newItems = [];
         foreach ($node->items as $item) {
-            $item->valueType = self::substituteNode($item->valueType, $boundTemplates, $declaredTemplates, $visited);
+            $newItems[] = new ArrayShapeItemNode(
+                $item->keyName,
+                $item->optional,
+                self::substituteNode($item->valueType, $boundTemplates, $declaredTemplates, $visited)
+            );
         }
 
+        $newUnsealed = null;
         if ($node->unsealedType !== null) {
-            if ($node->unsealedType->keyType !== null) {
-                $node->unsealedType->keyType = self::substituteNode($node->unsealedType->keyType, $boundTemplates, $declaredTemplates, $visited);
-            }
-            $node->unsealedType->valueType = self::substituteNode($node->unsealedType->valueType, $boundTemplates, $declaredTemplates, $visited);
+            $unsealedKey = $node->unsealedType->keyType !== null
+                ? self::substituteNode($node->unsealedType->keyType, $boundTemplates, $declaredTemplates, $visited)
+                : null;
+            $unsealedVal = self::substituteNode($node->unsealedType->valueType, $boundTemplates, $declaredTemplates, $visited);
+            $newUnsealed = new ArrayShapeUnsealedTypeNode($unsealedVal, $unsealedKey);
         }
 
-        return $node;
+        if ($node->sealed) {
+            return ArrayShapeNode::createSealed($newItems, $node->kind);
+        }
+
+        return ArrayShapeNode::createUnsealed($newItems, $newUnsealed, $node->kind);
     }
 
     /**
@@ -265,10 +279,15 @@ final class TemplateSubstitutor
         array $declaredTemplates,
         array $visited
     ): ObjectShapeNode {
+        $newItems = [];
         foreach ($node->items as $item) {
-            $item->valueType = self::substituteNode($item->valueType, $boundTemplates, $declaredTemplates, $visited);
+            $newItems[] = new ObjectShapeItemNode(
+                $item->keyName,
+                $item->optional,
+                self::substituteNode($item->valueType, $boundTemplates, $declaredTemplates, $visited)
+            );
         }
 
-        return $node;
+        return new ObjectShapeNode($newItems);
     }
 }

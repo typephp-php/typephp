@@ -10,6 +10,7 @@ use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
 use TypePHP\Internal\ErrorMessage;
 use TypePHP\Tests\Fixtures\Domain\Car;
+use TypePHP\Tests\Fixtures\Domain\Cat;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Enums\Suit;
 use TypePHP\Tests\Fixtures\Enums\TransactionStatus;
@@ -41,6 +42,13 @@ function parseType(string $typeString, Lexer $lexer, TypeParser $typeParser): Ty
 }
 
 describe('IdentifierValidator', function () {
+    test('validates case-insensitive refinement types (Positive-Int, Non-Empty-String)', function () {
+        $posInt = parseType('Positive-Int', $this->lexer, $this->typeParser);
+
+        expect($this->registry->validate(5, $posInt, 'arg'))->toBeNull();
+        expect($this->registry->validate(-5, $posInt, 'arg'))->toBeInstanceOf(ErrorMessage::class);
+    });
+
     test('validates basic primitives', function () {
         $intNode = parseType('int', $this->lexer, $this->typeParser);
         expect($this->registry->validate(10, $intNode, 'arg'))->toBeNull()
@@ -262,7 +270,15 @@ describe('IdentifierValidator', function () {
         ;
 
         $hyphenSyntax = parseType('custom-type-with-hyphens', $this->lexer, $this->typeParser);
-        expect($this->registry->validate('anything', $hyphenSyntax, 'arg'))->toBeNull(); // Gracefully ignored!
+        expect($this->registry->validate('anything', $hyphenSyntax, 'arg'))->toBeNull();
+    });
+
+    test('validates class-string with union bounds (class-string<Dog|Cat>)', function () {
+        $unionClassString = parseType('class-string<' . Dog::class . '|' . Cat::class . '>', $this->lexer, $this->typeParser);
+
+        expect($this->registry->validate(Dog::class, $unionClassString, 'arg'))->toBeNull();
+        expect($this->registry->validate(Cat::class, $unionClassString, 'arg'))->toBeNull();
+        expect($this->registry->validate(Car::class, $unionClassString, 'arg'))->toBeInstanceOf(ErrorMessage::class);
     });
 });
 
@@ -452,6 +468,15 @@ describe('ArrayValidator, UnionValidator, NullableValidator & IntersectionValida
         ;
     });
 
+    test('validates key-of on implicit keyless tuple shapes (key-of<array{string, int}>)', function () {
+        $tupleKeyOf = parseType('key-of<array{string, int}>', $this->lexer, $this->typeParser);
+
+        expect($this->registry->validate(0, $tupleKeyOf, 'arg'))->toBeNull();
+        expect($this->registry->validate(1, $tupleKeyOf, 'arg'))->toBeNull();
+
+        expect($this->registry->validate(2, $tupleKeyOf, 'arg'))->toBeInstanceOf(ErrorMessage::class);
+    });
+
     test('validates nullable types (?Type)', function () {
         $nullableInt = parseType('?int', $this->lexer, $this->typeParser);
         expect($this->registry->validate(null, $nullableInt, 'arg'))->toBeNull()
@@ -486,8 +511,8 @@ describe('ArrayValidator, UnionValidator, NullableValidator & IntersectionValida
         $dog = new Dog();
         $dogType = parseType(Dog::class, $this->lexer, $this->typeParser);
 
-        expect($this->registry->validate($dog, $dogType, 'arg'))->toBeNull(); // Validated and memoized
-        expect($this->registry->validate($dog, $dogType, 'arg'))->toBeNull(); // O(1) cache hit
+        expect($this->registry->validate($dog, $dogType, 'arg'))->toBeNull();
+        expect($this->registry->validate($dog, $dogType, 'arg'))->toBeNull();
 
         TypeValidatorRegistry::reset();
         expect($this->registry->validate($dog, $dogType, 'arg'))->toBeNull();

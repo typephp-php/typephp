@@ -60,6 +60,26 @@ function testProcessApiResponse(bool $isSuccess, mixed $payload): array
     return $payload;
 }
 
+/**
+ * @template T
+ * @param array{id: T, label: string} $payload
+ * @return array{id: T, label: string}
+ */
+function testGenericShapeMultiCall(array $payload): array
+{
+    return $payload;
+}
+
+/**
+ * @template T
+ * @param T $typeSample
+ * @param array{id: T} $payload
+ */
+function testLinkedGenericShape(mixed $typeSample, array $payload): array
+{
+    return $payload;
+}
+
 describe('class-string<T> Factory Contracts', function () {
     test('accepts valid class-string and returns matching instance', function () {
         $dog = new Dog();
@@ -69,16 +89,14 @@ describe('class-string<T> Factory Contracts', function () {
     });
 
     test('throws TypeError when class-string argument does not satisfy bound', function () {
-        expect(fn () => testClassStringFactory(Car::class, new Car()))
-            ->toThrow(TypeError::class, 'must be a class-string of TypePHP\Tests\Fixtures\Domain\Animal')
-        ;
+        expect(fn() => testClassStringFactory(Car::class, new Car()))
+            ->toThrow(TypeError::class, 'must be a class-string of TypePHP\Tests\Fixtures\Domain\Animal');
     });
 
     test('throws TypeError when returned object does not match bound class-string', function () {
         // Class string asks for Dog, but function returns Cat
-        expect(fn () => testClassStringFactory(Dog::class, new Cat()))
-            ->toThrow(TypeError::class)
-        ;
+        expect(fn() => testClassStringFactory(Dog::class, new Cat()))
+            ->toThrow(TypeError::class);
     });
 });
 
@@ -90,9 +108,8 @@ describe('Variadic Generic Templates (@param T ...$items)', function () {
 
     test('throws TypeError when variadic items have inconsistent types', function () {
         // T is inferred as int from 1st item, 3rd item 'invalid' violates T = int
-        expect(fn () => testCollectSameType(10, 20, 'invalid'))
-            ->toThrow(TypeError::class, 'template T = int')
-        ;
+        expect(fn() => testCollectSameType(10, 20, 'invalid'))
+            ->toThrow(TypeError::class, 'template T = int');
     });
 });
 
@@ -106,9 +123,8 @@ describe('Unbound Template Return Fallbacks (@template T of Bound)', function ()
 
     test('throws TypeError when unbound return value violates template bound', function () {
         // Car is not an Animal
-        expect(fn () => testCreateAnimalFallback(new Car()))
-            ->toThrow(TypeError::class, 'Return value')
-        ;
+        expect(fn() => testCreateAnimalFallback(new Car()))
+            ->toThrow(TypeError::class, 'Return value');
     });
 });
 
@@ -134,14 +150,27 @@ describe('Tagged / Discriminated Union Array Shapes', function () {
     });
 
     test('throws TypeError on shape failing all union variants', function () {
-        // Missing required 'data' key for success shape, and invalid status/code for error shape
         $badPayload = [
             'status' => 'success',
             'code' => 200,
         ];
 
-        expect(fn () => testProcessApiResponse(true, $badPayload))
-            ->toThrow(TypeError::class, 'Return value')
-        ;
+        expect(fn() => testProcessApiResponse(true, $badPayload))
+            ->toThrow(TypeError::class, 'Return value');
+    });
+
+    test('calling a method with generic array shape multiple times with different template types succeeds', function () {
+        $res1 = testGenericShapeMultiCall(['id' => 123, 'label' => 'first']);
+        expect($res1)->toBe(['id' => 123, 'label' => 'first']);
+
+        $res2 = testGenericShapeMultiCall(['id' => 'abc', 'label' => 'second']);
+        expect($res2)->toBe(['id' => 'abc', 'label' => 'second']);
+    });
+
+    test('linked generic array shape does not corrupt template binding across calls', function () {
+        testLinkedGenericShape(10, ['id' => 10]);
+
+        $res = testLinkedGenericShape('hello', ['id' => 'hello']);
+        expect($res)->toBe(['id' => 'hello']);
     });
 });

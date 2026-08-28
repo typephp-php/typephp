@@ -132,23 +132,49 @@ final class DocblockExtractor
     }
 
     /**
-     * Extracts @var tags with priority: @phpstan-var > @psalm-var > @var.
+     * Extracts @var tags with priority per variable name: @phpstan-var > @psalm-var > @var.
      *
      * @return array<VarTagValueNode>
      */
     public static function getVarTags(PhpDocNode $node): array
     {
-        $phpstanVars = $node->getVarTagValues('@phpstan-var');
-        if (\count($phpstanVars) > 0) {
-            return $phpstanVars;
+        $named = [];
+
+        foreach ($node->getVarTagValues('@var') as $tag) {
+            $vName = ltrim($tag->variableName, '$');
+            if ($vName !== '') {
+                $named[$vName] = $tag;
+            }
         }
 
-        $psalmVars = $node->getVarTagValues('@psalm-var');
-        if (\count($psalmVars) > 0) {
-            return $psalmVars;
+        foreach ($node->getVarTagValues('@psalm-var') as $tag) {
+            $vName = ltrim($tag->variableName, '$');
+            if ($vName !== '') {
+                $named[$vName] = $tag;
+            }
         }
 
-        return $node->getVarTagValues('@var');
+        foreach ($node->getVarTagValues('@phpstan-var') as $tag) {
+            $vName = ltrim($tag->variableName, '$');
+            if ($vName !== '') {
+                $named[$vName] = $tag;
+            }
+        }
+
+        $unnamed = [];
+        $unnamedPhpstan = array_values(array_filter($node->getVarTagValues('@phpstan-var'), fn ($t) => $t->variableName === ''));
+        $unnamedPsalm = array_values(array_filter($node->getVarTagValues('@psalm-var'), fn ($t) => $t->variableName === ''));
+        $unnamedStandard = array_values(array_filter($node->getVarTagValues('@var'), fn ($t) => $t->variableName === ''));
+
+        if (\count($unnamedPhpstan) > 0) {
+            $unnamed = $unnamedPhpstan;
+        } elseif (\count($unnamedPsalm) > 0) {
+            $unnamed = $unnamedPsalm;
+        } elseif (\count($unnamedStandard) > 0) {
+            $unnamed = $unnamedStandard;
+        }
+
+        return array_values([...$named, ...$unnamed]);
     }
 
     /**

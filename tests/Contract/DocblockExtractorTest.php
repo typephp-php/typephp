@@ -296,4 +296,31 @@ PHP;
             TypePHP\Internal\Config::reset();
         }
     });
+
+    test('preserves multiple variable @var tags when mixed with @phpstan-var and @psalm-var', function () {
+        $doc = <<<'DOC'
+/**
+ * @phpstan-var positive-int $id
+ * @var non-empty-string $username
+ * @psalm-var 'admin'|'user' $role
+ */
+DOC;
+        $node = DocblockExtractor::parseDocString($doc);
+        $varTags = DocblockExtractor::getVarTags($node);
+
+        expect($varTags)->toHaveCount(3);
+
+        $tagsByName = [];
+        foreach ($varTags as $tag) {
+            $tagsByName[ltrim($tag->variableName, '$')] = (string) $tag->type;
+        }
+
+        expect($tagsByName)->toHaveKey('id')
+            ->and($tagsByName['id'])->toBe('positive-int')
+            ->and($tagsByName)->toHaveKey('username')
+            ->and($tagsByName['username'])->toBe('non-empty-string')
+            ->and($tagsByName)->toHaveKey('role')
+            ->and($tagsByName['role'])->toBe("('admin' | 'user')")
+        ;
+    });
 });

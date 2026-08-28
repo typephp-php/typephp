@@ -40,4 +40,23 @@ describe('Array Destructuring Contracts (list() & [$a, $b] = $data)', function (
             [$id, $name] = [42, ''];
         })->toThrow(TypeError::class, 'Variable $name');
     });
+
+    test('enforces mixed @phpstan-var and @var annotations on array destructuring', function () {
+        /**
+         * @phpstan-var positive-int $id
+         * @var non-empty-string $name
+         */
+        [$id, $name] = [10, 'Alice'];
+
+        expect($id)->toBe(10);
+        expect($name)->toBe('Alice');
+
+        expect(function () {
+            /**
+             * @phpstan-var positive-int $id
+             * @var non-empty-string $name
+             */
+            [$id, $name] = [10, ''];
+        })->toThrow(TypeError::class, 'Variable $name');
+    });
 });

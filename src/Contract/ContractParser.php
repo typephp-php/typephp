@@ -6,7 +6,9 @@ namespace TypePHP\Contract;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\MethodTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeUnsealedTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
@@ -14,6 +16,7 @@ use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ObjectShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
@@ -1020,25 +1023,42 @@ final class ContractParser
         }
 
         if ($node instanceof ArrayShapeNode) {
+            $newItems = [];
             foreach ($node->items as $item) {
-                $item->valueType = self::substituteAliases($item->valueType, $aliases);
-            }
-            if ($node->unsealedType !== null) {
-                if ($node->unsealedType->keyType !== null) {
-                    $node->unsealedType->keyType = self::substituteAliases($node->unsealedType->keyType, $aliases);
-                }
-                $node->unsealedType->valueType = self::substituteAliases($node->unsealedType->valueType, $aliases);
+                $newItems[] = new ArrayShapeItemNode(
+                    $item->keyName,
+                    $item->optional,
+                    self::substituteAliases($item->valueType, $aliases)
+                );
             }
 
-            return $node;
+            $newUnsealed = null;
+            if ($node->unsealedType !== null) {
+                $unsealedKey = $node->unsealedType->keyType !== null
+                    ? self::substituteAliases($node->unsealedType->keyType, $aliases)
+                    : null;
+                $unsealedVal = self::substituteAliases($node->unsealedType->valueType, $aliases);
+                $newUnsealed = new ArrayShapeUnsealedTypeNode($unsealedVal, $unsealedKey);
+            }
+
+            if ($node->sealed) {
+                return ArrayShapeNode::createSealed($newItems, $node->kind);
+            }
+
+            return ArrayShapeNode::createUnsealed($newItems, $newUnsealed, $node->kind);
         }
 
         if ($node instanceof ObjectShapeNode) {
+            $newItems = [];
             foreach ($node->items as $item) {
-                $item->valueType = self::substituteAliases($item->valueType, $aliases);
+                $newItems[] = new ObjectShapeItemNode(
+                    $item->keyName,
+                    $item->optional,
+                    self::substituteAliases($item->valueType, $aliases)
+                );
             }
 
-            return $node;
+            return new ObjectShapeNode($newItems);
         }
 
         return $node;

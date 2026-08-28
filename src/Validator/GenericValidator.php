@@ -11,7 +11,9 @@ use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\ClassNameValidator;
 use TypePHP\Internal\Config;
 use TypePHP\Internal\ErrorFactory;
@@ -141,13 +143,22 @@ final class GenericValidator implements TypeValidatorInterface
             }
         } elseif ($targetType instanceof ArrayShapeNode) {
             $validKeys = [];
+            $nextAutoIndex = 0;
+
             foreach ($targetType->items as $item) {
                 if ($item->keyName instanceof ConstExprStringNode) {
                     $validKeys[] = $item->keyName->value;
                 } elseif ($item->keyName instanceof IdentifierTypeNode) {
                     $validKeys[] = $item->keyName->name;
                 } elseif ($item->keyName instanceof ConstExprIntegerNode) {
-                    $validKeys[] = (int) $item->keyName->value;
+                    $key = (int) $item->keyName->value;
+                    $validKeys[] = $key;
+                    $nextAutoIndex = max($nextAutoIndex, $key + 1);
+                } elseif ($item->keyName !== null) {
+                    $validKeys[] = (string) $item->keyName;
+                } else {
+                    $validKeys[] = $nextAutoIndex;
+                    $nextAutoIndex++;
                 }
             }
 
@@ -348,13 +359,50 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         $targetClassNode = $node->genericTypes[0] ?? null;
-        if ($targetClassNode instanceof IdentifierTypeNode) {
-            $targetName = $targetClassNode->name;
+        if ($targetClassNode === null) {
+            return null;
+        }
+
+        return $this->validateClassStringBound($value, $targetClassNode, $context);
+    }
+
+    private function validateClassStringBound(string $value, TypeNode $targetNode, string $context): ?ErrorMessage
+    {
+        if ($targetNode instanceof IdentifierTypeNode) {
+            $targetName = $targetNode->name;
+            $lower = strtolower($targetName);
+            if ($lower === 'object' || $lower === 'mixed') {
+                return null;
+            }
+
             if (class_exists($targetName) || interface_exists($targetName) || trait_exists($targetName) || enum_exists($targetName)) {
                 if (! is_a($value, $targetName, allow_string: true)) {
                     return ErrorFactory::createError($context . ' must be a class-string of ' . $targetName . ", '$value' given");
                 }
             }
+
+            return null;
+        }
+
+        if ($targetNode instanceof UnionTypeNode) {
+            foreach ($targetNode->types as $unionType) {
+                if ($this->validateClassStringBound($value, $unionType, $context) === null) {
+                    return null;
+                }
+            }
+
+            return ErrorFactory::createError($context . ' must be a class-string of ' . (string) $targetNode . ", '$value' given");
+        }
+
+        if ($targetNode instanceof IntersectionTypeNode) {
+            foreach ($targetNode->types as $intersectionType) {
+                $err = $this->validateClassStringBound($value, $intersectionType, $context);
+                if ($err !== null) {
+                    return $err;
+                }
+            }
+
+            return null;
         }
 
         return null;
