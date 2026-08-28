@@ -46,7 +46,8 @@ describe('PathMatcher Unit Tests', function () {
 
         test('returns unchanged path when no dots or traversals exist', function () {
             expect(PathMatcher::canonicalizePath('src/Services/UserService.php'))
-                ->toBe('src/Services/UserService.php');
+                ->toBe('src/Services/UserService.php')
+            ;
         });
 
         test('collapses relative directory traversals (..) and current directory dots (.)', function () {

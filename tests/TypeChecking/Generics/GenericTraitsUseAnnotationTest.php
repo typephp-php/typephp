@@ -15,7 +15,9 @@ trait GenericTraitWithMethodTemplate
 {
     /**
      * @template T of object
+     *
      * @param T $item
+     *
      * @return T
      */
     public function recordEvent(object $item): object
@@ -37,8 +39,9 @@ describe('Generic Traits with @use, @template-use, and @phpstan-use Annotations'
             expect(TypePHP::getGenericType($service))->toBe(Dog::class);
 
             expect($service->logItem(new Dog()))->toBeTrue();
-            expect(fn() => $service->logItem(new Car()))
-                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Domain\Dog');
+            expect(fn () => $service->logItem(new Car()))
+                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Domain\Dog')
+            ;
         });
 
         test('pops call stack frame cleanly when executing generic trait method from class', function () {
@@ -49,7 +52,7 @@ describe('Generic Traits with @use, @template-use, and @phpstan-use Annotations'
 
             $service->recordEvent($dog);
 
-            $ref = new \ReflectionClass(TemplateManager::class);
+            $ref = new ReflectionClass(TemplateManager::class);
             $callStackProp = $ref->getProperty('callStackBindings');
             $bindings = $callStackProp->getValue();
 
@@ -67,8 +70,9 @@ describe('Generic Traits with @use, @template-use, and @phpstan-use Annotations'
             expect(TypePHP::getGenericType($service))->toBe(Dog::class);
 
             expect($service->logItem(new Dog()))->toBeTrue();
-            expect(fn() => $service->logItem(new Car()))
-                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Domain\Dog');
+            expect(fn () => $service->logItem(new Car()))
+                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Domain\Dog')
+            ;
         });
 
         test('pre-binds generic template T with single-line docblock (/** @use Trait<T> */ use Trait;)', function () {
@@ -77,8 +81,9 @@ describe('Generic Traits with @use, @template-use, and @phpstan-use Annotations'
             expect(TypePHP::getGenericType($service))->toBe(Dog::class);
 
             expect($service->logItem(new Dog()))->toBeTrue();
-            expect(fn() => $service->logItem(new Car()))
-                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Domain\Dog');
+            expect(fn () => $service->logItem(new Car()))
+                ->toThrow(TypeError::class, 'must be of type TypePHP\Tests\Fixtures\Domain\Dog')
+            ;
         });
     });
 });
