@@ -267,7 +267,8 @@ describe('Variadic By-Reference with Array Unpacking (&...$args with ...$data)',
             ;
 
             expect($c1)->toBe(100)
-                ->and($c2)->toBe(-50);
+                ->and($c2)->toBe(-50)
+            ;
         });
     });
 });

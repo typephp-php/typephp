@@ -44,6 +44,7 @@ describe('Array Destructuring Contracts (list() & [$a, $b] = $data)', function (
     test('enforces mixed @phpstan-var and @var annotations on array destructuring', function () {
         /**
          * @phpstan-var positive-int $id
+         *
          * @var non-empty-string $name
          */
         [$id, $name] = [10, 'Alice'];
@@ -54,6 +55,7 @@ describe('Array Destructuring Contracts (list() & [$a, $b] = $data)', function (
         expect(function () {
             /**
              * @phpstan-var positive-int $id
+             *
              * @var non-empty-string $name
              */
             [$id, $name] = [10, ''];

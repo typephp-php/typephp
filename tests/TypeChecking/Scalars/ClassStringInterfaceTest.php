@@ -20,30 +20,33 @@ describe('class-string<Interface> Subtype Validation', function () {
 
     test('accepts concrete class string implementing the target interface', function () {
         expect(ClassStringFactoryContainer::makeCountable(CountableArrayAccess::class))
-            ->toBe(CountableArrayAccess::class);
+            ->toBe(CountableArrayAccess::class)
+        ;
     });
 
     test('accepts the interface string itself', function () {
         expect(ClassStringFactoryContainer::makeCountable(Countable::class))
-            ->toBe(Countable::class);
+            ->toBe(Countable::class)
+        ;
     });
 
     test('throws TypeError when class string does not implement the target interface', function () {
-        expect(fn() => ClassStringFactoryContainer::makeCountable(Car::class))
-            ->toThrow(TypeError::class, 'must be a class-string of Countable');
+        expect(fn () => ClassStringFactoryContainer::makeCountable(Car::class))
+            ->toThrow(TypeError::class, 'must be a class-string of Countable')
+        ;
     });
 
     test('accepts Dog or Cat class-string and rejects Car class-string in class-string<Dog|Cat>', function () {
         expect(testUnionClassStringFunction(Dog::class))->toBe(Dog::class);
         expect(testUnionClassStringFunction(Cat::class))->toBe(Cat::class);
 
-        expect(fn() => testUnionClassStringFunction(Car::class))
-            ->toThrow(TypeError::class, 'must be a class-string of');
+        expect(fn () => testUnionClassStringFunction(Car::class))
+            ->toThrow(TypeError::class, 'must be a class-string of')
+        ;
     });
 
-
     test('accepts anonymous class implementing interface for class-string<Interface>', function () {
-        $anonCountable = new class() implements Countable {
+        $anonCountable = new class () implements Countable {
             public function count(): int
             {
                 return 0;
@@ -51,6 +54,7 @@ describe('class-string<Interface> Subtype Validation', function () {
         };
 
         expect(ClassStringFactoryContainer::makeCountable($anonCountable::class))
-            ->toBe($anonCountable::class);
+            ->toBe($anonCountable::class)
+        ;
     });
 });
