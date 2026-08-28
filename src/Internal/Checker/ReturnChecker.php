@@ -106,20 +106,23 @@ final class ReturnChecker
         }
 
         $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : '');
-        $cacheKey = $function . '|' . $actualClassName;
-
-        if (isset(self::$effectiveFunctionCache[$cacheKey])) {
-            return self::$effectiveFunctionCache[$cacheKey];
+        if ($actualClassName === '') {
+            return $function;
         }
 
         [$classOrTrait, $methodName] = explode('::', $function, 2);
 
-        $effectiveFunction = ($actualClassName !== '' && $actualClassName !== $classOrTrait)
+        $cacheKey = $function . '|' . $actualClassName;
+        if (isset(self::$effectiveFunctionCache[$cacheKey])) {
+            return self::$effectiveFunctionCache[$cacheKey];
+        }
+
+        $effectiveFunction = ($actualClassName !== $classOrTrait)
             ? $actualClassName . '::' . $methodName
             : $function;
 
         if ($thisObj !== null) {
-            $targetClass = $actualClassName !== '' ? $actualClassName : $classOrTrait;
+            $targetClass = $actualClassName;
             $traitAliases = HierarchyResolver::getTraitAliases($targetClass);
 
             if (\count($traitAliases) > 0) {
@@ -163,8 +166,11 @@ final class ReturnChecker
         TypeValidatorRegistry $registry,
         callable $wrapIterableCallback
     ): mixed {
-        $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
-        if (! $isMagicCall || ! Config::isMagicMethodsEnabled()) {
+        if (! Config::isMagicMethodsEnabled()) {
+            return null;
+        }
+
+        if (! str_ends_with($effectiveFunction, '::__call') && ! str_ends_with($effectiveFunction, '::__callStatic')) {
             return null;
         }
 

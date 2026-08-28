@@ -21,6 +21,7 @@ use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
+use TypePHP\Internal\Checker\InlineChecker;
 use TypePHP\Internal\Config;
 use TypePHP\Internal\StubManager;
 use TypePHP\Resolver\SpecialTypeResolver;
@@ -68,6 +69,7 @@ final class ContractParser
         self::$propertyCache = [];
         self::$magicMethodCache = [];
         self::$classLevelDocCache = [];
+        InlineChecker::reset();
         DocblockExtractor::reset();
         FileFilter::reset();
         TypeValidatorRegistry::reset();

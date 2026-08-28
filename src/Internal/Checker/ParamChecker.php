@@ -49,14 +49,17 @@ final class ParamChecker
         string $function,
         array $vars,
         object|string|null $thisOrClass,
-        TypeValidatorRegistry $registry
+        TypeValidatorRegistry $registry,
+        string $effectiveFunction = ''
     ): ?ErrorMessage {
         if (! Config::isParamsEnabled()) {
             return null;
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $effectiveFunction = self::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+        if ($effectiveFunction === '') {
+            $effectiveFunction = self::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+        }
 
         $magicError = self::handleMagicCall($effectiveFunction, $vars, $thisObj, $registry);
         if ($magicError !== null) {
@@ -140,20 +143,23 @@ final class ParamChecker
         }
 
         $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : '');
-        $cacheKey = $function . '|' . $actualClassName;
-
-        if (isset(self::$effectiveFunctionCache[$cacheKey])) {
-            return self::$effectiveFunctionCache[$cacheKey];
+        if ($actualClassName === '') {
+            return $function;
         }
 
         [$classOrTrait, $methodName] = explode('::', $function, 2);
 
-        $effectiveFunction = ($actualClassName !== '' && $actualClassName !== $classOrTrait)
+        $cacheKey = $function . '|' . $actualClassName;
+        if (isset(self::$effectiveFunctionCache[$cacheKey])) {
+            return self::$effectiveFunctionCache[$cacheKey];
+        }
+
+        $effectiveFunction = ($actualClassName !== $classOrTrait)
             ? $actualClassName . '::' . $methodName
             : $function;
 
         if ($thisObj !== null) {
-            $targetClass = $actualClassName !== '' ? $actualClassName : $classOrTrait;
+            $targetClass = $actualClassName;
             $traitAliases = HierarchyResolver::getTraitAliases($targetClass);
 
             if (\count($traitAliases) > 0) {
@@ -195,8 +201,11 @@ final class ParamChecker
         ?object $thisObj,
         TypeValidatorRegistry $registry
     ): ?ErrorMessage {
-        $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
-        if (! $isMagicCall || ! Config::isMagicMethodsEnabled()) {
+        if (! Config::isMagicMethodsEnabled()) {
+            return null;
+        }
+
+        if (! str_ends_with($effectiveFunction, '::__call') && ! str_ends_with($effectiveFunction, '::__callStatic')) {
             return null;
         }
 

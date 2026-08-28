@@ -14,7 +14,6 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use PHPStan\PhpDocParser\Lexer\Lexer;
 use PHPStan\PhpDocParser\Parser\ConstExprParser;
-use PHPStan\PhpDocParser\Parser\PhpDocParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
@@ -49,6 +48,20 @@ final class TemplateManager
     private static array $callStackBindings = [];
 
     /**
+     * Cache for resolved hierarchy templates and variances per class name.
+     *
+     * @var array<string, array{0: array<string, TemplateTagValueNode>, 1: array<string, string>}>
+     */
+    private static array $classHierarchyTemplatesCache = [];
+
+    /**
+     * Cache for inherited template bindings per class name.
+     *
+     * @var array<string, array<string, TypeNode>>
+     */
+    private static array $classInheritedBindingsCache = [];
+
+    /**
      * Temporary storage for an original object instance being cloned.
      */
     public static ?object $pendingCloneSource = null;
@@ -60,6 +73,8 @@ final class TemplateManager
     {
         self::$instanceTemplateBindings = null;
         self::$callStackBindings = [];
+        self::$classHierarchyTemplatesCache = [];
+        self::$classInheritedBindingsCache = [];
         self::$pendingCloneSource = null;
     }
 
@@ -170,14 +185,12 @@ final class TemplateManager
 
         try {
             $stubDoc = StubManager::getClassDoc($className);
+            /** @var class-string<object> $className */
             $ref = new \ReflectionClass($className);
             $classDoc = $stubDoc ?? $ref->getDocComment();
 
             if ($classDoc !== false && $classDoc !== null) {
-                [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
-
-                $classTokens = new TokenIterator($lexer->tokenize($classDoc));
-                $classPhpDocNode = $phpDocParser->parse($classTokens);
+                $classPhpDocNode = DocblockExtractor::parseDocString($classDoc);
 
                 return DocblockExtractor::extractTemplateVariances($classPhpDocNode);
             }
@@ -278,6 +291,7 @@ final class TemplateManager
         self::resolveInheritedTemplates($instance, $className);
 
         try {
+            /** @var class-string<object> $className */
             $ref = new \ReflectionClass($className);
             [$templates, $classVariances] = self::collectHierarchyTemplatesAndVariances($ref);
 
@@ -304,9 +318,12 @@ final class TemplateManager
      */
     private static function collectHierarchyTemplatesAndVariances(\ReflectionClass $ref): array
     {
-        $classHierarchy = HierarchyResolver::getClassHierarchy($ref);
-        [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
+        $className = $ref->getName();
+        if (isset(self::$classHierarchyTemplatesCache[$className])) {
+            return self::$classHierarchyTemplatesCache[$className];
+        }
 
+        $classHierarchy = HierarchyResolver::getClassHierarchy($ref);
         $templates = [];
         $classVariances = [];
 
@@ -319,9 +336,7 @@ final class TemplateManager
                 continue;
             }
 
-            $classTokens = new TokenIterator($lexer->tokenize($classDoc));
-            $classPhpDocNode = $phpDocParser->parse($classTokens);
-
+            $classPhpDocNode = DocblockExtractor::parseDocString($classDoc);
             $hierTemplates = DocblockExtractor::extractTemplates($classPhpDocNode);
             $hierVariances = DocblockExtractor::extractTemplateVariances($classPhpDocNode);
 
@@ -337,7 +352,7 @@ final class TemplateManager
             }
         }
 
-        return [$templates, $classVariances];
+        return self::$classHierarchyTemplatesCache[$className] = [$templates, $classVariances];
     }
 
     /**
@@ -413,10 +428,51 @@ final class TemplateManager
     {
         $actualClassName = \get_class($instance);
 
+        if (isset(self::$classInheritedBindingsCache[$actualClassName])) {
+            if (self::$instanceTemplateBindings === null) {
+                self::$instanceTemplateBindings = new WeakMap();
+            }
+
+            /** @var array<string, TypeNode> $cachedBindings */
+            $cachedBindings = self::$classInheritedBindingsCache[$actualClassName];
+            if (\count($cachedBindings) > 0) {
+                /** @var array<string, TypeNode> $existing */
+                $existing = self::$instanceTemplateBindings[$instance] ?? [];
+                self::$instanceTemplateBindings[$instance] = [...$cachedBindings, ...$existing];
+            }
+
+            return;
+        }
+
+        $resolvedClassBindings = self::computeClassInheritedBindings($actualClassName);
+        self::$classInheritedBindingsCache[$actualClassName] = $resolvedClassBindings;
+
+        if (\count($resolvedClassBindings) > 0) {
+            if (self::$instanceTemplateBindings === null) {
+                self::$instanceTemplateBindings = new WeakMap();
+            }
+            /** @var array<string, TypeNode> $existing */
+            $existing = self::$instanceTemplateBindings[$instance] ?? [];
+            self::$instanceTemplateBindings[$instance] = [...$resolvedClassBindings, ...$existing];
+        }
+    }
+
+    /**
+     * @return array<string, TypeNode>
+     */
+    private static function computeClassInheritedBindings(string $actualClassName): array
+    {
+        /** @var array<string, TypeNode> $bindings */
+        $bindings = [];
+
+        if (! class_exists($actualClassName) && ! interface_exists($actualClassName) && ! trait_exists($actualClassName)) {
+            return [];
+        }
+
         try {
+            /** @var class-string<object> $actualClassName */
             $ref = new \ReflectionClass($actualClassName);
             $classHierarchy = HierarchyResolver::getClassHierarchy($ref);
-            [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
 
             foreach ($classHierarchy as $hierClass) {
                 $fileName = $hierClass->getFileName();
@@ -430,8 +486,7 @@ final class TemplateManager
                 $docsToInspect = self::collectDocsForClassHierarchyMember($hierClass);
 
                 foreach ($docsToInspect as $rawDoc) {
-                    $classTokens = new TokenIterator($lexer->tokenize($rawDoc));
-                    $classPhpDocNode = $phpDocParser->parse($classTokens);
+                    $classPhpDocNode = DocblockExtractor::parseDocString($rawDoc);
 
                     $declaredTemplateNames = [];
                     foreach ($classPhpDocNode->getTags() as $tag) {
@@ -445,13 +500,76 @@ final class TemplateManager
                     foreach ($inheritedTags as $inheritedTag) {
                         $genericTypeNode = $inheritedTag->type;
                         if ($genericTypeNode instanceof GenericTypeNode) {
-                            self::bindInheritedGenericTag($genericTypeNode, $hierClass, $declaredTemplateNames, $instance, $actualClassName);
+                            self::collectInheritedGenericTagBindings($genericTypeNode, $hierClass, $declaredTemplateNames, $actualClassName, $bindings);
                         }
                     }
                 }
             }
         } catch (\Throwable $e) {
             // Silently ignore reflection or parsing errors
+        }
+
+        return $bindings;
+    }
+
+    /**
+     * @param array<string, bool> $declaredTemplateNames
+     * @param array<string, TypeNode> $bindings
+     * @param \ReflectionClass<object> $hierClass
+     */
+    private static function collectInheritedGenericTagBindings(
+        GenericTypeNode $genericTypeNode,
+        \ReflectionClass $hierClass,
+        array $declaredTemplateNames,
+        string $actualClassName,
+        array &$bindings
+    ): void {
+        $parentName = SpecialTypeResolver::resolveFqcn($genericTypeNode->type->name, $hierClass);
+        $isHierarchyMember = is_a($actualClassName, $parentName, true) || trait_exists($parentName);
+
+        if (! ClassNameValidator::isValid($parentName) || ! $isHierarchyMember) {
+            return;
+        }
+
+        if (! class_exists($parentName) && ! interface_exists($parentName) && ! trait_exists($parentName)) {
+            return;
+        }
+
+        try {
+            $stubDoc = StubManager::getClassDoc($parentName);
+            /** @var class-string<object> $parentName */
+            $parentRef = new \ReflectionClass($parentName);
+            $parentDoc = $stubDoc ?? $parentRef->getDocComment();
+
+            if ($parentDoc === false || $parentDoc === null) {
+                return;
+            }
+
+            $parentPhpDocNode = DocblockExtractor::parseDocString($parentDoc);
+            $parentTemplateNames = array_keys(DocblockExtractor::extractTemplates($parentPhpDocNode));
+
+            foreach ($parentTemplateNames as $idx => $templateName) {
+                if (isset($genericTypeNode->genericTypes[$idx])) {
+                    $resolved = self::resolveTypeNodeAst($genericTypeNode->genericTypes[$idx], $hierClass);
+
+                    if ($resolved instanceof IdentifierTypeNode) {
+                        $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($resolved->name);
+                        $isRealType = class_exists($resolved->name) || interface_exists($resolved->name) || enum_exists($resolved->name) || trait_exists($resolved->name);
+
+                        if (! $isBuiltIn && ! $isRealType) {
+                            continue;
+                        }
+
+                        if (isset($declaredTemplateNames[$resolved->name])) {
+                            continue;
+                        }
+                    }
+
+                    $bindings[$templateName] = $resolved;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore reflection errors
         }
     }
 
@@ -475,76 +593,6 @@ final class TemplateManager
         }
 
         return $docs;
-    }
-
-    /**
-     * @param \ReflectionClass<object> $hierClass
-     * @param array<string, bool> $declaredTemplateNames
-     */
-    private static function bindInheritedGenericTag(
-        GenericTypeNode $genericTypeNode,
-        \ReflectionClass $hierClass,
-        array $declaredTemplateNames,
-        object $instance,
-        string $actualClassName
-    ): void {
-        $parentName = SpecialTypeResolver::resolveFqcn($genericTypeNode->type->name, $hierClass);
-        $isHierarchyMember = is_a($actualClassName, $parentName, true) || trait_exists($parentName);
-
-        if (! ClassNameValidator::isValid($parentName) || ! $isHierarchyMember) {
-            return;
-        }
-
-        if (! class_exists($parentName) && ! interface_exists($parentName) && ! trait_exists($parentName)) {
-            return;
-        }
-
-        try {
-            $stubDoc = StubManager::getClassDoc($parentName);
-            $parentRef = new \ReflectionClass($parentName);
-            $parentDoc = $stubDoc ?? $parentRef->getDocComment();
-
-            if ($parentDoc === false || $parentDoc === null) {
-                return;
-            }
-
-            [$phpDocParser, $lexer] = self::getPhpDocParserComponents();
-            $parentTokens = new TokenIterator($lexer->tokenize($parentDoc));
-            $parentPhpDocNode = $phpDocParser->parse($parentTokens);
-
-            $parentTemplateNames = array_keys(DocblockExtractor::extractTemplates($parentPhpDocNode));
-
-            if (self::$instanceTemplateBindings === null) {
-                self::$instanceTemplateBindings = new WeakMap();
-            }
-
-            $bindings = self::$instanceTemplateBindings[$instance] ?? [];
-
-            foreach ($parentTemplateNames as $idx => $templateName) {
-                if (isset($genericTypeNode->genericTypes[$idx])) {
-                    $resolved = self::resolveTypeNodeAst($genericTypeNode->genericTypes[$idx], $hierClass);
-
-                    if ($resolved instanceof IdentifierTypeNode) {
-                        $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($resolved->name);
-                        $isRealType = class_exists($resolved->name) || interface_exists($resolved->name) || enum_exists($resolved->name) || trait_exists($resolved->name);
-
-                        if (! $isBuiltIn && ! $isRealType) {
-                            continue;
-                        }
-
-                        if (isset($declaredTemplateNames[$resolved->name])) {
-                            continue;
-                        }
-                    }
-
-                    $bindings[$templateName] = $resolved;
-                }
-            }
-
-            self::$instanceTemplateBindings[$instance] = $bindings;
-        } catch (\Throwable $e) {
-            // Silently ignore reflection errors
-        }
     }
 
     /**
@@ -836,29 +884,6 @@ final class TemplateManager
         }
 
         return $n;
-    }
-
-    /**
-     * Returns shared static instances of PHPStan's PhpDocParser and Lexer.
-     *
-     * @return array{PhpDocParser, Lexer}
-     */
-    private static function getPhpDocParserComponents(): array
-    {
-        /** @var PhpDocParser|null $phpDocParser */
-        static $phpDocParser = null;
-        /** @var Lexer|null $lexer */
-        static $lexer = null;
-
-        if ($phpDocParser === null || $lexer === null) {
-            $config = new ParserConfig(usedAttributes: []);
-            $lexer = new Lexer($config);
-            $constExprParser = new ConstExprParser($config);
-            $typeParser = new TypeParser($config, $constExprParser);
-            $phpDocParser = new PhpDocParser($config, $typeParser, $constExprParser);
-        }
-
-        return [$phpDocParser, $lexer];
     }
 
     /**

@@ -4,4 +4,5 @@
 /manual-tests
 composer.lock
 index.php
+benchmark.php
 .php-cs-fixer.cache

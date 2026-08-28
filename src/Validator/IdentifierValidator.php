@@ -75,7 +75,6 @@ final class IdentifierValidator implements TypeValidatorInterface
             'falsy', 'falsey' => (bool) $value === false,
             'open-resource' => \is_resource($value),
             'closed-resource' => ! \is_resource($value) && get_debug_type($value) === 'resource (closed)',
-
             default => $this->validateClassOrIgnore($value, $name),
         };
 
