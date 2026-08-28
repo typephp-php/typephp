@@ -21,6 +21,8 @@ use TypePHP\Internal\ErrorMessage;
  */
 final class TypeValidatorRegistry
 {
+    private IdentifierValidator $identifierValidator;
+
     /**
      * @var array<string, TypeValidatorInterface>
      */
@@ -43,8 +45,9 @@ final class TypeValidatorRegistry
 
     public function __construct()
     {
+        $this->identifierValidator = new IdentifierValidator();
         $this->validators = [
-            IdentifierTypeNode::class => new IdentifierValidator(),
+            IdentifierTypeNode::class => $this->identifierValidator,
             GenericTypeNode::class => new GenericValidator(),
             UnionTypeNode::class => new UnionValidator(),
             IntersectionTypeNode::class => new IntersectionValidator(),
@@ -59,7 +62,7 @@ final class TypeValidatorRegistry
     /**
      * Validates a value against an AST TypeNode and returns an ErrorMessage on failure or null on success.
      */
-    public function validate(mixed $value, TypeNode $node, string $context): ?ErrorMessage
+    public function validate(mixed $value, TypeNode $node, string $context = ''): ?ErrorMessage
     {
         $isObj = \is_object($value);
         $nodeKey = null;
@@ -74,12 +77,15 @@ final class TypeValidatorRegistry
             }
         }
 
-        $validator = $this->validators[\get_class($node)] ?? null;
-        if ($validator === null) {
-            return null;
+        if ($node instanceof IdentifierTypeNode) {
+            $err = $this->identifierValidator->validate($value, $node, $context, $this);
+        } else {
+            $validator = $this->validators[\get_class($node)] ?? null;
+            if ($validator === null) {
+                return null;
+            }
+            $err = $validator->validate($value, $node, $context, $this);
         }
-
-        $err = $validator->validate($value, $node, $context, $this);
 
         if ($err === null && $isObj && $nodeKey !== null) {
             $cache = self::$validatedObjectCache[$value] ?? [];

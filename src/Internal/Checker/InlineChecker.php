@@ -43,6 +43,22 @@ final class InlineChecker
     private static array $parsedTypeNodeCache = [];
 
     /**
+     * In-memory cache for fully resolved type nodes per type string and file.
+     *
+     * @var array<string, TypeNode>
+     */
+    private static array $resolvedTypeNodeCache = [];
+
+    /**
+     * Resets internal type node caches. Useful for test isolation.
+     */
+    public static function reset(): void
+    {
+        self::$parsedTypeNodeCache = [];
+        self::$resolvedTypeNodeCache = [];
+    }
+
+    /**
      * Fast lookup set for scalar refinement types.
      */
     private const SCALAR_TYPES = [
@@ -103,14 +119,20 @@ final class InlineChecker
         }
 
         try {
-            $typeString = DocblockNormalizer::normalize($typeString);
-            $typeNode = self::parseTypeString($typeString);
+            $cacheKey = $typeString . '|' . $file;
+            if (isset(self::$resolvedTypeNodeCache[$cacheKey])) {
+                $typeNode = self::$resolvedTypeNodeCache[$cacheKey];
+            } else {
+                $normalized = DocblockNormalizer::normalize($typeString);
+                $typeNode = self::parseTypeString($normalized);
 
-            if ($file !== '') {
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+                if ($file !== '') {
+                    $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+                }
+
+                $typeNode = self::resolveCallerContext($typeNode);
+                self::$resolvedTypeNodeCache[$cacheKey] = $typeNode;
             }
-
-            $typeNode = self::resolveCallerContext($typeNode);
 
             if (! self::shouldValidateType($typeNode, $config)) {
                 return $value;
