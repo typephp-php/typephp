@@ -77,6 +77,13 @@ describe('TemplateManager Unit Tests', function () {
             TemplateManager::bindTemplate('testFunc', null, 'T', new IdentifierTypeNode('string'));
             expect(TemplateManager::isBound('testFunc', null, 'T'))->toBeTrue();
         });
+
+        test('resolveInheritedTemplates returns safely when class does not exist in reflection', function () {
+            $anonObj = new stdClass();
+            TemplateManager::resolveInheritedTemplates($anonObj, 'NonExistentClass12345');
+
+            expect(TemplateManager::getBoundTemplatesForInstance($anonObj))->toBeEmpty();
+        });
     });
 
     describe('Instance WeakMap Bindings', function () {
@@ -234,12 +241,5 @@ describe('TemplateManager Unit Tests', function () {
                 ->and($variances['T'])->toBe('covariant')
             ;
         });
-    });
-
-    test('resolveInheritedTemplates returns safely when class does not exist in reflection', function () {
-        $anonObj = new stdClass();
-        TemplateManager::resolveInheritedTemplates($anonObj, 'NonExistentClass12345');
-
-        expect(TemplateManager::getBoundTemplatesForInstance($anonObj))->toBeEmpty();
     });
 });
