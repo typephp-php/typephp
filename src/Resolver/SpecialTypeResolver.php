@@ -947,6 +947,20 @@ final class SpecialTypeResolver
             return $imports[$name];
         }
 
+        if (class_exists($name) || interface_exists($name) || trait_exists($name) || enum_exists($name)) {
+            return $name;
+        }
+
+        if (str_contains($name, '\\')) {
+            [$firstPart, $subPart] = explode('\\', $name, 2);
+            if (isset($imports[$firstPart])) {
+                $candidate = $imports[$firstPart] . '\\' . $subPart;
+                if (class_exists($candidate) || interface_exists($candidate) || trait_exists($candidate) || enum_exists($candidate)) {
+                    return $candidate;
+                }
+            }
+        }
+
         $namespace = match (true) {
             $ref instanceof \ReflectionClass => $ref->getNamespaceName(),
             $ref instanceof \ReflectionMethod => $ref->getDeclaringClass()->getNamespaceName(),
@@ -958,10 +972,6 @@ final class SpecialTypeResolver
             if (class_exists($namespacedClass) || interface_exists($namespacedClass) || trait_exists($namespacedClass) || enum_exists($namespacedClass)) {
                 return $namespacedClass;
             }
-        }
-
-        if (class_exists($name) || interface_exists($name) || trait_exists($name) || enum_exists($name)) {
-            return $name;
         }
 
         return $name;
@@ -991,16 +1001,26 @@ final class SpecialTypeResolver
             return $imports[$name];
         }
 
+        if (class_exists($name) || interface_exists($name) || trait_exists($name) || enum_exists($name)) {
+            return $name;
+        }
+
+        if (str_contains($name, '\\')) {
+            [$firstPart, $subPart] = explode('\\', $name, 2);
+            if (isset($imports[$firstPart])) {
+                $candidate = $imports[$firstPart] . '\\' . $subPart;
+                if (class_exists($candidate) || interface_exists($candidate) || trait_exists($candidate) || enum_exists($candidate)) {
+                    return $candidate;
+                }
+            }
+        }
+
         $namespace = self::getNamespaceFromFile($file);
         if ($namespace !== '') {
             $namespacedClass = $namespace . '\\' . $name;
             if (class_exists($namespacedClass) || interface_exists($namespacedClass) || trait_exists($namespacedClass) || enum_exists($namespacedClass)) {
                 return $namespacedClass;
             }
-        }
-
-        if (class_exists($name) || interface_exists($name) || trait_exists($name) || enum_exists($name)) {
-            return $name;
         }
 
         return $name;
