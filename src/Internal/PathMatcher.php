@@ -71,7 +71,7 @@ final class PathMatcher
 
     /**
      * Collapses relative directory traversals (..) into canonical paths.
-     * Preserves leading root slashes and root boundaries.
+     * Preserves leading root slashes, Windows drive letters, and root boundaries.
      */
     public static function canonicalizePath(string $path): string
     {
@@ -95,9 +95,12 @@ final class PathMatcher
             }
 
             if ($part === '..') {
-                if (\count($absolutes) > 0 && end($absolutes) !== '..' && end($absolutes) !== '') {
+                $last = end($absolutes);
+                $isDriveLetter = \is_string($last) && preg_match('/^[a-zA-Z]:$/', $last) === 1;
+
+                if (\count($absolutes) > 0 && $last !== '..' && $last !== '' && ! $isDriveLetter) {
                     array_pop($absolutes);
-                } elseif (\count($absolutes) === 0 || end($absolutes) === '..') {
+                } elseif (\count($absolutes) === 0 || $last === '..') {
                     $absolutes[] = '..';
                 }
             } else {

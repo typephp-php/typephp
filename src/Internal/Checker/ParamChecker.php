@@ -133,7 +133,7 @@ final class ParamChecker
     /**
      * Resolves the actual runtime class name vs trait name with O(1) memoization.
      */
-    private static function resolveEffectiveFunction(string $function, object|string|null $thisOrClass, ?object $thisObj): string
+    public static function resolveEffectiveFunction(string $function, object|string|null $thisOrClass, ?object $thisObj = null): string
     {
         if (! str_contains($function, '::')) {
             return $function;

@@ -37,10 +37,16 @@ describe('PathMatcher Unit Tests', function () {
     });
 
     describe('canonicalizePath()', function () {
+        test('preserves Windows drive letters when collapsing traversals at drive root', function () {
+            expect(PathMatcher::canonicalizePath('C:/project/../Service.php'))->toBe('C:/Service.php');
+
+            expect(PathMatcher::canonicalizePath('C:/../App.php'))->toBe('C:/App.php');
+            expect(PathMatcher::canonicalizePath('C:/project/../../App.php'))->toBe('C:/App.php');
+        });
+
         test('returns unchanged path when no dots or traversals exist', function () {
             expect(PathMatcher::canonicalizePath('src/Services/UserService.php'))
-                ->toBe('src/Services/UserService.php')
-            ;
+                ->toBe('src/Services/UserService.php');
         });
 
         test('collapses relative directory traversals (..) and current directory dots (.)', function () {

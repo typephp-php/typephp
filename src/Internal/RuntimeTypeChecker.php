@@ -78,21 +78,24 @@ final class RuntimeTypeChecker
             return null;
         }
 
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
         $err = self::checkParams($function, $vars, $thisOrClass);
 
-        $contract = ContractParser::parse($function);
+        $contract = ContractParser::parse($effectiveFunction);
         $methodTemplates = $contract['templates'] ?? [];
         $hasMethodTemplates = \count($methodTemplates) > 0;
 
         if ($err !== null) {
             if ($hasMethodTemplates) {
-                TemplateManager::popCallFrame($function);
+                TemplateManager::popCallFrame($effectiveFunction);
             }
 
             return $err;
         }
 
-        return $hasMethodTemplates ? new ScopeCleaner($function) : null;
+        return $hasMethodTemplates ? new ScopeCleaner($effectiveFunction) : null;
     }
 
     /**
