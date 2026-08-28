@@ -63,6 +63,28 @@ describe('ReturnChecker Unit Tests', function () {
                 Config::reset();
             }
         });
+
+        test('returns value cleanly when conditional return references non-existent method or class', function () {
+            $registry = new TypeValidatorRegistry();
+            $conditional = new PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode(
+                '$flag',
+                new PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode('true'),
+                new PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode('int'),
+                new PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode('string'),
+                false
+            );
+
+            $result = ReturnChecker::checkReturn(
+                'NonExistentClass123::nonExistentMethod',
+                'hello',
+                null,
+                ['otherParam' => true],
+                $registry,
+                fn () => null
+            );
+
+            expect($result)->toBe('hello');
+        });
     });
 
     describe('$this Identity Constraints', function () {

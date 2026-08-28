@@ -235,4 +235,11 @@ describe('TemplateManager Unit Tests', function () {
             ;
         });
     });
+
+    test('resolveInheritedTemplates returns safely when class does not exist in reflection', function () {
+        $anonObj = new stdClass();
+        TemplateManager::resolveInheritedTemplates($anonObj, 'NonExistentClass12345');
+
+        expect(TemplateManager::getBoundTemplatesForInstance($anonObj))->toBeEmpty();
+    });
 });
