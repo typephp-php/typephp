@@ -263,7 +263,7 @@ final class ReturnChecker
             $resolvedType = SpecialTypeResolver::resolve($resolvedType, $function, $thisObj);
         }
 
-        $resolvedType = self::resolveConditionalReturnType($resolvedType, $vars, $boundTemplates, $registry);
+        $resolvedType = self::resolveConditionalReturnType($resolvedType, $vars, $boundTemplates, $registry, $function);
 
         $err = $registry->validate($value, $resolvedType, $function . '(): Return value');
         if ($err !== null) {
@@ -301,10 +301,11 @@ final class ReturnChecker
         TypeNode $returnTypeNode,
         array $vars,
         array $boundTemplates,
-        TypeValidatorRegistry $registry
+        TypeValidatorRegistry $registry,
+        string $function = ''
     ): TypeNode {
         if ($returnTypeNode instanceof ConditionalTypeForParameterNode) {
-            return self::resolveParameterConditional($returnTypeNode, $vars, $boundTemplates, $registry);
+            return self::resolveParameterConditional($returnTypeNode, $vars, $boundTemplates, $registry, $function);
         }
 
         if ($returnTypeNode instanceof ConditionalTypeNode) {
@@ -324,10 +325,17 @@ final class ReturnChecker
         ConditionalTypeForParameterNode $node,
         array $vars,
         array $boundTemplates,
-        TypeValidatorRegistry $registry
+        TypeValidatorRegistry $registry,
+        string $function = ''
     ): TypeNode {
         $paramName = ltrim($node->parameterName, '$');
-        $paramValue = $vars[$paramName] ?? null;
+        $paramValue = null;
+
+        if (\array_key_exists($paramName, $vars)) {
+            $paramValue = $vars[$paramName];
+        } elseif (\count($vars) > 0 && $function !== '' && str_contains($function, '::')) {
+            $paramValue = self::resolveRenamedParamValue($function, $paramName, $vars);
+        }
 
         $targetErr = $registry->validate($paramValue, $node->targetType, 'condition');
         $isTargetMatch = ($targetErr === null);
@@ -338,7 +346,54 @@ final class ReturnChecker
 
         $selectedBranch = $isTargetMatch ? $node->if : $node->else;
 
-        return self::resolveConditionalReturnType($selectedBranch, $vars, $boundTemplates, $registry);
+        return self::resolveConditionalReturnType($selectedBranch, $vars, $boundTemplates, $registry, $function);
+    }
+
+    /**
+     * Disambiguates parameter value by positional index in method hierarchy when renamed in child class.
+     *
+     * @param array<int|string, mixed> $vars
+     */
+    private static function resolveRenamedParamValue(string $function, string $paramName, array $vars): mixed
+    {
+        [$className, $methodName] = explode('::', $function, 2);
+
+        if (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className) && ! enum_exists($className)) {
+            return null;
+        }
+
+        try {
+            /** @var class-string<object> $className */
+            $refClass = new \ReflectionClass($className);
+            if (! $refClass->hasMethod($methodName)) {
+                return null;
+            }
+
+            $refMethod = $refClass->getMethod($methodName);
+            $hierarchy = HierarchyResolver::getMethodHierarchy($refMethod);
+
+            $targetIndex = null;
+            foreach ($hierarchy as $hierMethod) {
+                foreach ($hierMethod->getParameters() as $idx => $p) {
+                    if ($p->getName() === $paramName) {
+                        $targetIndex = $idx;
+
+                        break 2;
+                    }
+                }
+            }
+
+            if ($targetIndex !== null) {
+                $values = array_values($vars);
+                if (\array_key_exists($targetIndex, $values)) {
+                    return $values[$targetIndex];
+                }
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore reflection errors
+        }
+
+        return null;
     }
 
     /**
