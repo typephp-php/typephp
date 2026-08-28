@@ -18,3 +18,10 @@ test('prepareException converts standard TypeError into ExactTypeError with call
 
     expect($prepared)->toBeInstanceOf(TypeError::class);
 });
+
+test('does not corrupt user string literals containing the word given in return error messages', function () {
+    $rawMsg = "getOrderDiscount(): Return value must be of type positive-int, string 'discount given to customer' given";
+    $err = ErrorFactory::createError($rawMsg);
+
+    expect($err->getMessage())->toBe("getOrderDiscount(): Return value must be of type positive-int, string 'discount given to customer' returned");
+});

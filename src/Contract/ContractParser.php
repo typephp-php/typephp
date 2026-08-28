@@ -492,7 +492,7 @@ final class ContractParser
         self::parseMethodHierarchyDocs($ref, $types, $methodTemplates, $returnType, $aliases);
 
         if ($ref->getName() === '__construct') {
-            self::applyConstructorPromotionFallback($ref, $types, $classTemplates);
+            self::applyConstructorPromotionFallback($ref, $types, $classTemplates, $aliases);
         }
 
         return [
@@ -803,9 +803,14 @@ final class ContractParser
      * @param \ReflectionMethod $ref
      * @param array<string, TypeNode> $types
      * @param array<string, TemplateTagValueNode> $classTemplates
+     * @param array<string, TypeNode> $aliases
      */
-    private static function applyConstructorPromotionFallback(\ReflectionMethod $ref, array &$types, array $classTemplates = []): void
-    {
+    private static function applyConstructorPromotionFallback(
+        \ReflectionMethod $ref,
+        array &$types,
+        array $classTemplates = [],
+        array $aliases = []
+    ): void {
         $declaringClass = $ref->getDeclaringClass();
 
         foreach ($ref->getParameters() as $p) {
@@ -821,16 +826,20 @@ final class ContractParser
                 if ($propDoc !== false && $propDoc !== null) {
                     $propType = DocblockExtractor::extractTypeFromPropertyDoc($propDoc, $paramName);
                     if ($propType !== null) {
+                        $substitutedProp = self::substituteAliases($propType, $aliases);
+                        $resolvedProp = SpecialTypeResolver::resolve($substitutedProp, $ref);
+
                         if ($p->hasType()) {
                             $nativeType = $p->getType();
                             if ($nativeType instanceof \ReflectionNamedType) {
                                 $nativeName = strtolower($nativeType->getName());
-                                $propTypeStr = strtolower((string) $propType);
+                                $propTypeStr = strtolower((string) $resolvedProp);
 
                                 if (
                                     $nativeType->isBuiltin()
                                     && ! \in_array($nativeName, ['array', 'iterable', 'mixed'], true)
                                     && ! \in_array($propTypeStr, [$nativeName, 'mixed'], true)
+                                    && ! self::isRefinementOfBuiltin($propTypeStr, $nativeName)
                                 ) {
                                     continue;
                                 }
@@ -840,24 +849,21 @@ final class ContractParser
                         $isVariadic = $p->isVariadic();
                         if (
                             $isVariadic
-                            && ! ($propType instanceof ArrayTypeNode)
-                            && ! ($propType instanceof GenericTypeNode && \in_array(strtolower($propType->type->name), ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true))
+                            && ! ($resolvedProp instanceof ArrayTypeNode)
+                            && ! ($resolvedProp instanceof GenericTypeNode && \in_array(strtolower($resolvedProp->type->name), ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true))
                         ) {
-                            $propType = new ArrayTypeNode($propType);
+                            $resolvedProp = new ArrayTypeNode($resolvedProp);
                         }
 
-                        $isTemplateType = ($propType instanceof IdentifierTypeNode && isset($classTemplates[$propType->name]));
+                        $isTemplateType = ($resolvedProp instanceof IdentifierTypeNode && isset($classTemplates[$resolvedProp->name]));
                         if (
                             Config::isRespectNativeNullabilityEnabled()
                             && self::parameterExplicitlyAllowsNull($p)
                             && ! $isTemplateType
-                            && ! self::typeContainsNull($propType)
+                            && ! self::typeContainsNull($resolvedProp)
                         ) {
-                            $propType = new NullableTypeNode($propType);
+                            $resolvedProp = new NullableTypeNode($resolvedProp);
                         }
-
-                        $substitutedProp = self::substituteAliases($propType, []);
-                        $resolvedProp = SpecialTypeResolver::resolve($substitutedProp, $ref);
 
                         if ($resolvedProp instanceof IdentifierTypeNode && strtolower($resolvedProp->name) === 'mixed') {
                             continue;
@@ -868,6 +874,20 @@ final class ContractParser
                 }
             }
         }
+    }
+
+    /**
+     * Checks if a scalar refinement type is compatible with a native PHP builtin type.
+     */
+    private static function isRefinementOfBuiltin(string $refinement, string $builtin): bool
+    {
+        return match ($builtin) {
+            'int', 'integer' => \in_array($refinement, ['positive-int', 'negative-int', 'non-positive-int', 'non-negative-int', 'non-zero-int', 'unsigned-int'], true) || str_starts_with($refinement, 'int<'),
+            'string' => \in_array($refinement, ['non-empty-string', 'numeric-string', 'lowercase-string', 'non-empty-lowercase-string', 'uppercase-string', 'non-empty-uppercase-string', 'class-string', 'interface-string', 'trait-string', 'enum-string', 'callable-string', 'literal-string', 'truthy-string', 'non-falsy-string'], true) || str_starts_with($refinement, 'class-string<'),
+            'float', 'double' => \in_array($refinement, ['positive-float', 'negative-float', 'non-positive-float', 'non-negative-float', 'non-zero-float', 'double'], true),
+            'bool', 'boolean' => \in_array($refinement, ['true', 'false', 'boolean'], true),
+            default => false,
+        };
     }
 
     /**

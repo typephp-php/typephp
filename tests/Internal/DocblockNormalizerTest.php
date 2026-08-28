@@ -68,6 +68,14 @@ describe('DocblockNormalizer', function () {
 
             expect(DocblockNormalizer::normalize($doc))->toBe($expected);
         });
+
+        test('does not double-quote already quoted class constant array shape keys', function () {
+            $docDoubleQuoted = '/** @param array{"self::KEY_ID": int, "App\Constants::ROLE": string} $payload */';
+            expect(DocblockNormalizer::normalize($docDoubleQuoted))->toBe($docDoubleQuoted);
+
+            $docSingleQuoted = "/** @param array{'self::KEY_ID': int, 'App\\Constants::ROLE': string} \$payload */";
+            expect(DocblockNormalizer::normalize($docSingleQuoted))->toBe($docSingleQuoted);
+        });
     });
 
     describe('Custom Class Shapes to Intersection Shapes', function () {

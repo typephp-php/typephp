@@ -38,7 +38,11 @@ final class ErrorFactory
     public static function createError(string $message): ErrorMessage
     {
         if (str_contains($message, 'Return value')) {
-            $message = str_replace(['null given', ' given'], ['none returned', ' returned'], $message);
+            if (str_ends_with($message, 'null given')) {
+                $message = substr($message, 0, -\strlen('null given')) . 'none returned';
+            } elseif (str_ends_with($message, ' given')) {
+                $message = substr($message, 0, -\strlen(' given')) . ' returned';
+            }
         }
 
         return new ErrorMessage($message);
