@@ -15,7 +15,8 @@ describe('Same-Namespace Resolution Priority over Global Class Names (Shopware E
         $ref = new ReflectionMethod(ErrorCollection::class, '__construct');
 
         expect(SpecialTypeResolver::resolveFqcn('Error', $ref))
-            ->toBe(Error::class);
+            ->toBe(Error::class)
+        ;
     });
 
     test('accepts TestError in ErrorCollection without global \Error TypeError', function () {

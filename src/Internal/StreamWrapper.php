@@ -206,16 +206,16 @@ final class StreamWrapper implements StreamWrapperInterface
         $isInclude = ($options & self::STREAM_OPEN_FOR_INCLUDE) !== 0;
 
         if (! $isInclude || ($mode !== 'r' && $mode !== 'rb' && $mode !== 'rt') || ! str_ends_with(strtolower($path), '.php') || ! Config::isEnabled()) {
-            return $this->openDirectHandle($path, $mode);
+            return $this->openDirectHandle($path, $mode, $options);
         }
 
         $normalizedRaw = str_replace('\\', '/', $path);
         if (! PathMatcher::mayPathBeIncluded($normalizedRaw)) {
-            return $this->openDirectHandle($path, $mode);
+            return $this->openDirectHandle($path, $mode, $options);
         }
 
         if (self::isReadOnlyCall()) {
-            return $this->openDirectHandle($path, $mode);
+            return $this->openDirectHandle($path, $mode, $options);
         }
 
         self::unregister();
@@ -257,15 +257,21 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Opens an underlying filesystem handle directly with error handler suppression.
+     * Opens an underlying filesystem handle directly with error reporting options.
      */
-    private function openDirectHandle(string $targetFile, string $mode): bool
+    private function openDirectHandle(string $targetFile, string $mode, int $options): bool
     {
+        $isInclude = ($options & self::STREAM_OPEN_FOR_INCLUDE) !== 0;
+
         self::unregister();
         /** @var resource|false $handle */
         $handle = self::silent(fn () => fopen($targetFile, $mode));
         $this->handle = $handle !== false ? $handle : null;
         self::register();
+
+        if ($this->handle === null && ! $isInclude) {
+            trigger_error("fopen({$targetFile}): Failed to open stream: No such file or directory", E_USER_WARNING);
+        }
 
         return $this->handle !== null;
     }
