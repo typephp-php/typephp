@@ -43,19 +43,11 @@ final class InlineChecker
     private static array $parsedTypeNodeCache = [];
 
     /**
-     * In-memory cache for fully resolved type nodes per type string and file.
-     *
-     * @var array<string, TypeNode>
-     */
-    private static array $resolvedTypeNodeCache = [];
-
-    /**
      * Resets internal type node caches. Useful for test isolation.
      */
     public static function reset(): void
     {
         self::$parsedTypeNodeCache = [];
-        self::$resolvedTypeNodeCache = [];
     }
 
     /**
@@ -119,20 +111,14 @@ final class InlineChecker
         }
 
         try {
-            $cacheKey = $typeString . '|' . $file;
-            if (isset(self::$resolvedTypeNodeCache[$cacheKey])) {
-                $typeNode = self::$resolvedTypeNodeCache[$cacheKey];
-            } else {
-                $normalized = DocblockNormalizer::normalize($typeString);
-                $typeNode = self::parseTypeString($normalized);
+            $normalized = DocblockNormalizer::normalize($typeString);
+            $typeNode = self::parseTypeString($normalized);
 
-                if ($file !== '') {
-                    $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
-                }
-
-                $typeNode = self::resolveCallerContext($typeNode);
-                self::$resolvedTypeNodeCache[$cacheKey] = $typeNode;
+            if ($file !== '') {
+                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
             }
+
+            $typeNode = self::resolveCallerContext($typeNode);
 
             if (! self::shouldValidateType($typeNode, $config)) {
                 return $value;
@@ -224,17 +210,21 @@ final class InlineChecker
     }
 
     /**
-     * Resolves caller class context and applies class-level type aliases to the AST.
+     * Resolves caller class context and applies class-level and method-level templates & type aliases to the AST.
      */
     private static function resolveCallerContext(TypeNode $typeNode): TypeNode
     {
         $className = null;
-        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 7);
+        $methodName = null;
+        $thisObj = null;
+        $trace = debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT, 7);
 
         foreach ($trace as $frame) {
             $classCandidate = $frame['class'] ?? null;
             if ($classCandidate !== null && ! str_starts_with($classCandidate, 'TypePHP\\Internal\\') && ! str_starts_with($classCandidate, 'TypePHP\\Wrapper\\')) {
                 $className = $classCandidate;
+                $methodName = $frame['function'];
+                $thisObj = $frame['object'] ?? null;
 
                 break;
             }
@@ -245,12 +235,25 @@ final class InlineChecker
         }
 
         try {
+            /** @var class-string<object> $className */
             $refClass = new \ReflectionClass($className);
             $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
 
             $classAliases = ContractParser::parseClassAliases($className);
-            if (\count($classAliases) > 0) {
-                $typeNode = TemplateSubstitutor::substitute($typeNode, $classAliases);
+
+            $targetFunc = ($methodName !== '{closure}')
+                ? $className . '::' . $methodName
+                : $className . '::__construct';
+
+            $contract = ContractParser::parse($targetFunc);
+            $declaredTemplates = $contract['allTemplates'] ?? ($contract['classTemplates'] ?? []);
+            $boundTemplates = TemplateManager::getBoundTemplates($targetFunc, $thisObj, $declaredTemplates);
+
+            $activeBindings = array_merge($classAliases, $boundTemplates);
+
+            if (\count($activeBindings) > 0 || \count($declaredTemplates) > 0) {
+                $typeNode = TemplateSubstitutor::substitute($typeNode, $activeBindings, $declaredTemplates);
+                $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
             }
         } catch (\ReflectionException $e) {
             // Silently continue if reflection fails
@@ -276,6 +279,7 @@ final class InlineChecker
 
             if (class_exists($className) || interface_exists($className) || trait_exists($className)) {
                 try {
+                    /** @var class-string<object> $className */
                     $refClass = new \ReflectionClass($className);
                     $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
                 } catch (\ReflectionException $e) {
