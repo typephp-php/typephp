@@ -75,10 +75,15 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $extracted = DocblockExtractor::extractVarTagFromDoc($doc->getText());
                 if ($extracted !== null) {
                     [$typeString, $varName] = $extracted;
-                    $effectiveVarName = ($varName !== '') ? $varName : 'return';
-                    $checkCall = NodeBuilder::createVariableCheckCall($node->expr, $typeString, $effectiveVarName);
-                    $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall, $node->getStartLine());
-                    $node->setAttribute('typephp_var_wrapped', true);
+                    $isApplicableToReturn = ($varName === '')
+                        || ($node->expr instanceof Node\Expr\Variable && $node->expr->name === $varName);
+
+                    if ($isApplicableToReturn) {
+                        $effectiveVarName = ($varName !== '') ? $varName : 'return';
+                        $checkCall = NodeBuilder::createVariableCheckCall($node->expr, $typeString, $effectiveVarName);
+                        $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall, $node->getStartLine());
+                        $node->setAttribute('typephp_var_wrapped', true);
+                    }
                 }
             }
         }
