@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace TypePHP\Internal;
 
 use PhpParser\Node;
-use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
 use TypePHP\Contract\DocblockExtractor;
 use TypePHP\Internal\Visitor\FunctionContractInjector;
@@ -49,15 +48,6 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
-            $doc = $node->getDocComment();
-            if ($doc !== null) {
-                $docText = $doc->getText();
-                $shouldRespectIgnore = (bool) (Config::get()['respect_ignore_tags'] ?? true);
-                if ($shouldRespectIgnore && (str_contains($docText, '@typephp-ignore') || str_contains($docText, '@typephp-disable'))) {
-                    return NodeTraverser::DONT_TRAVERSE_CHILDREN;
-                }
-            }
-
             FunctionContractInjector::inject($node);
 
             return null;

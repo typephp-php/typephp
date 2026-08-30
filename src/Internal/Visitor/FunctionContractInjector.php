@@ -7,7 +7,6 @@ namespace TypePHP\Internal\Visitor;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
-use TypePHP\Internal\Config;
 
 /**
  * @internal Injects parameter checks, return checks, and generator interceptors into functions and methods.
@@ -28,10 +27,6 @@ final class FunctionContractInjector
         }
 
         $docText = $doc !== null ? $doc->getText() : '';
-
-        if (self::shouldSkipInjection($docText)) {
-            return;
-        }
 
         $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
         $isMagicLifecycle = $isClassMethod && \in_array($methodName, ['__construct', '__destruct', '__clone'], true);
@@ -121,13 +116,6 @@ final class FunctionContractInjector
         }
 
         return false;
-    }
-
-    private static function shouldSkipInjection(string $docText): bool
-    {
-        $shouldRespectIgnore = (bool) (Config::get()['respect_ignore_tags'] ?? true);
-
-        return $shouldRespectIgnore && (str_contains($docText, '@typephp-ignore') || str_contains($docText, '@typephp-disable'));
     }
 
     private static function resolveThisArg(bool $isClassMethod, Node\Stmt\Function_|Node\Stmt\ClassMethod $node): Node\Expr

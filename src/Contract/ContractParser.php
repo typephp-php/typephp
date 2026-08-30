@@ -524,7 +524,7 @@ final class ContractParser
         $stubDoc = StubManager::getFunctionDoc($funcName);
         $doc = $stubDoc ?? $ref->getDocComment();
 
-        if ($doc === false || $doc === null) {
+        if ($doc === false || $doc === null || self::shouldIgnoreDoc($doc)) {
             return [
                 'types' => [],
                 'templates' => [],
@@ -690,7 +690,7 @@ final class ContractParser
             }
 
             $doc = $stubDoc ?? $hierRef->getDocComment();
-            if ($doc === false || $doc === null) {
+            if ($doc === false || $doc === null || self::shouldIgnoreDoc($doc)) {
                 continue;
             }
 
