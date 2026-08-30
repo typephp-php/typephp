@@ -27,9 +27,9 @@ final class ContractVisitor extends NodeVisitorAbstract
     /**
      * Traverses and transforms AST nodes during entry.
      *
-     * @return array<Node>|int|null
+     * @return array<Node>|null
      */
-    public function enterNode(Node $node): array|int|null
+    public function enterNode(Node $node): ?array
     {
         if ($node instanceof Node\Stmt\Function_
             || $node instanceof Node\Stmt\ClassMethod
