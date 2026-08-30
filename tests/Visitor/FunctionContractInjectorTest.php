@@ -220,10 +220,13 @@ describe('FunctionContractInjector Unit Tests', function () {
     });
 
     describe('Ignore Tag Suppression (@typephp-ignore)', function () {
-        test('skips injecting checks when method docblock contains @typephp-ignore', function () {
+        test('injects setupScope hook so @typephp-ignore can be resolved dynamically at runtime by ContractParser', function () {
             $doc = new Doc("/**\n * @typephp-ignore\n * @param positive-int \$id\n */");
 
             $method = new Node\Stmt\ClassMethod('ignoredMethod', [
+                'params' => [
+                    new Node\Param(new Node\Expr\Variable('id')),
+                ],
                 'stmts' => [],
             ], [
                 'comments' => [$doc],
@@ -231,7 +234,10 @@ describe('FunctionContractInjector Unit Tests', function () {
 
             FunctionContractInjector::inject($method);
 
-            expect($method->stmts)->toBeEmpty();
+            expect($method->stmts)->not()->toBeEmpty()
+                ->and($method->stmts[0])->toBeInstanceOf(Node\Stmt\If_::class)
+                ->and($method->stmts[0]->getAttribute('typephp_injected'))->toBeTrue()
+            ;
         });
     });
 });
