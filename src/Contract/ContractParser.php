@@ -563,12 +563,10 @@ final class ContractParser
             }
 
             $pObj = $baseParamObjects[$paramName] ?? null;
-            $isTemplateType = ($type instanceof IdentifierTypeNode && isset($templates[$type->name]));
             if (
                 Config::isRespectNativeNullabilityEnabled()
                 && $pObj !== null
                 && self::parameterExplicitlyAllowsNull($pObj)
-                && ! $isTemplateType
                 && ! self::typeContainsNull($type)
             ) {
                 $type = new NullableTypeNode($type);
@@ -734,12 +732,10 @@ final class ContractParser
                     }
 
                     $pObj = $baseParamObjects[$targetParamName] ?? null;
-                    $isTemplateType = ($type instanceof IdentifierTypeNode && isset($templates[$type->name]));
                     if (
                         Config::isRespectNativeNullabilityEnabled()
                         && $pObj !== null
                         && self::parameterExplicitlyAllowsNull($pObj)
-                        && ! $isTemplateType
                         && ! self::typeContainsNull($type)
                     ) {
                         $type = new NullableTypeNode($type);
@@ -857,11 +853,9 @@ final class ContractParser
                             $resolvedProp = new ArrayTypeNode($resolvedProp);
                         }
 
-                        $isTemplateType = ($resolvedProp instanceof IdentifierTypeNode && isset($classTemplates[$resolvedProp->name]));
                         if (
                             Config::isRespectNativeNullabilityEnabled()
                             && self::parameterExplicitlyAllowsNull($p)
-                            && ! $isTemplateType
                             && ! self::typeContainsNull($resolvedProp)
                         ) {
                             $resolvedProp = new NullableTypeNode($resolvedProp);

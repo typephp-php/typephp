@@ -67,6 +67,209 @@ final class TemplateManager
     public static ?object $pendingCloneSource = null;
 
     /**
+     * O(1) direct hash-table matrix for scalar subtype relationships.
+     *
+     * @var array<string, array<string, bool>>
+     */
+    private const SCALAR_SUBTYPES = [
+        'int' => [
+            'int' => true,
+            'integer' => true,
+            'positive-int' => true,
+            'negative-int' => true,
+            'non-positive-int' => true,
+            'non-negative-int' => true,
+            'non-zero-int' => true,
+            'unsigned-int' => true,
+        ],
+        'integer' => [
+            'int' => true,
+            'integer' => true,
+            'positive-int' => true,
+            'negative-int' => true,
+            'non-positive-int' => true,
+            'non-negative-int' => true,
+            'non-zero-int' => true,
+            'unsigned-int' => true,
+        ],
+        'string' => [
+            'string' => true,
+            'non-empty-string' => true,
+            'numeric-string' => true,
+            'lowercase-string' => true,
+            'non-empty-lowercase-string' => true,
+            'uppercase-string' => true,
+            'non-empty-uppercase-string' => true,
+            'class-string' => true,
+            'interface-string' => true,
+            'trait-string' => true,
+            'enum-string' => true,
+            'callable-string' => true,
+            'literal-string' => true,
+            'truthy-string' => true,
+            'non-falsy-string' => true,
+        ],
+        'float' => [
+            'float' => true,
+            'double' => true,
+            'positive-float' => true,
+            'negative-float' => true,
+            'non-positive-float' => true,
+            'non-negative-float' => true,
+            'non-zero-float' => true,
+        ],
+        'double' => [
+            'float' => true,
+            'double' => true,
+            'positive-float' => true,
+            'negative-float' => true,
+            'non-positive-float' => true,
+            'non-negative-float' => true,
+            'non-zero-float' => true,
+        ],
+        'bool' => [
+            'bool' => true,
+            'boolean' => true,
+            'true' => true,
+            'false' => true,
+        ],
+        'boolean' => [
+            'bool' => true,
+            'boolean' => true,
+            'true' => true,
+            'false' => true,
+        ],
+        'array-key' => [
+            'array-key' => true,
+            'int' => true,
+            'integer' => true,
+            'positive-int' => true,
+            'negative-int' => true,
+            'non-positive-int' => true,
+            'non-negative-int' => true,
+            'non-zero-int' => true,
+            'unsigned-int' => true,
+            'string' => true,
+            'non-empty-string' => true,
+            'numeric-string' => true,
+            'lowercase-string' => true,
+            'non-empty-lowercase-string' => true,
+            'uppercase-string' => true,
+            'non-empty-uppercase-string' => true,
+            'class-string' => true,
+            'interface-string' => true,
+            'trait-string' => true,
+            'enum-string' => true,
+            'callable-string' => true,
+            'literal-string' => true,
+            'truthy-string' => true,
+            'non-falsy-string' => true,
+        ],
+        'numeric' => [
+            'numeric' => true,
+            'number' => true,
+            'int' => true,
+            'integer' => true,
+            'float' => true,
+            'double' => true,
+            'positive-int' => true,
+            'negative-int' => true,
+            'non-positive-int' => true,
+            'non-negative-int' => true,
+            'non-zero-int' => true,
+            'unsigned-int' => true,
+            'positive-float' => true,
+            'negative-float' => true,
+            'non-positive-float' => true,
+            'non-negative-float' => true,
+            'non-zero-float' => true,
+            'numeric-string' => true,
+        ],
+        'number' => [
+            'numeric' => true,
+            'number' => true,
+            'int' => true,
+            'integer' => true,
+            'float' => true,
+            'double' => true,
+            'positive-int' => true,
+            'negative-int' => true,
+            'non-positive-int' => true,
+            'non-negative-int' => true,
+            'non-zero-int' => true,
+            'unsigned-int' => true,
+            'positive-float' => true,
+            'negative-float' => true,
+            'non-positive-float' => true,
+            'non-negative-float' => true,
+            'non-zero-float' => true,
+            'numeric-string' => true,
+        ],
+        'scalar' => [
+            'scalar' => true,
+            'int' => true,
+            'integer' => true,
+            'string' => true,
+            'float' => true,
+            'double' => true,
+            'bool' => true,
+            'boolean' => true,
+            'positive-int' => true,
+            'negative-int' => true,
+            'non-positive-int' => true,
+            'non-negative-int' => true,
+            'non-zero-int' => true,
+            'unsigned-int' => true,
+            'positive-float' => true,
+            'negative-float' => true,
+            'non-positive-float' => true,
+            'non-negative-float' => true,
+            'non-zero-float' => true,
+            'non-empty-string' => true,
+            'numeric-string' => true,
+            'lowercase-string' => true,
+            'non-empty-lowercase-string' => true,
+            'uppercase-string' => true,
+            'non-empty-uppercase-string' => true,
+            'class-string' => true,
+            'interface-string' => true,
+            'trait-string' => true,
+            'enum-string' => true,
+            'callable-string' => true,
+            'literal-string' => true,
+            'truthy-string' => true,
+            'non-falsy-string' => true,
+            'true' => true,
+            'false' => true,
+        ],
+    ];
+
+    /**
+     * O(1) lookup set for valid supertypes of integer ranges and numeric literals.
+     *
+     * @var array<string, bool>
+     */
+    private const INT_SUPERTYPES = [
+        'int' => true,
+        'integer' => true,
+        'array-key' => true,
+        'numeric' => true,
+        'number' => true,
+        'scalar' => true,
+    ];
+
+    /**
+     * O(1) lookup set for valid supertypes of string literals and class-string<T>.
+     *
+     * @var array<string, bool>
+     */
+    private const STRING_SUPERTYPES = [
+        'string' => true,
+        'array-key' => true,
+        'scalar' => true,
+    ];
+
+    /**
      * Resets all static generic template bindings and call stack frames.
      */
     public static function reset(): void
@@ -342,6 +545,15 @@ final class TemplateManager
 
             foreach ($hierTemplates as $tName => $tagNode) {
                 if (! isset($templates[$tName])) {
+                    if ($tagNode->bound !== null || $tagNode->default !== null) {
+                        $tagNode = new TemplateTagValueNode(
+                            $tagNode->name,
+                            $tagNode->bound !== null ? SpecialTypeResolver::resolve($tagNode->bound, $hierClass) : null,
+                            $tagNode->description,
+                            $tagNode->default !== null ? SpecialTypeResolver::resolve($tagNode->default, $hierClass) : null
+                        );
+                    }
+
                     $templates[$tName] = $tagNode;
                     $classVariances[$tName] = match ($hierVariances[$tName] ?? 'invariant') {
                         'covariant' => GenericTypeNode::VARIANCE_COVARIANT,
@@ -380,6 +592,16 @@ final class TemplateManager
 
             if (! $isBuiltIn && ! $isRealType) {
                 return null;
+            }
+        }
+
+        if ($templateTag->bound !== null) {
+            $satisfiesBound = self::checkVariance($expectedTypeNode, $templateTag->bound, GenericTypeNode::VARIANCE_COVARIANT);
+
+            if (! $satisfiesBound) {
+                return ErrorFactory::createError(
+                    ($context !== '' ? $context . ': ' : '') . "Generic type argument {$expectedTypeNode} does not satisfy upper bound {$templateTag->bound} of template {$templateTag->name} in {$className}"
+                );
             }
         }
 
@@ -607,6 +829,17 @@ final class TemplateManager
             return true;
         }
 
+        $lowerExpected = strtolower($expectedStr);
+        $lowerExisting = strtolower($existingStr);
+
+        if ($lowerExpected === 'object' && ClassNameValidator::isValid($existingStr) && (class_exists($existingStr) || interface_exists($existingStr))) {
+            return true;
+        }
+
+        if (self::isScalarSubtype($lowerExisting, $lowerExpected)) {
+            return true;
+        }
+
         if ($expected instanceof UnionTypeNode) {
             return self::checkExpectedUnionVariance($existing, $expected, $variance);
         }
@@ -639,6 +872,26 @@ final class TemplateManager
 
         if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
             return self::isSubclass($expectedStr, $existingStr);
+        }
+
+        return false;
+    }
+
+    /**
+     * O(1) scalar subtype verification.
+     */
+    private static function isScalarSubtype(string $sub, string $super): bool
+    {
+        if (isset(self::SCALAR_SUBTYPES[$super][$sub])) {
+            return true;
+        }
+
+        if ((str_starts_with($sub, 'int<') || is_numeric($sub)) && isset(self::INT_SUPERTYPES[$super])) {
+            return true;
+        }
+
+        if ((str_starts_with($sub, 'class-string<') || ($sub !== '' && ($sub[0] === "'" || $sub[0] === '"'))) && isset(self::STRING_SUPERTYPES[$super])) {
+            return true;
         }
 
         return false;

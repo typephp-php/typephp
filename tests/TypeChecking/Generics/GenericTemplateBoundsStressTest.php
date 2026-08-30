@@ -2,6 +2,10 @@
 
 declare(strict_types=1);
 
+use TypePHP\Tests\Fixtures\Domain\Animal;
+use TypePHP\Tests\Fixtures\Domain\Car;
+use TypePHP\Tests\Fixtures\Domain\Dog;
+
 /**
  * @template T of positive-int
  *
@@ -126,6 +130,60 @@ function testInferredOverridesDefault(mixed $input, mixed $valueToReturn): mixed
 {
     return $valueToReturn;
 }
+
+/**
+ * Fixture class with upper bound
+ *
+ * @template T of Animal
+ */
+class BoundedTestShelter
+{
+    /**
+     * @param T $item
+     */
+    public function add(mixed $item): void
+    {
+    }
+}
+
+/**
+ * Fixture with scalar upper bound
+ *
+ * @template T of positive-int
+ */
+class BoundedScalarBox
+{
+    /**
+     * @param T $val
+     */
+    public function set(mixed $val): void
+    {
+    }
+}
+
+describe('Generic Template Upper Bound Pre-binding Enforcement', function () {
+    test('throws TypeError on assignment when prebinding generic class with argument violating class upper bound', function () {
+        expect(function () {
+            /** @var BoundedTestShelter<Car> $shelter */
+            $shelter = new BoundedTestShelter();
+        })->toThrow(TypeError::class, 'does not satisfy upper bound');
+    });
+
+    test('throws TypeError on assignment when prebinding generic class with argument violating scalar upper bound', function () {
+        expect(function () {
+            /** @var BoundedScalarBox<string> $box */
+            $box = new BoundedScalarBox();
+        })->toThrow(TypeError::class, 'does not satisfy upper bound');
+    });
+
+    test('accepts valid prebinding when generic argument satisfies upper bound', function () {
+        /** @var BoundedTestShelter<Dog> $shelter */
+        $shelter = new BoundedTestShelter();
+
+        $shelter->add(new Dog());
+        expect(true)->toBeTrue();
+    });
+});
 
 describe('Generic Template Bounds Stress Test', function () {
     test('validates positive-int scalar bound', function () {

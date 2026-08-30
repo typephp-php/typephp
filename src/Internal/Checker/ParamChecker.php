@@ -348,8 +348,7 @@ final class ParamChecker
 
         $isClassStringT = ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates));
 
-        $isBareTemplate = ($typeNode instanceof IdentifierTypeNode && isset($templates[$typeNode->name]))
-            || ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof IdentifierTypeNode && isset($templates[$typeNode->type->name]));
+        $isBareTemplate = self::getTemplateName($typeNode, $templates) !== null;
 
         $shouldSkipTemplateSub = $isBareTemplate || $isClassStringT;
 
@@ -557,8 +556,25 @@ final class ParamChecker
             return $typeNode->name;
         }
 
+        if ($typeNode instanceof NullableTypeNode && $typeNode->type instanceof IdentifierTypeNode && isset($templates[$typeNode->type->name])) {
+            return $typeNode->type->name;
+        }
+
         if ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof IdentifierTypeNode && isset($templates[$typeNode->type->name])) {
             return $typeNode->type->name;
+        }
+
+        if ($typeNode instanceof UnionTypeNode && \count($typeNode->types) === 2) {
+            $t0 = $typeNode->types[0];
+            $t1 = $typeNode->types[1];
+
+            if ($t0 instanceof IdentifierTypeNode && isset($templates[$t0->name]) && $t1 instanceof IdentifierTypeNode && strtolower($t1->name) === 'null') {
+                return $t0->name;
+            }
+
+            if ($t1 instanceof IdentifierTypeNode && isset($templates[$t1->name]) && $t0 instanceof IdentifierTypeNode && strtolower($t0->name) === 'null') {
+                return $t1->name;
+            }
         }
 
         return null;
@@ -583,6 +599,11 @@ final class ParamChecker
 
         $templateNode = $templates[$templateName];
         $isVariadic = $typeNode instanceof ArrayTypeNode;
+        $isNullable = ($typeNode instanceof NullableTypeNode) || ($typeNode instanceof UnionTypeNode && self::typeContainsNull($typeNode));
+
+        if ($isNullable && $val === null) {
+            return null;
+        }
 
         $contract = ContractParser::parse($function);
         $classTemplates = $contract['classTemplates'] ?? [];
@@ -640,5 +661,26 @@ final class ParamChecker
         }
 
         return null;
+    }
+
+    private static function typeContainsNull(TypeNode $node): bool
+    {
+        if ($node instanceof NullableTypeNode) {
+            return true;
+        }
+
+        if ($node instanceof IdentifierTypeNode && strtolower($node->name) === 'null') {
+            return true;
+        }
+
+        if ($node instanceof UnionTypeNode) {
+            foreach ($node->types as $t) {
+                if (self::typeContainsNull($t)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

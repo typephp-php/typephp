@@ -374,6 +374,11 @@ final class SpecialTypeResolver
                 return self::$reflectionContextCache[$context] = new \ReflectionClass($fallbackClass);
             }
 
+            if (class_exists($context) || interface_exists($context) || trait_exists($context) || enum_exists($context)) {
+                /** @var class-string<object> $context */
+                return self::$reflectionContextCache[$context] = new \ReflectionClass($context);
+            }
+
             try {
                 return self::$reflectionContextCache[$context] = new \ReflectionFunction($context);
             } catch (\ReflectionException $e) {
