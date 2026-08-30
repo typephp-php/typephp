@@ -45,7 +45,7 @@ jobs:
       - name: Warm Up TypePHP Cache
         run: php bin/typephp cache:warm
 
-      - name: Run Type Checking Engine Suite (Pest)
+      - name: Run Runtime Type Checking Engine Suite (Pest)
         run: ./vendor/bin/pest tests/TypeChecking --compact
 
       - name: Run Full Test Suite with Coverage (Pest)
