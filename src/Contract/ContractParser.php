@@ -524,7 +524,7 @@ final class ContractParser
         $stubDoc = StubManager::getFunctionDoc($funcName);
         $doc = $stubDoc ?? $ref->getDocComment();
 
-        if ($doc === false || $doc === null) {
+        if ($doc === false || $doc === null || self::shouldIgnoreDoc($doc)) {
             return [
                 'types' => [],
                 'templates' => [],
@@ -563,12 +563,10 @@ final class ContractParser
             }
 
             $pObj = $baseParamObjects[$paramName] ?? null;
-            $isTemplateType = ($type instanceof IdentifierTypeNode && isset($templates[$type->name]));
             if (
                 Config::isRespectNativeNullabilityEnabled()
                 && $pObj !== null
                 && self::parameterExplicitlyAllowsNull($pObj)
-                && ! $isTemplateType
                 && ! self::typeContainsNull($type)
             ) {
                 $type = new NullableTypeNode($type);
@@ -692,7 +690,7 @@ final class ContractParser
             }
 
             $doc = $stubDoc ?? $hierRef->getDocComment();
-            if ($doc === false || $doc === null) {
+            if ($doc === false || $doc === null || self::shouldIgnoreDoc($doc)) {
                 continue;
             }
 
@@ -734,12 +732,10 @@ final class ContractParser
                     }
 
                     $pObj = $baseParamObjects[$targetParamName] ?? null;
-                    $isTemplateType = ($type instanceof IdentifierTypeNode && isset($templates[$type->name]));
                     if (
                         Config::isRespectNativeNullabilityEnabled()
                         && $pObj !== null
                         && self::parameterExplicitlyAllowsNull($pObj)
-                        && ! $isTemplateType
                         && ! self::typeContainsNull($type)
                     ) {
                         $type = new NullableTypeNode($type);
@@ -857,11 +853,9 @@ final class ContractParser
                             $resolvedProp = new ArrayTypeNode($resolvedProp);
                         }
 
-                        $isTemplateType = ($resolvedProp instanceof IdentifierTypeNode && isset($classTemplates[$resolvedProp->name]));
                         if (
                             Config::isRespectNativeNullabilityEnabled()
                             && self::parameterExplicitlyAllowsNull($p)
-                            && ! $isTemplateType
                             && ! self::typeContainsNull($resolvedProp)
                         ) {
                             $resolvedProp = new NullableTypeNode($resolvedProp);
