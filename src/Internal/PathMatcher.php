@@ -129,8 +129,7 @@ final class PathMatcher
     }
 
     /**
-     * Determines whether a given path belongs to an immutable, static source code repository
-     * (e.g. src/, app/, lib/, packages/, vendor/).
+     * Determines whether a given path belongs to an immutable, static source code repositor
      */
     public static function isStaticSourcePath(string $normalizedPath): bool
     {
@@ -140,15 +139,35 @@ final class PathMatcher
             return false;
         }
 
-        if (str_contains($canon, '/tmp/') || str_contains($canon, '/Fixtures/tmp') || str_contains($canon, '/fixtures/tmp')) {
+        if (
+            str_contains($canon, '/tests/') || str_starts_with($canon, 'tests/')
+            || str_contains($canon, '/Fixtures/') || str_contains($canon, '/fixtures/')
+            || str_contains($canon, '/tmp/') || str_contains($canon, '/install/')
+        ) {
             return false;
         }
 
-        return str_starts_with($canon, 'vendor/') || str_contains($canon, '/vendor/')
-            || str_starts_with($canon, 'src/') || str_contains($canon, '/src/')
-            || str_starts_with($canon, 'app/') || str_contains($canon, '/app/')
-            || str_starts_with($canon, 'lib/') || str_contains($canon, '/lib/')
-            || str_starts_with($canon, 'packages/') || str_contains($canon, '/packages/');
+        if (str_starts_with($canon, 'vendor/') || str_contains($canon, '/vendor/')) {
+            return true;
+        }
+
+        if (str_starts_with($canon, 'src/') || str_contains($canon, '/src/')) {
+            return true;
+        }
+
+        if (str_starts_with($canon, 'app/') || str_contains($canon, '/app/')) {
+            return true;
+        }
+
+        if (str_starts_with($canon, 'lib/') || str_contains($canon, '/lib/')) {
+            return true;
+        }
+
+        if (preg_match('#(^|/)packages/[^/]+/src/#', $canon) === 1) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
