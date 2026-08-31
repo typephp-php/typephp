@@ -53,8 +53,7 @@ final class StreamWrapper implements StreamWrapperInterface
     private static array $statCache = [];
 
     /**
-     * In-memory cache for static-path negative misses only (e.g. vendor directories).
-     * Never stores negative misses for dynamic paths (var/cache, storage).
+     * In-memory cache for static-path negative misses only (vendor directories).
      *
      * @var array<string, true>
      */
@@ -226,7 +225,10 @@ final class StreamWrapper implements StreamWrapperInterface
         if (! $exists || $resolvedPath === false || ! self::isApplicationFile($path, $resolvedPath)) {
             $target = ($resolvedPath !== false) ? $resolvedPath : $path;
             /** @var resource|false $handle */
-            $handle = self::silent(fn () => fopen($target, $mode));
+            $handle = self::silent(fn () => ($this->context !== null)
+                ? fopen($target, $mode, false, $this->context)
+                : fopen($target, $mode)
+            );
             $this->handle = $handle !== false ? $handle : null;
             self::register();
 
@@ -243,7 +245,7 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Very Important: Determines whether the stream is being opened by a native PHP source-viewing function
+     * Determines whether the stream is being opened by a native PHP source-viewing function
      * (e.g. highlight_file, show_source, file_get_contents, token_get_all) by inspecting shallow backtrace frames.
      */
     private static function isReadOnlyCall(): bool
@@ -257,7 +259,7 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Opens an underlying filesystem handle directly with error reporting options.
+     * Opens an underlying filesystem handle directly with error reporting options and context support.
      */
     private function openDirectHandle(string $targetFile, string $mode, int $options): bool
     {
@@ -265,7 +267,10 @@ final class StreamWrapper implements StreamWrapperInterface
 
         self::unregister();
         /** @var resource|false $handle */
-        $handle = self::silent(fn () => fopen($targetFile, $mode));
+        $handle = self::silent(fn () => ($this->context !== null)
+            ? fopen($targetFile, $mode, false, $this->context)
+            : fopen($targetFile, $mode)
+        );
         $this->handle = $handle !== false ? $handle : null;
         self::register();
 
@@ -397,8 +402,7 @@ final class StreamWrapper implements StreamWrapperInterface
     /**
      * Resolves file status with dual-tier memoization caching:
      * 1. Positive hit cache ($statCache): Stores stat arrays for confirmed files.
-     * 2. Static negative cache ($staticNegativeStatCache): Caches false lookups strictly for static vendor paths.
-     * 3. Dynamic writable bypass: Bypasses negative caching for dynamic directories (var/cache, storage).
+     * 2. Static negative cache ($staticNegativeStatCache): Caches false lookups strictly for immutable vendor paths.
      *
      * @return array<int|string, int>|false
      */
@@ -423,7 +427,7 @@ final class StreamWrapper implements StreamWrapperInterface
             return self::$statCache[$normalized] = $result;
         }
 
-        if (! PathMatcher::isDynamicWritablePath($normalized)) {
+        if (PathMatcher::isVendorPath($normalized)) {
             self::$staticNegativeStatCache[$normalized] = true;
         }
 
@@ -657,7 +661,9 @@ final class StreamWrapper implements StreamWrapperInterface
             }
         }
 
-        $cacheHandle = fopen($cachedFile, $mode);
+        $cacheHandle = ($this->context !== null)
+            ? fopen($cachedFile, $mode, false, $this->context)
+            : fopen($cachedFile, $mode);
         $this->handle = $cacheHandle !== false ? $cacheHandle : null;
 
         return $this->handle !== null;
