@@ -16,6 +16,59 @@ describe('FunctionContractInjector Unit Tests', function () {
         Config::reset();
     });
 
+    describe('Native : never Return Type Handling', function () {
+        test('does not inject return statements into methods with native : never return type (Tempest MockClock::dd pattern)', function () {
+            $method = new Node\Stmt\ClassMethod('dd', [
+                'returnType' => new Node\Identifier('never'),
+                'stmts' => [
+                    new Node\Stmt\Expression(new Node\Expr\FuncCall(new Node\Name('dd'))),
+                ],
+            ]);
+
+            FunctionContractInjector::inject($method);
+
+            $hasReturn = false;
+            foreach ($method->stmts ?? [] as $stmt) {
+                if ($stmt instanceof Node\Stmt\Return_) {
+                    $hasReturn = true;
+                }
+            }
+
+            expect($hasReturn)->toBeFalse();
+        });
+
+        test('transforms code containing native : never methods without injecting return statements into AST', function () {
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+class NeverMethodFixture
+{
+    /**
+     * @param positive-int $code
+     */
+    public function terminate(int $code): never
+    {
+        throw new RuntimeException("Terminated: {$code}");
+    }
+
+    public function dd(): never
+    {
+        exit(1);
+    }
+}
+PHP;
+
+            $transformed = TypePHP\Internal\StreamWrapper::transformSource($source, 'test_never_method.php');
+
+            expect($transformed)->toContain('RuntimeTypeChecker::setupScope')
+                ->and($transformed)->not()->toContain('return ($__typephpRet')
+                ->and($transformed)->not()->toContain('return null;')
+            ;
+        });
+    });
+
     describe('Parameter Injections', function () {
         test('injects setupScope and return check into function with docblocks', function () {
             $doc = new Doc('/** @param positive-int $id @return non-empty-string */');

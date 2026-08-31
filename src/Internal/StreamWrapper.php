@@ -53,8 +53,7 @@ final class StreamWrapper implements StreamWrapperInterface
     private static array $statCache = [];
 
     /**
-     * In-memory cache for static-path negative misses only (e.g. vendor directories).
-     * Never stores negative misses for dynamic paths (var/cache, storage).
+     * In-memory cache for static-path negative misses only (vendor directories).
      *
      * @var array<string, true>
      */
@@ -226,7 +225,11 @@ final class StreamWrapper implements StreamWrapperInterface
         if (! $exists || $resolvedPath === false || ! self::isApplicationFile($path, $resolvedPath)) {
             $target = ($resolvedPath !== false) ? $resolvedPath : $path;
             /** @var resource|false $handle */
-            $handle = self::silent(fn () => fopen($target, $mode));
+            $handle = self::silent(
+                fn () => ($this->context !== null)
+                    ? fopen($target, $mode, false, $this->context)
+                    : fopen($target, $mode)
+            );
             $this->handle = $handle !== false ? $handle : null;
             self::register();
 
@@ -243,7 +246,7 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Very Important: Determines whether the stream is being opened by a native PHP source-viewing function
+     * Determines whether the stream is being opened by a native PHP source-viewing function
      * (e.g. highlight_file, show_source, file_get_contents, token_get_all) by inspecting shallow backtrace frames.
      */
     private static function isReadOnlyCall(): bool
@@ -257,15 +260,20 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Opens an underlying filesystem handle directly with error reporting options.
+     * Opens an underlying filesystem handle directly with error reporting options and context support.
      */
     private function openDirectHandle(string $targetFile, string $mode, int $options): bool
     {
         $isInclude = ($options & self::STREAM_OPEN_FOR_INCLUDE) !== 0;
+        $useIncludePath = ($options & STREAM_USE_PATH) !== 0;
 
         self::unregister();
         /** @var resource|false $handle */
-        $handle = self::silent(fn () => fopen($targetFile, $mode));
+        $handle = self::silent(
+            fn () => ($this->context !== null)
+                ? fopen($targetFile, $mode, $useIncludePath, $this->context)
+                : fopen($targetFile, $mode, $useIncludePath)
+        );
         $this->handle = $handle !== false ? $handle : null;
         self::register();
 
@@ -396,18 +404,19 @@ final class StreamWrapper implements StreamWrapperInterface
 
     /**
      * Resolves file status with dual-tier memoization caching:
-     * 1. Positive hit cache ($statCache): Stores stat arrays for confirmed files.
-     * 2. Static negative cache ($staticNegativeStatCache): Caches false lookups strictly for static vendor paths.
-     * 3. Dynamic writable bypass: Bypasses negative caching for dynamic directories (var/cache, storage).
+     * 1. Differentiates between stat() and lstat() (STREAM_URL_STAT_LINK).
+     * 2. Only memoizes .php source files and immutable vendor paths.
      *
      * @return array<int|string, int>|false
      */
     public function url_stat(string $path, int $flags): array|false
     {
         $normalized = str_replace('\\', '/', $path);
+        $isLink = ($flags & STREAM_URL_STAT_LINK) !== 0;
+        $cacheKey = $normalized . ($isLink ? ':lstat' : ':stat');
 
-        if (isset(self::$statCache[$normalized])) {
-            return self::$statCache[$normalized];
+        if (isset(self::$statCache[$cacheKey])) {
+            return self::$statCache[$cacheKey];
         }
 
         if (isset(self::$staticNegativeStatCache[$normalized])) {
@@ -416,14 +425,19 @@ final class StreamWrapper implements StreamWrapperInterface
 
         self::unregister();
         /** @var array<int|string, int>|false $result */
-        $result = self::silent(fn () => (($flags & STREAM_URL_STAT_LINK) !== 0) ? @lstat($path) : @stat($path));
+        $result = self::silent(fn () => $isLink ? @lstat($path) : @stat($path));
         self::register();
 
         if ($result !== false) {
-            return self::$statCache[$normalized] = $result;
+            $isPhp = str_ends_with(strtolower($normalized), '.php');
+            if ($isPhp || PathMatcher::isVendorPath($normalized)) {
+                self::$statCache[$cacheKey] = $result;
+            }
+
+            return $result;
         }
 
-        if (! PathMatcher::isDynamicWritablePath($normalized)) {
+        if (PathMatcher::isVendorPath($normalized)) {
             self::$staticNegativeStatCache[$normalized] = true;
         }
 
@@ -433,7 +447,11 @@ final class StreamWrapper implements StreamWrapperInterface
     public function stream_metadata(string $path, int $option, mixed $value): bool
     {
         $normalized = str_replace('\\', '/', $path);
-        unset(self::$statCache[$normalized], self::$staticNegativeStatCache[$normalized]);
+        unset(
+            self::$statCache[$normalized . ':stat'],
+            self::$statCache[$normalized . ':lstat'],
+            self::$staticNegativeStatCache[$normalized]
+        );
 
         self::unregister();
         $result = false;
@@ -457,7 +475,11 @@ final class StreamWrapper implements StreamWrapperInterface
     {
         self::unregister();
         /** @var resource|false $dh */
-        $dh = self::silent(fn () => @opendir($path));
+        $dh = self::silent(
+            fn () => ($this->context !== null)
+                ? @opendir($path, $this->context)
+                : @opendir($path)
+        );
         $this->dirHandle = $dh !== false ? $dh : null;
         self::register();
 
@@ -497,10 +519,16 @@ final class StreamWrapper implements StreamWrapperInterface
     public function mkdir(string $path, int $mode, int $options): bool
     {
         $normalized = str_replace('\\', '/', $path);
-        unset(self::$statCache[$normalized], self::$staticNegativeStatCache[$normalized]);
+        unset(
+            self::$statCache[$normalized . ':stat'],
+            self::$statCache[$normalized . ':lstat'],
+            self::$staticNegativeStatCache[$normalized]
+        );
 
         self::unregister();
-        $result = (bool) self::silent(fn () => @mkdir($path, $mode, ($options & STREAM_MKDIR_RECURSIVE) !== 0));
+        $result = ($this->context !== null)
+            ? @mkdir($path, $mode, ($options & STREAM_MKDIR_RECURSIVE) !== 0, $this->context)
+            : @mkdir($path, $mode, ($options & STREAM_MKDIR_RECURSIVE) !== 0);
         self::register();
 
         return $result;
@@ -509,10 +537,16 @@ final class StreamWrapper implements StreamWrapperInterface
     public function rmdir(string $path, int $options): bool
     {
         $normalized = str_replace('\\', '/', $path);
-        unset(self::$statCache[$normalized], self::$staticNegativeStatCache[$normalized]);
+        unset(
+            self::$statCache[$normalized . ':stat'],
+            self::$statCache[$normalized . ':lstat'],
+            self::$staticNegativeStatCache[$normalized]
+        );
 
         self::unregister();
-        $result = (bool) self::silent(fn () => @rmdir($path));
+        $result = ($this->context !== null)
+            ? rmdir($path, $this->context)
+            : rmdir($path);
         self::register();
 
         return $result;
@@ -521,10 +555,16 @@ final class StreamWrapper implements StreamWrapperInterface
     public function unlink(string $path): bool
     {
         $normalized = str_replace('\\', '/', $path);
-        unset(self::$statCache[$normalized], self::$staticNegativeStatCache[$normalized]);
+        unset(
+            self::$statCache[$normalized . ':stat'],
+            self::$statCache[$normalized . ':lstat'],
+            self::$staticNegativeStatCache[$normalized]
+        );
 
         self::unregister();
-        $result = (bool) self::silent(fn () => @unlink($path));
+        $result = ($this->context !== null)
+            ? unlink($path, $this->context)
+            : unlink($path);
         self::register();
 
         return $result;
@@ -535,14 +575,18 @@ final class StreamWrapper implements StreamWrapperInterface
         $normFrom = str_replace('\\', '/', $pathFrom);
         $normTo = str_replace('\\', '/', $pathTo);
         unset(
-            self::$statCache[$normFrom],
-            self::$statCache[$normTo],
+            self::$statCache[$normFrom . ':stat'],
+            self::$statCache[$normFrom . ':lstat'],
             self::$staticNegativeStatCache[$normFrom],
+            self::$statCache[$normTo . ':stat'],
+            self::$statCache[$normTo . ':lstat'],
             self::$staticNegativeStatCache[$normTo]
         );
 
         self::unregister();
-        $result = (bool) self::silent(fn () => @rename($pathFrom, $pathTo));
+        $result = ($this->context !== null)
+            ? rename($pathFrom, $pathTo, $this->context)
+            : rename($pathFrom, $pathTo);
         self::register();
 
         return $result;
@@ -657,7 +701,9 @@ final class StreamWrapper implements StreamWrapperInterface
             }
         }
 
-        $cacheHandle = fopen($cachedFile, $mode);
+        $cacheHandle = ($this->context !== null)
+            ? fopen($cachedFile, $mode, false, $this->context)
+            : fopen($cachedFile, $mode);
         $this->handle = $cacheHandle !== false ? $cacheHandle : null;
 
         return $this->handle !== null;

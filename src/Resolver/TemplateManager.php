@@ -622,11 +622,27 @@ final class TemplateManager
         $templateName = $templateTag->name;
         $existingBindings = self::$instanceTemplateBindings[$instance] ?? [];
 
-        if (isset($existingBindings[$templateName])) {
+      if (isset($existingBindings[$templateName])) {
             $existingTypeNode = $existingBindings[$templateName];
             $valid = self::checkVariance($existingTypeNode, $expectedTypeNode, $variance);
 
             if (! $valid) {
+                if ($existingTypeNode instanceof IdentifierTypeNode && strtolower($existingTypeNode->name) === 'mixed') {
+                    $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+                    $bindings[$templateName] = $expectedTypeNode;
+                    self::$instanceTemplateBindings[$instance] = $bindings;
+
+                    return null;
+                }
+
+                if ($isReturnContext && self::checkVariance($expectedTypeNode, $existingTypeNode, GenericTypeNode::VARIANCE_COVARIANT)) {
+                    $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+                    $bindings[$templateName] = $expectedTypeNode;
+                    self::$instanceTemplateBindings[$instance] = $bindings;
+
+                    return null;
+                }
+
                 return ErrorFactory::createError(
                     $context . " expects {$className}<{$variance} {$expectedTypeNode}>, but {$className}<{$existingTypeNode}> was given"
                 );
