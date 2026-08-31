@@ -59,11 +59,12 @@ describe('Heterogeneous Array Generics in Array Helpers (Tempest values/flatten 
     });
 
     test('higher-order functions with callables still pre-infer template and enforce consistency', function () {
-        $stringify = fn(int $x): string => "num_{$x}";
+        $stringify = fn (int $x): string => "num_{$x}";
 
         expect(testHigherOrderMap([10, 20], $stringify))->toBe(['num_10', 'num_20']);
 
-        expect(fn() => testHigherOrderMap([10, 'not_an_int'], $stringify))
-            ->toThrow(TypeError::class, "['1']");
+        expect(fn () => testHigherOrderMap([10, 'not_an_int'], $stringify))
+            ->toThrow(TypeError::class, "['1']")
+        ;
     });
 });

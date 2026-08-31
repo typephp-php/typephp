@@ -249,6 +249,7 @@ final class ParamChecker
         foreach ($types as $tNode) {
             if ($tNode instanceof CallableTypeNode) {
                 $hasCallableParam = true;
+
                 break;
             }
         }
