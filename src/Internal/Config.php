@@ -138,6 +138,12 @@ final class Config
             return self::$projectRoot;
         }
 
+        $rootCandidate = str_replace('\\', '/', \dirname(__DIR__, 2));
+        
+        if (file_exists($rootCandidate . '/vendor/autoload.php') || file_exists($rootCandidate . '/composer.json') || file_exists($rootCandidate . '/typephp.php')) {
+            return self::$projectRoot = rtrim($rootCandidate, '/');
+        }
+
         $dir = __DIR__;
         for ($i = 0; $i < 10; $i++) {
             if (file_exists($dir . '/vendor/autoload.php')) {

@@ -129,6 +129,29 @@ final class PathMatcher
     }
 
     /**
+     * Determines whether a given path belongs to an immutable, static source code repository
+     * (e.g. src/, app/, lib/, packages/, vendor/).
+     */
+    public static function isStaticSourcePath(string $normalizedPath): bool
+    {
+        $canon = self::canonicalizePath($normalizedPath);
+
+        if (self::isDynamicWritablePath($canon)) {
+            return false;
+        }
+
+        if (str_contains($canon, '/tmp/') || str_contains($canon, '/Fixtures/tmp') || str_contains($canon, '/fixtures/tmp')) {
+            return false;
+        }
+
+        return str_starts_with($canon, 'vendor/') || str_contains($canon, '/vendor/')
+            || str_starts_with($canon, 'src/') || str_contains($canon, '/src/')
+            || str_starts_with($canon, 'app/') || str_contains($canon, '/app/')
+            || str_starts_with($canon, 'lib/') || str_contains($canon, '/lib/')
+            || str_starts_with($canon, 'packages/') || str_contains($canon, '/packages/');
+    }
+
+    /**
      * Determines whether a given path is within the TypePHP cache directory.
      */
     public static function isCachePath(string $normalizedPath): bool
