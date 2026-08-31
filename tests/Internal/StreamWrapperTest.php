@@ -245,6 +245,58 @@ PHP;
         });
     });
 
+    describe('Native Filesystem Error Passthrough & Mutations', function () {
+        test('rmdir on non-empty directory emits native Directory not empty warning instead of internal error', function () {
+            $tempDir = sys_get_temp_dir() . '/typephp_rmdir_passthru_' . uniqid();
+            mkdir($tempDir . '/sub', 0777, true);
+            file_put_contents($tempDir . '/sub/file.txt', 'content');
+
+            $caughtWarning = '';
+            set_error_handler(function (int $errno, string $errstr) use (&$caughtWarning) {
+                $caughtWarning .= $errstr;
+
+                return true;
+            });
+
+            try {
+                $result = rmdir($tempDir . '/sub');
+            } finally {
+                restore_error_handler();
+            }
+
+            expect($result)->toBeFalse()
+                ->and(strtolower($caughtWarning))->toContain('directory not empty')
+                ->and(strtolower($caughtWarning))->not()->toContain('internal error')
+            ;
+
+            @unlink($tempDir . '/sub/file.txt');
+            @rmdir($tempDir . '/sub');
+            @rmdir($tempDir);
+        });
+
+        test('unlink on non-existent file returns false and emits standard warning without internal error', function () {
+            $missingFile = sys_get_temp_dir() . '/missing_file_' . uniqid() . '.txt';
+
+            $caughtWarning = '';
+            set_error_handler(function (int $errno, string $errstr) use (&$caughtWarning) {
+                $caughtWarning .= $errstr;
+
+                return true;
+            });
+
+            try {
+                $result = unlink($missingFile);
+            } finally {
+                restore_error_handler();
+            }
+
+            expect($result)->toBeFalse()
+                ->and(strtolower($caughtWarning))->toContain('no such file or directory')
+                ->and(strtolower($caughtWarning))->not()->toContain('internal error')
+            ;
+        });
+    });
+
     describe('stream_open() & Context Support', function () {
         test('bypasses AST transformation on non-PHP files', function () {
             $wrapper = new StreamWrapper();
