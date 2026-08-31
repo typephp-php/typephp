@@ -27,7 +27,7 @@ final class CacheManager
     }
 
     /**
-     * Returns the absolute path to the cache directory, isolating by system user and parallel test worker if using temp dir.
+     * Returns the absolute path to the cache directory, isolating by system user if using temp dir.
      */
     public static function getCacheDir(): string
     {
@@ -55,20 +55,7 @@ final class CacheManager
             $user = (string) getmyuid();
         }
 
-        $testToken = getenv('TEST_TOKEN');
-        $uniqueToken = getenv('UNIQUE_TEST_TOKEN');
-        $pestWorkerId = getenv('PEST_PARALLEL_WORKER_ID');
-
-        $workerToken = '0';
-        if (\is_string($testToken) && $testToken !== '') {
-            $workerToken = $testToken;
-        } elseif (\is_string($uniqueToken) && $uniqueToken !== '') {
-            $workerToken = $uniqueToken;
-        } elseif (\is_string($pestWorkerId) && $pestWorkerId !== '') {
-            $workerToken = $pestWorkerId;
-        }
-
-        $userHash = hash('xxh128', 'typephp_' . $user . '_w' . $workerToken);
+        $userHash = hash('xxh128', 'typephp_' . $user);
 
         return self::$resolvedCacheDir = sys_get_temp_dir() . '/typephp-cache-' . $userHash;
     }
@@ -123,7 +110,7 @@ final class CacheManager
     /**
      * Safely writes cached content atomically to avoid symlink traversal attacks.
      */
-    public static function writeCachedFileSafely(string $cachedFile, string $transformed): bool
+  public static function writeCachedFileSafely(string $cachedFile, string $transformed): bool
     {
         if (! self::ensureSecureCacheDir()) {
             return false;
@@ -132,7 +119,7 @@ final class CacheManager
         $cacheDir = \dirname($cachedFile);
         $tmpFile = $cacheDir . '/.tmp_' . bin2hex(random_bytes(8));
 
-        if (@file_put_contents($tmpFile, $transformed, LOCK_EX) === false) {
+        if (@file_put_contents($tmpFile, $transformed) === false) {
             return false;
         }
 
@@ -148,8 +135,7 @@ final class CacheManager
     }
 
     /**
-     * Clears all cached transformed files from the cache directory,
-     * including all parallel worker directories (_w1, _w2, etc.).
+     * Clears all cached transformed files from the cache directory.
      */
     public static function clear(): int
     {
