@@ -263,18 +263,18 @@ final class InlineChecker
 
         foreach ($trace as $frame) {
             $classCandidate = $frame['class'] ?? null;
-            $funcCandidate = $frame['function'] ?? null;
+            $funcCandidate = $frame['function'];
 
             if ($classCandidate === 'Closure' || $classCandidate === 'Generator') {
-                if ($thisObj === null && isset($frame['object']) && \is_object($frame['object']) && ! ($frame['object'] instanceof \Closure) && ! ($frame['object'] instanceof \Generator)) {
+                if ($thisObj === null && isset($frame['object']) && ! ($frame['object'] instanceof \Closure) && ! ($frame['object'] instanceof \Generator)) {
                     $thisObj = $frame['object'];
                 }
 
                 continue;
             }
 
-            if ($funcCandidate === '{closure}' || ($funcCandidate !== null && str_starts_with($funcCandidate, '{closure'))) {
-                if ($thisObj === null && isset($frame['object']) && \is_object($frame['object']) && ! ($frame['object'] instanceof \Closure) && ! ($frame['object'] instanceof \Generator)) {
+            if ($funcCandidate === '{closure}' || str_starts_with($funcCandidate, '{closure')) {
+                if ($thisObj === null && isset($frame['object']) && ! ($frame['object'] instanceof \Closure) && ! ($frame['object'] instanceof \Generator)) {
                     $thisObj = $frame['object'];
                 }
 
@@ -292,7 +292,7 @@ final class InlineChecker
                     break;
                 }
             } else {
-                if ($funcCandidate !== null && ! str_starts_with($funcCandidate, 'TypePHP\\')) {
+                if (! str_starts_with($funcCandidate, 'TypePHP\\')) {
                     if (! \in_array($funcCandidate, ['include', 'include_once', 'require', 'require_once', 'eval'], true)) {
                         if (self::isInternalFunction($funcCandidate)) {
                             continue;
