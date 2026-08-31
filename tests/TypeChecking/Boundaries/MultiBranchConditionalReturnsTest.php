@@ -136,7 +136,8 @@ describe('Multi-Branch Nested & Negated Conditional Return Types', function () {
             expect($service->formatByNegation(true, 100))->toBe(100);
 
             expect(fn () => $service->formatByNegation(true, -50))
-                ->toThrow(TypeError::class, 'Return value must be of type positive-int');
+                ->toThrow(TypeError::class, 'Return value must be of type positive-int')
+            ;
         });
     });
 });

@@ -27,7 +27,7 @@ final class CacheManager
     }
 
     /**
-     * Returns the absolute path to the cache directory, isolating by system user if using temp dir.
+     * Returns the absolute path to the cache directory, isolating by system user and parallel test worker if using temp dir.
      */
     public static function getCacheDir(): string
     {
@@ -55,7 +55,20 @@ final class CacheManager
             $user = (string) getmyuid();
         }
 
-        $userHash = hash('xxh128', 'typephp_' . $user);
+        $testToken = getenv('TEST_TOKEN');
+        $uniqueToken = getenv('UNIQUE_TEST_TOKEN');
+        $pestWorkerId = getenv('PEST_PARALLEL_WORKER_ID');
+
+        $workerToken = '0';
+        if (\is_string($testToken) && $testToken !== '') {
+            $workerToken = $testToken;
+        } elseif (\is_string($uniqueToken) && $uniqueToken !== '') {
+            $workerToken = $uniqueToken;
+        } elseif (\is_string($pestWorkerId) && $pestWorkerId !== '') {
+            $workerToken = $pestWorkerId;
+        }
+
+        $userHash = hash('xxh128', 'typephp_' . $user . '_w' . $workerToken);
 
         return self::$resolvedCacheDir = sys_get_temp_dir() . '/typephp-cache-' . $userHash;
     }
@@ -135,26 +148,59 @@ final class CacheManager
     }
 
     /**
-     * Clears all cached transformed files from the cache directory.
+     * Clears all cached transformed files from the cache directory,
+     * including all parallel worker directories (_w1, _w2, etc.).
      */
     public static function clear(): int
     {
-        $cacheDir = self::getCacheDir();
+        $config = Config::get();
+        $customDir = $config['cache_dir'] ?? null;
 
-        if (! is_dir($cacheDir) || is_link($cacheDir)) {
-            return 0;
-        }
+        $dirsToClear = [];
 
-        $files = glob($cacheDir . '/*.php');
-        if ($files === false || \count($files) === 0) {
-            return 0;
+        if (\is_string($customDir) && $customDir !== '') {
+            if (is_dir($customDir) && ! is_link($customDir)) {
+                $dirsToClear[] = $customDir;
+            }
+        } else {
+            $tempBase = sys_get_temp_dir();
+            $matchedDirs = glob($tempBase . '/typephp-cache-*');
+
+            if ($matchedDirs !== false) {
+                foreach ($matchedDirs as $d) {
+                    if (is_dir($d) && ! is_link($d)) {
+                        if (\function_exists('posix_geteuid')) {
+                            $owner = @fileowner($d);
+                            if ($owner !== false && $owner !== posix_geteuid()) {
+                                continue;
+                            }
+                        }
+                        $dirsToClear[] = $d;
+                    }
+                }
+            }
         }
 
         $count = 0;
-        foreach ($files as $file) {
-            if (is_file($file) && ! is_link($file)) {
-                @unlink($file);
-                $count++;
+        foreach ($dirsToClear as $dir) {
+            $files = glob($dir . '/*.php');
+            if ($files !== false) {
+                foreach ($files as $file) {
+                    if (is_file($file) && ! is_link($file)) {
+                        @unlink($file);
+                        $count++;
+                    }
+                }
+            }
+
+            // Also clean up any lingering temporary swap files
+            $tmpFiles = glob($dir . '/.tmp_*');
+            if ($tmpFiles !== false) {
+                foreach ($tmpFiles as $tFile) {
+                    if (is_file($tFile) && ! is_link($tFile)) {
+                        @unlink($tFile);
+                    }
+                }
             }
         }
 

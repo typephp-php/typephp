@@ -100,6 +100,7 @@ describe('class-string<Interface> Subtype Validation', function () {
         expect(testTemplateWithIntersectionBoundClassString(ArrayObject::class))->toBe(ArrayObject::class);
 
         expect(fn () => testTemplateWithIntersectionBoundClassString(stdClass::class))
-            ->toThrow(TypeError::class, 'must be a class-string of');
+            ->toThrow(TypeError::class, 'must be a class-string of')
+        ;
     });
 });
