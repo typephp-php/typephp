@@ -6,6 +6,7 @@ namespace TypePHP\Internal\Checker;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
@@ -230,6 +231,7 @@ final class ParamChecker
 
     /**
      * Pre-infers generic template parameters from array arguments before callback wrapping.
+     * Only runs if at least one parameter in the signature is a callable that uses generic templates.
      *
      * @param array<string, TypeNode> $types
      * @param array<string, mixed> $vars
@@ -242,6 +244,19 @@ final class ParamChecker
         ?object $thisObj,
         array $templates
     ): void {
+        $hasCallableParam = false;
+
+        foreach ($types as $tNode) {
+            if ($tNode instanceof CallableTypeNode) {
+                $hasCallableParam = true;
+                break;
+            }
+        }
+
+        if (! $hasCallableParam) {
+            return;
+        }
+
         foreach ($types as $paramName => $typeNode) {
             if (! \array_key_exists($paramName, $vars) || ! \is_array($vars[$paramName]) || \count($vars[$paramName]) === 0) {
                 continue;
