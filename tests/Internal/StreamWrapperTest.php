@@ -115,9 +115,10 @@ PHP;
             file_put_contents($targetFile, '<?php // target file');
 
             $symlinkCreated = false;
+
             try {
                 $symlinkCreated = @symlink($targetFile, $linkFile);
-            } catch (\Throwable $e) {
+            } catch (Throwable $e) {
                 // Windows without developer mode may disallow symlinks
             }
 

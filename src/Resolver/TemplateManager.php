@@ -627,6 +627,16 @@ final class TemplateManager
             $valid = self::checkVariance($existingTypeNode, $expectedTypeNode, $variance);
 
             if (! $valid) {
+                // In return context, allow methods to specialize broad bounds to narrower types
+                // (e.g. @return static<int, TValue> specializing TKey of array-key to int)
+                if ($isReturnContext && self::checkVariance($expectedTypeNode, $existingTypeNode, GenericTypeNode::VARIANCE_COVARIANT)) {
+                    $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+                    $bindings[$templateName] = $expectedTypeNode;
+                    self::$instanceTemplateBindings[$instance] = $bindings;
+
+                    return null;
+                }
+
                 return ErrorFactory::createError(
                     $context . " expects {$className}<{$variance} {$expectedTypeNode}>, but {$className}<{$existingTypeNode}> was given"
                 );
