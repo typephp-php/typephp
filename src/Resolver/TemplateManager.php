@@ -622,13 +622,19 @@ final class TemplateManager
         $templateName = $templateTag->name;
         $existingBindings = self::$instanceTemplateBindings[$instance] ?? [];
 
-        if (isset($existingBindings[$templateName])) {
+      if (isset($existingBindings[$templateName])) {
             $existingTypeNode = $existingBindings[$templateName];
             $valid = self::checkVariance($existingTypeNode, $expectedTypeNode, $variance);
 
             if (! $valid) {
-                // In return context, allow methods to specialize broad bounds to narrower types
-                // (e.g. @return static<int, TValue> specializing TKey of array-key to int)
+                if ($existingTypeNode instanceof IdentifierTypeNode && strtolower($existingTypeNode->name) === 'mixed') {
+                    $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+                    $bindings[$templateName] = $expectedTypeNode;
+                    self::$instanceTemplateBindings[$instance] = $bindings;
+
+                    return null;
+                }
+
                 if ($isReturnContext && self::checkVariance($expectedTypeNode, $existingTypeNode, GenericTypeNode::VARIANCE_COVARIANT)) {
                     $bindings = self::$instanceTemplateBindings[$instance] ?? [];
                     $bindings[$templateName] = $expectedTypeNode;
