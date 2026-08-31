@@ -37,6 +37,7 @@ if (class_exists(TypePHP::class) && ! \defined('TYPEPHP_BOOTED')) {
                 'composer' => true,
                 'deptrac' => true,
                 'phan' => true,
+                'paratest' => true,
             ];
 
             $isTooling = isset($toolingBinaries[$binary]);
@@ -47,7 +48,7 @@ if (class_exists(TypePHP::class) && ! \defined('TYPEPHP_BOOTED')) {
     if (isset($_SERVER['argv']) && \is_array($_SERVER['argv'])) {
         $hasParallelArg = false;
         foreach ($_SERVER['argv'] as $arg) {
-            if (\is_string($arg) && (str_starts_with($arg, '--parallel') || $arg === '-p' || str_starts_with($arg, '--processes') || str_starts_with($arg, '--runner'))) {
+            if (\is_string($arg) && (str_starts_with($arg, '--parallel') || $arg === '-p' || str_starts_with($arg, '--processes'))) {
                 $hasParallelArg = true;
 
                 break;
@@ -56,12 +57,7 @@ if (class_exists(TypePHP::class) && ! \defined('TYPEPHP_BOOTED')) {
 
         $isParallelParent = ($binary === 'paratest') || ($binary === 'pest' && $hasParallelArg);
 
-        if (
-            getenv('TEST_TOKEN') !== false 
-            || getenv('PARATEST') !== false 
-            || getenv('UNIQUE_TEST_TOKEN') !== false 
-            || getenv('PEST_PARALLEL_WORKER_ID') !== false
-        ) {
+        if (getenv('TEST_TOKEN') !== false || getenv('PARATEST') !== false || getenv('PEST_PARALLEL_WORKER_ID') !== false) {
             $isParallelParent = false;
         }
     }

@@ -84,7 +84,8 @@ describe('Respect Native Return Type Nullability', function () {
             Config::set(['respect_native_nullability' => false]);
 
             expect(fn () => testNativeNullableReturnFunction(true))
-                ->toThrow(TypeError::class, 'none returned');
+                ->toThrow(TypeError::class, 'none returned')
+            ;
 
             expect(testNativeNullableReturnFunction(false))->toBe([10, 20, 30]);
         });
@@ -94,7 +95,8 @@ describe('Respect Native Return Type Nullability', function () {
             $service = new ReturnNullabilityService();
 
             expect(fn () => $service->findUsername(true))
-                ->toThrow(TypeError::class, 'none returned');
+                ->toThrow(TypeError::class, 'none returned')
+            ;
 
             expect($service->findUsername(false))->toBe('Alice');
         });

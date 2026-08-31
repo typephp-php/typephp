@@ -42,7 +42,8 @@ describe('Packages and Monorepo Path Inclusion (packages/**/src/**)', function (
 
         expect(FileFilter::isFileExcluded($coreSource))->toBeFalse()
             ->and(FileFilter::isFileExcluded($supportSource))->toBeFalse()
-            ->and(FileFilter::isFileExcluded($consoleSource))->toBeFalse();
+            ->and(FileFilter::isFileExcluded($consoleSource))->toBeFalse()
+        ;
     });
 
     test('correctly excludes package test files with packages/**/tests/** glob', function () {
@@ -63,7 +64,8 @@ describe('Packages and Monorepo Path Inclusion (packages/**/src/**)', function (
         $coreTest = str_replace('\\', '/', $projectRoot . '/packages/core/tests/ApplicationTest.php');
 
         expect(FileFilter::isFileExcluded($packageTest))->toBeTrue()
-            ->and(FileFilter::isFileExcluded($coreTest))->toBeTrue();
+            ->and(FileFilter::isFileExcluded($coreTest))->toBeTrue()
+        ;
     });
 
     test('verifies PathMatcher includes deep package source files and excludes package test files', function () {
@@ -83,11 +85,13 @@ describe('Packages and Monorepo Path Inclusion (packages/**/src/**)', function (
         expect(PathMatcher::isPathIncluded($projectRoot . '/packages/core/src/Application.php', $includes, $excludes, '', $projectRoot))->toBeTrue()
             ->and(PathMatcher::isPathIncluded($projectRoot . '/packages/support/src/Arr/functions.php', $includes, $excludes, '', $projectRoot))->toBeTrue()
             ->and(PathMatcher::isPathIncluded($projectRoot . '/packages/console/src/Input/ConsoleArgumentBag.php', $includes, $excludes, '', $projectRoot))->toBeTrue()
-            ->and(PathMatcher::isPathIncluded($projectRoot . '/packages/http/src/IsRequest.php', $includes, $excludes, '', $projectRoot))->toBeTrue();
+            ->and(PathMatcher::isPathIncluded($projectRoot . '/packages/http/src/IsRequest.php', $includes, $excludes, '', $projectRoot))->toBeTrue()
+        ;
 
         expect(PathMatcher::isPathIncluded($projectRoot . '/packages/support/tests/Filesystem/UnixFunctionsTest.php', $includes, $excludes, '', $projectRoot))->toBeFalse()
             ->and(PathMatcher::isPathIncluded($projectRoot . '/packages/core/tests/ApplicationTest.php', $includes, $excludes, '', $projectRoot))->toBeFalse()
-            ->and(PathMatcher::isPathIncluded($projectRoot . '/packages/console/tests/ConsoleArgumentBagTest.php', $includes, $excludes, '', $projectRoot))->toBeFalse();
+            ->and(PathMatcher::isPathIncluded($projectRoot . '/packages/console/tests/ConsoleArgumentBagTest.php', $includes, $excludes, '', $projectRoot))->toBeFalse()
+        ;
     });
 
     test('verifies isStaticSourcePath accurately classifies package source paths vs test fixture paths', function () {
@@ -97,6 +101,7 @@ describe('Packages and Monorepo Path Inclusion (packages/**/src/**)', function (
 
         expect(PathMatcher::isStaticSourcePath($pkgSourcePath))->toBeTrue()
             ->and(PathMatcher::isStaticSourcePath($pkgTestFixturePath))->toBeFalse()
-            ->and(PathMatcher::isStaticSourcePath($viteInstallFixturePath))->toBeFalse();
+            ->and(PathMatcher::isStaticSourcePath($viteInstallFixturePath))->toBeFalse()
+        ;
     });
 });
