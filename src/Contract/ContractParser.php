@@ -61,6 +61,72 @@ final class ContractParser
     private static array $classLevelDocCache = [];
 
     /**
+     * Fast O(1) lookup matrix for scalar refinements compatible with PHP native built-in types.
+     *
+     * @var array<string, array<string, bool>>
+     */
+    private const BUILTIN_REFINEMENTS = [
+        'int' => [
+            'positive-int' => true,
+            'negative-int' => true,
+            'non-positive-int' => true,
+            'non-negative-int' => true,
+            'non-zero-int' => true,
+            'unsigned-int' => true,
+        ],
+        'integer' => [
+            'positive-int' => true,
+            'negative-int' => true,
+            'non-positive-int' => true,
+            'non-negative-int' => true,
+            'non-zero-int' => true,
+            'unsigned-int' => true,
+        ],
+        'string' => [
+            'non-empty-string' => true,
+            'numeric-string' => true,
+            'lowercase-string' => true,
+            'non-empty-lowercase-string' => true,
+            'uppercase-string' => true,
+            'non-empty-uppercase-string' => true,
+            'class-string' => true,
+            'interface-string' => true,
+            'trait-string' => true,
+            'enum-string' => true,
+            'callable-string' => true,
+            'literal-string' => true,
+            'truthy-string' => true,
+            'non-falsy-string' => true,
+        ],
+        'float' => [
+            'positive-float' => true,
+            'negative-float' => true,
+            'non-positive-float' => true,
+            'non-negative-float' => true,
+            'non-zero-float' => true,
+            'double' => true,
+        ],
+        'double' => [
+            'positive-float' => true,
+            'negative-float' => true,
+            'non-positive-float' => true,
+            'non-negative-float' => true,
+            'non-zero-float' => true,
+            'double' => true,
+        ],
+        'bool' => [
+            'true' => true,
+            'false' => true,
+            'boolean' => true,
+        ],
+        'boolean' => [
+            'true' => true,
+            'false' => true,
+            'boolean' => true,
+        ],
+    ];
+
+    /**
      * Resets the contract, property, and class-level docblock caches.
      */
     public static function reset(): void
@@ -586,6 +652,14 @@ final class ContractParser
         if ($returnTag !== null) {
             $substitutedReturn = self::substituteAliases($returnTag->type, $aliases);
             $returnType = SpecialTypeResolver::resolve($substitutedReturn, $ref);
+
+            if (
+                Config::isRespectNativeNullabilityEnabled()
+                && self::returnTypeExplicitlyAllowsNull($ref)
+                && ! self::typeContainsNull($returnType)
+            ) {
+                $returnType = new NullableTypeNode($returnType);
+            }
         }
 
         return [
@@ -757,6 +831,14 @@ final class ContractParser
                 if ($returnTag !== null) {
                     $substitutedReturn = self::substituteAliases($returnTag->type, $aliases);
                     $returnType = SpecialTypeResolver::resolve($substitutedReturn, $hierRef);
+
+                    if (
+                        Config::isRespectNativeNullabilityEnabled()
+                        && self::returnTypeExplicitlyAllowsNull($ref)
+                        && ! self::typeContainsNull($returnType)
+                    ) {
+                        $returnType = new NullableTypeNode($returnType);
+                    }
                 }
             }
         }
@@ -877,13 +959,19 @@ final class ContractParser
      */
     private static function isRefinementOfBuiltin(string $refinement, string $builtin): bool
     {
-        return match ($builtin) {
-            'int', 'integer' => \in_array($refinement, ['positive-int', 'negative-int', 'non-positive-int', 'non-negative-int', 'non-zero-int', 'unsigned-int'], true) || str_starts_with($refinement, 'int<'),
-            'string' => \in_array($refinement, ['non-empty-string', 'numeric-string', 'lowercase-string', 'non-empty-lowercase-string', 'uppercase-string', 'non-empty-uppercase-string', 'class-string', 'interface-string', 'trait-string', 'enum-string', 'callable-string', 'literal-string', 'truthy-string', 'non-falsy-string'], true) || str_starts_with($refinement, 'class-string<'),
-            'float', 'double' => \in_array($refinement, ['positive-float', 'negative-float', 'non-positive-float', 'non-negative-float', 'non-zero-float', 'double'], true),
-            'bool', 'boolean' => \in_array($refinement, ['true', 'false', 'boolean'], true),
-            default => false,
-        };
+        if (isset(self::BUILTIN_REFINEMENTS[$builtin][$refinement])) {
+            return true;
+        }
+
+        if (($builtin === 'int' || $builtin === 'integer') && str_starts_with($refinement, 'int<')) {
+            return true;
+        }
+
+        if ($builtin === 'string' && str_starts_with($refinement, 'class-string<')) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -899,6 +987,32 @@ final class ContractParser
         if ($type instanceof \ReflectionNamedType) {
             $name = strtolower($type->getName());
             if ($name === 'mixed') {
+                return false;
+            }
+
+            return $type->allowsNull();
+        }
+
+        if ($type instanceof \ReflectionUnionType) {
+            return $type->allowsNull();
+        }
+
+        return false;
+    }
+
+    /**
+     * Checks if a reflection function or method explicitly declares a nullable native return type (excluding mixed, void, and never).
+     */
+    private static function returnTypeExplicitlyAllowsNull(\ReflectionFunctionAbstract $ref): bool
+    {
+        if (! $ref->hasReturnType()) {
+            return false;
+        }
+
+        $type = $ref->getReturnType();
+        if ($type instanceof \ReflectionNamedType) {
+            $name = strtolower($type->getName());
+            if ($name === 'mixed' || $name === 'void' || $name === 'never') {
                 return false;
             }
 
@@ -953,7 +1067,7 @@ final class ContractParser
 
         if ($node instanceof CallableTypeNode) {
             $parameters = array_map(
-                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+                fn(CallableTypeParameterNode $param) => new CallableTypeParameterNode(
                     self::substituteAliases($param->type, $aliases),
                     $param->isReference,
                     $param->isVariadic,
@@ -987,7 +1101,7 @@ final class ContractParser
         if ($node instanceof GenericTypeNode) {
             $genericType = self::substituteAliases($node->type, $aliases);
             $genericTypes = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->genericTypes
             );
 
@@ -1004,7 +1118,7 @@ final class ContractParser
 
         if ($node instanceof UnionTypeNode) {
             $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 
@@ -1019,7 +1133,7 @@ final class ContractParser
 
         if ($node instanceof IntersectionTypeNode) {
             $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 
