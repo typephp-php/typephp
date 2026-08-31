@@ -80,7 +80,9 @@ final class CacheManager
     }
 
     /**
-     * Ensures the cache directory exists securely with strict 0700 ownership.
+     * Ensures the cache directory exists securely.
+     * Enforces strict UID/0700 checks on system temp dirs, while allowing
+     * standard application permissions on custom user-configured directories.
      */
     public static function ensureSecureCacheDir(): bool
     {
@@ -90,31 +92,40 @@ final class CacheManager
             return false;
         }
 
+        $config = Config::get();
+        $isCustomDir = \is_string($config['cache_dir'] ?? null) && $config['cache_dir'] !== '';
+
         if (! is_dir($cacheDir)) {
-            if (! @mkdir($cacheDir, 0700, recursive: true) && ! is_dir($cacheDir)) {
+            $mode = $isCustomDir ? 0775 : 0700;
+            if (! @mkdir($cacheDir, $mode, recursive: true) && ! is_dir($cacheDir)) {
                 return false;
             }
-            @chmod($cacheDir, 0700);
+            if (! $isCustomDir) {
+                @chmod($cacheDir, 0700);
+            }
         }
 
-        if (\function_exists('posix_geteuid')) {
+        if (! $isCustomDir && \function_exists('posix_geteuid')) {
             $owner = @fileowner($cacheDir);
             if ($owner !== false && $owner !== posix_geteuid()) {
                 return false;
             }
         }
 
-        return true;
+        return is_writable($cacheDir);
     }
 
     /**
-     * Safely writes cached content atomically to avoid symlink traversal attacks.
+     * Safely writes cached content atomically to avoid corruption or partial reads.
      */
-  public static function writeCachedFileSafely(string $cachedFile, string $transformed): bool
+    public static function writeCachedFileSafely(string $cachedFile, string $transformed): bool
     {
         if (! self::ensureSecureCacheDir()) {
             return false;
         }
+
+        $config = Config::get();
+        $isCustomDir = \is_string($config['cache_dir'] ?? null) && $config['cache_dir'] !== '';
 
         $cacheDir = \dirname($cachedFile);
         $tmpFile = $cacheDir . '/.tmp_' . bin2hex(random_bytes(8));
@@ -123,7 +134,7 @@ final class CacheManager
             return false;
         }
 
-        @chmod($tmpFile, 0600);
+        @chmod($tmpFile, $isCustomDir ? 0664 : 0600);
 
         if (! @rename($tmpFile, $cachedFile)) {
             @unlink($tmpFile);
