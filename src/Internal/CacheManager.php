@@ -55,10 +55,18 @@ final class CacheManager
             $user = (string) getmyuid();
         }
 
-        $workerToken = getenv('TEST_TOKEN')
-            ?: (getenv('UNIQUE_TEST_TOKEN')
-                ?: (getenv('PEST_PARALLEL_WORKER_ID')
-                    ?: '0'));
+        $testToken = getenv('TEST_TOKEN');
+        $uniqueToken = getenv('UNIQUE_TEST_TOKEN');
+        $pestWorkerId = getenv('PEST_PARALLEL_WORKER_ID');
+
+        $workerToken = '0';
+        if (\is_string($testToken) && $testToken !== '') {
+            $workerToken = $testToken;
+        } elseif (\is_string($uniqueToken) && $uniqueToken !== '') {
+            $workerToken = $uniqueToken;
+        } elseif (\is_string($pestWorkerId) && $pestWorkerId !== '') {
+            $workerToken = $pestWorkerId;
+        }
 
         $userHash = hash('xxh128', 'typephp_' . $user . '_w' . $workerToken);
 
@@ -185,6 +193,7 @@ final class CacheManager
                 }
             }
 
+            // Also clean up any lingering temporary swap files
             $tmpFiles = glob($dir . '/.tmp_*');
             if ($tmpFiles !== false) {
                 foreach ($tmpFiles as $tFile) {

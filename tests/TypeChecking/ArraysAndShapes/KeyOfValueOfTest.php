@@ -167,7 +167,8 @@ describe('key-of<T> and value-of<T> Annotations', function () {
             expect($conn->localAction(['action' => 'start']))->toBeTrue();
 
             expect(fn () => $conn->localAction(['action' => 'pause']))
-                ->toThrow(TypeError::class, "['action'] must be a key of TypePHP\Tests\Fixtures\Types\DoctrineLikeConnection::LOCAL_ACTIONS");
+                ->toThrow(TypeError::class, "['action'] must be a key of TypePHP\Tests\Fixtures\Types\DoctrineLikeConnection::LOCAL_ACTIONS")
+            ;
         });
     });
 });
