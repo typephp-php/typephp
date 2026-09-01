@@ -132,6 +132,10 @@ final class Config
      * Locates the project root directory by searching upwards for vendor/autoload.php, composer.json, or typephp.php.
      * Caches the result in memory so the search happens exactly once.
      */
+    /**
+     * Locates the project root directory by searching upwards for vendor/autoload.php or composer.json.
+     * Caches the result in memory so the search happens exactly once.
+     */
     public static function getProjectRoot(): string
     {
         if (self::$projectRoot !== null) {
@@ -144,7 +148,6 @@ final class Config
             if (
                 file_exists($normCwd . '/vendor/autoload.php')
                 || file_exists($normCwd . '/composer.json')
-                || file_exists($normCwd . '/typephp.php')
             ) {
                 return self::$projectRoot = $normCwd;
             }
@@ -163,7 +166,7 @@ final class Config
         }
 
         for ($i = 0; $i < 10; $i++) {
-            if (file_exists($dir . '/vendor/autoload.php') || file_exists($dir . '/typephp.php')) {
+            if (file_exists($dir . '/composer.json') || file_exists($dir . '/vendor/autoload.php')) {
                 return self::$projectRoot = rtrim(str_replace('\\', '/', $dir), '/');
             }
 
