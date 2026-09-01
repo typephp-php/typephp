@@ -198,27 +198,30 @@ final class PathMatcher
         }
 
         $canon = self::canonicalizePath($normalizedPath);
+        $lowerCanon = strtolower($canon);
+        $lowerLibSrcDir = strtolower($libSrcDir);
 
-        if (str_contains($libSrcDir, '/vendor/')) {
-            return str_starts_with($canon, $libSrcDir);
+        if (str_contains($lowerLibSrcDir, '/vendor/')) {
+            return str_starts_with($lowerCanon, $lowerLibSrcDir);
         }
 
-        if (str_starts_with($canon, $libSrcDir)) {
+        if (str_starts_with($lowerCanon, $lowerLibSrcDir)) {
             $internalDirs = [
-                $libSrcDir . 'Internal/',
-                $libSrcDir . 'Contract/',
-                $libSrcDir . 'Command/',
-                $libSrcDir . 'Validator/',
-                $libSrcDir . 'Wrapper/',
-                $libSrcDir . 'Resolver/',
-                $libSrcDir . 'Extension/',
-                $libSrcDir . 'Exception/',
-                $libSrcDir . 'TypePHP.php',
-                $libSrcDir . 'bootstrap.php',
+                $lowerLibSrcDir . 'internal/',
+                $lowerLibSrcDir . 'contract/',
+                $lowerLibSrcDir . 'command/',
+                $lowerLibSrcDir . 'validator/',
+                $lowerLibSrcDir . 'wrapper/',
+                $lowerLibSrcDir . 'resolver/',
+                $lowerLibSrcDir . 'extension/',
+                $lowerLibSrcDir . 'exception/',
+                $lowerLibSrcDir . 'compiler/',
+                $lowerLibSrcDir . 'typephp.php',
+                $lowerLibSrcDir . 'bootstrap.php',
             ];
 
             foreach ($internalDirs as $dir) {
-                if (str_starts_with($canon, $dir)) {
+                if (str_starts_with($lowerCanon, $dir)) {
                     return true;
                 }
             }
