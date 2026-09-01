@@ -114,7 +114,8 @@ describe('Config Unit Tests', function () {
             Config::reset();
 
             $root = Config::getProjectRoot();
-            $normTempBase = rtrim(str_replace('\\', '/', $tempBase), '/');
+            $realTempBase = realpath($tempBase) !== false ? realpath($tempBase) : $tempBase;
+            $normTempBase = rtrim(str_replace('\\', '/', (string) $realTempBase), '/');
 
             expect($root)->toBe($normTempBase)
                 ->and($root)->not()->toContain('vendor/typephp/typephp')
