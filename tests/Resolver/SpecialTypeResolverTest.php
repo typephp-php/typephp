@@ -295,4 +295,99 @@ describe('SpecialTypeResolver Unit Tests', function () {
             expect(SpecialTypeResolver::resolveFqcnForFile('non-empty-string', 'some_file.php'))->toBe('non-empty-string');
         });
     });
+
+    describe('parseFileMetadata Tokenizer Edge Cases', function () {
+        test('extracts single, aliased, multi, and group use imports accurately', function () {
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\Services\Commerce;
+
+use App\Models\User;
+use App\Models\Order as CustomerOrder;
+use App\Contracts\{PaymentInterface, RefundInterface as Refund, Utilities\Formatter};
+use App\Helpers\MathHelper, App\Helpers\StringHelper as Str;
+use function App\Utils\calculateTotal as compute;
+use const App\Config\MAX_ITEMS as LIMIT;
+
+class CommerceService
+{
+    /**
+     * @use LoggerTrait<User>
+     */
+    use LoggerTrait;
+
+    public function process(): void
+    {
+        $callback = function () use ($userData) {
+            // Must not be confused with class use import!
+        };
+    }
+}
+PHP;
+
+            $virtualFile = 'VirtualCommerceService.php';
+            SpecialTypeResolver::parseFileMetadata($virtualFile, $source);
+
+            expect(SpecialTypeResolver::getNamespaceFromFile($virtualFile))->toBe('App\Services\Commerce');
+
+            $imports = SpecialTypeResolver::getUseImportsFromFile($virtualFile);
+
+            expect($imports)->toHaveKey('User')
+                ->and($imports['User'])->toBe('App\Models\User');
+
+            expect($imports)->toHaveKey('CustomerOrder')
+                ->and($imports['CustomerOrder'])->toBe('App\Models\Order');
+
+            expect($imports)->toHaveKey('PaymentInterface')
+                ->and($imports['PaymentInterface'])->toBe('App\Contracts\PaymentInterface')
+                ->and($imports)->toHaveKey('Refund')
+                ->and($imports['Refund'])->toBe('App\Contracts\RefundInterface')
+                ->and($imports)->toHaveKey('Formatter')
+                ->and($imports['Formatter'])->toBe('App\Contracts\Utilities\Formatter');
+
+            expect($imports)->toHaveKey('MathHelper')
+                ->and($imports['MathHelper'])->toBe('App\Helpers\MathHelper')
+                ->and($imports)->toHaveKey('Str')
+                ->and($imports['Str'])->toBe('App\Helpers\StringHelper');
+
+            expect($imports)->toHaveKey('compute')
+                ->and($imports['compute'])->toBe('App\Utils\calculateTotal')
+                ->and($imports)->toHaveKey('LIMIT')
+                ->and($imports['LIMIT'])->toBe('App\Config\MAX_ITEMS');
+
+            expect($imports)->not()->toHaveKey('userData')
+                ->and($imports)->not()->toHaveKey('LoggerTrait');
+
+            $traitDocs = SpecialTypeResolver::getClassTraitUseDocs('App\Services\Commerce\CommerceService');
+            expect($traitDocs)->toHaveCount(1)
+                ->and($traitDocs[0])->toContain('LoggerTrait<User>');
+        });
+
+        test('ignores use statements in docblock code examples and comments', function () {
+            $source = <<<'PHP'
+<?php
+
+namespace App\Demo;
+
+/**
+ * Example DocBlock with fake imports:
+ * use Fake\Example\ClassNotImported;
+ */
+// Comment: use Another\Fake\Import;
+class SampleDemo
+{
+}
+PHP;
+
+            $virtualFile = 'VirtualSampleDemo.php';
+            SpecialTypeResolver::parseFileMetadata($virtualFile, $source);
+
+            $imports = SpecialTypeResolver::getUseImportsFromFile($virtualFile);
+
+            expect($imports)->toBeEmpty();
+        });
+    });
 });
