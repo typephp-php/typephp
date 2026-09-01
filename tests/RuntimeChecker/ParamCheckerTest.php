@@ -171,7 +171,7 @@ describe('ParamChecker Unit Tests', function () {
             $target = ClassStringFactoryContainer::class . '::makeCountable';
 
             $err = ParamChecker::checkParams($target, [
-                'class' => 'NonExistentClass12345',
+                'class' => 'Invalid-Class-Name!',
             ], null, $registry);
 
             expect($err)->toBeInstanceOf(ErrorMessage::class)

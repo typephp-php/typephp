@@ -48,8 +48,8 @@ describe('class-string<T> Template Bounds', function () {
         expect(resolveBoundedClassStringSim(DateTime::class))->toBeTrue();
     });
 
-    test('rejects non-existent class-string when template T is bounded by object', function () {
-        expect(fn () => resolveObjectAttributeSim(stdClass::class, 'NonExistentClass12345'))
+    test('rejects syntactically invalid class-string when template T is bounded by object', function () {
+        expect(fn () => resolveObjectAttributeSim(stdClass::class, 'Invalid-Class-Name!'))
             ->toThrow(TypeError::class, 'must be a valid class-string')
         ;
     });

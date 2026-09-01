@@ -98,16 +98,6 @@ final class GenericValidator implements TypeValidatorInterface
 
     /**
      * Validates key-of<T> generic structures with O(1) in-memory caching.
-     *
-     * Execution Flow:
-     * 1. Array Constants: If T is a class constant (e.g., self::DRIVER_MAP), it safely reflects the
-     *    target class to bypass visibility restrictions (private/protected), caches the array in memory,
-     *    and verifies that the provided value exists as a key in that array.
-     * 2. Enums: If T is an Enum identifier, it extracts and caches the enum case names, then verifies
-     *    that the provided value matches a valid case name.
-     * 3. Array Shapes: If T is an inline array shape (e.g., array{id: int, name: string}), it verifies
-     *    that the provided value exists as one of the key names in the shape.
-     * 4. Fallback: Returns null gracefully for unresolvable or unsupported structures.
      */
     private function validateKeyOf(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
     {
@@ -174,15 +164,6 @@ final class GenericValidator implements TypeValidatorInterface
 
     /**
      * Validates value-of<T> generic structures with O(1) in-memory caching.
-     *
-     * Execution Flow:
-     * 1. Array Constants: If T is a class constant (e.g., self::DRIVER_MAP), it safely reflects the
-     *    target class to bypass visibility restrictions (private/protected), caches the array in memory,
-     *    and verifies that the provided value exists as a value in that array.
-     * 2. Backed Enums: If T is a Backed Enum identifier, it extracts and caches the enum case backing values,
-     *    then verifies that the provided value matches a valid case value.
-     * 3. Unit Enums: Pure non-backed UnitEnums have no backing values, so any value-of check fails.
-     * 4. Fallback: Returns null gracefully for unresolvable or unsupported structures.
      */
     private function validateValueOf(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
     {
@@ -354,7 +335,7 @@ final class GenericValidator implements TypeValidatorInterface
      */
     private function validateClassString(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
     {
-        if (! \is_string($value) || ! ClassNameValidator::isValid($value) || (! class_exists($value) && ! interface_exists($value) && ! trait_exists($value) && ! enum_exists($value))) {
+        if (! \is_string($value) || ! ClassNameValidator::isValidClassString($value)) {
             return ErrorFactory::createError($context . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($value) . ' given');
         }
 

@@ -336,34 +336,41 @@ PHP;
             $imports = SpecialTypeResolver::getUseImportsFromFile($virtualFile);
 
             expect($imports)->toHaveKey('User')
-                ->and($imports['User'])->toBe('App\Models\User');
+                ->and($imports['User'])->toBe('App\Models\User')
+            ;
 
             expect($imports)->toHaveKey('CustomerOrder')
-                ->and($imports['CustomerOrder'])->toBe('App\Models\Order');
+                ->and($imports['CustomerOrder'])->toBe('App\Models\Order')
+            ;
 
             expect($imports)->toHaveKey('PaymentInterface')
                 ->and($imports['PaymentInterface'])->toBe('App\Contracts\PaymentInterface')
                 ->and($imports)->toHaveKey('Refund')
                 ->and($imports['Refund'])->toBe('App\Contracts\RefundInterface')
                 ->and($imports)->toHaveKey('Formatter')
-                ->and($imports['Formatter'])->toBe('App\Contracts\Utilities\Formatter');
+                ->and($imports['Formatter'])->toBe('App\Contracts\Utilities\Formatter')
+            ;
 
             expect($imports)->toHaveKey('MathHelper')
                 ->and($imports['MathHelper'])->toBe('App\Helpers\MathHelper')
                 ->and($imports)->toHaveKey('Str')
-                ->and($imports['Str'])->toBe('App\Helpers\StringHelper');
+                ->and($imports['Str'])->toBe('App\Helpers\StringHelper')
+            ;
 
             expect($imports)->toHaveKey('compute')
                 ->and($imports['compute'])->toBe('App\Utils\calculateTotal')
                 ->and($imports)->toHaveKey('LIMIT')
-                ->and($imports['LIMIT'])->toBe('App\Config\MAX_ITEMS');
+                ->and($imports['LIMIT'])->toBe('App\Config\MAX_ITEMS')
+            ;
 
             expect($imports)->not()->toHaveKey('userData')
-                ->and($imports)->not()->toHaveKey('LoggerTrait');
+                ->and($imports)->not()->toHaveKey('LoggerTrait')
+            ;
 
             $traitDocs = SpecialTypeResolver::getClassTraitUseDocs('App\Services\Commerce\CommerceService');
             expect($traitDocs)->toHaveCount(1)
-                ->and($traitDocs[0])->toContain('LoggerTrait<User>');
+                ->and($traitDocs[0])->toContain('LoggerTrait<User>')
+            ;
         });
 
         test('ignores use statements in docblock code examples and comments', function () {

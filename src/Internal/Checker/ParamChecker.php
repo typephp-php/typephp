@@ -497,7 +497,7 @@ final class ParamChecker
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
 
         if (! TemplateManager::isBound($function, $targetObj, $templateName)) {
-            if (! \is_string($val) || ! ClassNameValidator::isValid($val) || (! class_exists($val) && ! interface_exists($val) && ! trait_exists($val) && ! enum_exists($val))) {
+            if (! \is_string($val) || ! ClassNameValidator::isValidClassString($val)) {
                 return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($val) . ' given');
             }
 
