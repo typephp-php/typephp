@@ -249,6 +249,7 @@ final class ParamChecker
         foreach ($types as $tNode) {
             if ($tNode instanceof CallableTypeNode) {
                 $hasCallableParam = true;
+
                 break;
             }
         }
@@ -362,9 +363,7 @@ final class ParamChecker
         }
 
         $isClassStringT = ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates));
-
         $isBareTemplate = self::getTemplateName($typeNode, $templates) !== null;
-
         $shouldSkipTemplateSub = $isBareTemplate || $isClassStringT;
 
         if (! $shouldSkipTemplateSub && (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0)) {
@@ -626,56 +625,251 @@ final class ParamChecker
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
 
         if (! TemplateManager::isBound($function, $targetObj, $templateName)) {
-            $sampleVal = ($isVariadic && \is_array($val)) ? ($val[0] ?? null) : $val;
-            $inferredType = TemplateManager::inferTypeFromValue($sampleVal);
+            return self::bindInitialTemplate(
+                $val,
+                $paramName,
+                $function,
+                $thisObj,
+                $targetObj,
+                $templateName,
+                $templateNode,
+                $isVariadic,
+                $isClassLevelTemplate,
+                $registry
+            );
+        }
 
-            if ($templateNode->bound !== null) {
-                $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
-                $err = $registry->validate($sampleVal, $resolvedBound, $function . '(): Argument $' . $paramName . ' (template ' . $templateName . ')');
-                if ($err !== null) {
-                    return $err;
-                }
+        return self::validateBoundTemplate(
+            $val,
+            $paramName,
+            $function,
+            $thisObj,
+            $targetObj,
+            $templateName,
+            $templateNode,
+            $isVariadic,
+            $isClassLevelTemplate,
+            $registry
+        );
+    }
+
+    private static function bindInitialTemplate(
+        mixed $val,
+        string $paramName,
+        string $function,
+        ?object $thisObj,
+        ?object $targetObj,
+        string $templateName,
+        TemplateTagValueNode $templateNode,
+        bool $isVariadic,
+        bool $isClassLevelTemplate,
+        TypeValidatorRegistry $registry
+    ): ?ErrorMessage {
+        $sampleVal = ($isVariadic && \is_array($val)) ? ($val[0] ?? null) : $val;
+        $inferredType = TemplateManager::inferTypeFromValue($sampleVal);
+
+        if ($templateNode->bound !== null) {
+            $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
+            $err = $registry->validate($sampleVal, $resolvedBound, $function . '(): Argument $' . $paramName . ' (template ' . $templateName . ')');
+            if ($err !== null) {
+                return $err;
             }
+        }
 
+        TemplateManager::bindTemplate($function, $targetObj, $templateName, $inferredType);
+
+        if ($isVariadic && \is_array($val)) {
+            return self::validateVariadicList(
+                $val,
+                $paramName,
+                $function,
+                $thisObj,
+                $targetObj,
+                $templateName,
+                $templateNode,
+                $inferredType,
+                $isClassLevelTemplate,
+                $registry
+            );
+        }
+
+        return null;
+    }
+
+    private static function validateBoundTemplate(
+        mixed $val,
+        string $paramName,
+        string $function,
+        ?object $thisObj,
+        ?object $targetObj,
+        string $templateName,
+        TemplateTagValueNode $templateNode,
+        bool $isVariadic,
+        bool $isClassLevelTemplate,
+        TypeValidatorRegistry $registry
+    ): ?ErrorMessage {
+        $expectedTypeNode = TemplateManager::getBoundType($function, $targetObj, $templateName);
+        if ($expectedTypeNode === null) {
+            return null;
+        }
+
+        if ($expectedTypeNode instanceof IdentifierTypeNode && $expectedTypeNode->name === $templateName) {
+            $inferredType = TemplateManager::inferTypeFromValue($val);
             TemplateManager::bindTemplate($function, $targetObj, $templateName, $inferredType);
 
-            if ($isVariadic && \is_array($val)) {
-                foreach ($val as $idx => $item) {
-                    $err = $registry->validate($item, $inferredType, $function . '(): Argument $' . $paramName . '[' . $idx . '] (template ' . $templateName . ' = ' . $inferredType . ')');
-                    if ($err !== null) {
-                        return $err;
-                    }
-                }
-            }
-        } else {
-            $expectedTypeNode = TemplateManager::getBoundType($function, $targetObj, $templateName);
-            if ($expectedTypeNode === null) {
-                return null;
-            }
+            return null;
+        }
 
-            if ($expectedTypeNode instanceof IdentifierTypeNode && $expectedTypeNode->name === $templateName) {
-                $inferredType = TemplateManager::inferTypeFromValue($val);
-                TemplateManager::bindTemplate($function, $targetObj, $templateName, $inferredType);
+        if ($isVariadic && \is_array($val)) {
+            return self::validateVariadicList(
+                $val,
+                $paramName,
+                $function,
+                $thisObj,
+                $targetObj,
+                $templateName,
+                $templateNode,
+                $expectedTypeNode,
+                $isClassLevelTemplate,
+                $registry
+            );
+        }
 
-                return null;
-            }
+        $context = $function . '(): Argument $' . $paramName;
+        $err = $registry->validate($val, $expectedTypeNode, $context . ' (template ' . $templateName . ' = ' . $expectedTypeNode . ')');
 
-            if ($isVariadic && \is_array($val)) {
-                foreach ($val as $idx => $item) {
-                    $err = $registry->validate($item, $expectedTypeNode, $function . '(): Argument $' . $paramName . '[' . $idx . '] (template ' . $templateName . ' = ' . $expectedTypeNode . ')');
-                    if ($err !== null) {
-                        return $err;
-                    }
+        if ($err !== null) {
+            return self::tryWidenTemplate(
+                $val,
+                $expectedTypeNode,
+                $templateNode,
+                $isClassLevelTemplate,
+                $function,
+                $thisObj,
+                $targetObj,
+                $templateName,
+                $context,
+                $err,
+                $registry
+            );
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<mixed> $items
+     */
+    private static function validateVariadicList(
+        array $items,
+        string $paramName,
+        string $function,
+        ?object $thisObj,
+        ?object $targetObj,
+        string $templateName,
+        TemplateTagValueNode $templateNode,
+        TypeNode &$currentType,
+        bool $isClassLevelTemplate,
+        TypeValidatorRegistry $registry
+    ): ?ErrorMessage {
+        foreach ($items as $idx => $item) {
+            $context = $function . '(): Argument $' . $paramName . '[' . $idx . ']';
+            $err = $registry->validate($item, $currentType, $context . ' (template ' . $templateName . ' = ' . $currentType . ')');
+
+            if ($err !== null) {
+                $widenErr = self::tryWidenTemplate(
+                    $item,
+                    $currentType,
+                    $templateNode,
+                    $isClassLevelTemplate,
+                    $function,
+                    $thisObj,
+                    $targetObj,
+                    $templateName,
+                    $context,
+                    $err,
+                    $registry
+                );
+
+                if ($widenErr !== null) {
+                    return $widenErr;
                 }
-            } else {
-                $err = $registry->validate($val, $expectedTypeNode, $function . '(): Argument $' . $paramName . ' (template ' . $templateName . ' = ' . $expectedTypeNode . ')');
-                if ($err !== null) {
-                    return $err;
-                }
+
+                $currentType = TemplateManager::getBoundType($function, $targetObj, $templateName) ?? $currentType;
             }
         }
 
         return null;
+    }
+
+    private static function tryWidenTemplate(
+        mixed $val,
+        TypeNode $currentType,
+        TemplateTagValueNode $templateNode,
+        bool $isClassLevelTemplate,
+        string $function,
+        ?object $thisObj,
+        ?object $targetObj,
+        string $templateName,
+        string $context,
+        ErrorMessage $originalError,
+        TypeValidatorRegistry $registry
+    ): ?ErrorMessage {
+        if ($isClassLevelTemplate || $templateNode->bound === null) {
+            return $originalError;
+        }
+
+        $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
+        $boundErr = $registry->validate($val, $resolvedBound, $context . ' (template ' . $templateName . ')');
+
+        if ($boundErr === null) {
+            $newInferred = TemplateManager::inferTypeFromValue($val);
+            $unifiedType = self::unifyTypes($currentType, $newInferred);
+            TemplateManager::bindTemplate($function, $targetObj, $templateName, $unifiedType);
+
+            return null;
+        }
+
+        return $boundErr;
+    }
+
+    /**
+     * Unifies two types into a combined UnionTypeNode, deduplicating identical member types.
+     */
+    private static function unifyTypes(TypeNode $type1, TypeNode $type2): TypeNode
+    {
+        if ((string) $type1 === (string) $type2) {
+            return $type1;
+        }
+
+        $types = [];
+
+        if ($type1 instanceof UnionTypeNode) {
+            $types = $type1->types;
+        } else {
+            $types[] = $type1;
+        }
+
+        if ($type2 instanceof UnionTypeNode) {
+            foreach ($type2->types as $t) {
+                $types[] = $t;
+            }
+        } else {
+            $types[] = $type2;
+        }
+
+        $unique = [];
+        $deduped = [];
+
+        foreach ($types as $t) {
+            $str = (string) $t;
+            if (! isset($unique[$str])) {
+                $unique[$str] = true;
+                $deduped[] = $t;
+            }
+        }
+
+        return \count($deduped) === 1 ? $deduped[0] : new UnionTypeNode($deduped);
     }
 
     private static function typeContainsNull(TypeNode $node): bool

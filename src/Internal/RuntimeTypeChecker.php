@@ -81,7 +81,7 @@ final class RuntimeTypeChecker
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        $err = self::checkParams($function, $vars, $thisOrClass);
+        $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry(), $effectiveFunction);
 
         $contract = ContractParser::parse($effectiveFunction);
         $methodTemplates = $contract['templates'] ?? [];

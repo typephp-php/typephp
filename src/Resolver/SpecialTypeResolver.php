@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace TypePHP\Resolver;
 
-use PhpParser\Node\Stmt;
-use PhpParser\ParserFactory;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
@@ -118,6 +116,13 @@ final class SpecialTypeResolver
     private static array $reflectionContextCache = [];
 
     /**
+     * In-memory cache for resolved FQCNs per context and type name.
+     *
+     * @var array<string, string>
+     */
+    private static array $fqcnCache = [];
+
+    /**
      * In-memory cache of file import maps keyed by filename.
      *
      * @var array<string, array<string, string>>
@@ -139,14 +144,12 @@ final class SpecialTypeResolver
     private static array $classTraitUseDocs = [];
 
     /**
-     * Resets internal reflection and file caches. Useful for test isolation.
+     * Resets reflection context and dynamic caches. Preserves static file imports.
      */
     public static function reset(): void
     {
         self::$reflectionContextCache = [];
-        self::$fileUseImports = [];
-        self::$fileNamespaces = [];
-        self::$classTraitUseDocs = [];
+        self::$fqcnCache = [];
     }
 
     /**
@@ -930,6 +933,7 @@ final class SpecialTypeResolver
 
     /**
      * Resolves a short class name to its fully qualified class name (FQCN) using Reflection context.
+     * Memoizes resolved FQCNs in memory to avoid autoloader search storms.
      *
      * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
      */
@@ -947,6 +951,17 @@ final class SpecialTypeResolver
             return $name;
         }
 
+        $contextKey = match (true) {
+            $ref instanceof \ReflectionClass => 'C:' . $ref->getName(),
+            $ref instanceof \ReflectionMethod => 'M:' . $ref->getDeclaringClass()->getName() . '::' . $ref->getName(),
+            $ref instanceof \ReflectionFunction => 'F:' . $ref->getName(),
+        };
+
+        $cacheKey = $contextKey . '|' . $name;
+        if (isset(self::$fqcnCache[$cacheKey])) {
+            return self::$fqcnCache[$cacheKey];
+        }
+
         $imports = self::getUseImports($ref);
         $namespace = match (true) {
             $ref instanceof \ReflectionClass => $ref->getNamespaceName(),
@@ -954,7 +969,9 @@ final class SpecialTypeResolver
             $ref instanceof \ReflectionFunction => $ref->getNamespaceName(),
         };
 
-        return self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
+        $resolved = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
+
+        return self::$fqcnCache[$cacheKey] = $resolved;
     }
 
     /**
@@ -1039,80 +1056,130 @@ final class SpecialTypeResolver
     }
 
     /**
-     * Parses the AST of a PHP file once to extract namespace, use imports, and class trait use docblocks.
+     * Fast C-level token scanner using PhpToken (PHP 8.0+) to extract namespace,
+     * use imports, and trait docblocks in microseconds without PhpParser AST overhead.
+     *
+     * Execution Flow:
+     * 1. Namespace: Identifies T_NAMESPACE to track file-level namespace prefix.
+     * 2. Class Scope: Tracks class, interface, trait, and enum boundaries.
+     * 3. Trait DocBlocks: Scans doc comments preceding T_USE statements inside class declarations.
+     * 4. Top-Level Imports: Parses single, multi, and group use statements outside classes into alias maps.
      */
     private static function parseFileMetadata(string $fileName, string $source): void
     {
         self::$fileNamespaces[$fileName] = '';
         self::$fileUseImports[$fileName] = [];
 
-        /** @var \PhpParser\Parser|null $parser */
-        static $parser = null;
-        if ($parser === null) {
-            $parser = (new ParserFactory())->createForNewestSupportedVersion();
-        }
-
         try {
-            $stmts = $parser->parse($source);
-            if ($stmts === null) {
-                return;
-            }
-
-            $imports = [];
+            $tokens = \PhpToken::tokenize($source);
+            $count = \count($tokens);
             $namespace = '';
+            $imports = [];
+            $currentClass = null;
 
-            /** @var array<Stmt> $nodesToScan */
-            $nodesToScan = $stmts;
-            foreach ($stmts as $stmt) {
-                if ($stmt instanceof Stmt\Namespace_) {
-                    $namespace = $stmt->name !== null ? $stmt->name->toString() : '';
-                    $nodesToScan = $stmt->stmts;
+            for ($i = 0; $i < $count; $i++) {
+                $token = $tokens[$i];
 
-                    break;
-                }
-            }
+                if ($token->id === T_NAMESPACE) {
+                    $nsParts = [];
+                    for ($j = $i + 1; $j < $count; $j++) {
+                        if ($tokens[$j]->text === ';' || $tokens[$j]->text === '{') {
+                            $i = $j;
 
-            foreach ($nodesToScan as $stmt) {
-                if ($stmt instanceof Stmt\Use_) {
-                    if ($stmt->type !== Stmt\Use_::TYPE_NORMAL) {
-                        continue;
-                    }
-
-                    foreach ($stmt->uses as $use) {
-                        $fqcn = $use->name->toString();
-                        $alias = $use->getAlias()->toString();
-                        $imports[$alias] = $fqcn;
-                    }
-                } elseif ($stmt instanceof Stmt\GroupUse) {
-                    $prefix = $stmt->prefix->toString();
-
-                    foreach ($stmt->uses as $use) {
-                        if ($use->type !== Stmt\Use_::TYPE_NORMAL && $use->type !== Stmt\Use_::TYPE_UNKNOWN && $stmt->type !== Stmt\Use_::TYPE_NORMAL) {
-                            continue;
+                            break;
                         }
-
-                        $fqcn = $prefix . '\\' . $use->name->toString();
-                        $alias = $use->getAlias()->toString();
-                        $imports[$alias] = $fqcn;
+                        if ($tokens[$j]->id === T_NAME_QUALIFIED || $tokens[$j]->id === T_STRING || $tokens[$j]->id === T_NS_SEPARATOR) {
+                            $nsParts[] = $tokens[$j]->text;
+                        }
                     }
-                } elseif ($stmt instanceof Stmt\Class_ && $stmt->name !== null) {
-                    $className = $namespace !== '' ? $namespace . '\\' . $stmt->name->toString() : $stmt->name->toString();
-                    self::$classTraitUseDocs[$className] = [];
-                    foreach ($stmt->stmts as $classStmt) {
-                        if ($classStmt instanceof Stmt\TraitUse) {
-                            $doc = $classStmt->getDocComment();
-                            if ($doc !== null) {
-                                self::$classTraitUseDocs[$className][] = $doc->getText();
+                    $namespace = trim(implode('', $nsParts));
+                    self::$fileNamespaces[$fileName] = $namespace;
+
+                    continue;
+                }
+
+                if (($token->id === T_CLASS || $token->id === T_INTERFACE || $token->id === T_TRAIT || (\defined('T_ENUM') && $token->id === T_ENUM)) && isset($tokens[$i + 2]) && $tokens[$i + 2]->id === T_STRING) {
+                    $className = $tokens[$i + 2]->text;
+                    $currentClass = $namespace !== '' ? $namespace . '\\' . $className : $className;
+                    self::$classTraitUseDocs[$currentClass] ??= [];
+
+                    continue;
+                }
+
+                if ($token->id === T_USE && $currentClass !== null) {
+                    for ($k = $i - 1; $k >= 0; $k--) {
+                        if ($tokens[$k]->id === T_DOC_COMMENT) {
+                            self::$classTraitUseDocs[$currentClass][] = $tokens[$k]->text;
+
+                            break;
+                        }
+                        if ($tokens[$k]->id !== T_WHITESPACE) {
+                            break;
+                        }
+                    }
+
+                    continue;
+                }
+
+                if ($token->id === T_USE && $currentClass === null) {
+                    $useStatement = '';
+                    for ($j = $i + 1; $j < $count; $j++) {
+                        if ($tokens[$j]->text === ';') {
+                            $i = $j;
+
+                            break;
+                        }
+                        if ($tokens[$j]->text === '{') {
+                            $prefix = trim($useStatement);
+                            $groupContent = '';
+                            for ($g = $j + 1; $g < $count; $g++) {
+                                if ($tokens[$g]->text === '}') {
+                                    $i = $g;
+
+                                    break;
+                                }
+                                $groupContent .= $tokens[$g]->text;
+                            }
+                            foreach (explode(',', $groupContent) as $part) {
+                                $part = trim($part);
+                                if ($part === '') {
+                                    continue;
+                                }
+                                if (preg_match('/^([a-zA-Z0-9_\\\\]+)(?:\s+as\s+([a-zA-Z0-9_]+))?$/i', $part, $m) === 1) {
+                                    $fqcn = rtrim($prefix, '\\') . '\\' . trim($m[1]);
+                                    $alias = $m[2] ?? basename(str_replace('\\', '/', $fqcn));
+                                    $imports[$alias] = ltrim($fqcn, '\\');
+                                }
+                            }
+
+                            break;
+                        }
+                        $useStatement .= $tokens[$j]->text;
+                    }
+
+                    if (str_contains($useStatement, ',')) {
+                        foreach (explode(',', $useStatement) as $part) {
+                            $part = trim($part);
+                            if ($part === '') {
+                                continue;
+                            }
+                            if (preg_match('/^(?:function\s+|const\s+)?([a-zA-Z0-9_\\\\]+)(?:\s+as\s+([a-zA-Z0-9_]+))?$/i', $part, $m) === 1) {
+                                $fqcn = trim($m[1]);
+                                $alias = $m[2] ?? basename(str_replace('\\', '/', $fqcn));
+                                $imports[$alias] = ltrim($fqcn, '\\');
                             }
                         }
+                    } elseif (preg_match('/^(?:function\s+|const\s+)?([a-zA-Z0-9_\\\\]+)(?:\s+as\s+([a-zA-Z0-9_]+))?$/i', trim($useStatement), $m) === 1) {
+                        $fqcn = trim($m[1]);
+                        $alias = $m[2] ?? basename(str_replace('\\', '/', $fqcn));
+                        $imports[$alias] = ltrim($fqcn, '\\');
                     }
                 }
             }
 
-            self::$fileNamespaces[$fileName] = $namespace;
             self::$fileUseImports[$fileName] = $imports;
         } catch (\Throwable $e) {
-            // Silently fall back to empty metadata if parsing fails
+            self::$fileUseImports[$fileName] = [];
         }
     }
 }

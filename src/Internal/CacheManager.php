@@ -21,13 +21,19 @@ final class CacheManager
      */
     private static ?string $resolvedCacheDir = null;
 
+    /**
+     * Memoized verification state of the cache directory.
+     */
+    private static ?bool $secureDirVerified = null;
+
     public static function reset(): void
     {
         self::$resolvedCacheDir = null;
+        self::$secureDirVerified = null;
     }
 
     /**
-     * Returns the absolute path to the cache directory, isolating by system user and parallel test worker if using temp dir.
+     * Returns the absolute path to the cache directory, isolating by system user if using temp dir.
      */
     public static function getCacheDir(): string
     {
@@ -55,20 +61,7 @@ final class CacheManager
             $user = (string) getmyuid();
         }
 
-        $testToken = getenv('TEST_TOKEN');
-        $uniqueToken = getenv('UNIQUE_TEST_TOKEN');
-        $pestWorkerId = getenv('PEST_PARALLEL_WORKER_ID');
-
-        $workerToken = '0';
-        if (\is_string($testToken) && $testToken !== '') {
-            $workerToken = $testToken;
-        } elseif (\is_string($uniqueToken) && $uniqueToken !== '') {
-            $workerToken = $uniqueToken;
-        } elseif (\is_string($pestWorkerId) && $pestWorkerId !== '') {
-            $workerToken = $pestWorkerId;
-        }
-
-        $userHash = hash('xxh128', 'typephp_' . $user . '_w' . $workerToken);
+        $userHash = hash('xxh128', 'typephp_' . $user);
 
         return self::$resolvedCacheDir = sys_get_temp_dir() . '/typephp-cache-' . $userHash;
     }
@@ -93,35 +86,47 @@ final class CacheManager
     }
 
     /**
-     * Ensures the cache directory exists securely with strict 0700 ownership.
+     * Ensures the cache directory exists securely.
+     * Enforces strict UID/0700 checks on system temp dirs, while allowing
+     * standard application permissions on custom user-configured directories.
      */
     public static function ensureSecureCacheDir(): bool
     {
+        if (self::$secureDirVerified !== null) {
+            return self::$secureDirVerified;
+        }
+
         $cacheDir = self::getCacheDir();
 
         if (is_link($cacheDir)) {
-            return false;
+            return self::$secureDirVerified = false;
         }
+
+        $config = Config::get();
+        $isCustomDir = \is_string($config['cache_dir'] ?? null) && $config['cache_dir'] !== '';
 
         if (! is_dir($cacheDir)) {
-            if (! @mkdir($cacheDir, 0700, recursive: true) && ! is_dir($cacheDir)) {
-                return false;
+            $mode = $isCustomDir ? 0775 : 0700;
+            if (! @mkdir($cacheDir, $mode, recursive: true) && ! is_dir($cacheDir)) {
+                return self::$secureDirVerified = false;
             }
-            @chmod($cacheDir, 0700);
+            if (! $isCustomDir) {
+                @chmod($cacheDir, 0700);
+            }
         }
 
-        if (\function_exists('posix_geteuid')) {
+        if (! $isCustomDir && \function_exists('posix_geteuid')) {
             $owner = @fileowner($cacheDir);
             if ($owner !== false && $owner !== posix_geteuid()) {
-                return false;
+                return self::$secureDirVerified = false;
             }
         }
 
-        return true;
+        return self::$secureDirVerified = is_writable($cacheDir);
     }
 
     /**
-     * Safely writes cached content atomically to avoid symlink traversal attacks.
+     * Safely writes cached content atomically to avoid corruption or partial reads.
      */
     public static function writeCachedFileSafely(string $cachedFile, string $transformed): bool
     {
@@ -129,14 +134,17 @@ final class CacheManager
             return false;
         }
 
+        $config = Config::get();
+        $isCustomDir = \is_string($config['cache_dir'] ?? null) && $config['cache_dir'] !== '';
+
         $cacheDir = \dirname($cachedFile);
         $tmpFile = $cacheDir . '/.tmp_' . bin2hex(random_bytes(8));
 
-        if (@file_put_contents($tmpFile, $transformed, LOCK_EX) === false) {
+        if (@file_put_contents($tmpFile, $transformed) === false) {
             return false;
         }
 
-        @chmod($tmpFile, 0600);
+        @chmod($tmpFile, $isCustomDir ? 0664 : 0600);
 
         if (! @rename($tmpFile, $cachedFile)) {
             @unlink($tmpFile);
@@ -148,8 +156,7 @@ final class CacheManager
     }
 
     /**
-     * Clears all cached transformed files from the cache directory,
-     * including all parallel worker directories (_w1, _w2, etc.).
+     * Clears all cached transformed files from the cache directory.
      */
     public static function clear(): int
     {
@@ -193,7 +200,6 @@ final class CacheManager
                 }
             }
 
-            // Also clean up any lingering temporary swap files
             $tmpFiles = glob($dir . '/.tmp_*');
             if ($tmpFiles !== false) {
                 foreach ($tmpFiles as $tFile) {

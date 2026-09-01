@@ -97,4 +97,44 @@ describe('Config Unit Tests', function () {
             ->and($config['inline_vars']['generics'])->toBeTrue()
         ;
     });
+
+    test('resolves consumer project root when TypePHP is installed inside vendor/typephp/typephp', function () {
+        $tempBase = sys_get_temp_dir() . '/typephp_root_test_' . uniqid();
+        $vendorDir = $tempBase . '/vendor/typephp/typephp/src/Internal';
+        mkdir($vendorDir, 0777, true);
+
+        file_put_contents($tempBase . '/composer.json', json_encode(['name' => 'acme/consumer-app']));
+        file_put_contents($tempBase . '/vendor/autoload.php', '<?php');
+        file_put_contents($tempBase . '/vendor/typephp/typephp/composer.json', json_encode(['name' => 'typephp/typephp']));
+
+        try {
+            $prevCwd = getcwd();
+            chdir($tempBase);
+
+            Config::reset();
+
+            $root = Config::getProjectRoot();
+            $realTempBase = realpath($tempBase) !== false ? realpath($tempBase) : $tempBase;
+            $normTempBase = rtrim(str_replace('\\', '/', (string) $realTempBase), '/');
+
+            expect($root)->toBe($normTempBase)
+                ->and($root)->not()->toContain('vendor/typephp/typephp')
+            ;
+
+            if ($prevCwd !== false) {
+                chdir($prevCwd);
+            }
+        } finally {
+            @unlink($tempBase . '/composer.json');
+            @unlink($tempBase . '/vendor/autoload.php');
+            @unlink($tempBase . '/vendor/typephp/typephp/composer.json');
+            @rmdir($tempBase . '/vendor/typephp/typephp/src/Internal');
+            @rmdir($tempBase . '/vendor/typephp/typephp/src');
+            @rmdir($tempBase . '/vendor/typephp/typephp');
+            @rmdir($tempBase . '/vendor/typephp');
+            @rmdir($tempBase . '/vendor');
+            @rmdir($tempBase);
+            Config::reset();
+        }
+    });
 });

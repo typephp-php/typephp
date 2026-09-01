@@ -7,11 +7,16 @@ namespace TypePHP\Internal\Checker;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode;
+use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ThisTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use PHPStan\PhpDocParser\Lexer\Lexer;
@@ -36,18 +41,26 @@ use TypePHP\Wrapper\CallableWrapper;
 final class InlineChecker
 {
     /**
-     * In-memory cache for tokenized and parsed TypeNode ASTs keyed by normalized type string.
+     * In-memory cache for tokenized and parsed TypeNode ASTs and their context necessity flag.
      *
-     * @var array<string, TypeNode>
+     * @var array<string, array{0: TypeNode, 1: bool}>
      */
     private static array $parsedTypeNodeCache = [];
 
     /**
-     * Resets internal type node caches. Useful for test isolation.
+     * Memoized cache for PHP internal function determinations.
+     *
+     * @var array<string, bool>
+     */
+    private static array $internalFunctionsCache = [];
+
+    /**
+     * Resets internal type node and function caches. Useful for test isolation.
      */
     public static function reset(): void
     {
         self::$parsedTypeNodeCache = [];
+        self::$internalFunctionsCache = [];
     }
 
     /**
@@ -112,13 +125,15 @@ final class InlineChecker
 
         try {
             $normalized = DocblockNormalizer::normalize($typeString);
-            $typeNode = self::parseTypeString($normalized);
+            [$typeNode, $needsContext] = self::parseTypeString($normalized);
 
             if ($file !== '') {
                 $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
             }
 
-            $typeNode = self::resolveCallerContext($typeNode);
+            if ($needsContext) {
+                $typeNode = self::resolveCallerContext($typeNode);
+            }
 
             if (! self::shouldValidateType($typeNode, $config)) {
                 return $value;
@@ -210,27 +225,158 @@ final class InlineChecker
     }
 
     /**
-     * Resolves caller class context and applies class-level and method-level templates & type aliases to the AST.
+     * Resolves caller class or function context and applies templates & type aliases to the AST.
      */
     private static function resolveCallerContext(TypeNode $typeNode): TypeNode
     {
+        $frameInfo = self::findCallerFrame();
+
+        if ($frameInfo['functionName'] !== null) {
+            return self::resolveFunctionContext($typeNode, $frameInfo['functionName']);
+        }
+
+        if ($frameInfo['className'] !== null) {
+            return self::resolveClassContext(
+                $typeNode,
+                $frameInfo['className'],
+                $frameInfo['methodName'],
+                $frameInfo['thisObj']
+            );
+        }
+
+        return $typeNode;
+    }
+
+    /**
+     * Inspects the backtrace to find the nearest non-internal caller frame.
+     *
+     * @return array{className: ?string, methodName: ?string, functionName: ?string, thisObj: ?object}
+     */
+    private static function findCallerFrame(): array
+    {
         $className = null;
         $methodName = null;
+        $functionName = null;
         $thisObj = null;
-        $trace = debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT, 7);
+
+        $trace = debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT, 15);
 
         foreach ($trace as $frame) {
             $classCandidate = $frame['class'] ?? null;
-            if ($classCandidate !== null && ! str_starts_with($classCandidate, 'TypePHP\\Internal\\') && ! str_starts_with($classCandidate, 'TypePHP\\Wrapper\\')) {
-                $className = $classCandidate;
-                $methodName = $frame['function'];
-                $thisObj = $frame['object'] ?? null;
+            $funcCandidate = $frame['function'];
 
-                break;
+            if ($classCandidate === 'Closure' || $classCandidate === 'Generator') {
+                if ($thisObj === null && isset($frame['object']) && ! ($frame['object'] instanceof \Closure) && ! ($frame['object'] instanceof \Generator)) {
+                    $thisObj = $frame['object'];
+                }
+
+                continue;
+            }
+
+            if ($funcCandidate === '{closure}' || str_starts_with($funcCandidate, '{closure')) {
+                if ($thisObj === null && isset($frame['object']) && ! ($frame['object'] instanceof \Closure) && ! ($frame['object'] instanceof \Generator)) {
+                    $thisObj = $frame['object'];
+                }
+
+                continue;
+            }
+
+            if ($classCandidate !== null) {
+                if (! str_starts_with($classCandidate, 'TypePHP\\Internal\\') && ! str_starts_with($classCandidate, 'TypePHP\\Wrapper\\')) {
+                    $className = $classCandidate;
+                    $methodName = $funcCandidate;
+                    if ($thisObj === null) {
+                        $thisObj = $frame['object'] ?? null;
+                    }
+
+                    break;
+                }
+            } else {
+                if (! str_starts_with($funcCandidate, 'TypePHP\\')) {
+                    if (! \in_array($funcCandidate, ['include', 'include_once', 'require', 'require_once', 'eval'], true)) {
+                        if (self::isInternalFunction($funcCandidate)) {
+                            continue;
+                        }
+
+                        $functionName = $funcCandidate;
+
+                        break;
+                    }
+                }
             }
         }
 
-        if ($className === null || (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className))) {
+        return [
+            'className' => $className,
+            'methodName' => $methodName,
+            'functionName' => $functionName,
+            'thisObj' => $thisObj,
+        ];
+    }
+
+    /**
+     * Fast check if a function name represents an internal PHP built-in function.
+     */
+    private static function isInternalFunction(string $funcName): bool
+    {
+        if (! \function_exists($funcName)) {
+            return false;
+        }
+
+        if (isset(self::$internalFunctionsCache[$funcName])) {
+            return self::$internalFunctionsCache[$funcName];
+        }
+
+        try {
+            $rf = new \ReflectionFunction($funcName);
+
+            return self::$internalFunctionsCache[$funcName] = $rf->isInternal();
+        } catch (\ReflectionException $e) {
+            return self::$internalFunctionsCache[$funcName] = false;
+        }
+    }
+
+    /**
+     * Resolves templates and aliases within standalone functions.
+     */
+    private static function resolveFunctionContext(TypeNode $typeNode, string $functionName): TypeNode
+    {
+        if (! \function_exists($functionName)) {
+            return $typeNode;
+        }
+
+        try {
+            $refFunc = new \ReflectionFunction($functionName);
+            $typeNode = SpecialTypeResolver::resolve($typeNode, $refFunc);
+
+            $contract = ContractParser::parse($functionName);
+            $declaredTemplates = $contract['templates'] ?? [];
+            $aliases = $contract['aliases'] ?? [];
+            $boundTemplates = TemplateManager::getBoundTemplates($functionName, null, $declaredTemplates);
+
+            $activeBindings = [...$aliases, ...$boundTemplates];
+
+            if (\count($activeBindings) > 0 || \count($declaredTemplates) > 0) {
+                $typeNode = TemplateSubstitutor::substitute($typeNode, $activeBindings, $declaredTemplates);
+                $typeNode = SpecialTypeResolver::resolve($typeNode, $refFunc);
+            }
+        } catch (\ReflectionException $e) {
+            // Silently continue if reflection fails
+        }
+
+        return $typeNode;
+    }
+
+    /**
+     * Resolves templates, aliases, and class context within class methods.
+     */
+    private static function resolveClassContext(
+        TypeNode $typeNode,
+        string $className,
+        ?string $methodName,
+        ?object $thisObj
+    ): TypeNode {
+        if (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className)) {
             return $typeNode;
         }
 
@@ -241,7 +387,7 @@ final class InlineChecker
 
             $classAliases = ContractParser::parseClassAliases($className);
 
-            $targetFunc = ($methodName !== '{closure}')
+            $targetFunc = ($methodName !== '{closure}' && $methodName !== null)
                 ? $className . '::' . $methodName
                 : $className . '::__construct';
 
@@ -249,7 +395,7 @@ final class InlineChecker
             $declaredTemplates = $contract['allTemplates'] ?? ($contract['classTemplates'] ?? []);
             $boundTemplates = TemplateManager::getBoundTemplates($targetFunc, $thisObj, $declaredTemplates);
 
-            $activeBindings = array_merge($classAliases, $boundTemplates);
+            $activeBindings = [...$classAliases, ...$boundTemplates];
 
             if (\count($activeBindings) > 0 || \count($declaredTemplates) > 0) {
                 $typeNode = TemplateSubstitutor::substitute($typeNode, $activeBindings, $declaredTemplates);
@@ -292,9 +438,97 @@ final class InlineChecker
     }
 
     /**
-     * Parses and caches a type string into a TypeNode AST.
+     * Inspects a TypeNode to check if it requires caller context resolution (templates, aliases, self/static/$this).
      */
-    private static function parseTypeString(string $typeString): TypeNode
+    private static function needsContextResolution(TypeNode $node): bool
+    {
+        if ($node instanceof ThisTypeNode || $node instanceof OffsetAccessTypeNode || $node instanceof ConditionalTypeNode || $node instanceof ConditionalTypeForParameterNode) {
+            return true;
+        }
+
+        if ($node instanceof IdentifierTypeNode) {
+            $lower = strtolower($node->name);
+            if (\in_array($lower, ['self', 'static', 'parent', '$this'], true)) {
+                return true;
+            }
+
+            return ! SpecialTypeResolver::isBuiltInTypeKeyword($lower);
+        }
+
+        if ($node instanceof GenericTypeNode) {
+            return true;
+        }
+
+        if ($node instanceof ConstTypeNode) {
+            $constExpr = $node->constExpr;
+            if ($constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode && $constExpr->className !== '') {
+                return true;
+            }
+
+            return false;
+        }
+
+        if ($node instanceof NullableTypeNode || $node instanceof ArrayTypeNode) {
+            return self::needsContextResolution($node->type);
+        }
+
+        if ($node instanceof UnionTypeNode || $node instanceof IntersectionTypeNode) {
+            foreach ($node->types as $subType) {
+                if (self::needsContextResolution($subType)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if ($node instanceof ArrayShapeNode) {
+            foreach ($node->items as $item) {
+                if (self::needsContextResolution($item->valueType)) {
+                    return true;
+                }
+            }
+
+            if ($node->unsealedType !== null) {
+                if ($node->unsealedType->keyType !== null && self::needsContextResolution($node->unsealedType->keyType)) {
+                    return true;
+                }
+
+                return self::needsContextResolution($node->unsealedType->valueType);
+            }
+
+            return false;
+        }
+
+        if ($node instanceof ObjectShapeNode) {
+            foreach ($node->items as $item) {
+                if (self::needsContextResolution($item->valueType)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if ($node instanceof CallableTypeNode) {
+            foreach ($node->parameters as $p) {
+                if (self::needsContextResolution($p->type)) {
+                    return true;
+                }
+            }
+
+            return self::needsContextResolution($node->returnType);
+        }
+
+        return false;
+    }
+
+    /**
+     * Parses and caches a type string into a TypeNode AST along with its context requirement flag.
+     *
+     * @return array{0: TypeNode, 1: bool}
+     */
+    private static function parseTypeString(string $typeString): array
     {
         if (isset(self::$parsedTypeNodeCache[$typeString])) {
             return self::$parsedTypeNodeCache[$typeString];
@@ -302,8 +536,10 @@ final class InlineChecker
 
         [$typeParser, $lexer] = self::getTypeParserComponents();
         $tokens = new TokenIterator($lexer->tokenize($typeString));
+        $typeNode = $typeParser->parse($tokens);
+        $needsContext = self::needsContextResolution($typeNode);
 
-        return self::$parsedTypeNodeCache[$typeString] = $typeParser->parse($tokens);
+        return self::$parsedTypeNodeCache[$typeString] = [$typeNode, $needsContext];
     }
 
     /**

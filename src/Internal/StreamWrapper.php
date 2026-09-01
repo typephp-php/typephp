@@ -53,7 +53,7 @@ final class StreamWrapper implements StreamWrapperInterface
     private static array $statCache = [];
 
     /**
-     * In-memory cache for static-path negative misses only (vendor directories).
+     * In-memory cache for static-path negative misses only (vendor & package source directories).
      *
      * @var array<string, true>
      */
@@ -219,8 +219,8 @@ final class StreamWrapper implements StreamWrapperInterface
 
         self::unregister();
 
-        $exists = (bool) self::silent(fn () => file_exists($path));
-        $resolvedPath = $exists ? self::silent(fn () => realpath($path)) : false;
+        $exists = (bool) self::silent(static fn () => file_exists($path));
+        $resolvedPath = $exists ? self::silent(static fn () => realpath($path)) : false;
 
         if (! $exists || $resolvedPath === false || ! self::isApplicationFile($path, $resolvedPath)) {
             $target = ($resolvedPath !== false) ? $resolvedPath : $path;
@@ -405,7 +405,7 @@ final class StreamWrapper implements StreamWrapperInterface
     /**
      * Resolves file status with dual-tier memoization caching:
      * 1. Differentiates between stat() and lstat() (STREAM_URL_STAT_LINK).
-     * 2. Only memoizes .php source files and immutable vendor paths.
+     * 2. Memoizes PHP files, vendor files, and static package source directories.
      *
      * @return array<int|string, int>|false
      */
@@ -425,19 +425,21 @@ final class StreamWrapper implements StreamWrapperInterface
 
         self::unregister();
         /** @var array<int|string, int>|false $result */
-        $result = self::silent(fn () => $isLink ? @lstat($path) : @stat($path));
+        $result = self::silent(static fn () => $isLink ? @lstat($path) : @stat($path));
         self::register();
 
         if ($result !== false) {
             $isPhp = str_ends_with(strtolower($normalized), '.php');
-            if ($isPhp || PathMatcher::isVendorPath($normalized)) {
+            $isStaticDir = is_dir($path) && PathMatcher::isStaticSourcePath($normalized);
+
+            if ($isPhp || PathMatcher::isVendorPath($normalized) || $isStaticDir) {
                 self::$statCache[$cacheKey] = $result;
             }
 
             return $result;
         }
 
-        if (PathMatcher::isVendorPath($normalized)) {
+        if (PathMatcher::isStaticSourcePath($normalized)) {
             self::$staticNegativeStatCache[$normalized] = true;
         }
 
@@ -673,7 +675,7 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Transforms, persists, and loads cached source code from disk.
+     * Transforms, persists, and loads cached source code from disk in a single handle open.
      */
     private function openCachedStream(string $resolvedPath, string $mode): bool
     {
@@ -690,13 +692,6 @@ final class StreamWrapper implements StreamWrapperInterface
             }
             $transformed = self::transformSource($source, $resolvedPath);
             if (! CacheManager::writeCachedFileSafely($cachedFile, $transformed)) {
-                return $this->openMemoryStream($resolvedPath);
-            }
-        }
-
-        if (\function_exists('posix_geteuid')) {
-            $owner = @fileowner($cachedFile);
-            if ($owner !== false && $owner !== posix_geteuid()) {
                 return $this->openMemoryStream($resolvedPath);
             }
         }

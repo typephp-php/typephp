@@ -129,6 +129,14 @@ final class Config
     }
 
     /**
+     * Locates the project root directory by searching upwards for vendor/autoload.php, composer.json, or typephp.php.
+     * Caches the result in memory so the search happens exactly once.
+     */
+    /**
+     * Locates the project root directory by searching upwards for vendor/autoload.php or composer.json.
+     * Caches the result in memory so the search happens exactly once.
+     */
+    /**
      * Locates the project root directory by searching upwards for vendor/autoload.php or composer.json.
      * Caches the result in memory so the search happens exactly once.
      */
@@ -138,10 +146,37 @@ final class Config
             return self::$projectRoot;
         }
 
-        $dir = __DIR__;
+        $cwd = getcwd();
+        if ($cwd !== false) {
+            $realCwd = realpath($cwd) !== false ? realpath($cwd) : $cwd;
+            $normCwd = rtrim(str_replace('\\', '/', (string) $realCwd), '/');
+            if (
+                file_exists($normCwd . '/vendor/autoload.php')
+                || file_exists($normCwd . '/composer.json')
+            ) {
+                return self::$projectRoot = $normCwd;
+            }
+        }
+
+        $dir = str_replace('\\', '/', __DIR__);
+
+        if (str_contains($dir, '/vendor/')) {
+            $vendorPos = strrpos($dir, '/vendor/');
+            if ($vendorPos !== false) {
+                $candidate = substr($dir, 0, $vendorPos);
+                $realCandidate = realpath($candidate) !== false ? realpath($candidate) : $candidate;
+                $normCandidate = rtrim(str_replace('\\', '/', (string) $realCandidate), '/');
+                if (file_exists($normCandidate . '/vendor/autoload.php') || file_exists($normCandidate . '/composer.json')) {
+                    return self::$projectRoot = $normCandidate;
+                }
+            }
+        }
+
         for ($i = 0; $i < 10; $i++) {
-            if (file_exists($dir . '/vendor/autoload.php')) {
-                return self::$projectRoot = rtrim(str_replace('\\', '/', $dir), '/');
+            if (file_exists($dir . '/composer.json') || file_exists($dir . '/vendor/autoload.php')) {
+                $realDir = realpath($dir) !== false ? realpath($dir) : $dir;
+
+                return self::$projectRoot = rtrim(str_replace('\\', '/', (string) $realDir), '/');
             }
 
             $parent = \dirname($dir);
@@ -151,23 +186,9 @@ final class Config
             $dir = $parent;
         }
 
-        $cwd = getcwd();
-        if ($cwd !== false) {
-            $dir = $cwd;
-            for ($i = 0; $i < 10; $i++) {
-                if (file_exists($dir . '/vendor/autoload.php') || file_exists($dir . '/composer.json') || file_exists($dir . '/typephp.php')) {
-                    return self::$projectRoot = rtrim(str_replace('\\', '/', $dir), '/');
-                }
+        $fallback = $cwd !== false ? (realpath($cwd) !== false ? realpath($cwd) : $cwd) : '.';
 
-                $parent = \dirname($dir);
-                if ($parent === $dir) {
-                    break;
-                }
-                $dir = $parent;
-            }
-        }
-
-        return self::$projectRoot = rtrim(str_replace('\\', '/', $cwd !== false ? $cwd : '.'), '/');
+        return self::$projectRoot = rtrim(str_replace('\\', '/', (string) $fallback), '/');
     }
 
     /**

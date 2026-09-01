@@ -139,7 +139,7 @@ final class FunctionContractInjector
             return false;
         }
 
-        $visitor = new class() extends NodeVisitorAbstract {
+        $visitor = new class () extends NodeVisitorAbstract {
             public bool $isGen = false;
 
             public function enterNode(Node $n): ?int
@@ -537,8 +537,10 @@ final class FunctionContractInjector
     private static function wrapGeneratorReturns(array $stmts, Node\Expr $thisArg): array
     {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class($thisArg) extends NodeVisitorAbstract {
-            public function __construct(private Node\Expr $thisArg) {}
+        $traverser->addVisitor(new class ($thisArg) extends NodeVisitorAbstract {
+            public function __construct(private Node\Expr $thisArg)
+            {
+            }
 
             public function enterNode(Node $n): int|Node|null
             {
@@ -592,12 +594,13 @@ final class FunctionContractInjector
     private static function wrapNonGeneratorReturns(array $stmts, Node\Expr $thisArg, bool $isNativeVoid, bool $needsReturnVars = false): array
     {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class($thisArg, $isNativeVoid, $needsReturnVars) extends NodeVisitorAbstract {
+        $traverser->addVisitor(new class ($thisArg, $isNativeVoid, $needsReturnVars) extends NodeVisitorAbstract {
             public function __construct(
                 private Node\Expr $thisArg,
                 private bool $isNativeVoid,
                 private bool $needsReturnVars
-            ) {}
+            ) {
+            }
 
             public function enterNode(Node $n): int|array|null
             {

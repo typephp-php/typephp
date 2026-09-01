@@ -622,7 +622,7 @@ final class TemplateManager
         $templateName = $templateTag->name;
         $existingBindings = self::$instanceTemplateBindings[$instance] ?? [];
 
-      if (isset($existingBindings[$templateName])) {
+        if (isset($existingBindings[$templateName])) {
             $existingTypeNode = $existingBindings[$templateName];
             $valid = self::checkVariance($existingTypeNode, $expectedTypeNode, $variance);
 

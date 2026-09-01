@@ -129,6 +129,48 @@ final class PathMatcher
     }
 
     /**
+     * Determines whether a given path belongs to an immutable, static source code repositor
+     */
+    public static function isStaticSourcePath(string $normalizedPath): bool
+    {
+        $canon = self::canonicalizePath($normalizedPath);
+
+        if (self::isDynamicWritablePath($canon)) {
+            return false;
+        }
+
+        if (
+            str_contains($canon, '/tests/') || str_starts_with($canon, 'tests/')
+            || str_contains($canon, '/Fixtures/') || str_contains($canon, '/fixtures/')
+            || str_contains($canon, '/tmp/') || str_contains($canon, '/install/')
+        ) {
+            return false;
+        }
+
+        if (str_starts_with($canon, 'vendor/') || str_contains($canon, '/vendor/')) {
+            return true;
+        }
+
+        if (str_starts_with($canon, 'src/') || str_contains($canon, '/src/')) {
+            return true;
+        }
+
+        if (str_starts_with($canon, 'app/') || str_contains($canon, '/app/')) {
+            return true;
+        }
+
+        if (str_starts_with($canon, 'lib/') || str_contains($canon, '/lib/')) {
+            return true;
+        }
+
+        if (preg_match('#(^|/)packages/[^/]+/src/#', $canon) === 1) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Determines whether a given path is within the TypePHP cache directory.
      */
     public static function isCachePath(string $normalizedPath): bool
@@ -156,27 +198,30 @@ final class PathMatcher
         }
 
         $canon = self::canonicalizePath($normalizedPath);
+        $lowerCanon = strtolower($canon);
+        $lowerLibSrcDir = strtolower($libSrcDir);
 
-        if (str_contains($libSrcDir, '/vendor/')) {
-            return str_starts_with($canon, $libSrcDir);
+        if (str_contains($lowerLibSrcDir, '/vendor/')) {
+            return str_starts_with($lowerCanon, $lowerLibSrcDir);
         }
 
-        if (str_starts_with($canon, $libSrcDir)) {
+        if (str_starts_with($lowerCanon, $lowerLibSrcDir)) {
             $internalDirs = [
-                $libSrcDir . 'Internal/',
-                $libSrcDir . 'Contract/',
-                $libSrcDir . 'Command/',
-                $libSrcDir . 'Validator/',
-                $libSrcDir . 'Wrapper/',
-                $libSrcDir . 'Resolver/',
-                $libSrcDir . 'Extension/',
-                $libSrcDir . 'Exception/',
-                $libSrcDir . 'TypePHP.php',
-                $libSrcDir . 'bootstrap.php',
+                $lowerLibSrcDir . 'internal/',
+                $lowerLibSrcDir . 'contract/',
+                $lowerLibSrcDir . 'command/',
+                $lowerLibSrcDir . 'validator/',
+                $lowerLibSrcDir . 'wrapper/',
+                $lowerLibSrcDir . 'resolver/',
+                $lowerLibSrcDir . 'extension/',
+                $lowerLibSrcDir . 'exception/',
+                $lowerLibSrcDir . 'compiler/',
+                $lowerLibSrcDir . 'typephp.php',
+                $lowerLibSrcDir . 'bootstrap.php',
             ];
 
             foreach ($internalDirs as $dir) {
-                if (str_starts_with($canon, $dir)) {
+                if (str_starts_with($lowerCanon, $dir)) {
                     return true;
                 }
             }
