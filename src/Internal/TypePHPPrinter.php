@@ -29,6 +29,7 @@ final class TypePHPPrinter extends Standard
         $output = parent::p($node, $precedence, $lhsPrecedence, $parentFormatPreserved);
 
         if ($node instanceof Node\Stmt && $node->getAttribute('typephp_injected') === true) {
+            $output = preg_replace('/(?:\/\/(.*?)|#(.*?))(?=\r?\n|$)/', '/*$1$2 */', $output) ?? $output;
             $output = preg_replace('/\s+/', ' ', trim($output)) ?? $output;
 
             return '/*__TYPEPHP_INJECTED_START__*/' . $output . '/*__TYPEPHP_INJECTED_END__*/';

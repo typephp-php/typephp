@@ -133,4 +133,28 @@ PHP;
 
         expect($transCallLine)->toBe($origCallLine);
     });
+
+    test('preserves executable code when single line comments precede injected statements', function () {
+        $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+/**
+ * @param positive-int $id
+ * @return positive-int
+ */
+function testTrailingCommentFunc(int $id): int
+{
+    $val = $id;
+    // Single line trailing comment before return
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_comment.php');
+
+        expect($transformed)->toContain('/* Single line trailing comment before return */')
+            ->and($transformed)->toContain('RuntimeTypeChecker::checkReturn')
+        ;
+    });
 });
