@@ -282,6 +282,38 @@ final class TemplateManager
     }
 
     /**
+     * Normalizes generic type arguments when a single type argument is supplied
+     * for a 2-template collection/map whose first template is a key type (TKey of array-key).
+     *
+     * @param array<TypeNode> $genericTypes
+     * @param array<TemplateTagValueNode> $templateList
+     *
+     * @return array<TypeNode>
+     */
+    public static function normalizeGenericArguments(array $genericTypes, array $templateList): array
+    {
+        $genericTypes = array_values($genericTypes);
+        $templateList = array_values($templateList);
+
+        if (\count($genericTypes) === 1 && \count($templateList) === 2) {
+            $firstTemplate = $templateList[0];
+            $firstBound = $firstTemplate->bound !== null ? strtolower((string) $firstTemplate->bound) : '';
+            $firstName = strtolower($firstTemplate->name);
+
+            $isKeyTemplate = $firstBound === 'array-key'
+                || \in_array($firstName, ['tkey', 'key', 'k'], true);
+
+            if ($isKeyTemplate) {
+                $defaultKeyNode = $firstTemplate->default ?? $firstTemplate->bound ?? new IdentifierTypeNode('array-key');
+
+                return [$defaultKeyNode, $genericTypes[0]];
+            }
+        }
+
+        return $genericTypes;
+    }
+
+    /**
      * Copies bound generic template types from a source object to a cloned target object.
      */
     public static function copyInstanceBindings(object $source, object $target): void
@@ -500,9 +532,14 @@ final class TemplateManager
 
             self::$instanceTemplateBindings ??= new WeakMap();
             $templateList = array_values($templates);
+            $normalizedTypeArgs = self::normalizeGenericArguments($typeNode->genericTypes, $templateList);
 
             foreach ($templateList as $index => $templateTag) {
-                $err = self::bindSingleTemplateArgument($instance, $className, $typeNode, $index, $templateTag, $classVariances, $context, $forceBind);
+                if (! isset($normalizedTypeArgs[$index])) {
+                    continue;
+                }
+
+                $err = self::bindSingleTemplateArgument($instance, $className, $normalizedTypeArgs[$index], $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT, $templateTag, $classVariances, $context, $forceBind);
                 if ($err !== null) {
                     return $err;
                 }
@@ -573,19 +610,13 @@ final class TemplateManager
     private static function bindSingleTemplateArgument(
         object $instance,
         string $className,
-        GenericTypeNode $typeNode,
-        int $index,
+        TypeNode $expectedTypeNode,
+        string $usageVariance,
         TemplateTagValueNode $templateTag,
         array $classVariances,
         string $context,
         bool $forceBind
     ): ?ErrorMessage {
-        if (! isset($typeNode->genericTypes[$index])) {
-            return null;
-        }
-
-        $expectedTypeNode = $typeNode->genericTypes[$index];
-
         if ($expectedTypeNode instanceof IdentifierTypeNode) {
             $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($expectedTypeNode->name);
             $isRealType = class_exists($expectedTypeNode->name) || interface_exists($expectedTypeNode->name) || enum_exists($expectedTypeNode->name) || trait_exists($expectedTypeNode->name);
@@ -609,7 +640,6 @@ final class TemplateManager
             self::$instanceTemplateBindings = new WeakMap();
         }
 
-        $usageVariance = $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT;
         $declaredVariance = $classVariances[$templateTag->name] ?? GenericTypeNode::VARIANCE_INVARIANT;
 
         // Return values are naturally in a covariant position under Liskov Substitution Principle
@@ -785,10 +815,12 @@ final class TemplateManager
 
             $parentPhpDocNode = DocblockExtractor::parseDocString($parentDoc);
             $parentTemplateNames = array_keys(DocblockExtractor::extractTemplates($parentPhpDocNode));
+            $parentTemplateNodes = array_values(DocblockExtractor::extractTemplates($parentPhpDocNode));
+            $normalizedGenericTypes = self::normalizeGenericArguments($genericTypeNode->genericTypes, $parentTemplateNodes);
 
             foreach ($parentTemplateNames as $idx => $templateName) {
-                if (isset($genericTypeNode->genericTypes[$idx])) {
-                    $resolved = self::resolveTypeNodeAst($genericTypeNode->genericTypes[$idx], $hierClass);
+                if (isset($normalizedGenericTypes[$idx])) {
+                    $resolved = self::resolveTypeNodeAst($normalizedGenericTypes[$idx], $hierClass);
 
                     if ($resolved instanceof IdentifierTypeNode) {
                         $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($resolved->name);
