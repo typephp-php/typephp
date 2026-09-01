@@ -26,7 +26,7 @@ use TypePHP\Internal\TypeFormatter;
  */
 final class GenericValidator implements TypeValidatorInterface
 {
-    private const HYBRID_SAMPLE_THRESHOLD = 64;
+    private const HYBRID_SAMPLE_THRESHOLD = 128;
 
     /**
      * @var array<string, mixed>

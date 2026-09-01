@@ -21,7 +21,7 @@ use TypePHP\Internal\TypeFormatter;
  */
 final class ArrayValidator implements TypeValidatorInterface
 {
-    private const HYBRID_SAMPLE_THRESHOLD = 64;
+    private const HYBRID_SAMPLE_THRESHOLD = 128;
 
     public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
     {

@@ -78,7 +78,7 @@ return [
     |             is caught without exception.
     |
     | - 'hybrid' : (Beartype O(1) Mode) Fast boundary + random sampling on
-    |             arrays > 64 items. Ideal for massive production datasets.
+    |             arrays > 128 items. Ideal for massive production datasets.
     */
     'array_validation' => 'hybrid',
 
