@@ -230,8 +230,7 @@ final class ParamChecker
     }
 
     /**
-     * Pre-infers generic template parameters from array arguments before callback wrapping.
-     * Only runs if at least one parameter in the signature is a callable that uses generic templates.
+     * Pre-infers generic template parameters from closure typehints or array arguments before callback wrapping.
      *
      * @param array<string, TypeNode> $types
      * @param array<string, mixed> $vars
@@ -244,18 +243,57 @@ final class ParamChecker
         ?object $thisObj,
         array $templates
     ): void {
-        $hasCallableParam = false;
+        $callableParamNodes = [];
 
-        foreach ($types as $tNode) {
+        foreach ($types as $paramName => $tNode) {
             if ($tNode instanceof CallableTypeNode) {
-                $hasCallableParam = true;
+                $callableParamNodes[$paramName] = $tNode;
+            } elseif ($tNode instanceof UnionTypeNode) {
+                foreach ($tNode->types as $subT) {
+                    if ($subT instanceof CallableTypeNode) {
+                        $callableParamNodes[$paramName] = $subT;
 
-                break;
+                        break;
+                    }
+                }
             }
         }
 
-        if (! $hasCallableParam) {
+        if (\count($callableParamNodes) === 0) {
             return;
+        }
+
+        foreach ($callableParamNodes as $cParamName => $cTypeNode) {
+            if (! \array_key_exists($cParamName, $vars)) {
+                continue;
+            }
+
+            $callableVal = $vars[$cParamName];
+            if ($callableVal instanceof \Closure) {
+                try {
+                    $refClosure = new \ReflectionFunction($callableVal);
+                    $closureParams = $refClosure->getParameters();
+
+                    foreach ($cTypeNode->parameters as $idx => $pNode) {
+                        if ($pNode->type instanceof IdentifierTypeNode && isset($templates[$pNode->type->name])) {
+                            $tName = $pNode->type->name;
+                            if (isset($closureParams[$idx]) && $closureParams[$idx]->hasType()) {
+                                $cType = $closureParams[$idx]->getType();
+                                if ($cType instanceof \ReflectionNamedType) {
+                                    $cTypeName = $cType->getName();
+                                    if ($cTypeName === 'mixed') {
+                                        TemplateManager::bindTemplate($effectiveFunction, null, $tName, new IdentifierTypeNode('mixed'));
+                                    } elseif (class_exists($cTypeName) || interface_exists($cTypeName) || SpecialTypeResolver::isBuiltInTypeKeyword($cTypeName)) {
+                                        TemplateManager::bindTemplate($effectiveFunction, null, $tName, new IdentifierTypeNode($cTypeName));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    // Silently ignore reflection errors
+                }
+            }
         }
 
         foreach ($types as $paramName => $typeNode) {
