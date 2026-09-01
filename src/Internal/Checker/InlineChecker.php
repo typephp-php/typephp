@@ -139,6 +139,10 @@ final class InlineChecker
                 return $value;
             }
 
+            if ($value === [] && $varName !== 'return' && self::isArrayShapeType($typeNode)) {
+                return $value;
+            }
+
             $context = ($varName === 'return') ? 'Return value' : "Variable \$$varName";
 
             if ($typeNode instanceof CallableTypeNode || ($typeNode instanceof IdentifierTypeNode && strtolower($typeNode->name) === 'callable')) {
@@ -164,6 +168,30 @@ final class InlineChecker
         }
 
         return $value;
+    }
+
+    /**
+     * Checks if a TypeNode is or contains an ArrayShapeNode.
+     */
+    private static function isArrayShapeType(TypeNode $node): bool
+    {
+        if ($node instanceof ArrayShapeNode) {
+            return true;
+        }
+
+        if ($node instanceof NullableTypeNode) {
+            return self::isArrayShapeType($node->type);
+        }
+
+        if ($node instanceof UnionTypeNode) {
+            foreach ($node->types as $subType) {
+                if (self::isArrayShapeType($subType)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**

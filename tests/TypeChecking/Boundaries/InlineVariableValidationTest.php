@@ -279,4 +279,18 @@ describe('Inline @var Validation for New Features', function () {
         ;
     });
 
+    test('allows initializing empty array for array shape variable before preg_match_all population (Tempest TextBuffer)', function () {
+        /** @var array{0: list<string>} $matches */
+        $matches = [];
+        preg_match_all('/\X/u', '👨‍👩‍👧‍👦ab', $matches);
+
+        expect($matches[0])->toBe(['👨‍👩‍👧‍👦', 'a', 'b']);
+    });
+
+    test('still rejects non-empty incomplete array shapes on local variable assignment', function () {
+        expect(function () {
+            /** @var array{0: list<string>, 1: list<string>} $matches */
+            $matches = [0 => ['test']];
+        })->toThrow(TypeError::class, "is missing required key '1'");
+    });
 });
