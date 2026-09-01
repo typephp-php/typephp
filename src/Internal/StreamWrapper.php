@@ -53,7 +53,7 @@ final class StreamWrapper implements StreamWrapperInterface
     private static array $statCache = [];
 
     /**
-     * In-memory cache for static-path negative misses only (vendor directories).
+     * In-memory cache for static-path negative misses only (vendor & package source directories).
      *
      * @var array<string, true>
      */
@@ -129,7 +129,8 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Transforms PHP source code and embeds metadata header for instant zero-disk runtime resolution.
+     * Transforms PHP source code by parsing AST, extracting metadata, applying ContractVisitor,
+     * and formatting output while preserving exact line numbers to prevent line-drift in debug stack traces.
      */
     public static function transformSource(string $source, string $filePath = ''): string
     {
@@ -150,7 +151,7 @@ final class StreamWrapper implements StreamWrapperInterface
             return $source;
         }
 
-        $metadata = self::extractAndSeedFileMetadata($oldStmts, $filePath);
+        self::extractAndSeedFileMetadata($oldStmts, $filePath);
 
         $oldTokens = $parser->getTokens();
 
@@ -189,14 +190,7 @@ final class StreamWrapper implements StreamWrapperInterface
             $transformed = preg_replace('/\/\*__TYPEPHP_INJECTED_END__\*\/[ \t]*\r?\n[ \t]*/', '/*__TYPEPHP_INJECTED_END__*/ ', $transformed, $drift) ?? $transformed;
         }
 
-        $cleanTransformed = str_replace(['/*__TYPEPHP_INJECTED_START__*/', '/*__TYPEPHP_INJECTED_END__*/'], '', $transformed);
-
-        if ($metadata !== null) {
-            $metaJson = json_encode($metadata);
-            $cleanTransformed = preg_replace('/^<\?php/i', "<?php /*__TYPEPHP_META__{$metaJson}__TYPEPHP_META__*/", $cleanTransformed, 1) ?? $cleanTransformed;
-        }
-
-        return $cleanTransformed;
+        return str_replace(['/*__TYPEPHP_INJECTED_START__*/', '/*__TYPEPHP_INJECTED_END__*/'], '', $transformed);
     }
 
     /**
@@ -225,14 +219,14 @@ final class StreamWrapper implements StreamWrapperInterface
 
         self::unregister();
 
-        $exists = (bool) self::silent(fn() => file_exists($path));
-        $resolvedPath = $exists ? self::silent(fn() => realpath($path)) : false;
+        $exists = (bool) self::silent(static fn () => file_exists($path));
+        $resolvedPath = $exists ? self::silent(static fn () => realpath($path)) : false;
 
         if (! $exists || $resolvedPath === false || ! self::isApplicationFile($path, $resolvedPath)) {
             $target = ($resolvedPath !== false) ? $resolvedPath : $path;
             /** @var resource|false $handle */
             $handle = self::silent(
-                fn() => ($this->context !== null)
+                fn () => ($this->context !== null)
                     ? fopen($target, $mode, false, $this->context)
                     : fopen($target, $mode)
             );
@@ -276,7 +270,7 @@ final class StreamWrapper implements StreamWrapperInterface
         self::unregister();
         /** @var resource|false $handle */
         $handle = self::silent(
-            fn() => ($this->context !== null)
+            fn () => ($this->context !== null)
                 ? fopen($targetFile, $mode, $useIncludePath, $this->context)
                 : fopen($targetFile, $mode, $useIncludePath)
         );
@@ -411,7 +405,7 @@ final class StreamWrapper implements StreamWrapperInterface
     /**
      * Resolves file status with dual-tier memoization caching:
      * 1. Differentiates between stat() and lstat() (STREAM_URL_STAT_LINK).
-     * 2. Only memoizes .php source files and immutable vendor paths.
+     * 2. Memoizes PHP files, vendor files, and static package source directories.
      *
      * @return array<int|string, int>|false
      */
@@ -431,7 +425,7 @@ final class StreamWrapper implements StreamWrapperInterface
 
         self::unregister();
         /** @var array<int|string, int>|false $result */
-        $result = self::silent(static fn() => $isLink ? @lstat($path) : @stat($path));
+        $result = self::silent(static fn () => $isLink ? @lstat($path) : @stat($path));
         self::register();
 
         if ($result !== false) {
@@ -468,11 +462,11 @@ final class StreamWrapper implements StreamWrapperInterface
             $valueArray = \is_array($value) ? $value : [];
             $time = $valueArray[0] ?? time();
             $atime = $valueArray[1] ?? $time;
-            $result = (bool) self::silent(fn() => @touch($path, (int) $time, (int) $atime));
+            $result = (bool) self::silent(fn () => @touch($path, (int) $time, (int) $atime));
         } elseif ($option === STREAM_META_ACCESS) {
             /** @var int $mode */
             $mode = \is_int($value) ? $value : 0777;
-            $result = (bool) self::silent(fn() => @chmod($path, $mode));
+            $result = (bool) self::silent(fn () => @chmod($path, $mode));
         }
         self::register();
 
@@ -484,7 +478,7 @@ final class StreamWrapper implements StreamWrapperInterface
         self::unregister();
         /** @var resource|false $dh */
         $dh = self::silent(
-            fn() => ($this->context !== null)
+            fn () => ($this->context !== null)
                 ? @opendir($path, $this->context)
                 : @opendir($path)
         );
@@ -611,7 +605,7 @@ final class StreamWrapper implements StreamWrapperInterface
      */
     private static function silent(callable $callback): mixed
     {
-        set_error_handler(static fn() => true);
+        set_error_handler(static fn () => true);
 
         try {
             return $callback();
@@ -681,7 +675,7 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Transforms, persists, and loads cached source code from disk.
+     * Transforms, persists, and loads cached source code from disk in a single handle open.
      */
     private function openCachedStream(string $resolvedPath, string $mode): bool
     {
@@ -700,8 +694,6 @@ final class StreamWrapper implements StreamWrapperInterface
             if (! CacheManager::writeCachedFileSafely($cachedFile, $transformed)) {
                 return $this->openMemoryStream($resolvedPath);
             }
-        } else {
-            self::seedMetadataFromCachedFile($cachedFile, $resolvedPath);
         }
 
         $cacheHandle = ($this->context !== null)
@@ -713,41 +705,14 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Reads the lightweight metadata header from the first 512 bytes of the cached file.
-     */
-    private static function seedMetadataFromCachedFile(string $cachedFile, string $resolvedPath): void
-    {
-        $fp = @fopen($cachedFile, 'r');
-        if ($fp === false) {
-            return;
-        }
-
-        $header = (string) fread($fp, 2048);
-        fclose($fp);
-
-        if (preg_match('/\/\*__TYPEPHP_META__(.+?)__TYPEPHP_META\*\//s', $header, $m)) {
-            $meta = json_decode($m[1], true);
-            if (\is_array($meta)) {
-                SpecialTypeResolver::seedFileMetadata(
-                    $resolvedPath,
-                    $meta['ns'] ?? '',
-                    $meta['imports'] ?? [],
-                    $meta['traits'] ?? []
-                );
-            }
-        }
-    }
-
-    /**
      * Scans top-level AST statements for namespace, use imports, and trait use declarations to seed SpecialTypeResolver.
-     * 
+     *
      * @param array<\PhpParser\Node\Stmt> $stmts
-     * @return array{ns: string, imports: array<string, string>, traits: array<string, array<int, string>>}|null
      */
-    private static function extractAndSeedFileMetadata(array $stmts, string $filePath): ?array
+    private static function extractAndSeedFileMetadata(array $stmts, string $filePath): void
     {
         if ($filePath === '') {
-            return null;
+            return;
         }
 
         $namespace = '';
@@ -801,11 +766,5 @@ final class StreamWrapper implements StreamWrapperInterface
         }
 
         SpecialTypeResolver::seedFileMetadata($filePath, $namespace, $imports, $classTraitUseDocs);
-
-        return [
-            'ns' => $namespace,
-            'imports' => $imports,
-            'traits' => $classTraitUseDocs,
-        ];
     }
 }

@@ -116,6 +116,13 @@ final class SpecialTypeResolver
     private static array $reflectionContextCache = [];
 
     /**
+     * In-memory cache for resolved FQCNs per context and type name.
+     *
+     * @var array<string, string>
+     */
+    private static array $fqcnCache = [];
+
+    /**
      * In-memory cache of file import maps keyed by filename.
      *
      * @var array<string, array<string, string>>
@@ -142,6 +149,7 @@ final class SpecialTypeResolver
     public static function reset(): void
     {
         self::$reflectionContextCache = [];
+        self::$fqcnCache = [];
     }
 
     /**
@@ -925,6 +933,7 @@ final class SpecialTypeResolver
 
     /**
      * Resolves a short class name to its fully qualified class name (FQCN) using Reflection context.
+     * Memoizes resolved FQCNs in memory to avoid autoloader search storms.
      *
      * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
      */
@@ -942,6 +951,17 @@ final class SpecialTypeResolver
             return $name;
         }
 
+        $contextKey = match (true) {
+            $ref instanceof \ReflectionClass => 'C:' . $ref->getName(),
+            $ref instanceof \ReflectionMethod => 'M:' . $ref->getDeclaringClass()->getName() . '::' . $ref->getName(),
+            $ref instanceof \ReflectionFunction => 'F:' . $ref->getName(),
+        };
+
+        $cacheKey = $contextKey . '|' . $name;
+        if (isset(self::$fqcnCache[$cacheKey])) {
+            return self::$fqcnCache[$cacheKey];
+        }
+
         $imports = self::getUseImports($ref);
         $namespace = match (true) {
             $ref instanceof \ReflectionClass => $ref->getNamespaceName(),
@@ -949,7 +969,9 @@ final class SpecialTypeResolver
             $ref instanceof \ReflectionFunction => $ref->getNamespaceName(),
         };
 
-        return self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
+        $resolved = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
+
+        return self::$fqcnCache[$cacheKey] = $resolved;
     }
 
     /**
@@ -1036,6 +1058,12 @@ final class SpecialTypeResolver
     /**
      * Fast C-level token scanner using PhpToken (PHP 8.0+) to extract namespace,
      * use imports, and trait docblocks in microseconds without PhpParser AST overhead.
+     *
+     * Execution Flow:
+     * 1. Namespace: Identifies T_NAMESPACE to track file-level namespace prefix.
+     * 2. Class Scope: Tracks class, interface, trait, and enum boundaries.
+     * 3. Trait DocBlocks: Scans doc comments preceding T_USE statements inside class declarations.
+     * 4. Top-Level Imports: Parses single, multi, and group use statements outside classes into alias maps.
      */
     private static function parseFileMetadata(string $fileName, string $source): void
     {
@@ -1070,7 +1098,7 @@ final class SpecialTypeResolver
                     continue;
                 }
 
-                if (($token->id === T_CLASS || $token->id === T_INTERFACE || $token->id === T_TRAIT || (defined('T_ENUM') && $token->id === T_ENUM)) && isset($tokens[$i + 2]) && $tokens[$i + 2]->id === T_STRING) {
+                if (($token->id === T_CLASS || $token->id === T_INTERFACE || $token->id === T_TRAIT || (\defined('T_ENUM') && $token->id === T_ENUM)) && isset($tokens[$i + 2]) && $tokens[$i + 2]->id === T_STRING) {
                     $className = $tokens[$i + 2]->text;
                     $currentClass = $namespace !== '' ? $namespace . '\\' . $className : $className;
                     self::$classTraitUseDocs[$currentClass] ??= [];

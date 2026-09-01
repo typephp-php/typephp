@@ -21,9 +21,15 @@ final class CacheManager
      */
     private static ?string $resolvedCacheDir = null;
 
+    /**
+     * Memoized verification state of the cache directory.
+     */
+    private static ?bool $secureDirVerified = null;
+
     public static function reset(): void
     {
         self::$resolvedCacheDir = null;
+        self::$secureDirVerified = null;
     }
 
     /**
@@ -86,10 +92,14 @@ final class CacheManager
      */
     public static function ensureSecureCacheDir(): bool
     {
+        if (self::$secureDirVerified !== null) {
+            return self::$secureDirVerified;
+        }
+
         $cacheDir = self::getCacheDir();
 
         if (is_link($cacheDir)) {
-            return false;
+            return self::$secureDirVerified = false;
         }
 
         $config = Config::get();
@@ -98,7 +108,7 @@ final class CacheManager
         if (! is_dir($cacheDir)) {
             $mode = $isCustomDir ? 0775 : 0700;
             if (! @mkdir($cacheDir, $mode, recursive: true) && ! is_dir($cacheDir)) {
-                return false;
+                return self::$secureDirVerified = false;
             }
             if (! $isCustomDir) {
                 @chmod($cacheDir, 0700);
@@ -108,11 +118,11 @@ final class CacheManager
         if (! $isCustomDir && \function_exists('posix_geteuid')) {
             $owner = @fileowner($cacheDir);
             if ($owner !== false && $owner !== posix_geteuid()) {
-                return false;
+                return self::$secureDirVerified = false;
             }
         }
 
-        return is_writable($cacheDir);
+        return self::$secureDirVerified = is_writable($cacheDir);
     }
 
     /**
@@ -190,7 +200,6 @@ final class CacheManager
                 }
             }
 
-            // Also clean up any lingering temporary swap files
             $tmpFiles = glob($dir . '/.tmp_*');
             if ($tmpFiles !== false) {
                 foreach ($tmpFiles as $tFile) {
