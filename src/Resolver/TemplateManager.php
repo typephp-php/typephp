@@ -652,7 +652,6 @@ final class TemplateManager
             $valid = self::checkVariance($existingTypeNode, $expectedTypeNode, $variance);
 
             if (! $valid) {
-                // If existing binding is broad unspecialized default/bound (mixed, array-key, or declared bound), allow narrowing to the expected subtype
                 $isDefaultOrBound = ($existingTypeNode instanceof IdentifierTypeNode) && (
                     strtolower($existingTypeNode->name) === 'mixed'
                     || strtolower($existingTypeNode->name) === 'array-key'
@@ -660,20 +659,30 @@ final class TemplateManager
                     || ($templateTag->default !== null && (string) $existingTypeNode === (string) $templateTag->default)
                 );
 
-                if ($isDefaultOrBound && self::checkVariance($expectedTypeNode, $existingTypeNode, GenericTypeNode::VARIANCE_COVARIANT)) {
-                    $bindings = self::$instanceTemplateBindings[$instance] ?? [];
-                    $bindings[$templateName] = $expectedTypeNode;
-                    self::$instanceTemplateBindings[$instance] = $bindings;
+                if (self::checkVariance($expectedTypeNode, $existingTypeNode, GenericTypeNode::VARIANCE_COVARIANT)) {
+                    if ($isDefaultOrBound || $isReturnContext) {
+                        $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+                        $bindings[$templateName] = $expectedTypeNode;
+                        self::$instanceTemplateBindings[$instance] = $bindings;
 
-                    return null;
+                        return null;
+                    }
                 }
 
-                if ($isReturnContext && self::checkVariance($expectedTypeNode, $existingTypeNode, GenericTypeNode::VARIANCE_COVARIANT)) {
-                    $bindings = self::$instanceTemplateBindings[$instance] ?? [];
-                    $bindings[$templateName] = $expectedTypeNode;
-                    self::$instanceTemplateBindings[$instance] = $bindings;
+                if ($isReturnContext) {
+                    $isWrapping = ($expectedTypeNode instanceof ArrayTypeNode)
+                        && self::checkVariance($expectedTypeNode->type, $existingTypeNode, GenericTypeNode::VARIANCE_COVARIANT);
 
-                    return null;
+                    $isUnwrapping = ($existingTypeNode instanceof ArrayTypeNode)
+                        && self::checkVariance($expectedTypeNode, $existingTypeNode->type, GenericTypeNode::VARIANCE_COVARIANT);
+
+                    if ($isWrapping || $isUnwrapping) {
+                        $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+                        $bindings[$templateName] = $expectedTypeNode;
+                        self::$instanceTemplateBindings[$instance] = $bindings;
+
+                        return null;
+                    }
                 }
 
                 return ErrorFactory::createError(
@@ -960,6 +969,7 @@ final class TemplateManager
             return true;
         }
 
+        // For Covariant and Invariant union matching: if existing satisfies any member in expected union
         foreach ($expected->types as $unionVariant) {
             if (self::checkVariance($existing, $unionVariant, GenericTypeNode::VARIANCE_COVARIANT)) {
                 return true;
