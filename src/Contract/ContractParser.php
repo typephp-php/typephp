@@ -897,10 +897,14 @@ final class ContractParser
             $paramName = $p->getName();
 
             if (! isset($types[$paramName]) && $declaringClass->hasProperty($paramName)) {
+                $propertyRef = $declaringClass->getProperty($paramName);
+
+                if (! self::areConstructorParamAndPropertyCompatible($p, $propertyRef)) {
+                    continue;
+                }
+
                 $className = $declaringClass->getName();
                 $stubDoc = StubManager::getPropertyDoc($className, $paramName);
-
-                $propertyRef = $declaringClass->getProperty($paramName);
                 $propDoc = $stubDoc ?? $propertyRef->getDocComment();
 
                 if ($propDoc !== false && $propDoc !== null) {
@@ -952,6 +956,32 @@ final class ContractParser
                 }
             }
         }
+    }
+
+    /**
+     * Checks whether an un-promoted constructor parameter is compatible with a class property.
+     */
+    private static function areConstructorParamAndPropertyCompatible(
+        \ReflectionParameter $p,
+        \ReflectionProperty $propertyRef
+    ): bool {
+        if ($p->isPromoted()) {
+            return true;
+        }
+
+        if ($p->hasType() && $propertyRef->hasType()) {
+            $pType = (string) $p->getType();
+            $propType = (string) $propertyRef->getType();
+
+            $normP = strtolower(ltrim($pType, '?'));
+            $normProp = strtolower(ltrim($propType, '?'));
+
+            if ($normP !== $normProp) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -1067,7 +1097,7 @@ final class ContractParser
 
         if ($node instanceof CallableTypeNode) {
             $parameters = array_map(
-                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+                fn(CallableTypeParameterNode $param) => new CallableTypeParameterNode(
                     self::substituteAliases($param->type, $aliases),
                     $param->isReference,
                     $param->isVariadic,
@@ -1101,7 +1131,7 @@ final class ContractParser
         if ($node instanceof GenericTypeNode) {
             $genericType = self::substituteAliases($node->type, $aliases);
             $genericTypes = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->genericTypes
             );
 
@@ -1118,7 +1148,7 @@ final class ContractParser
 
         if ($node instanceof UnionTypeNode) {
             $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 
@@ -1133,7 +1163,7 @@ final class ContractParser
 
         if ($node instanceof IntersectionTypeNode) {
             $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 
