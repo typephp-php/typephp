@@ -10,6 +10,7 @@ use TypePHP\Internal\ClassNameValidator;
 use TypePHP\Internal\ErrorFactory;
 use TypePHP\Internal\ErrorMessage;
 use TypePHP\Internal\TypeFormatter;
+use TypePHP\Wrapper\CallableWrapper;
 
 /**
  * @internal Class for validating basic scalar identifier types like int, string, bool, array, list, object, callable, resource, null, true, false, mixed, scalar, void.
@@ -31,7 +32,7 @@ final class IdentifierValidator implements TypeValidatorInterface
             'array' => \is_array($value),
             'list' => \is_array($value) && (\count($value) === 0 || array_is_list($value)),
             'object', 'self', 'static', 'parent', '$this' => \is_object($value),
-            'callable', 'pure-callable' => \is_callable($value),
+            'callable', 'pure-callable' => CallableWrapper::isCallable($value),
             'iterable' => is_iterable($value),
             'resource' => \is_resource($value),
             'null' => $value === null,
@@ -56,7 +57,7 @@ final class IdentifierValidator implements TypeValidatorInterface
             'interface-string' => \is_string($value) && interface_exists($value),
             'trait-string' => \is_string($value) && trait_exists($value),
             'enum-string' => \is_string($value) && enum_exists($value),
-            'callable-string' => \is_string($value) && \is_callable($value),
+            'callable-string' => \is_string($value) && CallableWrapper::isCallable($value),
             'numeric-string' => \is_string($value) && is_numeric($value),
             'non-empty-string' => \is_string($value) && $value !== '',
             'lowercase-string' => \is_string($value) && strtolower($value) === $value,
