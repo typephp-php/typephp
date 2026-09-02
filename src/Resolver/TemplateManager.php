@@ -950,16 +950,6 @@ final class TemplateManager
 
     private static function checkExpectedUnionVariance(TypeNode $existing, UnionTypeNode $expected, string $variance): bool
     {
-        if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
-            foreach ($expected->types as $unionVariant) {
-                if (self::checkVariance($existing, $unionVariant, $variance)) {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
             foreach ($expected->types as $unionVariant) {
                 if (! self::checkVariance($existing, $unionVariant, $variance)) {
@@ -968,6 +958,12 @@ final class TemplateManager
             }
 
             return true;
+        }
+
+        foreach ($expected->types as $unionVariant) {
+            if (self::checkVariance($existing, $unionVariant, GenericTypeNode::VARIANCE_COVARIANT)) {
+                return true;
+            }
         }
 
         return false;
