@@ -142,9 +142,14 @@ final class CallableWrapper
                 throw ErrorFactory::prepareException($e);
             }
 
-            $err = $registry->validate($result, $typeNode->returnType, "$prefix return value");
-            if ($err !== null) {
-                throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
+            $isVoidReturn = ($typeNode->returnType instanceof IdentifierTypeNode)
+                && strtolower($typeNode->returnType->name) === 'void';
+
+            if (! $isVoidReturn) {
+                $err = $registry->validate($result, $typeNode->returnType, "$prefix return value");
+                if ($err !== null) {
+                    throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
+                }
             }
 
             if ($typeNode->returnType instanceof CallableTypeNode && self::isCallable($result)) {
