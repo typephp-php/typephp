@@ -265,7 +265,9 @@ final class ParamChecker
             return;
         }
 
-        // 1. If a passed closure argument explicitly types its parameter (e.g. fn(mixed $item) or fn(int $x)), bind from the closure
+        $contract = ContractParser::parse($effectiveFunction);
+        $classTemplates = $contract['classTemplates'] ?? [];
+
         foreach ($callableParamNodes as $cParamName => $cTypeNode) {
             if (! \array_key_exists($cParamName, $vars)) {
                 continue;
@@ -280,14 +282,31 @@ final class ParamChecker
                     foreach ($cTypeNode->parameters as $idx => $pNode) {
                         if ($pNode->type instanceof IdentifierTypeNode && isset($templates[$pNode->type->name])) {
                             $tName = $pNode->type->name;
+                            $isClassLevel = isset($classTemplates[$tName]);
+                            $targetObj = $isClassLevel ? $thisObj : null;
+
                             if (isset($closureParams[$idx]) && $closureParams[$idx]->hasType()) {
                                 $cType = $closureParams[$idx]->getType();
                                 if ($cType instanceof \ReflectionNamedType) {
                                     $cTypeName = $cType->getName();
                                     if ($cTypeName === 'mixed') {
-                                        TemplateManager::bindTemplate($effectiveFunction, null, $tName, new IdentifierTypeNode('mixed'));
+                                        TemplateManager::bindTemplate($effectiveFunction, $targetObj, $tName, new IdentifierTypeNode('mixed'));
                                     } elseif (class_exists($cTypeName) || interface_exists($cTypeName) || SpecialTypeResolver::isBuiltInTypeKeyword($cTypeName)) {
-                                        TemplateManager::bindTemplate($effectiveFunction, null, $tName, new IdentifierTypeNode($cTypeName));
+                                        TemplateManager::bindTemplate($effectiveFunction, $targetObj, $tName, new IdentifierTypeNode($cTypeName));
+                                    }
+                                } elseif ($cType instanceof \ReflectionUnionType) {
+                                    $unionSubTypes = [];
+                                    foreach ($cType->getTypes() as $subNamedType) {
+                                        if ($subNamedType instanceof \ReflectionNamedType) {
+                                            $subName = $subNamedType->getName();
+                                            if (class_exists($subName) || interface_exists($subName) || SpecialTypeResolver::isBuiltInTypeKeyword($subName)) {
+                                                $unionSubTypes[] = new IdentifierTypeNode($subName);
+                                            }
+                                        }
+                                    }
+                                    if (\count($unionSubTypes) > 0) {
+                                        $unionNode = \count($unionSubTypes) === 1 ? $unionSubTypes[0] : new UnionTypeNode($unionSubTypes);
+                                        TemplateManager::bindTemplate($effectiveFunction, $targetObj, $tName, $unionNode);
                                     }
                                 }
                             }
@@ -299,7 +318,6 @@ final class ParamChecker
             }
         }
 
-        // 2. For any remaining unbound templates, infer and unify from array arguments
         foreach ($types as $paramName => $typeNode) {
             if (! \array_key_exists($paramName, $vars) || ! \is_array($vars[$paramName]) || \count($vars[$paramName]) === 0) {
                 continue;
@@ -313,7 +331,7 @@ final class ParamChecker
 
     /**
      * Extracts and unifies template parameters across all elements of an array argument.
-     * Uses Beartype O(1) hybrid random sampling on arrays > 64 items when hybrid mode is active.
+     * Uses Beartype O(1) hybrid random sampling on arrays > 128 items when hybrid mode is active.
      *
      * @param array<mixed> $arrVal
      * @param array<string, TemplateTagValueNode> $templates

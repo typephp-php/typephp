@@ -17,6 +17,7 @@ use PHPStan\PhpDocParser\Parser\ConstExprParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
+use TypePHP\Contract\ContractParser;
 use TypePHP\Contract\DocblockExtractor;
 use TypePHP\Contract\FileFilter;
 use TypePHP\Contract\HierarchyResolver;
@@ -364,10 +365,6 @@ final class TemplateManager
         $bindings = [];
 
         if ($thisObj !== null) {
-            if (self::$pendingCloneSource !== null && ! isset(self::$instanceTemplateBindings[$thisObj])) {
-                self::copyInstanceBindings(self::$pendingCloneSource, $thisObj);
-            }
-
             if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$thisObj])) {
                 self::resolveInheritedTemplates($thisObj, \get_class($thisObj));
             }
@@ -380,7 +377,17 @@ final class TemplateManager
         if (self::hasCallFrame($function)) {
             $topFrame = end(self::$callStackBindings[$function]);
             if ($topFrame !== false) {
-                $bindings = [...$bindings, ...$topFrame];
+                if ($thisObj !== null) {
+                    $contract = ContractParser::parse($function);
+                    $methodTemplates = $contract['templates'] ?? [];
+                    foreach ($topFrame as $tName => $tNode) {
+                        if (isset($methodTemplates[$tName])) {
+                            $bindings[$tName] = $tNode;
+                        }
+                    }
+                } else {
+                    $bindings = [...$bindings, ...$topFrame];
+                }
             }
         }
 
@@ -394,10 +401,6 @@ final class TemplateManager
      */
     public static function getBoundTemplatesForInstance(object $instance): array
     {
-        if (self::$pendingCloneSource !== null && ! isset(self::$instanceTemplateBindings[$instance])) {
-            self::copyInstanceBindings(self::$pendingCloneSource, $instance);
-        }
-
         if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$instance])) {
             self::resolveInheritedTemplates($instance, \get_class($instance));
         }
@@ -449,10 +452,6 @@ final class TemplateManager
         }
 
         if ($thisObj !== null) {
-            if (self::$pendingCloneSource !== null && ! isset(self::$instanceTemplateBindings[$thisObj])) {
-                self::copyInstanceBindings(self::$pendingCloneSource, $thisObj);
-            }
-
             if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$thisObj])) {
                 self::resolveInheritedTemplates($thisObj, \get_class($thisObj));
             }
@@ -476,10 +475,6 @@ final class TemplateManager
         }
 
         if ($thisObj !== null) {
-            if (self::$pendingCloneSource !== null && ! isset(self::$instanceTemplateBindings[$thisObj])) {
-                self::copyInstanceBindings(self::$pendingCloneSource, $thisObj);
-            }
-
             if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$thisObj])) {
                 self::resolveInheritedTemplates($thisObj, \get_class($thisObj));
             }
@@ -657,6 +652,7 @@ final class TemplateManager
             $valid = self::checkVariance($existingTypeNode, $expectedTypeNode, $variance);
 
             if (! $valid) {
+                // If existing binding is broad unspecialized default/bound (mixed, array-key, or declared bound), allow narrowing to the expected subtype
                 $isDefaultOrBound = ($existingTypeNode instanceof IdentifierTypeNode) && (
                     strtolower($existingTypeNode->name) === 'mixed'
                     || strtolower($existingTypeNode->name) === 'array-key'
@@ -1174,7 +1170,7 @@ final class TemplateManager
         }
         if ($n instanceof GenericTypeNode) {
             $base = new IdentifierTypeNode(SpecialTypeResolver::resolveFqcn($n->type->name, $ref));
-            $generics = array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
+            $generics = array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
 
             return new GenericTypeNode($base, $generics, $n->variances);
         }
@@ -1185,10 +1181,10 @@ final class TemplateManager
             return new NullableTypeNode(self::resolveTypeNodeAst($n->type, $ref));
         }
         if ($n instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new UnionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
         if ($n instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new IntersectionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
 
         return $n;
