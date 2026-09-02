@@ -104,7 +104,7 @@ final class ParamChecker
 
         $allTemplates = [...$classTemplates, ...$methodTemplates];
         if (\count($allTemplates) > 0) {
-            self::preInferGenericArrayTemplates($contract['types'], $vars, $effectiveFunction, $thisObj, $allTemplates);
+            self::preInferGenericTemplates($contract['types'], $vars, $effectiveFunction, $thisObj, $allTemplates);
         }
 
         $boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates);
@@ -232,28 +232,97 @@ final class ParamChecker
     }
 
     /**
-     * Pre-infers generic template parameters from closure typehints or array arguments before callback wrapping.
+     * Pre-infers generic template parameters from closure typehints and array arguments.
      *
      * @param array<string, TypeNode> $types
      * @param array<string, mixed> $vars
      * @param array<string, TemplateTagValueNode> $templates
      */
-    private static function preInferGenericArrayTemplates(
+    private static function preInferGenericTemplates(
         array $types,
         array $vars,
         string $effectiveFunction,
         ?object $thisObj,
         array $templates
     ): void {
-        $callableParamNodes = [];
+        self::inferTemplatesFromClosures($types, $vars, $effectiveFunction, $thisObj, $templates);
+        self::inferTemplatesFromArrays($types, $vars, $effectiveFunction, $thisObj, $templates);
+    }
+
+    /**
+     * Infers generic template parameters from closure parameter typehints.
+     *
+     * @param array<string, TypeNode> $types
+     * @param array<string, mixed> $vars
+     * @param array<string, TemplateTagValueNode> $templates
+     */
+    private static function inferTemplatesFromClosures(
+        array $types,
+        array $vars,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates
+    ): void {
+        $callableNodes = self::extractCallableNodes($types);
+        if (\count($callableNodes) === 0) {
+            return;
+        }
+
+        $contract = ContractParser::parse($effectiveFunction);
+        $classTemplates = $contract['classTemplates'] ?? [];
+
+        foreach ($callableNodes as $cParamName => $cTypeNode) {
+            if (! \array_key_exists($cParamName, $vars) || ! ($vars[$cParamName] instanceof \Closure)) {
+                continue;
+            }
+
+            try {
+                $refClosure = new \ReflectionFunction($vars[$cParamName]);
+                $closureParams = $refClosure->getParameters();
+
+                foreach ($cTypeNode->parameters as $idx => $pNode) {
+                    if ($pNode->type instanceof IdentifierTypeNode && isset($templates[$pNode->type->name]) && isset($closureParams[$idx])) {
+                        $tName = $pNode->type->name;
+                        $isClassLevel = isset($classTemplates[$tName]);
+                        $targetObj = $isClassLevel ? $thisObj : null;
+
+                        $inferredCandidate = self::extractTypeFromClosureParameter($closureParams[$idx]);
+                        if ($inferredCandidate !== null) {
+                            $templateTag = $templates[$tName];
+                            $satisfiesBound = true;
+                            if ($templateTag->bound !== null) {
+                                $resolvedBound = SpecialTypeResolver::resolve($templateTag->bound, $effectiveFunction, $thisObj);
+                                $satisfiesBound = TemplateManager::checkVariance($inferredCandidate, $resolvedBound, GenericTypeNode::VARIANCE_COVARIANT);
+                            }
+
+                            if ($satisfiesBound) {
+                                TemplateManager::bindTemplate($effectiveFunction, $targetObj, $tName, $inferredCandidate);
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Silently ignore reflection errors
+            }
+        }
+    }
+
+    /**
+     * @param array<string, TypeNode> $types
+     *
+     * @return array<string, CallableTypeNode>
+     */
+    private static function extractCallableNodes(array $types): array
+    {
+        $callableNodes = [];
 
         foreach ($types as $paramName => $tNode) {
             if ($tNode instanceof CallableTypeNode) {
-                $callableParamNodes[$paramName] = $tNode;
+                $callableNodes[$paramName] = $tNode;
             } elseif ($tNode instanceof UnionTypeNode) {
                 foreach ($tNode->types as $subT) {
                     if ($subT instanceof CallableTypeNode) {
-                        $callableParamNodes[$paramName] = $subT;
+                        $callableNodes[$paramName] = $subT;
 
                         break;
                     }
@@ -261,71 +330,62 @@ final class ParamChecker
             }
         }
 
-        if (\count($callableParamNodes) === 0) {
-            return;
+        return $callableNodes;
+    }
+
+    /**
+     * Extracts an inferred TypeNode from a closure parameter, ignoring `mixed`.
+     */
+    private static function extractTypeFromClosureParameter(\ReflectionParameter $closureParam): ?TypeNode
+    {
+        if (! $closureParam->hasType()) {
+            return null;
         }
 
-        $contract = ContractParser::parse($effectiveFunction);
-        $classTemplates = $contract['classTemplates'] ?? [];
-
-        foreach ($callableParamNodes as $cParamName => $cTypeNode) {
-            if (! \array_key_exists($cParamName, $vars)) {
-                continue;
+        $cType = $closureParam->getType();
+        if ($cType instanceof \ReflectionNamedType) {
+            $cTypeName = $cType->getName();
+            if ($cTypeName !== 'mixed' && (class_exists($cTypeName) || interface_exists($cTypeName) || SpecialTypeResolver::isBuiltInTypeKeyword($cTypeName))) {
+                return new IdentifierTypeNode($cTypeName);
             }
-
-            $callableVal = $vars[$cParamName];
-            if ($callableVal instanceof \Closure) {
-                try {
-                    $refClosure = new \ReflectionFunction($callableVal);
-                    $closureParams = $refClosure->getParameters();
-
-                    foreach ($cTypeNode->parameters as $idx => $pNode) {
-                        if ($pNode->type instanceof IdentifierTypeNode && isset($templates[$pNode->type->name])) {
-                            $tName = $pNode->type->name;
-                            $isClassLevel = isset($classTemplates[$tName]);
-                            $targetObj = $isClassLevel ? $thisObj : null;
-
-                            if (isset($closureParams[$idx]) && $closureParams[$idx]->hasType()) {
-                                $cType = $closureParams[$idx]->getType();
-                                if ($cType instanceof \ReflectionNamedType) {
-                                    $cTypeName = $cType->getName();
-                                    if ($cTypeName === 'mixed') {
-                                        TemplateManager::bindTemplate($effectiveFunction, $targetObj, $tName, new IdentifierTypeNode('mixed'));
-                                    } elseif (class_exists($cTypeName) || interface_exists($cTypeName) || SpecialTypeResolver::isBuiltInTypeKeyword($cTypeName)) {
-                                        TemplateManager::bindTemplate($effectiveFunction, $targetObj, $tName, new IdentifierTypeNode($cTypeName));
-                                    }
-                                } elseif ($cType instanceof \ReflectionUnionType) {
-                                    $unionSubTypes = [];
-                                    foreach ($cType->getTypes() as $subNamedType) {
-                                        if ($subNamedType instanceof \ReflectionNamedType) {
-                                            $subName = $subNamedType->getName();
-                                            if (class_exists($subName) || interface_exists($subName) || SpecialTypeResolver::isBuiltInTypeKeyword($subName)) {
-                                                $unionSubTypes[] = new IdentifierTypeNode($subName);
-                                            }
-                                        }
-                                    }
-                                    if (\count($unionSubTypes) > 0) {
-                                        $unionNode = \count($unionSubTypes) === 1 ? $unionSubTypes[0] : new UnionTypeNode($unionSubTypes);
-                                        TemplateManager::bindTemplate($effectiveFunction, $targetObj, $tName, $unionNode);
-                                    }
-                                }
-                            }
-                        }
+        } elseif ($cType instanceof \ReflectionUnionType) {
+            $unionSubTypes = [];
+            foreach ($cType->getTypes() as $subNamedType) {
+                if ($subNamedType instanceof \ReflectionNamedType) {
+                    $subName = $subNamedType->getName();
+                    if ($subName !== 'mixed' && (class_exists($subName) || interface_exists($subName) || SpecialTypeResolver::isBuiltInTypeKeyword($subName))) {
+                        $unionSubTypes[] = new IdentifierTypeNode($subName);
                     }
-                } catch (\Throwable $e) {
-                    // Silently ignore reflection errors
                 }
             }
+            if (\count($unionSubTypes) > 0) {
+                return \count($unionSubTypes) === 1 ? $unionSubTypes[0] : new UnionTypeNode($unionSubTypes);
+            }
         }
 
+        return null;
+    }
+
+    /**
+     * Infers generic template parameters from array arguments.
+     *
+     * @param array<string, TypeNode> $types
+     * @param array<string, mixed> $vars
+     * @param array<string, TemplateTagValueNode> $templates
+     */
+    private static function inferTemplatesFromArrays(
+        array $types,
+        array $vars,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates
+    ): void {
         foreach ($types as $paramName => $typeNode) {
             if (! \array_key_exists($paramName, $vars) || ! \is_array($vars[$paramName]) || \count($vars[$paramName]) === 0) {
                 continue;
             }
 
-            $arrVal = $vars[$paramName];
-
-            self::inferArrayTemplatesFromAllElements($typeNode, $arrVal, $effectiveFunction, $thisObj, $templates);
+            self::inferArrayTemplatesFromAllElements($typeNode, $vars[$paramName], $effectiveFunction, $thisObj, $templates);
         }
     }
 
@@ -357,15 +417,7 @@ final class ParamChecker
             $genericCount = \count($typeNode->genericTypes);
 
             if ($genericCount === 1 && $typeNode->genericTypes[0] instanceof IdentifierTypeNode) {
-                $tName = $typeNode->genericTypes[0]->name;
-                $inferredType = null;
-                foreach ($sampleItems as $item) {
-                    $itemType = TemplateManager::inferTypeFromValue($item);
-                    $inferredType = ($inferredType === null) ? $itemType : self::unifyTypes($inferredType, $itemType);
-                }
-                if ($inferredType !== null) {
-                    self::bindTemplateIfUnbound($tName, $inferredType, $effectiveFunction, $thisObj, $templates);
-                }
+                self::inferSingleTemplateFromArraySamples($typeNode->genericTypes[0]->name, $sampleItems, $effectiveFunction, $thisObj, $templates);
             } elseif ($genericCount >= 2) {
                 $keyTName = $typeNode->genericTypes[0] instanceof IdentifierTypeNode ? $typeNode->genericTypes[0]->name : null;
                 $valTName = $typeNode->genericTypes[1] instanceof IdentifierTypeNode ? $typeNode->genericTypes[1]->name : null;
@@ -391,18 +443,29 @@ final class ParamChecker
                     self::bindTemplateIfUnbound($valTName, $inferredValType, $effectiveFunction, $thisObj, $templates);
                 }
             }
-        } elseif ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof IdentifierTypeNode) {
-            $tName = $typeNode->type->name;
-            $sampleItems = self::getSampleArraySlice($arrVal);
-            $inferredType = null;
+        }
+    }
 
-            foreach ($sampleItems as $item) {
-                $itemType = TemplateManager::inferTypeFromValue($item);
-                $inferredType = ($inferredType === null) ? $itemType : self::unifyTypes($inferredType, $itemType);
-            }
-            if ($inferredType !== null) {
-                self::bindTemplateIfUnbound($tName, $inferredType, $effectiveFunction, $thisObj, $templates);
-            }
+    /**
+     * @param array<mixed> $sampleItems
+     * @param array<string, TemplateTagValueNode> $templates
+     */
+    private static function inferSingleTemplateFromArraySamples(
+        string $templateName,
+        array $sampleItems,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates
+    ): void {
+        $inferredType = null;
+
+        foreach ($sampleItems as $item) {
+            $itemType = TemplateManager::inferTypeFromValue($item);
+            $inferredType = ($inferredType === null) ? $itemType : self::unifyTypes($inferredType, $itemType);
+        }
+
+        if ($inferredType !== null) {
+            self::bindTemplateIfUnbound($templateName, $inferredType, $effectiveFunction, $thisObj, $templates);
         }
     }
 
@@ -538,35 +601,13 @@ final class ParamChecker
                 continue;
             }
 
-            $val = null;
-            $hasVal = false;
-
-            if ($isVariadic) {
-                if (\array_key_exists($paramName, $args)) {
-                    $val = [$args[$paramName]];
-                    $hasVal = true;
-                } else {
-                    $val = [];
-                    for ($i = $index; $i < \count($argValues); $i++) {
-                        if (\is_int($argKeys[$i])) {
-                            $val[] = $argValues[$i];
-                            $hasVal = true;
-                        }
-                    }
-                }
-                $typeNode = new ArrayTypeNode($typeNode);
-            } else {
-                if (\array_key_exists($paramName, $args)) {
-                    $val = $args[$paramName];
-                    $hasVal = true;
-                } elseif (\array_key_exists($index, $argValues)) {
-                    $val = $argValues[$index];
-                    $hasVal = true;
-                }
-            }
-
+            [$val, $hasVal] = self::extractMagicArgumentValue($paramName, $index, $isVariadic, $args, $argValues, $argKeys);
             if (! $hasVal) {
                 continue;
+            }
+
+            if ($isVariadic) {
+                $typeNode = new ArrayTypeNode($typeNode);
             }
 
             $err = self::validateSingleParam(
@@ -588,6 +629,50 @@ final class ParamChecker
         }
 
         return null;
+    }
+
+    /**
+     * @param array<int|string, mixed> $args
+     * @param array<int, mixed> $argValues
+     * @param array<int, int|string> $argKeys
+     *
+     * @return array{0: mixed, 1: bool}
+     */
+    private static function extractMagicArgumentValue(
+        string $paramName,
+        int $index,
+        bool $isVariadic,
+        array $args,
+        array $argValues,
+        array $argKeys
+    ): array {
+        if ($isVariadic) {
+            if (\array_key_exists($paramName, $args)) {
+                return [[$args[$paramName]], true];
+            }
+
+            $val = [];
+            $hasVal = false;
+            $count = \count($argValues);
+            for ($i = $index; $i < $count; $i++) {
+                if (\is_int($argKeys[$i])) {
+                    $val[] = $argValues[$i];
+                    $hasVal = true;
+                }
+            }
+
+            return [$val, $hasVal];
+        }
+
+        if (\array_key_exists($paramName, $args)) {
+            return [$args[$paramName], true];
+        }
+
+        if (\array_key_exists($index, $argValues)) {
+            return [$argValues[$index], true];
+        }
+
+        return [null, false];
     }
 
     /**
