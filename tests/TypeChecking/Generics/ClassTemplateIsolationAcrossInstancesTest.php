@@ -17,7 +17,9 @@ class FixtureConsoleArgument
  */
 class FixtureIsolatedArray
 {
-    /** @var array<TKey, TValue> */
+    /**
+     * @var array<TKey, TValue>
+     */
     public array $value;
 
     public function __construct(array $value = [])

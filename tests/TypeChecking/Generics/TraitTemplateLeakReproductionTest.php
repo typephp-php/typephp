@@ -15,7 +15,9 @@ use Stringable;
  */
 trait FixtureLeakTrait
 {
-    /** @var array<TKey, TValue> */
+    /**
+     * @var array<TKey, TValue>
+     */
     public array $storage = [];
 
     public function __construct(array $items = [])

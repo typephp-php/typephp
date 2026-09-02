@@ -15,12 +15,14 @@ use Stringable;
  */
 trait ConsoleTestManipulatesArray
 {
-    /** @var array<TKey, TValue> */
+    /**
+     * @var array<TKey, TValue>
+     */
     public array $storage = [];
 
     public function __construct(mixed $input = [])
     {
-        $this->storage = is_array($input) ? $input : [$input];
+        $this->storage = \is_array($input) ? $input : [$input];
     }
 
     /**
@@ -84,7 +86,8 @@ describe('Console Middleware to AboutCommand Template Leak Reproduction', functi
             ->filter()
             ->map(function (Stringable|string $val) {
                 return (string) $val;
-            });
+            })
+        ;
 
         expect($result->storage)->toBe(['3.19.0']);
     });

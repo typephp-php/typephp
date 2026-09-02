@@ -8,7 +8,9 @@ declare(strict_types=1);
  */
 trait FixtureCloneLeakTrait
 {
-    /** @var array<TKey, TValue> */
+    /**
+     * @var array<TKey, TValue>
+     */
     public array $items = [];
 
     public function __construct(array $items = [])
@@ -55,7 +57,7 @@ describe('Clone Template Leak Prevention (Tempest tempest about reproduction)', 
         $argsArray->map(fn (FixtureCloneArgument $arg) => $arg->name);
 
         $cloned = clone $argsArray;
-        
+
         $versionArray = new FixtureCloneLeakArray([
             'Tempest' => '3.19.0',
             'PHP' => '8.4.0',
