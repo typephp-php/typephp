@@ -21,13 +21,16 @@ class OptionFixture
 
 /**
  * Exact replica of Tempest OptionCollection:
+ *
  * - Property $options has `/** @var array<OptionFixture> * /`
  * - Constructor parameter $options is UN-PROMOTED and takes raw iterable inputs (strings, enums, etc.)
  * - Internal code transforms raw values into OptionFixture objects
  */
 class OptionCollectionFixture
 {
-    /** @var array<OptionFixture> */
+    /**
+     * @var array<OptionFixture>
+     */
     private array $options;
 
     public function __construct(iterable $options)

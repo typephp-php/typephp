@@ -22,7 +22,9 @@ class FixtureObjectFactory
 
     /**
      * @template T of object
+     *
      * @param class-string<T> $class
+     *
      * @return self<T>
      */
     public function forClass(string $class): self

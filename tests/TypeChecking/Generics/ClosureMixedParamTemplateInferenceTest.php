@@ -8,7 +8,9 @@ declare(strict_types=1);
  */
 class BoundedKeyCollectionFixture
 {
-    /** @var array<TKey, TValue> */
+    /**
+     * @var array<TKey, TValue>
+     */
     public array $items;
 
     public function __construct(array $items = [])

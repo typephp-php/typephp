@@ -619,16 +619,10 @@ final class ContractParser
 
         foreach (DocblockExtractor::getParamTags($phpDocNode) as $paramName => $paramTag) {
             $type = $paramTag->type;
-            $isVariadic = $paramTag->isVariadic || ($baseParamVariadic[$paramName] ?? false);
-            if (
-                $isVariadic
-                && ! ($type instanceof ArrayTypeNode)
-                && ! ($type instanceof GenericTypeNode && \in_array(strtolower($type->type->name), ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true))
-            ) {
-                $type = new ArrayTypeNode($type);
-            }
-
             $pObj = $baseParamObjects[$paramName] ?? null;
+
+            $type = self::wrapVariadicParameterType($type, $paramTag->isVariadic, $baseParamVariadic[$paramName] ?? false, $pObj);
+
             if (
                 Config::isRespectNativeNullabilityEnabled()
                 && $pObj !== null
@@ -796,16 +790,10 @@ final class ContractParser
 
                 if ($targetParamName !== null && ! isset($types[$targetParamName])) {
                     $type = $paramTag->type;
-                    $isVariadic = $paramTag->isVariadic || ($baseParamVariadic[$targetParamName] ?? false);
-                    if (
-                        $isVariadic
-                        && ! ($type instanceof ArrayTypeNode)
-                        && ! ($type instanceof GenericTypeNode && \in_array(strtolower($type->type->name), ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true))
-                    ) {
-                        $type = new ArrayTypeNode($type);
-                    }
-
                     $pObj = $baseParamObjects[$targetParamName] ?? null;
+
+                    $type = self::wrapVariadicParameterType($type, $paramTag->isVariadic, $baseParamVariadic[$targetParamName] ?? false, $pObj);
+
                     if (
                         Config::isRespectNativeNullabilityEnabled()
                         && $pObj !== null
@@ -899,6 +887,7 @@ final class ContractParser
             if (! isset($types[$paramName]) && $declaringClass->hasProperty($paramName)) {
                 $propertyRef = $declaringClass->getProperty($paramName);
 
+                // For non-promoted parameters, ensure constructor param and property native types are compatible
                 if (! self::areConstructorParamAndPropertyCompatible($p, $propertyRef)) {
                     continue;
                 }
@@ -930,14 +919,7 @@ final class ContractParser
                             }
                         }
 
-                        $isVariadic = $p->isVariadic();
-                        if (
-                            $isVariadic
-                            && ! ($resolvedProp instanceof ArrayTypeNode)
-                            && ! ($resolvedProp instanceof GenericTypeNode && \in_array(strtolower($resolvedProp->type->name), ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true))
-                        ) {
-                            $resolvedProp = new ArrayTypeNode($resolvedProp);
-                        }
+                        $resolvedProp = self::wrapVariadicParameterType($resolvedProp, false, $p->isVariadic(), $p);
 
                         if (
                             Config::isRespectNativeNullabilityEnabled()
@@ -982,6 +964,44 @@ final class ContractParser
         }
 
         return true;
+    }
+
+    /**
+     * Wraps a variadic parameter type into an ArrayTypeNode, accounting for variadic arrays/iterables.
+     */
+    private static function wrapVariadicParameterType(
+        TypeNode $type,
+        bool $tagIsVariadic,
+        bool $nativeIsVariadic,
+        ?\ReflectionParameter $reflectionParam = null
+    ): TypeNode {
+        if (! $tagIsVariadic && ! $nativeIsVariadic) {
+            return $type;
+        }
+
+        $isNativeArrayOrIterable = false;
+        if ($reflectionParam !== null && $reflectionParam->hasType()) {
+            $nativeType = $reflectionParam->getType();
+            if ($nativeType instanceof \ReflectionNamedType) {
+                $nativeName = strtolower($nativeType->getName());
+                $isNativeArrayOrIterable = \in_array($nativeName, ['array', 'iterable'], true);
+            }
+        }
+
+        // If native parameter is array ...$items, each argument is an array, so wrap in ArrayTypeNode
+        if ($isNativeArrayOrIterable) {
+            return new ArrayTypeNode($type);
+        }
+
+        // If DocBlock type is not already an ArrayTypeNode or list/array GenericTypeNode
+        if (
+            ! ($type instanceof ArrayTypeNode)
+            && ! ($type instanceof GenericTypeNode && \in_array(strtolower($type->type->name), ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true))
+        ) {
+            return new ArrayTypeNode($type);
+        }
+
+        return $type;
     }
 
     /**
@@ -1097,7 +1117,7 @@ final class ContractParser
 
         if ($node instanceof CallableTypeNode) {
             $parameters = array_map(
-                fn(CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
                     self::substituteAliases($param->type, $aliases),
                     $param->isReference,
                     $param->isVariadic,
@@ -1131,7 +1151,7 @@ final class ContractParser
         if ($node instanceof GenericTypeNode) {
             $genericType = self::substituteAliases($node->type, $aliases);
             $genericTypes = array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->genericTypes
             );
 
@@ -1148,7 +1168,7 @@ final class ContractParser
 
         if ($node instanceof UnionTypeNode) {
             $types = array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 
@@ -1163,7 +1183,7 @@ final class ContractParser
 
         if ($node instanceof IntersectionTypeNode) {
             $types = array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 
