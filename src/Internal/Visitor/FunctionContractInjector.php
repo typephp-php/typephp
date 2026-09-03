@@ -31,19 +31,18 @@ final class FunctionContractInjector
         $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
         $isMagicLifecycle = $isClassMethod && \in_array($methodName, ['__construct', '__destruct', '__clone'], true);
 
-        $isNativeVoid = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'void';
         $isNativeNever = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'never';
 
-        $hasParam = self::hasParamContracts($docText, $isClassMethod);
+        $thisArg = self::resolveThisArg($isClassMethod, $node);
+        $isNativeVoid = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'void';
+        $needsReturnVars = $isClassMethod || str_contains($docText, ' is ') || (str_contains($docText, '@return') && str_contains($docText, '$'));
+
+        $hasParam = self::hasParamContracts($docText, $isClassMethod) || $needsReturnVars;
         $hasReturn = ! $isMagicLifecycle && ! $isNativeNever && self::hasReturnContracts($docText, $isClassMethod);
 
         if (! $hasParam && ! $hasReturn) {
             return;
         }
-
-        $thisArg = self::resolveThisArg($isClassMethod, $node);
-        $isNativeVoid = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'void';
-        $needsReturnVars = $isClassMethod || str_contains($docText, ' is ') || (str_contains($docText, '@return') && str_contains($docText, '$'));
 
         $injectedStmts = [];
         if ($hasParam) {
@@ -199,11 +198,16 @@ final class FunctionContractInjector
             }
         }
 
+        $argsExpr = new Node\Expr\Assign(
+            new Node\Expr\Variable('__typephpArgs'),
+            new Node\Expr\Array_($arrayItems)
+        );
+
         $checkCall = new Node\Expr\FuncCall(
             new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::setupScope'),
             [
                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                new Node\Arg(new Node\Expr\Array_($arrayItems)),
+                new Node\Arg($argsExpr),
                 new Node\Arg($thisArg),
             ]
         );
@@ -391,7 +395,7 @@ final class FunctionContractInjector
     public static function buildReturnCheckCall(Node\Expr $exprToWrap, Node\Expr $thisArg, bool $needsReturnVars = false): Node\Expr\FuncCall
     {
         $varsArg = $needsReturnVars
-            ? new Node\Expr\FuncCall(new Node\Name('get_defined_vars'))
+            ? new Node\Expr\Variable('__typephpArgs')
             : new Node\Expr\Array_();
 
         return new Node\Expr\FuncCall(

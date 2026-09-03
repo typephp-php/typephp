@@ -26,8 +26,6 @@ use TypePHP\Internal\TypeFormatter;
  */
 final class GenericValidator implements TypeValidatorInterface
 {
-    private const HYBRID_SAMPLE_THRESHOLD = 128;
-
     /**
      * @var array<string, mixed>
      */
@@ -410,7 +408,7 @@ final class GenericValidator implements TypeValidatorInterface
         if ($valueTypeNode !== null && $count > 0) {
             $isComplexObjectGeneric = ($valueTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valueTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
 
-            if ($count > self::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 $sampleIndices = [0, $count - 1];
                 $samplesToTake = min(3, $count - 2);
                 for ($i = 0; $i < $samplesToTake; $i++) {
@@ -474,7 +472,7 @@ final class GenericValidator implements TypeValidatorInterface
         if ($typesCount === 1) {
             $valTypeNode = $node->genericTypes[0];
             $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
-            if ($count > self::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 $keys = array_keys($value);
                 $sampleKeys = [$keys[0], $keys[$count - 1]];
                 $samplesToTake = min(3, $count - 2);
@@ -510,7 +508,7 @@ final class GenericValidator implements TypeValidatorInterface
             $valTypeNode = $node->genericTypes[1];
             $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
 
-            if ($count > self::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 $keys = array_keys($value);
                 $sampleKeys = [$keys[0], $keys[$count - 1]];
                 $samplesToTake = min(3, $count - 2);

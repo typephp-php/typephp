@@ -22,6 +22,11 @@ use TypePHP\Resolver\TemplateManager;
 final class Config
 {
     /**
+     * Threshold (number of elements) above which Beartype O(1) hybrid random sampling is applied.
+     */
+    public const HYBRID_SAMPLE_THRESHOLD = 128;
+
+    /**
      * @var array<string, mixed>|null
      */
     private static ?array $cachedConfig = null;

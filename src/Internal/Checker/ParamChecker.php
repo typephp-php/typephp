@@ -30,8 +30,6 @@ use TypePHP\Validator\TypeValidatorRegistry;
  */
 final class ParamChecker
 {
-    private const HYBRID_SAMPLE_THRESHOLD = 128;
-
     /**
      * @var array<string, string>
      */
@@ -479,7 +477,7 @@ final class ParamChecker
     private static function getSampleArraySlice(array $arrVal): array
     {
         $count = \count($arrVal);
-        if ($count <= self::HYBRID_SAMPLE_THRESHOLD || ! Config::isArrayValidationHybrid()) {
+        if ($count <= Config::HYBRID_SAMPLE_THRESHOLD || ! Config::isArrayValidationHybrid()) {
             return $arrVal;
         }
 
@@ -826,14 +824,20 @@ final class ParamChecker
         $isVariadic = $typeNode instanceof ArrayTypeNode;
         $isNullable = ($typeNode instanceof NullableTypeNode) || ($typeNode instanceof UnionTypeNode && self::typeContainsNull($typeNode));
 
-        if ($isNullable && $val === null) {
-            return null;
-        }
-
         $contract = ContractParser::parse($function);
         $classTemplates = $contract['classTemplates'] ?? [];
         $isClassLevelTemplate = isset($classTemplates[$templateName]);
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
+
+        $allowsNullInBound = ($templateNode->bound !== null && self::typeContainsNull($templateNode->bound));
+
+        if ($isNullable && $val === null) {
+            if ($allowsNullInBound && ! TemplateManager::isBound($function, $targetObj, $templateName)) {
+                TemplateManager::bindTemplate($function, $targetObj, $templateName, new IdentifierTypeNode('null'));
+            }
+
+            return null;
+        }
 
         if (! TemplateManager::isBound($function, $targetObj, $templateName)) {
             return self::bindInitialTemplate(
