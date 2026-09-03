@@ -1015,7 +1015,16 @@ final class TemplateManager
             return true;
         }
 
-        // For Covariant and Invariant union matching: if existing satisfies any member in expected union
+        if ($existing instanceof UnionTypeNode) {
+            foreach ($existing->types as $existingVariant) {
+                if (! self::checkExpectedUnionVariance($existingVariant, $expected, $variance)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         foreach ($expected->types as $unionVariant) {
             if (self::checkVariance($existing, $unionVariant, GenericTypeNode::VARIANCE_COVARIANT)) {
                 return true;
