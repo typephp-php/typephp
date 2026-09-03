@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Resolver;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
@@ -242,6 +243,35 @@ final class TemplateManager
             'non-falsy-string' => true,
             'true' => true,
             'false' => true,
+        ],
+    ];
+
+    /**
+     * O(1) hashmap for collection and iterable subtype relationships.
+     *
+     * @var array<string, array<string, bool>>
+     */
+    private const COLLECTION_SUBTYPES = [
+        'array' => [
+            'array' => true,
+            'list' => true,
+            'non-empty-array' => true,
+            'non-empty-list' => true,
+        ],
+        'list' => [
+            'list' => true,
+            'non-empty-list' => true,
+        ],
+        'iterable' => [
+            'iterable' => true,
+            'array' => true,
+            'list' => true,
+            'non-empty-array' => true,
+            'non-empty-list' => true,
+            'traversable' => true,
+        ],
+        'traversable' => [
+            'traversable' => true,
         ],
     ];
 
@@ -900,6 +930,22 @@ final class TemplateManager
             return true;
         }
 
+        if ($variance === GenericTypeNode::VARIANCE_COVARIANT && isset(self::COLLECTION_SUBTYPES[$lowerExpected])) {
+            $allowedSubtypes = self::COLLECTION_SUBTYPES[$lowerExpected];
+
+            if (isset($allowedSubtypes[$lowerExisting])) {
+                return true;
+            }
+
+            if ($existing instanceof ArrayTypeNode || $existing instanceof ArrayShapeNode) {
+                return $lowerExpected === 'array' || $lowerExpected === 'iterable';
+            }
+
+            if ($existing instanceof GenericTypeNode && isset($allowedSubtypes[strtolower($existing->type->name)])) {
+                return true;
+            }
+        }
+
         if ($expected instanceof UnionTypeNode) {
             return self::checkExpectedUnionVariance($existing, $expected, $variance);
         }
@@ -1176,7 +1222,7 @@ final class TemplateManager
         }
         if ($n instanceof GenericTypeNode) {
             $base = new IdentifierTypeNode(SpecialTypeResolver::resolveFqcn($n->type->name, $ref));
-            $generics = array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
+            $generics = array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
 
             return new GenericTypeNode($base, $generics, $n->variances);
         }
@@ -1187,10 +1233,10 @@ final class TemplateManager
             return new NullableTypeNode(self::resolveTypeNodeAst($n->type, $ref));
         }
         if ($n instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new UnionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
         if ($n instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new IntersectionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
 
         return $n;

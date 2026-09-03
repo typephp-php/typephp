@@ -422,16 +422,7 @@ final class ReturnChecker
             $subjectTypeNode = $boundTemplates[$subjectTypeNode->name];
         }
 
-        $subStr = (string) $subjectTypeNode;
-        $targetStr = (string) $node->targetType;
-
-        $isTargetMatch = ($subStr === $targetStr);
-        if (! $isTargetMatch) {
-            $isTargetMatch = ClassNameValidator::isValid($subStr) && ClassNameValidator::isValid($targetStr) &&
-                (class_exists($subStr) || interface_exists($subStr)) &&
-                (class_exists($targetStr) || interface_exists($targetStr)) &&
-                is_a($subStr, $targetStr, true);
-        }
+        $isTargetMatch = TemplateManager::checkVariance($subjectTypeNode, $node->targetType, GenericTypeNode::VARIANCE_COVARIANT);
 
         if ($node->negated) {
             $isTargetMatch = ! $isTargetMatch;
