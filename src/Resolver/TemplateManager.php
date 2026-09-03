@@ -1061,16 +1061,6 @@ final class TemplateManager
 
     private static function checkExpectedIntersectionVariance(TypeNode $existing, IntersectionTypeNode $expected, string $variance): bool
     {
-        if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
-            foreach ($expected->types as $intersectionMember) {
-                if (! self::checkVariance($existing, $intersectionMember, $variance)) {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
         if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
             foreach ($expected->types as $intersectionMember) {
                 if (self::checkVariance($existing, $intersectionMember, $variance)) {
@@ -1081,21 +1071,17 @@ final class TemplateManager
             return true;
         }
 
-        return false;
+        foreach ($expected->types as $intersectionMember) {
+            if (! self::checkVariance($existing, $intersectionMember, GenericTypeNode::VARIANCE_COVARIANT)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static function checkExistingIntersectionVariance(IntersectionTypeNode $existing, TypeNode $expected, string $variance): bool
     {
-        if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
-            foreach ($existing->types as $existingMember) {
-                if (self::checkVariance($existingMember, $expected, $variance)) {
-                    return true;
-                }
-            }
-
-            return true;
-        }
-
         if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
             foreach ($existing->types as $existingMember) {
                 if (! self::checkVariance($existingMember, $expected, $variance)) {
@@ -1104,6 +1090,12 @@ final class TemplateManager
             }
 
             return true;
+        }
+
+        foreach ($existing->types as $existingMember) {
+            if (self::checkVariance($existingMember, $expected, GenericTypeNode::VARIANCE_COVARIANT)) {
+                return true;
+            }
         }
 
         return false;
