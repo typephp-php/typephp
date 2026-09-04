@@ -169,6 +169,7 @@ final class StreamWrapper implements StreamWrapperInterface
         $printer = new TypePHPPrinter();
         $transformed = $printer->printFormatPreserving($newStmts, $oldStmts, $oldTokens);
 
+        $transformed = preg_replace('/(?:\/\/(.*?)|#(.*?))(?=[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\/)/', '/*$1$2 */', $transformed) ?? $transformed;
         $transformed = preg_replace('/[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\//', ' /*__TYPEPHP_INJECTED_START__*/', $transformed) ?? $transformed;
 
         $transformedLineCount = substr_count($transformed, "\n");

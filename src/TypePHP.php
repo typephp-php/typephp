@@ -37,7 +37,7 @@ final class TypePHP
             return reset($types);
         }
 
-        return $types['T'] ?? null;
+        return $types['T'] ?? $types['TValue'] ?? $types['TElement'] ?? $types['V'] ?? null;
     }
 
     /**
@@ -75,7 +75,7 @@ final class TypePHP
             return reset($variances);
         }
 
-        return $variances['T'] ?? 'invariant';
+        return $variances['T'] ?? $variances['TValue'] ?? $variances['TElement'] ?? $variances['V'] ?? 'invariant';
     }
 
     /**

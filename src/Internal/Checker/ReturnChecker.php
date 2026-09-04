@@ -11,6 +11,8 @@ use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use ReflectionClass;
+use Traversable;
 use TypePHP\Contract\ContractParser;
 use TypePHP\Contract\HierarchyResolver;
 use TypePHP\Internal\ClassNameValidator;
@@ -239,7 +241,7 @@ final class ReturnChecker
                 return $err;
             }
 
-            if ($value instanceof \Traversable) {
+            if ($value instanceof Traversable) {
                 $baseName = '';
                 if ($resolvedType instanceof IdentifierTypeNode) {
                     $baseName = strtolower(ltrim($resolvedType->name, '\\'));
@@ -276,11 +278,11 @@ final class ReturnChecker
             return $err;
         }
 
-        if (\is_callable($value) && $resolvedType instanceof CallableTypeNode) {
+        if ($resolvedType instanceof CallableTypeNode && CallableWrapper::isCallable($value)) {
             return CallableWrapper::wrapTypeNode($resolvedType, $value, $function . '(): Return value', $registry);
         }
 
-        if ($value instanceof \Traversable) {
+        if ($value instanceof Traversable) {
             $baseName = '';
             if ($resolvedType instanceof IdentifierTypeNode) {
                 $baseName = strtolower(ltrim($resolvedType->name, '\\'));
@@ -370,7 +372,7 @@ final class ReturnChecker
 
         try {
             /** @var class-string<object> $className */
-            $refClass = new \ReflectionClass($className);
+            $refClass = new ReflectionClass($className);
             if (! $refClass->hasMethod($methodName)) {
                 return null;
             }
@@ -420,16 +422,7 @@ final class ReturnChecker
             $subjectTypeNode = $boundTemplates[$subjectTypeNode->name];
         }
 
-        $subStr = (string) $subjectTypeNode;
-        $targetStr = (string) $node->targetType;
-
-        $isTargetMatch = ($subStr === $targetStr);
-        if (! $isTargetMatch) {
-            $isTargetMatch = ClassNameValidator::isValid($subStr) && ClassNameValidator::isValid($targetStr) &&
-                (class_exists($subStr) || interface_exists($subStr)) &&
-                (class_exists($targetStr) || interface_exists($targetStr)) &&
-                is_a($subStr, $targetStr, true);
-        }
+        $isTargetMatch = TemplateManager::checkVariance($subjectTypeNode, $node->targetType, GenericTypeNode::VARIANCE_COVARIANT);
 
         if ($node->negated) {
             $isTargetMatch = ! $isTargetMatch;

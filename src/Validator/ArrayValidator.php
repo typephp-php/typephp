@@ -21,8 +21,6 @@ use TypePHP\Internal\TypeFormatter;
  */
 final class ArrayValidator implements TypeValidatorInterface
 {
-    private const HYBRID_SAMPLE_THRESHOLD = 64;
-
     public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
     {
         if (! \is_array($value) && ! ($value instanceof Traversable)) {
@@ -42,7 +40,7 @@ final class ArrayValidator implements TypeValidatorInterface
                 return null;
             }
 
-            if ($count > self::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 return $this->validateArrayHybrid($value, $arrayNode, $context, $registry, $count);
             }
 

@@ -1065,7 +1065,7 @@ final class SpecialTypeResolver
      * 3. Trait DocBlocks: Scans doc comments preceding T_USE statements inside class declarations.
      * 4. Top-Level Imports: Parses single, multi, and group use statements outside classes into alias maps.
      */
-    private static function parseFileMetadata(string $fileName, string $source): void
+    public static function parseFileMetadata(string $fileName, string $source): void
     {
         self::$fileNamespaces[$fileName] = '';
         self::$fileUseImports[$fileName] = [];

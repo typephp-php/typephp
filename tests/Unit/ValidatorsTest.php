@@ -244,7 +244,7 @@ describe('IdentifierValidator', function () {
         $classString = parseType('class-string', $this->lexer, $this->typeParser);
         expect($this->registry->validate(DateTimeInterface::class, $classString, 'arg'))->toBeNull()
             ->and($this->registry->validate(Dog::class, $classString, 'arg'))->toBeNull()
-            ->and($this->registry->validate('NonExistentClass123', $classString, 'arg'))->toBeInstanceOf(ErrorMessage::class)
+            ->and($this->registry->validate('Invalid Class Name', $classString, 'arg'))->toBeInstanceOf(ErrorMessage::class)
         ;
 
         $ifaceString = parseType('interface-string', $this->lexer, $this->typeParser);

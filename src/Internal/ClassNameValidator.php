@@ -30,6 +30,26 @@ final class ClassNameValidator
             return false;
         }
 
-        return preg_match('/^[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff\\\\]*$/', $trimmed) === 1;
+        return preg_match('/^[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*(?:\\\\[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)*$/', $trimmed) === 1;
+    }
+
+    /**
+     * Validates a class-string value:
+     * - Unqualified names (e.g. 'Hello', 'stdClass') MUST physically exist in runtime.
+     * - Qualified names (e.g. 'App\Models\User') pass if they exist or match valid qualified class syntax.
+     */
+    public static function isValidClassString(mixed $name): bool
+    {
+        if (! \is_string($name) || ! self::isValid($name)) {
+            return false;
+        }
+
+        if (class_exists($name) || interface_exists($name) || trait_exists($name) || enum_exists($name)) {
+            return true;
+        }
+
+        $trimmed = ltrim($name, '\\');
+
+        return str_contains($trimmed, '\\');
     }
 }

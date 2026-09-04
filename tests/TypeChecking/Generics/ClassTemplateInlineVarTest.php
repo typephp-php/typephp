@@ -2,8 +2,6 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Tests\TypeChecking\Generics;
-
 use TypePHP\Exception\TypeError;
 use TypePHP\Internal\Config;
 use TypePHP\Tests\Fixtures\Collections\ShopwareCollection;

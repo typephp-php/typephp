@@ -26,8 +26,6 @@ use TypePHP\Internal\TypeFormatter;
  */
 final class GenericValidator implements TypeValidatorInterface
 {
-    private const HYBRID_SAMPLE_THRESHOLD = 64;
-
     /**
      * @var array<string, mixed>
      */
@@ -98,16 +96,6 @@ final class GenericValidator implements TypeValidatorInterface
 
     /**
      * Validates key-of<T> generic structures with O(1) in-memory caching.
-     *
-     * Execution Flow:
-     * 1. Array Constants: If T is a class constant (e.g., self::DRIVER_MAP), it safely reflects the
-     *    target class to bypass visibility restrictions (private/protected), caches the array in memory,
-     *    and verifies that the provided value exists as a key in that array.
-     * 2. Enums: If T is an Enum identifier, it extracts and caches the enum case names, then verifies
-     *    that the provided value matches a valid case name.
-     * 3. Array Shapes: If T is an inline array shape (e.g., array{id: int, name: string}), it verifies
-     *    that the provided value exists as one of the key names in the shape.
-     * 4. Fallback: Returns null gracefully for unresolvable or unsupported structures.
      */
     private function validateKeyOf(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
     {
@@ -174,15 +162,6 @@ final class GenericValidator implements TypeValidatorInterface
 
     /**
      * Validates value-of<T> generic structures with O(1) in-memory caching.
-     *
-     * Execution Flow:
-     * 1. Array Constants: If T is a class constant (e.g., self::DRIVER_MAP), it safely reflects the
-     *    target class to bypass visibility restrictions (private/protected), caches the array in memory,
-     *    and verifies that the provided value exists as a value in that array.
-     * 2. Backed Enums: If T is a Backed Enum identifier, it extracts and caches the enum case backing values,
-     *    then verifies that the provided value matches a valid case value.
-     * 3. Unit Enums: Pure non-backed UnitEnums have no backing values, so any value-of check fails.
-     * 4. Fallback: Returns null gracefully for unresolvable or unsupported structures.
      */
     private function validateValueOf(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
     {
@@ -354,7 +333,7 @@ final class GenericValidator implements TypeValidatorInterface
      */
     private function validateClassString(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
     {
-        if (! \is_string($value) || ! ClassNameValidator::isValid($value) || (! class_exists($value) && ! interface_exists($value) && ! trait_exists($value) && ! enum_exists($value))) {
+        if (! \is_string($value) || ! ClassNameValidator::isValidClassString($value)) {
             return ErrorFactory::createError($context . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($value) . ' given');
         }
 
@@ -429,7 +408,7 @@ final class GenericValidator implements TypeValidatorInterface
         if ($valueTypeNode !== null && $count > 0) {
             $isComplexObjectGeneric = ($valueTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valueTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
 
-            if ($count > self::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 $sampleIndices = [0, $count - 1];
                 $samplesToTake = min(3, $count - 2);
                 for ($i = 0; $i < $samplesToTake; $i++) {
@@ -493,7 +472,7 @@ final class GenericValidator implements TypeValidatorInterface
         if ($typesCount === 1) {
             $valTypeNode = $node->genericTypes[0];
             $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
-            if ($count > self::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 $keys = array_keys($value);
                 $sampleKeys = [$keys[0], $keys[$count - 1]];
                 $samplesToTake = min(3, $count - 2);
@@ -529,7 +508,7 @@ final class GenericValidator implements TypeValidatorInterface
             $valTypeNode = $node->genericTypes[1];
             $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
 
-            if ($count > self::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 $keys = array_keys($value);
                 $sampleKeys = [$keys[0], $keys[$count - 1]];
                 $samplesToTake = min(3, $count - 2);
