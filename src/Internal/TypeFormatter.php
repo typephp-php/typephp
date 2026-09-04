@@ -22,6 +22,10 @@ final class TypeFormatter
             return "int ($value)";
         }
 
+        if (\is_float($value)) {
+            return "float ($value)";
+        }
+
         if (\is_string($value)) {
             if ($value === '') {
                 return "empty string ('')";
