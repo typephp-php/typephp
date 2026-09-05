@@ -174,6 +174,13 @@ final class SpecialTypeResolver
      */
     public static function resolve(TypeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context, ?object $thisObj = null): TypeNode
     {
+        if ($node instanceof IdentifierTypeNode) {
+            $lower = strtolower($node->name);
+            if (isset(self::BUILTIN_TYPE_KEYWORDS[$lower]) && $lower !== 'self' && $lower !== 'parent' && $lower !== 'static' && $lower !== '$this') {
+                return $node;
+            }
+        }
+
         $ref = self::getReflectionContext($context);
         $declaringClass = $ref instanceof \ReflectionMethod ? $ref->getDeclaringClass()->getName() : ($ref instanceof \ReflectionClass ? $ref->getName() : null);
 

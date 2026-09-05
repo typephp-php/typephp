@@ -29,6 +29,10 @@ final class DocblockNormalizer
      */
     public static function normalize(string $doc): string
     {
+        if (! str_contains($doc, '@')) {
+            return $doc;
+        }
+
         if (str_contains($doc, '-type') && str_contains($doc, '=')) {
             $doc = preg_replace('/(@(?:phpstan|psalm)-type\s+[a-zA-Z0-9_\x80-\xff]+)\s*=\s*/', '$1 ', $doc) ?? $doc;
         }

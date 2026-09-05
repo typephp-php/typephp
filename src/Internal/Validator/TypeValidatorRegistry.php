@@ -23,10 +23,21 @@ final class TypeValidatorRegistry
 {
     private IdentifierValidator $identifierValidator;
 
-    /**
-     * @var array<string, TypeValidatorInterface>
-     */
-    private array $validators = [];
+    private GenericValidator $genericValidator;
+
+    private UnionValidator $unionValidator;
+
+    private IntersectionValidator $intersectionValidator;
+
+    private NullableValidator $nullableValidator;
+
+    private ArrayValidator $arrayValidator;
+
+    private ArrayShapeValidator $arrayShapeValidator;
+
+    private ObjectShapeValidator $objectShapeValidator;
+
+    private ConstValidator $constValidator;
 
     /**
      * WeakMap memoizing previously validated object instances against TypeNode signatures.
@@ -46,17 +57,14 @@ final class TypeValidatorRegistry
     public function __construct()
     {
         $this->identifierValidator = new IdentifierValidator();
-        $this->validators = [
-            IdentifierTypeNode::class => $this->identifierValidator,
-            GenericTypeNode::class => new GenericValidator(),
-            UnionTypeNode::class => new UnionValidator(),
-            IntersectionTypeNode::class => new IntersectionValidator(),
-            NullableTypeNode::class => new NullableValidator(),
-            ArrayTypeNode::class => new ArrayValidator(),
-            ArrayShapeNode::class => new ArrayShapeValidator(),
-            ObjectShapeNode::class => new ObjectShapeValidator(),
-            ConstTypeNode::class => new ConstValidator(),
-        ];
+        $this->genericValidator = new GenericValidator();
+        $this->unionValidator = new UnionValidator();
+        $this->intersectionValidator = new IntersectionValidator();
+        $this->nullableValidator = new NullableValidator();
+        $this->arrayValidator = new ArrayValidator();
+        $this->arrayShapeValidator = new ArrayShapeValidator();
+        $this->objectShapeValidator = new ObjectShapeValidator();
+        $this->constValidator = new ConstValidator();
     }
 
     /**
@@ -77,15 +85,18 @@ final class TypeValidatorRegistry
             }
         }
 
-        if ($node instanceof IdentifierTypeNode) {
-            $err = $this->identifierValidator->validate($value, $node, $context, $this);
-        } else {
-            $validator = $this->validators[\get_class($node)] ?? null;
-            if ($validator === null) {
-                return null;
-            }
-            $err = $validator->validate($value, $node, $context, $this);
-        }
+        $err = match ($node::class) {
+            IdentifierTypeNode::class => $this->identifierValidator->validate($value, $node, $context, $this),
+            GenericTypeNode::class => $this->genericValidator->validate($value, $node, $context, $this),
+            UnionTypeNode::class => $this->unionValidator->validate($value, $node, $context, $this),
+            NullableTypeNode::class => $this->nullableValidator->validate($value, $node, $context, $this),
+            ArrayTypeNode::class => $this->arrayValidator->validate($value, $node, $context, $this),
+            ArrayShapeNode::class => $this->arrayShapeValidator->validate($value, $node, $context, $this),
+            ObjectShapeNode::class => $this->objectShapeValidator->validate($value, $node, $context, $this),
+            IntersectionTypeNode::class => $this->intersectionValidator->validate($value, $node, $context, $this),
+            ConstTypeNode::class => $this->constValidator->validate($value, $node, $context, $this),
+            default => null,
+        };
 
         if ($err === null && $isObj && $nodeKey !== null) {
             $cache = self::$validatedObjectCache[$value] ?? [];
