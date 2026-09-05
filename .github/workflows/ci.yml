@@ -46,7 +46,7 @@ jobs:
         run: php bin/typephp cache:warm
 
       - name: Run Runtime Type Checking Engine Suite (Pest)
-        run: ./vendor/bin/pest tests/TypeChecking/ArraysAndShapes/ClassConstKeyShapeTest.php tests/TypeChecking/ArraysAndShapes/OffsetAccessTest.php --verbose
+        run: ./vendor/bin/pest tests/TypeChecking/ArraysAndShapes/ClassConstKeyShapeTest.php tests/TypeChecking/ArraysAndShapes/OffsetAccessTest.php
 
       - name: Upload Coverage to Codecov
         uses: codecov/codecov-action@v5
