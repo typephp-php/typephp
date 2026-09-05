@@ -1101,7 +1101,7 @@ final class SpecialTypeResolver
                 if (($token->id === T_CLASS || $token->id === T_INTERFACE || $token->id === T_TRAIT || (\defined('T_ENUM') && $token->id === T_ENUM)) && isset($tokens[$i + 2]) && $tokens[$i + 2]->id === T_STRING) {
                     $className = $tokens[$i + 2]->text;
                     $currentClass = $namespace !== '' ? $namespace . '\\' . $className : $className;
-                    self::$classTraitUseDocs[$currentClass] ??= [];
+                    self::$classTraitUseDocs[$currentClass] = []; 
 
                     continue;
                 }
