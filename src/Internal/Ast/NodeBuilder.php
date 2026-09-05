@@ -14,7 +14,7 @@ final class NodeBuilder
     public static function createPropertyCheckCall(Node\Expr $valueExpr, Node\Expr $objectOrClassExpr, string $propertyName): Node\Expr\FuncCall
     {
         return new Node\Expr\FuncCall(
-            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkProperty'),
+            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkProperty'),
             [
                 new Node\Arg($valueExpr),
                 new Node\Arg($objectOrClassExpr),
@@ -27,7 +27,7 @@ final class NodeBuilder
     public static function createVariableCheckCall(Node\Expr $valueExpr, string $typeString, string $varName): Node\Expr\FuncCall
     {
         return new Node\Expr\FuncCall(
-            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkVariable'),
+            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkVariable'),
             [
                 new Node\Arg($valueExpr),
                 new Node\Arg(new Node\Scalar\String_($typeString)),
