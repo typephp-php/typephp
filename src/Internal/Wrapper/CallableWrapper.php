@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Wrapper;
+namespace TypePHP\Internal\Wrapper;
 
 use Closure;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
@@ -19,7 +19,7 @@ use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
-use TypePHP\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
  * Wraps callables to enforce argument and return type contracts dynamically at runtime.

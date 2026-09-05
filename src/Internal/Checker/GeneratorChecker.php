@@ -12,7 +12,7 @@ use TypePHP\Internal\Docblock\ContractParser;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
-use TypePHP\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
  * @internal Evaluates generator yield and send (TSend) type validations.

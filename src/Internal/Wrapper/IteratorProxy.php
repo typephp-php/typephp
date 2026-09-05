@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Wrapper;
+namespace TypePHP\Internal\Wrapper;
 
 use Countable;
 use Iterator;

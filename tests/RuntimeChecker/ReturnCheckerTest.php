@@ -14,7 +14,7 @@ use TypePHP\Tests\Fixtures\Services\FluentService;
 use TypePHP\Tests\Fixtures\Services\UserEntityFactory;
 use TypePHP\Tests\Fixtures\Services\UserService;
 use TypePHP\Tests\Fixtures\Types\MagicMethodFixture;
-use TypePHP\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 describe('ReturnChecker Unit Tests', function () {
     beforeEach(function () {

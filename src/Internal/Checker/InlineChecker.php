@@ -30,8 +30,8 @@ use TypePHP\Internal\Dockblock\DocblockNormalizer;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
-use TypePHP\Validator\TypeValidatorRegistry;
-use TypePHP\Wrapper\CallableWrapper;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Wrapper\CallableWrapper;
 
 /**
  * Evaluates inline variable (@var) and class property validation rules.

@@ -6,8 +6,8 @@ use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use TypePHP\Exception\TypeError;
-use TypePHP\Validator\TypeValidatorRegistry;
-use TypePHP\Wrapper\CallableWrapper;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Wrapper\CallableWrapper;
 
 describe('CallableWrapper Unit Tests', function () {
     test('returns raw value if callable is not valid or node is not CallableTypeNode', function () {

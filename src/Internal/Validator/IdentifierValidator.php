@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Validator;
+namespace TypePHP\Internal\Validator;
 
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
@@ -10,7 +10,7 @@ use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
-use TypePHP\Wrapper\CallableWrapper;
+use TypePHP\Internal\Wrapper\CallableWrapper;
 
 /**
  * @internal Class for validating basic scalar identifier types like int, string, bool, array, list, object, callable, resource, null, true, false, mixed, scalar, void.

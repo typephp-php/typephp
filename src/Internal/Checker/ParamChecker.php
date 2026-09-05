@@ -23,7 +23,7 @@ use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
-use TypePHP\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
  * @internal Evaluates function and method parameter contract validations (including dynamic @method calls via __call / __callStatic).

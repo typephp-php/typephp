@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Validator;
+namespace TypePHP\Internal\Validator;
 
 use Generator;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;

@@ -20,8 +20,8 @@ use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
-use TypePHP\Validator\TypeValidatorRegistry;
-use TypePHP\Wrapper\CallableWrapper;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Wrapper\CallableWrapper;
 
 /**
  * @internal Evaluates function and method return contract validations (including dynamic @method calls via __call / __callStatic).

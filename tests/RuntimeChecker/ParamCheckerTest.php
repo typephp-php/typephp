@@ -11,7 +11,7 @@ use TypePHP\Tests\Fixtures\Services\ShiftedParamService;
 use TypePHP\Tests\Fixtures\Services\UserService;
 use TypePHP\Tests\Fixtures\Types\ClassStringFactoryContainer;
 use TypePHP\Tests\Fixtures\Types\MagicMethodFixture;
-use TypePHP\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 describe('ParamChecker Unit Tests', function () {
     beforeEach(function () {

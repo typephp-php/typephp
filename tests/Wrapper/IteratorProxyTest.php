@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Wrapper\IteratorProxy;
+use TypePHP\Internal\Wrapper\IteratorProxy;
 
 describe('IteratorProxy Unit Tests', function () {
     test('iterates inner traversable cleanly while executing type check callback', function () {

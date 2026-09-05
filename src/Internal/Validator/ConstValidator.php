@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Validator;
+namespace TypePHP\Internal\Validator;
 
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFalseNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFloatNode;

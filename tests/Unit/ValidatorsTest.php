@@ -24,7 +24,7 @@ use TypePHP\Tests\Fixtures\Types\DatabaseDriverMap;
 use TypePHP\Tests\Fixtures\Types\StatusEnum;
 use TypePHP\Tests\Fixtures\Types\UserObjectShape;
 use TypePHP\Tests\Fixtures\Types\WildcardConstantFixture;
-use TypePHP\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 beforeEach(function () {
     $this->registry = new TypeValidatorRegistry();

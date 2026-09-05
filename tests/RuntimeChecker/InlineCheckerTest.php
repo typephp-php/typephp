@@ -12,7 +12,7 @@ use TypePHP\Tests\Fixtures\Generics\GenericCollection;
 use TypePHP\Tests\Fixtures\Generics\HookedCollection;
 use TypePHP\Tests\Fixtures\Types\ConfiguredProperty;
 use TypePHP\TypePHP;
-use TypePHP\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 describe('InlineChecker Unit Tests', function () {
     beforeEach(function () {

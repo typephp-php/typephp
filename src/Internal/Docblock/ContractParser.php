@@ -25,7 +25,7 @@ use TypePHP\Internal\Checker\InlineChecker;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\StubManager;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
-use TypePHP\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
  * @internal Main orchestrator parsing and caching PHPDoc contracts (@param, @return, @template, @phpstan-type, @var, stubs).
