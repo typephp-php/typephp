@@ -90,16 +90,16 @@ final class PropertyHookInjector
         return new Node\Expr\Ternary(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpVal'), $checkCall),
-                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
+                new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             new Node\Expr\Throw_(
                 new Node\Expr\StaticCall(
-                    new Node\Name('\TypePHP\Internal\Diagnostic\ErrorFactory'),
+                    new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorFactory'),
                     'prepareException',
                     [
                         new Node\Arg(
                             new Node\Expr\New_(
-                                new Node\Name('\TypePHP\Exception\TypeError'),
+                                new Node\Name\FullyQualified('TypePHP\Exception\TypeError'),
                                 [
                                     new Node\Arg(
                                         new Node\Expr\MethodCall(new Node\Expr\Variable('__typephpVal'), 'getMessage')
@@ -122,10 +122,8 @@ final class PropertyHookInjector
     private static function wrapHookReturnStatements(array $stmts, string $propertyName): array
     {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class ($propertyName) extends NodeVisitorAbstract {
-            public function __construct(private string $propertyName)
-            {
-            }
+        $traverser->addVisitor(new class($propertyName) extends NodeVisitorAbstract {
+            public function __construct(private string $propertyName) {}
 
             public function enterNode(Node $node): int|null
             {

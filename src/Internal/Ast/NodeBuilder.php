@@ -14,7 +14,7 @@ final class NodeBuilder
     public static function createPropertyCheckCall(Node\Expr $valueExpr, Node\Expr $objectOrClassExpr, string $propertyName): Node\Expr\FuncCall
     {
         return new Node\Expr\FuncCall(
-            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkProperty'),
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkProperty'),
             [
                 new Node\Arg($valueExpr),
                 new Node\Arg($objectOrClassExpr),
@@ -27,7 +27,7 @@ final class NodeBuilder
     public static function createVariableCheckCall(Node\Expr $valueExpr, string $typeString, string $varName): Node\Expr\FuncCall
     {
         return new Node\Expr\FuncCall(
-            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkVariable'),
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkVariable'),
             [
                 new Node\Arg($valueExpr),
                 new Node\Arg(new Node\Scalar\String_($typeString)),
@@ -42,7 +42,7 @@ final class NodeBuilder
         $args = [
             new Node\Arg(
                 new Node\Expr\New_(
-                    new Node\Name('\TypePHP\Exception\TypeError'),
+                    new Node\Name\FullyQualified('TypePHP\Exception\TypeError'),
                     [
                         new Node\Arg(
                             new Node\Expr\MethodCall(
@@ -65,11 +65,11 @@ final class NodeBuilder
                     new Node\Expr\Variable('__typephpVal'),
                     $checkCall
                 ),
-                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
+                new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             new Node\Expr\Throw_(
                 new Node\Expr\StaticCall(
-                    new Node\Name('\TypePHP\Internal\Diagnostic\ErrorFactory'),
+                    new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorFactory'),
                     'prepareException',
                     $args
                 )

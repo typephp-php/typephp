@@ -204,7 +204,7 @@ final class FunctionContractInjector
         );
 
         $checkCall = new Node\Expr\FuncCall(
-            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::setupScope'),
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::setupScope'),
             [
                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
                 new Node\Arg($argsExpr),
@@ -217,7 +217,7 @@ final class FunctionContractInjector
         $ifStmt = new Node\Stmt\If_(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpErr'), $checkCall),
-                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
+                new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             ['stmts' => [$throwStmt]]
         );
@@ -242,7 +242,7 @@ final class FunctionContractInjector
                     new Node\Expr\Assign(
                         new Node\Expr\Variable($paramName),
                         new Node\Expr\FuncCall(
-                            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::wrapCallable'),
+                            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::wrapCallable'),
                             [
                                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
                                 new Node\Arg(new Node\Scalar\String_($paramName)),
@@ -275,7 +275,7 @@ final class FunctionContractInjector
                     new Node\Expr\Assign(
                         new Node\Expr\Variable($paramName),
                         new Node\Expr\FuncCall(
-                            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::wrapIterable'),
+                            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::wrapIterable'),
                             [
                                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
                                 new Node\Arg(new Node\Scalar\String_($paramName)),
@@ -373,12 +373,12 @@ final class FunctionContractInjector
         return new Node\Stmt\Expression(
             new Node\Expr\Throw_(
                 new Node\Expr\StaticCall(
-                    new Node\Name('\TypePHP\Internal\Diagnostic\ErrorFactory'),
+                    new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorFactory'),
                     'prepareException',
                     [
                         new Node\Arg(
                             new Node\Expr\New_(
-                                new Node\Name('\TypePHP\Exception\TypeError'),
+                                new Node\Name\FullyQualified('TypePHP\Exception\TypeError'),
                                 [
                                     new Node\Arg(
                                         new Node\Expr\MethodCall($errorVar, 'getMessage')
@@ -399,7 +399,7 @@ final class FunctionContractInjector
             : new Node\Expr\Array_();
 
         return new Node\Expr\FuncCall(
-            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkReturn'),
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkReturn'),
             [
                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
                 new Node\Arg($exprToWrap),
@@ -417,7 +417,7 @@ final class FunctionContractInjector
         $ifStmt = new Node\Stmt\If_(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpRet'), $checkCall),
-                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
+                new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             ['stmts' => [self::buildTypeErrorThrowStmt(new Node\Expr\Variable('__typephpRet'))]]
         );
@@ -434,16 +434,16 @@ final class FunctionContractInjector
         return new Node\Expr\Ternary(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpRet'), $checkCall),
-                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
+                new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             new Node\Expr\Throw_(
                 new Node\Expr\StaticCall(
-                    new Node\Name('\TypePHP\Internal\Diagnostic\ErrorFactory'),
+                    new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorFactory'),
                     'prepareException',
                     [
                         new Node\Arg(
                             new Node\Expr\New_(
-                                new Node\Name('\TypePHP\Exception\TypeError'),
+                                new Node\Name\FullyQualified('TypePHP\Exception\TypeError'),
                                 [
                                     new Node\Arg(
                                         new Node\Expr\MethodCall(new Node\Expr\Variable('__typephpRet'), 'getMessage')
@@ -461,7 +461,7 @@ final class FunctionContractInjector
     public static function buildWrappedYieldNode(Node\Expr\Yield_ $n, Node\Expr $thisArg): Node\Expr\Ternary
     {
         $checkYieldCall = new Node\Expr\FuncCall(
-            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkYield'),
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkYield'),
             [
                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
                 new Node\Arg($n->key ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
@@ -473,16 +473,16 @@ final class FunctionContractInjector
         $n->value = new Node\Expr\Ternary(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpYld'), $checkYieldCall),
-                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
+                new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             new Node\Expr\Throw_(
                 new Node\Expr\StaticCall(
-                    new Node\Name('\TypePHP\Internal\Diagnostic\ErrorFactory'),
+                    new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorFactory'),
                     'prepareException',
                     [
                         new Node\Arg(
                             new Node\Expr\New_(
-                                new Node\Name('\TypePHP\Exception\TypeError'),
+                                new Node\Name\FullyQualified('TypePHP\Exception\TypeError'),
                                 [
                                     new Node\Arg(
                                         new Node\Expr\MethodCall(new Node\Expr\Variable('__typephpYld'), 'getMessage')
@@ -498,7 +498,7 @@ final class FunctionContractInjector
         );
 
         $checkSendCall = new Node\Expr\FuncCall(
-            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkSend'),
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkSend'),
             [
                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
                 new Node\Arg($n),
@@ -509,16 +509,16 @@ final class FunctionContractInjector
         return new Node\Expr\Ternary(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpSnd'), $checkSendCall),
-                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
+                new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             new Node\Expr\Throw_(
                 new Node\Expr\StaticCall(
-                    new Node\Name('\TypePHP\Internal\Diagnostic\ErrorFactory'),
+                    new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorFactory'),
                     'prepareException',
                     [
                         new Node\Arg(
                             new Node\Expr\New_(
-                                new Node\Name('\TypePHP\Exception\TypeError'),
+                                new Node\Name\FullyQualified('TypePHP\Exception\TypeError'),
                                 [
                                     new Node\Arg(
                                         new Node\Expr\MethodCall(new Node\Expr\Variable('__typephpSnd'), 'getMessage')
@@ -570,7 +570,7 @@ final class FunctionContractInjector
                     $n->setAttribute('typephp_wrapped', true);
 
                     $n->expr = new Node\Expr\FuncCall(
-                        new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::wrapIterable'),
+                        new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::wrapIterable'),
                         [
                             new Node\Arg(new Node\Scalar\MagicConst\Method()),
                             new Node\Arg(new Node\Scalar\String_('return')),

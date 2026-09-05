@@ -27,7 +27,8 @@ final class ContractVisitor extends NodeVisitorAbstract
      */
     public function enterNode(Node $node): ?array
     {
-        if ($node instanceof Node\Stmt\Function_
+        if (
+            $node instanceof Node\Stmt\Function_
             || $node instanceof Node\Stmt\ClassMethod
             || $node instanceof Node\Expr\Closure
             || $node instanceof Node\Expr\ArrowFunction
@@ -161,12 +162,12 @@ final class ContractVisitor extends NodeVisitorAbstract
             $node->setAttribute('typephp_wrapped', value: true);
 
             return new Node\Expr\FuncCall(
-                new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::cloneInstance'),
+                new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::cloneInstance'),
                 [
                     new Node\Arg(
                         new Node\Expr\Clone_(
                             new Node\Expr\FuncCall(
-                                new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::prepareClone'),
+                                new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::prepareClone'),
                                 [new Node\Arg($node->expr)]
                             )
                         )
@@ -176,7 +177,8 @@ final class ContractVisitor extends NodeVisitorAbstract
             );
         }
 
-        if ($node instanceof Node\Stmt\Function_
+        if (
+            $node instanceof Node\Stmt\Function_
             || $node instanceof Node\Stmt\ClassMethod
             || $node instanceof Node\Expr\Closure
             || $node instanceof Node\Expr\ArrowFunction
