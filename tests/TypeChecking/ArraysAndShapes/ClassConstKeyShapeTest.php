@@ -35,14 +35,6 @@ describe('Class Constant Keys in Array Shapes (array{self::CONST_KEY: T})', func
     test('throws TypeError when array shape item with class constant key violates type contract', function () {
         $container = new ConstKeyContainer();
 
-        $manualCheck = \TypePHP\Internal\RuntimeTypeChecker::setupScope(
-            'TypePHP\Tests\Fixtures\Types\ConstKeyContainer::process',
-            ['payload' => ['user_id' => -5, 'user_role' => 'admin']],
-            $container
-        );
-        fwrite(STDERR, "[DEBUG] setupScope returned class: " . (is_object($manualCheck) ? get_class($manualCheck) : var_export($manualCheck, true)) . "\n");
-        fwrite(STDERR, "[DEBUG] instanceof ErrorMessage: " . var_export($manualCheck instanceof \TypePHP\Internal\Diagnostic\ErrorMessage, true) . "\n");
-
         expect(fn() => $container->process([
             'user_id' => -5,
             'user_role' => 'admin',
