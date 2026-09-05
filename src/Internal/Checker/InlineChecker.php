@@ -24,7 +24,7 @@ use PHPStan\PhpDocParser\Parser\ConstExprParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
-use TypePHP\Internal\Docblock\ContractParser;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
@@ -213,7 +213,7 @@ final class InlineChecker
 
         $className = \is_string($objectOrClass) ? $objectOrClass : \get_class($objectOrClass);
 
-        $typeNode = ContractParser::parseProperty($className, $propName);
+        $typeNode = DocblockParser::parseProperty($className, $propName);
         if ($typeNode === null) {
             return $value;
         }
@@ -377,7 +377,7 @@ final class InlineChecker
             $refFunc = new \ReflectionFunction($functionName);
             $typeNode = SpecialTypeResolver::resolve($typeNode, $refFunc);
 
-            $contract = ContractParser::parse($functionName);
+            $contract = DocblockParser::parse($functionName);
             $declaredTemplates = $contract['templates'] ?? [];
             $aliases = $contract['aliases'] ?? [];
             $boundTemplates = TemplateManager::getBoundTemplates($functionName, null, $declaredTemplates);
@@ -413,13 +413,13 @@ final class InlineChecker
             $refClass = new \ReflectionClass($className);
             $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
 
-            $classAliases = ContractParser::parseClassAliases($className);
+            $classAliases = DocblockParser::parseClassAliases($className);
 
             $targetFunc = ($methodName !== '{closure}' && $methodName !== null)
                 ? $className . '::' . $methodName
                 : $className . '::__construct';
 
-            $contract = ContractParser::parse($targetFunc);
+            $contract = DocblockParser::parse($targetFunc);
             $declaredTemplates = $contract['allTemplates'] ?? ($contract['classTemplates'] ?? []);
             $boundTemplates = TemplateManager::getBoundTemplates($targetFunc, $thisObj, $declaredTemplates);
 
@@ -442,7 +442,7 @@ final class InlineChecker
     private static function substitutePropertyGenerics(TypeNode $typeNode, object $object, string $className): TypeNode
     {
         $constructorTarget = $className . '::__construct';
-        $contract = ContractParser::parse($constructorTarget);
+        $contract = DocblockParser::parse($constructorTarget);
 
         $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
         $boundTemplates = TemplateManager::getBoundTemplates('none', $object, $allTemplates);

@@ -13,7 +13,7 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use ReflectionClass;
 use Traversable;
-use TypePHP\Internal\Docblock\ContractParser;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Internal\Resolver\HierarchyResolver;
@@ -71,7 +71,7 @@ final class ReturnChecker
             return $magicResult;
         }
 
-        $contract = ContractParser::parse($effectiveFunction);
+        $contract = DocblockParser::parse($effectiveFunction);
 
         if (! ($contract['hasReturnContract'] ?? ($contract['return'] !== null))) {
             return $value;
@@ -185,7 +185,7 @@ final class ReturnChecker
         }
 
         $className = explode('::', $effectiveFunction, 2)[0];
-        $magicContract = ContractParser::parseMagicMethod($className, $magicMethodName);
+        $magicContract = DocblockParser::parseMagicMethod($className, $magicMethodName);
 
         if ($magicContract === null || $magicContract['return'] === null) {
             return null;

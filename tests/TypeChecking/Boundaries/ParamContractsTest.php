@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\Docblock\ContractParser;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Services\VariadicPropertyService;
@@ -114,7 +114,7 @@ describe('Function & Method Parameter Contracts', function () {
     });
 
     test('filters out pure mixed parameters so hasParamContract is false', function () {
-        $contract = ContractParser::parse('testPureMixedParamFunction');
+        $contract = DocblockParser::parse('testPureMixedParamFunction');
 
         expect($contract['types'])->toBeEmpty()
             ->and($contract['hasParamContract'])->toBeFalse()

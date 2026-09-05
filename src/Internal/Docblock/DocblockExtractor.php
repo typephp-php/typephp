@@ -385,7 +385,7 @@ final class DocblockExtractor
         }
 
         foreach ($aliases as $name => $type) {
-            $aliases[$name] = ContractParser::substituteAliases($type, $aliases);
+            $aliases[$name] = DocblockParser::substituteAliases($type, $aliases);
         }
     }
 

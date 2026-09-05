@@ -7,7 +7,7 @@ namespace TypePHP\Internal\Util;
 use TypePHP\Extension\ExtensionInterface;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
-use TypePHP\Internal\Docblock\ContractParser;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Io\CacheManager;
 use TypePHP\Internal\Io\StreamWrapper;
@@ -295,7 +295,7 @@ final class Config
         self::$cachedConfig = $mergedConfig;
         self::syncFlags($mergedConfig);
 
-        ContractParser::reset();
+        DocblockParser::reset();
         ParamChecker::reset();
         ReturnChecker::reset();
         FileFilter::reset();
@@ -354,7 +354,7 @@ final class Config
         self::$respectNativeNullability = true;
         self::$arrayValidation = 'full';
 
-        ContractParser::reset();
+        DocblockParser::reset();
         ParamChecker::reset();
         ReturnChecker::reset();
         TemplateManager::reset();

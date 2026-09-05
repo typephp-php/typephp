@@ -16,7 +16,7 @@ use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
-use TypePHP\Internal\Docblock\ContractParser;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
@@ -413,7 +413,7 @@ final class TemplateManager
             $topFrame = end(self::$callStackBindings[$function]);
             if ($topFrame !== false) {
                 if ($thisObj !== null) {
-                    $contract = ContractParser::parse($function);
+                    $contract = DocblockParser::parse($function);
                     $methodTemplates = $contract['templates'] ?? [];
                     foreach ($topFrame as $tName => $tNode) {
                         if (isset($methodTemplates[$tName])) {

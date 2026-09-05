@@ -32,7 +32,7 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
 /**
  * @internal Main orchestrator parsing and caching PHPDoc contracts (@param, @return, @template, @phpstan-type, @var, stubs).
  */
-final class ContractParser
+final class DocblockParser
 {
     /**
      * Cache for resolved contract metadata.

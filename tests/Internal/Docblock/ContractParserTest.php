@@ -17,7 +17,7 @@ use PHPStan\PhpDocParser\Ast\Type\ObjectShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
-use TypePHP\Internal\Docblock\ContractParser;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Tests\Fixtures\IgnoreTags\IgnoredMethod;
 use TypePHP\Tests\Fixtures\Services\ChildMagicMethodService;
@@ -30,23 +30,23 @@ use TypePHP\Tests\Fixtures\Types\MagicPropertyFixture;
 use TypePHP\Tests\Fixtures\Types\NestedAliasService;
 use TypePHP\Tests\Fixtures\Types\NonCpmStrings;
 
-describe('ContractParser Unit Tests', function () {
+describe('DocblockParser Unit Tests', function () {
     beforeEach(function () {
         Config::reset();
-        ContractParser::reset();
+        DocblockParser::reset();
     });
 
     afterEach(function () {
         Config::reset();
-        ContractParser::reset();
+        DocblockParser::reset();
     });
 
     describe('Function and Method Parsing (parse)', function () {
         test('parses class method contracts and caches results', function () {
             $target = UserService::class . '::find';
 
-            $contract1 = ContractParser::parse($target);
-            $contract2 = ContractParser::parse($target);
+            $contract1 = DocblockParser::parse($target);
+            $contract2 = DocblockParser::parse($target);
 
             expect($contract1)->toBeArray()
                 ->and($contract1['types'])->toHaveKey('id')
@@ -58,7 +58,7 @@ describe('ContractParser Unit Tests', function () {
         test('parses standalone global/namespaced functions', function () {
             $target = 'TypePHP\Tests\Fixtures\Functions\calculateDiscount';
 
-            $contract = ContractParser::parse($target);
+            $contract = DocblockParser::parse($target);
 
             expect($contract['types'])->toHaveKey('price')
                 ->and($contract['types'])->toHaveKey('percentage')
@@ -69,7 +69,7 @@ describe('ContractParser Unit Tests', function () {
         });
 
         test('returns empty contract array for non-existent classes or functions', function () {
-            $contract = ContractParser::parse('NonExistentClass12345::method');
+            $contract = DocblockParser::parse('NonExistentClass12345::method');
 
             expect($contract['types'])->toBeEmpty()
                 ->and($contract['templates'])->toBeEmpty()
@@ -81,7 +81,7 @@ describe('ContractParser Unit Tests', function () {
         test('returns class-level templates and aliases when class has no requested method', function () {
             $target = NestedAliasService::class . '::nonExistentMethod';
 
-            $contract = ContractParser::parse($target);
+            $contract = DocblockParser::parse($target);
 
             expect($contract['types'])->toBeEmpty()
                 ->and($contract['aliases'])->toHaveKey('LocalId')
@@ -91,7 +91,7 @@ describe('ContractParser Unit Tests', function () {
 
         test('falls back to property @var docblock for constructor property promotion', function () {
             $target = NonCpmStrings::class . '::__construct';
-            $contract = ContractParser::parse($target);
+            $contract = DocblockParser::parse($target);
 
             expect($contract['types'])->toHaveKey('strings')
                 ->and($contract['types']['strings'])->toBeInstanceOf(ArrayTypeNode::class)
@@ -101,10 +101,10 @@ describe('ContractParser Unit Tests', function () {
 
     describe('Property Contract Parsing (parseProperty)', function () {
         test('parses instance and static property @var docblocks', function () {
-            $instanceProp = ContractParser::parseProperty(ConfiguredProperty::class, 'numbers');
+            $instanceProp = DocblockParser::parseProperty(ConfiguredProperty::class, 'numbers');
             expect($instanceProp)->toBeInstanceOf(ArrayTypeNode::class);
 
-            $staticProp = ContractParser::parseProperty(ConfiguredProperty::class, 'staticTitle');
+            $staticProp = DocblockParser::parseProperty(ConfiguredProperty::class, 'staticTitle');
             expect($staticProp)->toBeInstanceOf(IdentifierTypeNode::class)
                 ->and($staticProp->name)->toBe('string')
             ;
@@ -117,7 +117,7 @@ describe('ContractParser Unit Tests', function () {
                 return;
             }
 
-            $readOnlyProp = ContractParser::parseProperty(HookedInterfaceImplementation::class, 'readOnlyProp');
+            $readOnlyProp = DocblockParser::parseProperty(HookedInterfaceImplementation::class, 'readOnlyProp');
 
             expect($readOnlyProp)->not()->toBeNull()
                 ->and((string) $readOnlyProp)->toBe('positive-int')
@@ -125,18 +125,18 @@ describe('ContractParser Unit Tests', function () {
         });
 
         test('parses class-level magic @property docblocks', function () {
-            $magicScore = ContractParser::parseProperty(MagicPropertyFixture::class, 'magicScore');
+            $magicScore = DocblockParser::parseProperty(MagicPropertyFixture::class, 'magicScore');
             expect((string) $magicScore)->toBe('positive-int');
 
-            $magicName = ContractParser::parseProperty(MagicPropertyFixture::class, 'magicName');
+            $magicName = DocblockParser::parseProperty(MagicPropertyFixture::class, 'magicName');
             expect((string) $magicName)->toBe('non-empty-string');
 
-            $magicTags = ContractParser::parseProperty(MagicPropertyFixture::class, 'magicTags');
+            $magicTags = DocblockParser::parseProperty(MagicPropertyFixture::class, 'magicTags');
             expect((string) $magicTags)->toBe('list<int>');
         });
 
         test('inherits magic @property docblocks across inheritance hierarchy', function () {
-            $inheritedRole = ContractParser::parseProperty(ChildMagicPropertyFixture::class, 'magicRole');
+            $inheritedRole = DocblockParser::parseProperty(ChildMagicPropertyFixture::class, 'magicRole');
 
             expect($inheritedRole)->not()->toBeNull()
                 ->and((string) $inheritedRole)->toContain('admin')
@@ -144,12 +144,12 @@ describe('ContractParser Unit Tests', function () {
         });
 
         test('returns null for un-annotated properties or non-existent classes', function () {
-            expect(ContractParser::parseProperty('NonExistentClass123', 'prop'))->toBeNull();
-            expect(ContractParser::parseProperty(ConfiguredProperty::class, 'nonExistentProperty'))->toBeNull();
+            expect(DocblockParser::parseProperty('NonExistentClass123', 'prop'))->toBeNull();
+            expect(DocblockParser::parseProperty(ConfiguredProperty::class, 'nonExistentProperty'))->toBeNull();
         });
 
         test('returns null for properties marked with @typephp-ignore', function () {
-            $ignored = ContractParser::parseProperty(IgnoredMethod::class, 'ignoredProperty');
+            $ignored = DocblockParser::parseProperty(IgnoredMethod::class, 'ignoredProperty');
 
             expect($ignored)->toBeNull();
         });
@@ -157,7 +157,7 @@ describe('ContractParser Unit Tests', function () {
 
     describe('Magic Method Parsing (parseMagicMethod)', function () {
         test('parses dynamic @method annotations with variadics and optional parameters', function () {
-            $method = ContractParser::parseMagicMethod(MagicMethodFixture::class, 'processId');
+            $method = DocblockParser::parseMagicMethod(MagicMethodFixture::class, 'processId');
 
             expect($method)->not()->toBeNull()
                 ->and((string) $method['return'])->toBe('positive-int')
@@ -166,30 +166,30 @@ describe('ContractParser Unit Tests', function () {
                 ->and((string) $method['parameters'][0]['type'])->toBe('positive-int')
             ;
 
-            $variadicMethod = ContractParser::parseMagicMethod(MagicMethodFixture::class, 'fetchList');
+            $variadicMethod = DocblockParser::parseMagicMethod(MagicMethodFixture::class, 'fetchList');
             expect($variadicMethod['parameters'][0]['isVariadic'])->toBeTrue();
         });
 
         test('inherits magic @method annotations from parent classes, interfaces, and traits', function () {
-            $parentMethod = ContractParser::parseMagicMethod(ChildMagicMethodService::class, 'parentMethod');
+            $parentMethod = DocblockParser::parseMagicMethod(ChildMagicMethodService::class, 'parentMethod');
             expect($parentMethod)->not()->toBeNull();
 
-            $interfaceMethod = ContractParser::parseMagicMethod(ChildMagicMethodService::class, 'interfaceMethod');
+            $interfaceMethod = DocblockParser::parseMagicMethod(ChildMagicMethodService::class, 'interfaceMethod');
             expect($interfaceMethod)->not()->toBeNull();
 
-            $traitMethod = ContractParser::parseMagicMethod(ChildMagicMethodService::class, 'traitMethod');
+            $traitMethod = DocblockParser::parseMagicMethod(ChildMagicMethodService::class, 'traitMethod');
             expect($traitMethod)->not()->toBeNull();
         });
 
         test('returns null for non-existent magic methods or non-existent classes', function () {
-            expect(ContractParser::parseMagicMethod('NonExistentClass123', 'method'))->toBeNull();
-            expect(ContractParser::parseMagicMethod(MagicMethodFixture::class, 'nonExistentMagicMethod'))->toBeNull();
+            expect(DocblockParser::parseMagicMethod('NonExistentClass123', 'method'))->toBeNull();
+            expect(DocblockParser::parseMagicMethod(MagicMethodFixture::class, 'nonExistentMagicMethod'))->toBeNull();
         });
     });
 
     describe('Class Aliases (parseClassAliases)', function () {
         test('parses and returns all local type aliases for a class', function () {
-            $aliases = ContractParser::parseClassAliases(NestedAliasService::class);
+            $aliases = DocblockParser::parseClassAliases(NestedAliasService::class);
 
             expect($aliases)->toHaveKey('LocalId')
                 ->and($aliases)->toHaveKey('LocalStatus')
@@ -199,7 +199,7 @@ describe('ContractParser Unit Tests', function () {
         });
 
         test('returns empty array for non-existent classes', function () {
-            expect(ContractParser::parseClassAliases('NonExistentClass123'))->toBe([]);
+            expect(DocblockParser::parseClassAliases('NonExistentClass123'))->toBe([]);
         });
     });
 
@@ -214,12 +214,12 @@ describe('ContractParser Unit Tests', function () {
 
         test('substitutes aliases in IdentifierTypeNode', function () {
             $node = new IdentifierTypeNode('UserId');
-            $result = ContractParser::substituteAliases($node, $this->aliases);
+            $result = DocblockParser::substituteAliases($node, $this->aliases);
 
             expect((string) $result)->toBe('positive-int');
 
             $unaliased = new IdentifierTypeNode('string');
-            expect(ContractParser::substituteAliases($unaliased, $this->aliases))->toBe($unaliased);
+            expect(DocblockParser::substituteAliases($unaliased, $this->aliases))->toBe($unaliased);
         });
 
         test('substitutes parameter and return aliases in CallableTypeNode', function () {
@@ -230,7 +230,7 @@ describe('ContractParser Unit Tests', function () {
                 []
             );
 
-            $result = ContractParser::substituteAliases($callableNode, $this->aliases);
+            $result = DocblockParser::substituteAliases($callableNode, $this->aliases);
 
             expect($result)->toBeInstanceOf(CallableTypeNode::class)
                 ->and((string) $result)->toContain('positive-int')
@@ -240,7 +240,7 @@ describe('ContractParser Unit Tests', function () {
 
         test('substitutes target and offset aliases in OffsetAccessTypeNode', function () {
             $offsetNode = new OffsetAccessTypeNode(new IdentifierTypeNode('UserId'), new IdentifierTypeNode('UserName'));
-            $result = ContractParser::substituteAliases($offsetNode, $this->aliases);
+            $result = DocblockParser::substituteAliases($offsetNode, $this->aliases);
 
             expect($result)->toBeInstanceOf(OffsetAccessTypeNode::class)
                 ->and((string) $result->type)->toBe('positive-int')
@@ -250,7 +250,7 @@ describe('ContractParser Unit Tests', function () {
 
         test('substitutes inner type aliases in ArrayTypeNode (UserId[] -> positive-int[])', function () {
             $arrNode = new ArrayTypeNode(new IdentifierTypeNode('UserId'));
-            $result = ContractParser::substituteAliases($arrNode, $this->aliases);
+            $result = DocblockParser::substituteAliases($arrNode, $this->aliases);
 
             expect($result)->toBeInstanceOf(ArrayTypeNode::class)
                 ->and((string) $result)->toBe('positive-int[]')
@@ -259,7 +259,7 @@ describe('ContractParser Unit Tests', function () {
 
         test('substitutes base and generic argument aliases in GenericTypeNode (Collection<UserId>)', function () {
             $genericNode = new GenericTypeNode(new IdentifierTypeNode('Collection'), [new IdentifierTypeNode('UserId')]);
-            $result = ContractParser::substituteAliases($genericNode, $this->aliases);
+            $result = DocblockParser::substituteAliases($genericNode, $this->aliases);
 
             expect($result)->toBeInstanceOf(GenericTypeNode::class)
                 ->and((string) $result)->toContain('positive-int')
@@ -268,7 +268,7 @@ describe('ContractParser Unit Tests', function () {
 
         test('substitutes inner type aliases in NullableTypeNode (?UserId -> ?positive-int)', function () {
             $nullableNode = new NullableTypeNode(new IdentifierTypeNode('UserId'));
-            $result = ContractParser::substituteAliases($nullableNode, $this->aliases);
+            $result = DocblockParser::substituteAliases($nullableNode, $this->aliases);
 
             expect($result)->toBeInstanceOf(NullableTypeNode::class)
                 ->and((string) $result)->toBe('?positive-int')
@@ -277,7 +277,7 @@ describe('ContractParser Unit Tests', function () {
 
         test('substitutes member type aliases in UnionTypeNode (UserId|UserName)', function () {
             $unionNode = new UnionTypeNode([new IdentifierTypeNode('UserId'), new IdentifierTypeNode('UserName')]);
-            $result = ContractParser::substituteAliases($unionNode, $this->aliases);
+            $result = DocblockParser::substituteAliases($unionNode, $this->aliases);
 
             expect($result)->toBeInstanceOf(UnionTypeNode::class)
                 ->and((string) $result)->toContain('positive-int')
@@ -287,7 +287,7 @@ describe('ContractParser Unit Tests', function () {
 
         test('substitutes member type aliases in IntersectionTypeNode (UserId&UserName)', function () {
             $intersectionNode = new IntersectionTypeNode([new IdentifierTypeNode('UserId'), new IdentifierTypeNode('UserName')]);
-            $result = ContractParser::substituteAliases($intersectionNode, $this->aliases);
+            $result = DocblockParser::substituteAliases($intersectionNode, $this->aliases);
 
             expect($result)->toBeInstanceOf(IntersectionTypeNode::class)
                 ->and((string) $result)->toContain('positive-int')
@@ -301,7 +301,7 @@ describe('ContractParser Unit Tests', function () {
                 new ArrayShapeItemNode(new ConstExprStringNode('id', ConstExprStringNode::SINGLE_QUOTED), false, new IdentifierTypeNode('UserId')),
             ], $unsealed);
 
-            $result = ContractParser::substituteAliases($shapeNode, $this->aliases);
+            $result = DocblockParser::substituteAliases($shapeNode, $this->aliases);
 
             expect($result)->toBeInstanceOf(ArrayShapeNode::class)
                 ->and((string) $result->items[0]->valueType)->toBe('positive-int')
@@ -316,7 +316,7 @@ describe('ContractParser Unit Tests', function () {
                 new ObjectShapeItemNode(new IdentifierTypeNode('name'), false, new IdentifierTypeNode('UserName')),
             ]);
 
-            $result = ContractParser::substituteAliases($objShapeNode, $this->aliases);
+            $result = DocblockParser::substituteAliases($objShapeNode, $this->aliases);
 
             expect($result)->toBeInstanceOf(ObjectShapeNode::class)
                 ->and((string) $result->items[0]->valueType)->toBe('positive-int')

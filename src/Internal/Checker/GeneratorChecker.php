@@ -8,7 +8,7 @@ use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
-use TypePHP\Internal\Docblock\ContractParser;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
@@ -86,7 +86,7 @@ final class GeneratorChecker
      */
     private static function resolveGeneratorReturnType(string $function, object|string|null $thisOrClass): ?TypeNode
     {
-        $contract = ContractParser::parse($function);
+        $contract = DocblockParser::parse($function);
         $returnTypeNode = $contract['return'] ?? null;
 
         if ($returnTypeNode === null) {

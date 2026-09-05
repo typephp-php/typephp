@@ -15,7 +15,7 @@ use TypeError;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
-use TypePHP\Internal\Docblock\ContractParser;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
@@ -70,7 +70,7 @@ final class CallableWrapper
      */
     public static function wrap(string $function, string $paramName, mixed $callable, TypeValidatorRegistry $registry, object|string|null $thisOrClass = null): mixed
     {
-        $contract = ContractParser::parse($function);
+        $contract = DocblockParser::parse($function);
         $typeNode = ($paramName === 'return') ? ($contract['return'] ?? null) : ($contract['types'][$paramName] ?? null);
         $aliases = $contract['aliases'] ?? [];
         $templates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];

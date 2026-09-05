@@ -12,7 +12,7 @@ use TypePHP\Internal\Checker\InlineChecker;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
-use TypePHP\Internal\Docblock\ContractParser;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
@@ -86,7 +86,7 @@ final class RuntimeTypeChecker
 
         $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry(), $effectiveFunction);
 
-        $contract = ContractParser::parse($effectiveFunction);
+        $contract = DocblockParser::parse($effectiveFunction);
         $methodTemplates = $contract['templates'] ?? [];
         $hasMethodTemplates = \count($methodTemplates) > 0;
 

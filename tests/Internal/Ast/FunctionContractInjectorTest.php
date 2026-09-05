@@ -273,7 +273,7 @@ PHP;
     });
 
     describe('Ignore Tag Suppression (@typephp-ignore)', function () {
-        test('injects setupScope hook so @typephp-ignore can be resolved dynamically at runtime by ContractParser', function () {
+        test('injects setupScope hook so @typephp-ignore can be resolved dynamically at runtime by DocblockParser', function () {
             $doc = new Doc("/**\n * @typephp-ignore\n * @param positive-int \$id\n */");
 
             $method = new Node\Stmt\ClassMethod('ignoredMethod', [

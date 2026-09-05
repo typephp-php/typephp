@@ -11,7 +11,7 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
-use TypePHP\Internal\Docblock\ContractParser;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
@@ -37,7 +37,7 @@ final class IterableWrapper
             return $iterable;
         }
 
-        $contract = ContractParser::parse($function);
+        $contract = DocblockParser::parse($function);
         $typeNode = ($paramName === 'return') ? ($contract['return'] ?? null) : ($contract['types'][$paramName] ?? null);
 
         if ($typeNode === null) {
