@@ -302,7 +302,7 @@ PHP;
         test('bypasses AST transformation on non-PHP files', function () {
             $wrapper = new StreamWrapper();
             $openedPath = null;
-            $jsonFile = __DIR__ . '/../../composer.json';
+            $jsonFile = dirname(__DIR__, 3) . '/composer.json';
 
             $success = $wrapper->stream_open($jsonFile, 'r', 0, $openedPath);
             expect($success)->toBeTrue();
@@ -466,9 +466,8 @@ PHP;
 
                 expect(\App\Test\sampleAction(42))->toBe('id_42');
 
-                expect(fn () => \App\Test\sampleAction(-5))
-                    ->toThrow(\TypeError::class, 'positive-int')
-                ;
+                expect(fn() => \App\Test\sampleAction(-5))
+                    ->toThrow(\TypeError::class, 'positive-int');
             } finally {
                 if (file_exists($testFile)) {
                     @unlink($testFile);
