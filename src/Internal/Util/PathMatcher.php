@@ -190,7 +190,7 @@ final class PathMatcher
     public static function isLibraryInternal(string $normalizedPath): bool
     {
         if (self::$cachedLibSrcDir === null) {
-            $parentDir = realpath(__DIR__ . '/..');
+            $parentDir = realpath(dirname(__DIR__, 2));
             self::$cachedLibSrcDir = $parentDir !== false ? rtrim(self::normalizePath($parentDir), '/') . '/' : '';
         }
 
@@ -210,14 +210,8 @@ final class PathMatcher
         if (str_starts_with($lowerCanon, $lowerLibSrcDir)) {
             $internalDirs = [
                 $lowerLibSrcDir . 'internal/',
-                $lowerLibSrcDir . 'contract/',
-                $lowerLibSrcDir . 'command/',
-                $lowerLibSrcDir . 'validator/',
-                $lowerLibSrcDir . 'wrapper/',
-                $lowerLibSrcDir . 'resolver/',
                 $lowerLibSrcDir . 'extension/',
                 $lowerLibSrcDir . 'exception/',
-                $lowerLibSrcDir . 'compiler/',
                 $lowerLibSrcDir . 'typephp.php',
                 $lowerLibSrcDir . 'bootstrap.php',
             ];

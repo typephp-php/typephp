@@ -15,11 +15,6 @@ final class ErrorFactory
 {
     private const INTERNAL_DIR_PATTERNS = [
         'src/Internal/',
-        'src/Wrapper/',
-        'src/Validator/',
-        'src/Resolver/',
-        'src/Contract/',
-        'src/Command/',
         'bin/typephp',
     ];
 
