@@ -9,6 +9,7 @@ require_once __DIR__ . '/PathMatcher.php';
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\CloningVisitor;
 use PhpParser\ParserFactory;
+use TypePHP\Internal\Ast\ContractVisitor;
 use TypePHP\Resolver\SpecialTypeResolver;
 
 /**

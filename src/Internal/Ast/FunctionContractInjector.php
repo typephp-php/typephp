@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Internal\Visitor;
+namespace TypePHP\Internal\Ast;
 
 use PhpParser\Node;
 use PhpParser\NodeTraverser;

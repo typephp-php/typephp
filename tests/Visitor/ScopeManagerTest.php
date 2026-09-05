@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use PhpParser\Node;
-use TypePHP\Internal\Visitor\ScopeManager;
+use TypePHP\Internal\Ast\ScopeManager;
 
 describe('ScopeManager Unit Tests', function () {
     test('manages scoped variable stack frames', function () {

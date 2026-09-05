@@ -7,6 +7,7 @@ namespace TypePHP\Internal;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Contract\ContractParser;
+use TypePHP\Internal\Ast\ScopeCleaner;
 use TypePHP\Internal\Checker\GeneratorChecker;
 use TypePHP\Internal\Checker\InlineChecker;
 use TypePHP\Internal\Checker\ParamChecker;

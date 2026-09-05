@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use PhpParser\Node;
-use TypePHP\Internal\Visitor\NodeBuilder;
+use TypePHP\Internal\Ast\NodeBuilder;
 
 describe('NodeBuilder Unit Tests', function () {
     test('createPropertyCheckCall creates FuncCall node for RuntimeTypeChecker::checkProperty', function () {
