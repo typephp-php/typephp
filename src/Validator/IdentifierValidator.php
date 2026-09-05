@@ -7,9 +7,9 @@ namespace TypePHP\Validator;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Internal\ClassNameValidator;
-use TypePHP\Internal\ErrorFactory;
-use TypePHP\Internal\ErrorMessage;
-use TypePHP\Internal\TypeFormatter;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Wrapper\CallableWrapper;
 
 /**

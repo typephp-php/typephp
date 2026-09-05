@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Config;
-use TypePHP\Internal\ErrorMessage;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Tests\Fixtures\Callables\GenericCallableService;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Services\ShiftedParamService;

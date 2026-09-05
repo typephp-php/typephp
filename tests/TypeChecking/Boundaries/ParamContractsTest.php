@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Contract\ContractParser;
+use TypePHP\Internal\Docblock\ContractParser;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Services\VariadicPropertyService;

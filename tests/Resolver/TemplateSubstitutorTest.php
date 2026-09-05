@@ -19,7 +19,7 @@ use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
-use TypePHP\Resolver\TemplateSubstitutor;
+use TypePHP\Internal\Generics\TemplateSubstitutor;
 
 describe('TemplateSubstitutor Unit Tests', function () {
     test('substitutes simple identifier template placeholders', function () {

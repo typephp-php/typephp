@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\PhpDocNode;
-use TypePHP\Contract\DocblockExtractor;
+use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Tests\Fixtures\Services\HelperService;
 use TypePHP\Tests\Fixtures\Services\UserService;
 use TypePHP\Tests\Fixtures\Shopware\Metric\Type as MetricTypeEnum;

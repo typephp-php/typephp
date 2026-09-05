@@ -6,7 +6,7 @@ namespace TypePHP\Validator;
 
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
-use TypePHP\Internal\ErrorMessage;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
 
 /**
  * @internal Class for validating nullable types like ?int.

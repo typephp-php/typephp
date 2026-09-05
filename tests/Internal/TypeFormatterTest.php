@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\TypeFormatter;
+use TypePHP\Internal\Diagnostic\TypeFormatter;
 
 test('formats negative integer correctly', function () {
     expect(TypeFormatter::formatGivenValue(-10))->toBe('negative int (-10)');

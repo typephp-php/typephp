@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Internal;
+namespace TypePHP\Internal\Diagnostic;
 
 use ReflectionClass;
 use Throwable;
@@ -157,7 +157,7 @@ final class ErrorFactory
             $message = $cleaned;
         }
 
-        return str_replace('TypePHP\Command\RunCommand::', '', $message);
+        return str_replace('TypePHP\Internal\Cli\RunCommand::', '', $message);
     }
 
     /**

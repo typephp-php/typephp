@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Contract;
+namespace TypePHP\Internal\Docblock;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\MethodTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;

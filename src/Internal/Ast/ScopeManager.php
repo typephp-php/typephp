@@ -6,8 +6,8 @@ namespace TypePHP\Internal\Ast;
 
 use PhpParser\Node;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
-use TypePHP\Contract\DocblockExtractor;
-use TypePHP\Internal\DocblockNormalizer;
+use TypePHP\Internal\Docblock\DocblockExtractor;
+use TypePHP\Internal\Dockblock\DocblockNormalizer;
 
 /**
  * @internal Manages lexical scope stack frames and extracts local @var variable annotations.

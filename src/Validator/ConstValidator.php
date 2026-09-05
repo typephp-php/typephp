@@ -13,9 +13,9 @@ use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprTrueNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
 use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
-use TypePHP\Internal\ErrorFactory;
-use TypePHP\Internal\ErrorMessage;
-use TypePHP\Internal\TypeFormatter;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Diagnostic\TypeFormatter;
 
 /**
  * @internal Validates literal values, class constants, and wildcard constant patterns (Class::PREFIX_*) against ConstTypeNode ASTs.

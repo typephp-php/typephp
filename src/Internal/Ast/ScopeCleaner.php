@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Ast;
 
-use TypePHP\Resolver\TemplateManager;
+use TypePHP\Internal\Generics\TemplateManager;
 
 /**
  * @internal ensures proper scope cleanup for variable tracking.

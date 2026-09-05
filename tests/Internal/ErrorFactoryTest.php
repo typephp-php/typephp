@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\ErrorFactory;
-use TypePHP\Internal\ErrorMessage;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
 
 test('error factory creates an ErrorMessage value object', function () {
     $err = ErrorFactory::createError('Test argument error message');

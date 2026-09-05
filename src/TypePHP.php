@@ -6,7 +6,7 @@ namespace TypePHP;
 
 use TypePHP\Internal\Config;
 use TypePHP\Internal\StreamWrapper;
-use TypePHP\Resolver\TemplateManager;
+use TypePHP\Internal\Generics\TemplateManager;
 
 final class TypePHP
 {

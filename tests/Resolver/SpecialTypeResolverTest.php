@@ -20,7 +20,7 @@ use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ThisTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
-use TypePHP\Internal\ErrorMessage;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Resolver\SpecialTypeResolver;
 use TypePHP\Tests\Fixtures\Generics\InlineTraitUseService;
 use TypePHP\Tests\Fixtures\Services\BaseService;

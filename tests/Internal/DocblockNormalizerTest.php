@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\DocblockNormalizer;
+use TypePHP\Internal\Dockblock\DocblockNormalizer;
 
 describe('DocblockNormalizer', function () {
     test('returns docblock string unchanged when no special keywords or curly braces are present', function () {

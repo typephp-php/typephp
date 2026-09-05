@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 use TypePHP\Internal\Checker\InlineChecker;
 use TypePHP\Internal\Config;
-use TypePHP\Internal\ErrorMessage;
-use TypePHP\Resolver\TemplateManager;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Generics\GenericCollection;

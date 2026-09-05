@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal;
 
-use TypePHP\Contract\ContractParser;
+use TypePHP\Internal\Docblock\ContractParser;
 use TypePHP\Contract\FileFilter;
 use TypePHP\Contract\HierarchyResolver;
 use TypePHP\Extension\ExtensionInterface;
@@ -12,7 +12,7 @@ use TypePHP\Extension\ExtensionManager;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
 use TypePHP\Resolver\SpecialTypeResolver;
-use TypePHP\Resolver\TemplateManager;
+use TypePHP\Internal\Generics\TemplateManager;
 
 /**
  * Global configuration manager for loading and dynamically overriding settings.

@@ -14,7 +14,7 @@ use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
-use TypePHP\Internal\ErrorMessage;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
 
 /**
  * Registry mapping AST TypeNodes to their corresponding validator strategy implementations.

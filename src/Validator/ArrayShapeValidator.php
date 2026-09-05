@@ -9,9 +9,9 @@ use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
-use TypePHP\Internal\ErrorFactory;
-use TypePHP\Internal\ErrorMessage;
-use TypePHP\Internal\TypeFormatter;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Diagnostic\TypeFormatter;
 
 /**
  * @internal Class for validating array shapes and tuple shapes like array{0: string, 1: int} or array{string, int}.

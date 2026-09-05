@@ -6,7 +6,7 @@ namespace TypePHP\Internal\Ast;
 
 use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
-use TypePHP\Contract\DocblockExtractor;
+use TypePHP\Internal\Docblock\DocblockExtractor;
 
 /**
  * @internal AST Node Visitor that injects contract checks, scope tracking, property hook validation, and parameter/return wrappers into functions and methods.

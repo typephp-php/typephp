@@ -27,9 +27,9 @@ use PHPStan\PhpDocParser\Ast\Type\ThisTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\ClassNameValidator;
-use TypePHP\Internal\ErrorFactory;
-use TypePHP\Internal\ErrorMessage;
-use TypePHP\Internal\TypeFormatter;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Diagnostic\TypeFormatter;
 
 /**
  * Resolves special type identifiers (self, static, parent, FQCNs) against Reflection or file contexts.

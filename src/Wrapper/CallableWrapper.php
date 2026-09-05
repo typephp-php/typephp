@@ -12,13 +12,13 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use ReflectionFunction;
 use TypeError;
-use TypePHP\Contract\ContractParser;
+use TypePHP\Internal\Docblock\ContractParser;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
-use TypePHP\Internal\ErrorFactory;
-use TypePHP\Internal\TypeFormatter;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Resolver\SpecialTypeResolver;
-use TypePHP\Resolver\TemplateManager;
-use TypePHP\Resolver\TemplateSubstitutor;
+use TypePHP\Internal\Generics\TemplateManager;
+use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Resolver;
+namespace TypePHP\Internal\Generics;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
@@ -18,13 +18,13 @@ use PHPStan\PhpDocParser\Parser\ConstExprParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
-use TypePHP\Contract\ContractParser;
-use TypePHP\Contract\DocblockExtractor;
+use TypePHP\Internal\Docblock\ContractParser;
+use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Contract\FileFilter;
 use TypePHP\Contract\HierarchyResolver;
 use TypePHP\Internal\ClassNameValidator;
-use TypePHP\Internal\ErrorFactory;
-use TypePHP\Internal\ErrorMessage;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\StubManager;
 use WeakMap;
 

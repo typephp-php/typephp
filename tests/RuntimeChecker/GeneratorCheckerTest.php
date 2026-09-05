@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use TypePHP\Internal\Checker\GeneratorChecker;
-use TypePHP\Internal\ErrorMessage;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Internal;
+namespace TypePHP\Internal\Diagnostic;
 
 /**
  * @internal Value object holding validation error messages prior to call-site exception throwing.

@@ -90,11 +90,11 @@ final class PropertyHookInjector
         return new Node\Expr\Ternary(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpVal'), $checkCall),
-                new Node\Name('\TypePHP\Internal\ErrorMessage')
+                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             new Node\Expr\Throw_(
                 new Node\Expr\StaticCall(
-                    new Node\Name('\TypePHP\Internal\ErrorFactory'),
+                    new Node\Name('\TypePHP\Internal\Diagnostic\ErrorFactory'),
                     'prepareException',
                     [
                         new Node\Arg(

@@ -65,11 +65,11 @@ final class NodeBuilder
                     new Node\Expr\Variable('__typephpVal'),
                     $checkCall
                 ),
-                new Node\Name('\TypePHP\Internal\ErrorMessage')
+                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             new Node\Expr\Throw_(
                 new Node\Expr\StaticCall(
-                    new Node\Name('\TypePHP\Internal\ErrorFactory'),
+                    new Node\Name('\TypePHP\Internal\Diagnostic\ErrorFactory'),
                     'prepareException',
                     $args
                 )

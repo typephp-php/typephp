@@ -217,7 +217,7 @@ final class FunctionContractInjector
         $ifStmt = new Node\Stmt\If_(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpErr'), $checkCall),
-                new Node\Name('\TypePHP\Internal\ErrorMessage')
+                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             ['stmts' => [$throwStmt]]
         );
@@ -373,7 +373,7 @@ final class FunctionContractInjector
         return new Node\Stmt\Expression(
             new Node\Expr\Throw_(
                 new Node\Expr\StaticCall(
-                    new Node\Name('\TypePHP\Internal\ErrorFactory'),
+                    new Node\Name('\TypePHP\Internal\Diagnostic\ErrorFactory'),
                     'prepareException',
                     [
                         new Node\Arg(
@@ -417,7 +417,7 @@ final class FunctionContractInjector
         $ifStmt = new Node\Stmt\If_(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpRet'), $checkCall),
-                new Node\Name('\TypePHP\Internal\ErrorMessage')
+                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             ['stmts' => [self::buildTypeErrorThrowStmt(new Node\Expr\Variable('__typephpRet'))]]
         );
@@ -434,11 +434,11 @@ final class FunctionContractInjector
         return new Node\Expr\Ternary(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpRet'), $checkCall),
-                new Node\Name('\TypePHP\Internal\ErrorMessage')
+                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             new Node\Expr\Throw_(
                 new Node\Expr\StaticCall(
-                    new Node\Name('\TypePHP\Internal\ErrorFactory'),
+                    new Node\Name('\TypePHP\Internal\Diagnostic\ErrorFactory'),
                     'prepareException',
                     [
                         new Node\Arg(
@@ -473,11 +473,11 @@ final class FunctionContractInjector
         $n->value = new Node\Expr\Ternary(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpYld'), $checkYieldCall),
-                new Node\Name('\TypePHP\Internal\ErrorMessage')
+                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             new Node\Expr\Throw_(
                 new Node\Expr\StaticCall(
-                    new Node\Name('\TypePHP\Internal\ErrorFactory'),
+                    new Node\Name('\TypePHP\Internal\Diagnostic\ErrorFactory'),
                     'prepareException',
                     [
                         new Node\Arg(
@@ -509,11 +509,11 @@ final class FunctionContractInjector
         return new Node\Expr\Ternary(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpSnd'), $checkSendCall),
-                new Node\Name('\TypePHP\Internal\ErrorMessage')
+                new Node\Name('\TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
             new Node\Expr\Throw_(
                 new Node\Expr\StaticCall(
-                    new Node\Name('\TypePHP\Internal\ErrorFactory'),
+                    new Node\Name('\TypePHP\Internal\Diagnostic\ErrorFactory'),
                     'prepareException',
                     [
                         new Node\Arg(

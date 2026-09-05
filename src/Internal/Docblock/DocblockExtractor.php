@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Contract;
+namespace TypePHP\Internal\Docblock;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\MethodTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\ParamTagValueNode;
@@ -18,7 +18,6 @@ use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
 use TypePHP\Internal\ClassNameValidator;
-use TypePHP\Internal\DocblockNormalizer;
 use TypePHP\Internal\StubManager;
 use TypePHP\Resolver\SpecialTypeResolver;
 

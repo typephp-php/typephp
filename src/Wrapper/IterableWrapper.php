@@ -9,12 +9,12 @@ use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
-use TypePHP\Contract\ContractParser;
+use TypePHP\Internal\Docblock\ContractParser;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
-use TypePHP\Internal\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Resolver\SpecialTypeResolver;
-use TypePHP\Resolver\TemplateManager;
-use TypePHP\Resolver\TemplateSubstitutor;
+use TypePHP\Internal\Generics\TemplateManager;
+use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;
 
 /**

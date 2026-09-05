@@ -6,9 +6,9 @@ namespace TypePHP\Validator;
 
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
-use TypePHP\Internal\ErrorFactory;
-use TypePHP\Internal\ErrorMessage;
-use TypePHP\Internal\TypeFormatter;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Diagnostic\TypeFormatter;
 
 /**
  * @internal Validates stdClass dynamic properties and custom class instances against PHPDoc object shape structures.

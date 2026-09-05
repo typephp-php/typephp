@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Command;
+namespace TypePHP\Internal\Cli;
 
 /**
  * @internal Rebuilds the TypePHP cache.

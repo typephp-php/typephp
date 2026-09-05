@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Resolver;
+namespace TypePHP\Internal\Generics;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;

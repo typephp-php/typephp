@@ -16,10 +16,10 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\ClassNameValidator;
 use TypePHP\Internal\Config;
-use TypePHP\Internal\ErrorFactory;
-use TypePHP\Internal\ErrorMessage;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\RuntimeTypeChecker;
-use TypePHP\Internal\TypeFormatter;
+use TypePHP\Internal\Diagnostic\TypeFormatter;
 
 /**
  * @internal Validates values against generic AST structures (int ranges, class-string<T>, list<T>, array<K,V>, object generics, key-of, value-of, int-mask, int-mask-of).

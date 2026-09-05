@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Command;
+namespace TypePHP\Internal\Cli;
 
 use TypePHP\TypePHP;
 

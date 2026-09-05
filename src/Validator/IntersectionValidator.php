@@ -6,7 +6,7 @@ namespace TypePHP\Validator;
 
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
-use TypePHP\Internal\ErrorMessage;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
 
 /**
  * @internal Class for validating intersection types like int & string.

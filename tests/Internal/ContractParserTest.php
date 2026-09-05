@@ -17,7 +17,7 @@ use PHPStan\PhpDocParser\Ast\Type\ObjectShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
-use TypePHP\Contract\ContractParser;
+use TypePHP\Internal\Docblock\ContractParser;
 use TypePHP\Internal\Config;
 use TypePHP\Tests\Fixtures\IgnoreTags\IgnoredMethod;
 use TypePHP\Tests\Fixtures\Services\ChildMagicMethodService;

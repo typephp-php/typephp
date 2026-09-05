@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Tests\Command;
 
-use TypePHP\Command\CommandRunner;
+use TypePHP\Internal\Cli\CommandRunner;
 
 describe('CommandRunner Unit Tests', function () {
     test('routes help command successfully', function () {

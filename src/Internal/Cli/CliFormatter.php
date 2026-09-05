@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Command;
+namespace TypePHP\Internal\Cli;
 
 /**
  * @internal Helper class for ANSI color formatting and terminal STDOUT/STDERR output styling.

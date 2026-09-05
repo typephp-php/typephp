@@ -37,7 +37,7 @@ describe('Constructor Parameter vs Property Type Conflict (Doctrine DBAL Abstrac
     });
 
     test('ContractParser::parse resolves property aliases for constructor parameters', function () {
-        $contract = TypePHP\Contract\ContractParser::parse(ConstructorPromotionWithAlias::class . '::__construct');
+        $contract = TypePHP\Internal\Docblock\ContractParser::parse(ConstructorPromotionWithAlias::class . '::__construct');
 
         expect((string) $contract['types']['userId'])->toBe('positive-int');
     });

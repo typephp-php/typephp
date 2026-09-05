@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Internal;
+namespace TypePHP\Internal\Docblock;
 
 /**
  * Normalizes PHPDoc comment strings before AST parsing.

@@ -24,12 +24,12 @@ use PHPStan\PhpDocParser\Parser\ConstExprParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
-use TypePHP\Contract\ContractParser;
+use TypePHP\Internal\Docblock\ContractParser;
 use TypePHP\Internal\Config;
-use TypePHP\Internal\DocblockNormalizer;
+use TypePHP\Internal\Dockblock\DocblockNormalizer;
 use TypePHP\Resolver\SpecialTypeResolver;
-use TypePHP\Resolver\TemplateManager;
-use TypePHP\Resolver\TemplateSubstitutor;
+use TypePHP\Internal\Generics\TemplateManager;
+use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;
 use TypePHP\Wrapper\CallableWrapper;
 
