@@ -18,14 +18,14 @@ use PHPStan\PhpDocParser\Parser\ConstExprParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\ContractParser;
 use TypePHP\Internal\Docblock\DocblockExtractor;
-use TypePHP\Internal\Util\FileFilter;
 use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\ClassNameValidator;
-use TypePHP\Internal\Diagnostic\ErrorFactory;
-use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Util\FileFilter;
 use TypePHP\Internal\Util\StubManager;
 use WeakMap;
 
@@ -1224,7 +1224,7 @@ final class TemplateManager
         }
         if ($n instanceof GenericTypeNode) {
             $base = new IdentifierTypeNode(SpecialTypeResolver::resolveFqcn($n->type->name, $ref));
-            $generics = array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
+            $generics = array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
 
             return new GenericTypeNode($base, $generics, $n->variances);
         }
@@ -1235,10 +1235,10 @@ final class TemplateManager
             return new NullableTypeNode(self::resolveTypeNodeAst($n->type, $ref));
         }
         if ($n instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new UnionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
         if ($n instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new IntersectionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
 
         return $n;

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Io;
 
-require_once __DIR__ . '/PathMatcher.php';
+require_once __DIR__ . '/../Util/PathMatcher.php';
 
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\CloningVisitor;
@@ -13,6 +13,7 @@ use TypePHP\Internal\Ast\ContractVisitor;
 use TypePHP\Internal\Ast\TypePHPPrinter;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\PathMatcher;
 
 /**
  * Intercepts PHP 'file://' protocol operations to perform on-the-fly AST transformations

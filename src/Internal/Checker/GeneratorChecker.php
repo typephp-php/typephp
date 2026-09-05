@@ -9,9 +9,9 @@ use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Internal\Docblock\ContractParser;
-use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**

@@ -13,16 +13,16 @@ use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
-use TypePHP\Internal\Docblock\ContractParser;
-use TypePHP\Internal\Resolver\HierarchyResolver;
-use TypePHP\Internal\Util\ClassNameValidator;
-use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
-use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Docblock\ContractParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
+use TypePHP\Internal\Resolver\HierarchyResolver;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\ClassNameValidator;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**

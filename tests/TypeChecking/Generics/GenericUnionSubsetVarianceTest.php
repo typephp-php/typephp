@@ -2,17 +2,27 @@
 
 declare(strict_types=1);
 
-class StmtA {}
-class StmtB {}
-class StmtC {}
-class StmtUnrelated {}
+class StmtA
+{
+}
+class StmtB
+{
+}
+class StmtC
+{
+}
+class StmtUnrelated
+{
+}
 
 /**
  * @template T
  */
 class GenericUnionHolderFixture
 {
-    /** @var array<int, T> */
+    /**
+     * @var array<int, T>
+     */
     public array $items = [];
 }
 
@@ -39,6 +49,6 @@ describe('Generic Union Subset Assignability (Collection<A|B> into Collection<A|
 
         expect(function () use (&$container, $incompatibleContainer) {
             $container = $incompatibleContainer;
-        })->toThrow(\TypeError::class);
+        })->toThrow(TypeError::class);
     });
 });

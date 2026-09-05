@@ -26,10 +26,10 @@ use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ThisTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
-use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
+use TypePHP\Internal\Util\ClassNameValidator;
 
 /**
  * Resolves special type identifiers (self, static, parent, FQCNs) against Reflection or file contexts.

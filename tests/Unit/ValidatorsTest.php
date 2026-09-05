@@ -9,6 +9,7 @@ use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Cat;
 use TypePHP\Tests\Fixtures\Domain\Dog;
@@ -24,7 +25,6 @@ use TypePHP\Tests\Fixtures\Types\DatabaseDriverMap;
 use TypePHP\Tests\Fixtures\Types\StatusEnum;
 use TypePHP\Tests\Fixtures\Types\UserObjectShape;
 use TypePHP\Tests\Fixtures\Types\WildcardConstantFixture;
-use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 beforeEach(function () {
     $this->registry = new TypeValidatorRegistry();

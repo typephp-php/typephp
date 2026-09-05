@@ -25,11 +25,11 @@ use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
 use TypePHP\Internal\Docblock\ContractParser;
-use TypePHP\Internal\Util\Config;
-use TypePHP\Internal\Dockblock\DocblockNormalizer;
-use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Internal\Wrapper\CallableWrapper;
 

@@ -14,12 +14,12 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
-use TypePHP\Internal\Util\ClassNameValidator;
-use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
-use TypePHP\Internal\RuntimeTypeChecker;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
+use TypePHP\Internal\RuntimeTypeChecker;
+use TypePHP\Internal\Util\ClassNameValidator;
+use TypePHP\Internal\Util\Config;
 
 /**
  * @internal Validates values against generic AST structures (int ranges, class-string<T>, list<T>, array<K,V>, object generics, key-of, value-of, int-mask, int-mask-of).

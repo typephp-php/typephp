@@ -3,15 +3,15 @@
 declare(strict_types=1);
 
 use TypePHP\Internal\Checker\ParamChecker;
-use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Tests\Fixtures\Callables\GenericCallableService;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Services\ShiftedParamService;
 use TypePHP\Tests\Fixtures\Services\UserService;
 use TypePHP\Tests\Fixtures\Types\ClassStringFactoryContainer;
 use TypePHP\Tests\Fixtures\Types\MagicMethodFixture;
-use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 describe('ParamChecker Unit Tests', function () {
     beforeEach(function () {

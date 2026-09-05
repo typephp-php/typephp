@@ -22,9 +22,11 @@ use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Checker\InlineChecker;
-use TypePHP\Internal\Util\Config;
-use TypePHP\Internal\Util\StubManager;
+use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\FileFilter;
+use TypePHP\Internal\Util\StubManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**

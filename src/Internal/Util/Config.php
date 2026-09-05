@@ -4,16 +4,15 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Util;
 
-use TypePHP\Internal\Docblock\ContractParser;
-use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Extension\ExtensionInterface;
-use TypePHP\Internal\Util\ExtensionManager;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
-use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Docblock\ContractParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Io\CacheManager;
 use TypePHP\Internal\Io\StreamWrapper;
+use TypePHP\Internal\Resolver\HierarchyResolver;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 
 /**
  * Global configuration manager for loading and dynamically overriding settings.

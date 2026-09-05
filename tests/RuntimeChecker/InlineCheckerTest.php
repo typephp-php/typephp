@@ -3,16 +3,16 @@
 declare(strict_types=1);
 
 use TypePHP\Internal\Checker\InlineChecker;
-use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Generics\TemplateManager;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Generics\GenericCollection;
 use TypePHP\Tests\Fixtures\Generics\HookedCollection;
 use TypePHP\Tests\Fixtures\Types\ConfiguredProperty;
 use TypePHP\TypePHP;
-use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 describe('InlineChecker Unit Tests', function () {
     beforeEach(function () {

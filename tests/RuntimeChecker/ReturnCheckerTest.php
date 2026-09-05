@@ -3,8 +3,9 @@
 declare(strict_types=1);
 
 use TypePHP\Internal\Checker\ReturnChecker;
-use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Tests\Fixtures\Collections\ConcreteFileCollection;
 use TypePHP\Tests\Fixtures\Collections\PluginConfiguration;
 use TypePHP\Tests\Fixtures\Conditionals\ConditionalReturnService;
@@ -14,7 +15,6 @@ use TypePHP\Tests\Fixtures\Services\FluentService;
 use TypePHP\Tests\Fixtures\Services\UserEntityFactory;
 use TypePHP\Tests\Fixtures\Services\UserService;
 use TypePHP\Tests\Fixtures\Types\MagicMethodFixture;
-use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 describe('ReturnChecker Unit Tests', function () {
     beforeEach(function () {

@@ -14,12 +14,11 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use ReflectionClass;
 use Traversable;
 use TypePHP\Internal\Docblock\ContractParser;
-use TypePHP\Internal\Resolver\HierarchyResolver;
-use TypePHP\Internal\Util\ClassNameValidator;
-use TypePHP\Internal\Util\Config;
-use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
+use TypePHP\Internal\Resolver\HierarchyResolver;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Internal\Wrapper\CallableWrapper;
 

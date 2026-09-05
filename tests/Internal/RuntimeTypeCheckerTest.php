@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\RuntimeTypeChecker;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Tests\Fixtures\Types\ConfiguredProperty;
 
 describe('RuntimeTypeChecker Unit Tests', function () {

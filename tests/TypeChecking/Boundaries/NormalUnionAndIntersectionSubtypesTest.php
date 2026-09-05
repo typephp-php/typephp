@@ -18,17 +18,60 @@ class NormalQuadObject implements Countable, ArrayAccess, Iterator, Stringable
 {
     private array $data = ['key' => 'value'];
 
-    public function count(): int { return count($this->data); }
-    public function offsetExists(mixed $offset): bool { return isset($this->data[$offset]); }
-    public function offsetGet(mixed $offset): mixed { return $this->data[$offset] ?? null; }
-    public function offsetSet(mixed $offset, mixed $value): void { $this->data[$offset] = $value; }
-    public function offsetUnset(mixed $offset): void { unset($this->data[$offset]); }
-    public function rewind(): void { reset($this->data); }
-    public function current(): mixed { return current($this->data); }
-    public function key(): mixed { return key($this->data); }
-    public function next(): void { next($this->data); }
-    public function valid(): bool { return key($this->data) !== null; }
-    public function __toString(): string { return 'quad_object'; }
+    public function count(): int
+    {
+        return \count($this->data);
+    }
+
+    public function offsetExists(mixed $offset): bool
+    {
+        return isset($this->data[$offset]);
+    }
+
+    public function offsetGet(mixed $offset): mixed
+    {
+        return $this->data[$offset] ?? null;
+    }
+
+    public function offsetSet(mixed $offset, mixed $value): void
+    {
+        $this->data[$offset] = $value;
+    }
+
+    public function offsetUnset(mixed $offset): void
+    {
+        unset($this->data[$offset]);
+    }
+
+    public function rewind(): void
+    {
+        reset($this->data);
+    }
+
+    public function current(): mixed
+    {
+        return current($this->data);
+    }
+
+    public function key(): mixed
+    {
+        return key($this->data);
+    }
+
+    public function next(): void
+    {
+        next($this->data);
+    }
+
+    public function valid(): bool
+    {
+        return key($this->data) !== null;
+    }
+
+    public function __toString(): string
+    {
+        return 'quad_object';
+    }
 }
 
 /**
@@ -38,11 +81,30 @@ class NormalBranchAObject implements Countable, ArrayAccess
 {
     private array $data = ['a' => 1];
 
-    public function count(): int { return count($this->data); }
-    public function offsetExists(mixed $offset): bool { return isset($this->data[$offset]); }
-    public function offsetGet(mixed $offset): mixed { return $this->data[$offset] ?? null; }
-    public function offsetSet(mixed $offset, mixed $value): void { $this->data[$offset] = $value; }
-    public function offsetUnset(mixed $offset): void { unset($this->data[$offset]); }
+    public function count(): int
+    {
+        return \count($this->data);
+    }
+
+    public function offsetExists(mixed $offset): bool
+    {
+        return isset($this->data[$offset]);
+    }
+
+    public function offsetGet(mixed $offset): mixed
+    {
+        return $this->data[$offset] ?? null;
+    }
+
+    public function offsetSet(mixed $offset, mixed $value): void
+    {
+        $this->data[$offset] = $value;
+    }
+
+    public function offsetUnset(mixed $offset): void
+    {
+        unset($this->data[$offset]);
+    }
 }
 
 /**
@@ -52,12 +114,35 @@ class NormalBranchBObject implements Iterator, Stringable
 {
     private array $data = ['b' => 2];
 
-    public function rewind(): void { reset($this->data); }
-    public function current(): mixed { return current($this->data); }
-    public function key(): mixed { return key($this->data); }
-    public function next(): void { next($this->data); }
-    public function valid(): bool { return key($this->data) !== null; }
-    public function __toString(): string { return 'branch_b_object'; }
+    public function rewind(): void
+    {
+        reset($this->data);
+    }
+
+    public function current(): mixed
+    {
+        return current($this->data);
+    }
+
+    public function key(): mixed
+    {
+        return key($this->data);
+    }
+
+    public function next(): void
+    {
+        next($this->data);
+    }
+
+    public function valid(): bool
+    {
+        return key($this->data) !== null;
+    }
+
+    public function __toString(): string
+    {
+        return 'branch_b_object';
+    }
 }
 
 /**
@@ -67,13 +152,23 @@ class NormalBranchBObject implements Iterator, Stringable
  */
 class NormalCrossOverObject implements Countable, Stringable
 {
-    public function count(): int { return 1; }
-    public function __toString(): string { return 'crossover_object'; }
+    public function count(): int
+    {
+        return 1;
+    }
+
+    public function __toString(): string
+    {
+        return 'crossover_object';
+    }
 }
 
 class NormalSingleCountable implements Countable
 {
-    public function count(): int { return 1; }
+    public function count(): int
+    {
+        return 1;
+    }
 }
 
 /**
@@ -81,11 +176,15 @@ class NormalSingleCountable implements Countable
  */
 class NormalSpecialDog extends Dog implements Countable
 {
-    public function count(): int { return 5; }
+    public function count(): int
+    {
+        return 5;
+    }
 }
 
 /**
  * @param Dog|Cat|NormalBird $animal
+ *
  * @return Dog|Cat|NormalBird
  */
 function processNormalUnionAnimal(Animal $animal): Animal
@@ -95,6 +194,7 @@ function processNormalUnionAnimal(Animal $animal): Animal
 
 /**
  * @param 'admin'|'editor'|'viewer'|'guest' $role
+ *
  * @return 'admin'|'editor'|'viewer'|'guest'
  */
 function processNormalUnionLiteralRole(string $role): string
@@ -104,6 +204,7 @@ function processNormalUnionLiteralRole(string $role): string
 
 /**
  * @param 1|2|3|4|5 $number
+ *
  * @return 1|2|3|4|5
  */
 function processNormalUnionLiteralNumber(int $number): int
@@ -113,6 +214,7 @@ function processNormalUnionLiteralNumber(int $number): int
 
 /**
  * @param positive-int|non-empty-string $idOrCode
+ *
  * @return positive-int|non-empty-string
  */
 function processNormalUnionRefinements(mixed $idOrCode): mixed
@@ -122,6 +224,7 @@ function processNormalUnionRefinements(mixed $idOrCode): mixed
 
 /**
  * @param Countable&ArrayAccess $collection
+ *
  * @return Countable&ArrayAccess
  */
 function processNormalIntersection(object $collection): object
@@ -131,6 +234,7 @@ function processNormalIntersection(object $collection): object
 
 /**
  * @param Dog&Countable $pet
+ *
  * @return Dog&Countable
  */
 function processNormalClassInterfaceIntersection(object $pet): object
@@ -142,6 +246,7 @@ function processNormalClassInterfaceIntersection(object $pet): object
  * DNF: (Countable & ArrayAccess) | (Iterator & Stringable)
  *
  * @param (Countable&ArrayAccess)|(Iterator&Stringable) $dnf
+ *
  * @return (Countable&ArrayAccess)|(Iterator&Stringable)
  */
 function processNormalDnf(object $dnf): object
@@ -208,19 +313,24 @@ describe('Normal Non-Generic Union, Intersection, and DNF Subtyping', function (
 
         test('strictly rejects value not present in union', function () {
             expect(fn () => processNormalUnionAnimal(new Car()))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
 
             expect(fn () => processNormalUnionLiteralRole('superadmin'))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
 
             expect(fn () => processNormalUnionLiteralNumber(99))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
 
             expect(fn () => processNormalUnionRefinements(-50))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
 
             expect(fn () => processNormalUnionRefinements(''))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
         });
     });
 
@@ -248,15 +358,18 @@ describe('Normal Non-Generic Union, Intersection, and DNF Subtyping', function (
 
         test('strictly rejects object missing one required interface of the intersection', function () {
             expect(fn () => processNormalIntersection(new NormalSingleCountable()))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
         });
 
         test('strictly rejects object failing class or interface part of class-interface intersection', function () {
             expect(fn () => processNormalClassInterfaceIntersection(new Dog()))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
 
             expect(fn () => processNormalClassInterfaceIntersection(new NormalSingleCountable()))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
         });
     });
 
@@ -292,14 +405,16 @@ describe('Normal Non-Generic Union, Intersection, and DNF Subtyping', function (
             $crossOver = new NormalCrossOverObject();
 
             expect(fn () => processNormalDnf($crossOver))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
         });
 
         test('strictly rejects object satisfying only a single interface of one branch', function () {
             $single = new NormalSingleCountable();
 
             expect(fn () => processNormalDnf($single))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
         });
 
         test('strictly rejects completely unrelated object', function () {

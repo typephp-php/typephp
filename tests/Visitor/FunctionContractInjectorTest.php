@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 use PhpParser\Comment\Doc;
 use PhpParser\Node;
-use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Ast\FunctionContractInjector;
+use TypePHP\Internal\Util\Config;
 
 describe('FunctionContractInjector Unit Tests', function () {
     beforeEach(function () {

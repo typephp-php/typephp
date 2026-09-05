@@ -8,8 +8,12 @@ use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Cat;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 
-class Bird extends Animal {}
-class Fish extends Animal {}
+class Bird extends Animal
+{
+}
+class Fish extends Animal
+{
+}
 
 /**
  * Fixture representing an object that implements THREE interfaces
@@ -17,26 +21,86 @@ class Fish extends Animal {}
 class TripleInterfaceObject implements Countable, ArrayAccess, Iterator
 {
     private array $data = ['a' => 1];
-    public function count(): int { return count($this->data); }
-    public function offsetExists(mixed $offset): bool { return isset($this->data[$offset]); }
-    public function offsetGet(mixed $offset): mixed { return $this->data[$offset] ?? null; }
-    public function offsetSet(mixed $offset, mixed $value): void { $this->data[$offset] = $value; }
-    public function offsetUnset(mixed $offset): void { unset($this->data[$offset]); }
-    public function rewind(): void { reset($this->data); }
-    public function current(): mixed { return current($this->data); }
-    public function key(): mixed { return key($this->data); }
-    public function next(): void { next($this->data); }
-    public function valid(): bool { return key($this->data) !== null; }
+
+    public function count(): int
+    {
+        return \count($this->data);
+    }
+
+    public function offsetExists(mixed $offset): bool
+    {
+        return isset($this->data[$offset]);
+    }
+
+    public function offsetGet(mixed $offset): mixed
+    {
+        return $this->data[$offset] ?? null;
+    }
+
+    public function offsetSet(mixed $offset, mixed $value): void
+    {
+        $this->data[$offset] = $value;
+    }
+
+    public function offsetUnset(mixed $offset): void
+    {
+        unset($this->data[$offset]);
+    }
+
+    public function rewind(): void
+    {
+        reset($this->data);
+    }
+
+    public function current(): mixed
+    {
+        return current($this->data);
+    }
+
+    public function key(): mixed
+    {
+        return key($this->data);
+    }
+
+    public function next(): void
+    {
+        next($this->data);
+    }
+
+    public function valid(): bool
+    {
+        return key($this->data) !== null;
+    }
 }
 
 class DoubleInterfaceObject implements Countable, ArrayAccess
 {
     private array $data = ['a' => 1];
-    public function count(): int { return count($this->data); }
-    public function offsetExists(mixed $offset): bool { return isset($this->data[$offset]); }
-    public function offsetGet(mixed $offset): mixed { return $this->data[$offset] ?? null; }
-    public function offsetSet(mixed $offset, mixed $value): void { $this->data[$offset] = $value; }
-    public function offsetUnset(mixed $offset): void { unset($this->data[$offset]); }
+
+    public function count(): int
+    {
+        return \count($this->data);
+    }
+
+    public function offsetExists(mixed $offset): bool
+    {
+        return isset($this->data[$offset]);
+    }
+
+    public function offsetGet(mixed $offset): mixed
+    {
+        return $this->data[$offset] ?? null;
+    }
+
+    public function offsetSet(mixed $offset, mixed $value): void
+    {
+        $this->data[$offset] = $value;
+    }
+
+    public function offsetUnset(mixed $offset): void
+    {
+        unset($this->data[$offset]);
+    }
 }
 
 /**
@@ -44,7 +108,9 @@ class DoubleInterfaceObject implements Countable, ArrayAccess
  */
 class TypeSetHolder
 {
-    /** @var array<int, T> */
+    /**
+     * @var array<int, T>
+     */
     public array $items = [];
 }
 
