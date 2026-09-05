@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Contract\FileFilter;
+use TypePHP\Internal\Util\FileFilter;
 use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\Util\Config;
 
@@ -131,7 +131,7 @@ PHP;
                         ->and($lstatResult)->toBeArray()
                     ;
 
-                    $ref = new ReflectionClass(StreamWrapper::class);
+                    $ref = new \ReflectionClass(StreamWrapper::class);
                     $prop = $ref->getProperty('statCache');
                     $cache = $prop->getValue();
 
@@ -164,7 +164,7 @@ PHP;
                 $stat = $wrapper->url_stat($txtFile, 0);
                 expect($stat)->toBeArray();
 
-                $ref = new ReflectionClass(StreamWrapper::class);
+                $ref = new \ReflectionClass(StreamWrapper::class);
                 $prop = $ref->getProperty('statCache');
                 $cache = $prop->getValue();
 
@@ -193,7 +193,7 @@ PHP;
                 ->and($miss2)->toBeFalse()
             ;
 
-            $ref = new ReflectionClass(StreamWrapper::class);
+            $ref = new \ReflectionClass(StreamWrapper::class);
             $negProp = $ref->getProperty('staticNegativeStatCache');
             $negCache = $negProp->getValue();
 
@@ -208,7 +208,7 @@ PHP;
             $miss = $wrapper->url_stat($missingAppTempFile, 0);
             expect($miss)->toBeFalse();
 
-            $ref = new ReflectionClass(StreamWrapper::class);
+            $ref = new \ReflectionClass(StreamWrapper::class);
             $negProp = $ref->getProperty('staticNegativeStatCache');
             $negCache = $negProp->getValue();
 
@@ -228,7 +228,7 @@ PHP;
 
             $normFile = str_replace('\\', '/', $tempFile);
 
-            $ref = new ReflectionClass(StreamWrapper::class);
+            $ref = new \ReflectionClass(StreamWrapper::class);
             $prop = $ref->getProperty('statCache');
 
             expect($prop->getValue())->toHaveKey($normFile . ':stat');
@@ -467,7 +467,7 @@ PHP;
                 expect(\App\Test\sampleAction(42))->toBe('id_42');
 
                 expect(fn () => \App\Test\sampleAction(-5))
-                    ->toThrow(TypeError::class, 'positive-int')
+                    ->toThrow(\TypeError::class, 'positive-int')
                 ;
             } finally {
                 if (file_exists($testFile)) {
