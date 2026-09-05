@@ -96,8 +96,8 @@ final class ParamChecker
             foreach ($contract['types'] as $paramName => $typeNode) {
                 if (\array_key_exists($paramName, $vars)) {
                     $err = $registry->validate($vars[$paramName], $typeNode, $effectiveFunction . '(): Argument $' . $paramName);
-                    if (str_contains($effectiveFunction, 'ConstKeyContainer') || str_contains($effectiveFunction, 'OffsetAccessContainer')) {
-                        fwrite(STDERR, "  - validate result: " . ($err ? 'ERROR: ' . $err->getMessage() : 'NULL (PASSED)') . "\n");
+                    if ($err !== null) {
+                        return $err;
                     }
                 }
             }
