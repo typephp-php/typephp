@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Tests\Fixtures\IgnoreTags\ForceCheckedMethod;
 
 describe('Respect Ignore Tags Configuration (respect_ignore_tags)', function () {

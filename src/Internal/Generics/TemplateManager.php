@@ -21,11 +21,11 @@ use PHPStan\PhpDocParser\ParserConfig;
 use TypePHP\Internal\Docblock\ContractParser;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Contract\FileFilter;
-use TypePHP\Contract\HierarchyResolver;
-use TypePHP\Internal\ClassNameValidator;
+use TypePHP\Internal\Resolver\HierarchyResolver;
+use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
-use TypePHP\Internal\StubManager;
+use TypePHP\Internal\Util\StubManager;
 use WeakMap;
 
 /**

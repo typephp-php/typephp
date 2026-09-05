@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Cli;
 
-use TypePHP\Internal\CacheManager;
+use TypePHP\Internal\Io\CacheManager;
 
 /**
  * @internal Warms up the TypePHP cache.

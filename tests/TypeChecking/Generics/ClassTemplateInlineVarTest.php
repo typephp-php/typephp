@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use TypePHP\Exception\TypeError;
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Tests\Fixtures\Collections\ShopwareCollection;
 use TypePHP\Tests\Fixtures\Collections\ShopwareEntityCollection;
 use TypePHP\Tests\Fixtures\Collections\ShopwareEntitySearchResult;

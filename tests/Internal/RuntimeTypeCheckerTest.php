@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\RuntimeTypeChecker;
 use TypePHP\Tests\Fixtures\Types\ConfiguredProperty;

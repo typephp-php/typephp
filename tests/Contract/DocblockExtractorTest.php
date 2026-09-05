@@ -274,7 +274,7 @@ PHP;
         file_put_contents($stubPath, $stubContent);
 
         try {
-            TypePHP\Internal\Config::set([
+            TypePHP\Internal\Util\Config::set([
                 'stubs' => [
                     str_replace('\\', '/', $tempDir) . '/**',
                 ],
@@ -293,7 +293,7 @@ PHP;
             if (is_dir($tempDir)) {
                 @rmdir($tempDir);
             }
-            TypePHP\Internal\Config::reset();
+            TypePHP\Internal\Util\Config::reset();
         }
     });
 

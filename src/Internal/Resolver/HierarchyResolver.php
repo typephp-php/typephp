@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Contract;
+namespace TypePHP\Internal\Resolver;
 
 use ReflectionClass;
 use ReflectionMethod;

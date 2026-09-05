@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Extension;
+namespace TypePHP\Internal\Util;
+
+use TypePHP\Extension\ExtensionInterface;
 
 /**
  * Loads explicitly registered TypePHP extensions from user configuration.

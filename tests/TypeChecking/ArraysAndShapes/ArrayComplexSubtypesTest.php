@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use TypePHP\Exception\TypeError;
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Tests\Fixtures\Domain\Animal;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Cat;

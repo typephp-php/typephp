@@ -2,9 +2,10 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Internal;
+namespace TypePHP\Internal\Io;
 
 use TypePHP\Contract\FileFilter;
+use TypePHP\Internal\Util\Config;
 
 /**
  * @internal

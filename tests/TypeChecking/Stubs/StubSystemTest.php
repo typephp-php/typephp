@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 use TypePHP\Exception\TypeError;
 use TypePHP\Extension\ExtensionInterface;
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Tests\Fixtures\Liskov\AppChildService;
 use TypePHP\Tests\Fixtures\Liskov\SimulatedVendorParent;
 use TypePHP\Tests\Fixtures\Services\ChildMagicMethodService;

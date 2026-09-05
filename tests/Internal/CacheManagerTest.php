@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\CacheManager;
+use TypePHP\Internal\Io\CacheManager;
 
 describe('CacheManager Unit Tests', function () {
     test('returns valid cache directory path', function () {

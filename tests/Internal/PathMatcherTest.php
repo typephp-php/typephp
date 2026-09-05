@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\CacheManager;
-use TypePHP\Internal\Config;
-use TypePHP\Internal\PathMatcher;
+use TypePHP\Internal\Io\CacheManager;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\PathMatcher;
 
 describe('PathMatcher Unit Tests', function () {
     beforeEach(function () {

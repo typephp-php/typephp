@@ -12,7 +12,7 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Internal\Docblock\ContractParser;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
-use TypePHP\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Validator\TypeValidatorRegistry;

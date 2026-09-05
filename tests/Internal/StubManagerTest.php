@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\Config;
-use TypePHP\Internal\StubManager;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\StubManager;
 
 describe('StubManager Unit Tests', function () {
     beforeEach(function () {

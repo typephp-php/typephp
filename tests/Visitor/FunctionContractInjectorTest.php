@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 use PhpParser\Comment\Doc;
 use PhpParser\Node;
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Ast\FunctionContractInjector;
 
 describe('FunctionContractInjector Unit Tests', function () {
@@ -60,7 +60,7 @@ class NeverMethodFixture
 }
 PHP;
 
-            $transformed = TypePHP\Internal\StreamWrapper::transformSource($source, 'test_never_method.php');
+            $transformed = TypePHP\Internal\Io\StreamWrapper::transformSource($source, 'test_never_method.php');
 
             expect($transformed)->toContain('RuntimeTypeChecker::setupScope')
                 ->and($transformed)->not()->toContain('return ($__typephpRet')

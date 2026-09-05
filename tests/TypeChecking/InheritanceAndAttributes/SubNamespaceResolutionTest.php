@@ -8,7 +8,7 @@ namespace TypePHP\Tests\TypeChecking\InheritanceAndAttributes;
 
 use ReflectionFunction;
 use TypePHP\Exception\TypeError;
-use TypePHP\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Tests\Fixtures\Domain;
 
 /**

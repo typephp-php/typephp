@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Internal;
+namespace TypePHP\Internal\Io;
 
 /**
  * @internal Contract defining PHP's native stream wrapper protocol methods.

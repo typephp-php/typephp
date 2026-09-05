@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Contract\HierarchyResolver;
+use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Tests\Fixtures\Services\BaseService;
 use TypePHP\Tests\Fixtures\Services\UserService;
 use TypePHP\Tests\Fixtures\Types\CountableArrayAccess;

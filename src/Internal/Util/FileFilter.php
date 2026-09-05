@@ -2,10 +2,7 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Contract;
-
-use TypePHP\Internal\Config;
-use TypePHP\Internal\PathMatcher;
+namespace TypePHP\Internal\Util;
 
 /**
  * @internal Checks file paths against vendor directories, file extensions, and user-configured include/exclude globs.

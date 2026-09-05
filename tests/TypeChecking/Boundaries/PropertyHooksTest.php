@@ -6,7 +6,7 @@ if (PHP_VERSION_ID < 80400) {
     return;
 }
 
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Tests\Fixtures\Types\HookedInterfaceImplementation;
 use TypePHP\Tests\Fixtures\Types\HookedUser;
 use TypePHP\Tests\Fixtures\Types\PropertyHooks;

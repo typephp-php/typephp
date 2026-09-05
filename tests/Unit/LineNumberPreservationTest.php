@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\StreamWrapper;
+use TypePHP\Internal\Io\StreamWrapper;
 
 describe('Line Number Preservation', function () {
     test('transforms code without shifting original line numbers for parameter checks', function () {

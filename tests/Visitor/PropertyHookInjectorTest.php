@@ -8,7 +8,7 @@ if (PHP_VERSION_ID < 80400) {
 
 use PhpParser\Comment\Doc;
 use PhpParser\Node;
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Ast\PropertyHookInjector;
 
 describe('PropertyHookInjector Unit Tests', function () {

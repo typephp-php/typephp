@@ -7,7 +7,7 @@ namespace TypePHP\Internal\Ast;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
 
 /**
  * @internal Injects property contract checks into PHP 8.4 get and set property hooks.

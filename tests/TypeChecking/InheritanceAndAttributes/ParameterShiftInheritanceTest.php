@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Tests\Fixtures\Services\ChildShiftedMethodService;
 use TypePHP\Tests\Fixtures\Services\ChildShiftedOopService;
 use TypePHP\Tests\Fixtures\Services\ChildShiftedParamService;

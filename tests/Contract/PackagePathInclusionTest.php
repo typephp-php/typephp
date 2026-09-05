@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace TypePHP\Tests\Contract;
 
 use TypePHP\Contract\FileFilter;
-use TypePHP\Internal\Config;
-use TypePHP\Internal\PathMatcher;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\PathMatcher;
 
 describe('Packages and Monorepo Path Inclusion (packages/**/src/**)', function () {
     beforeEach(function () {

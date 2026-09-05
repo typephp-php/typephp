@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
 
 describe('Config Unit Tests', function () {
     afterEach(function () {

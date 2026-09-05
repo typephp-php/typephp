@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use TypePHP\Internal\Checker\InlineChecker;
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Tests\Fixtures\Domain\Car;

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\ClassNameValidator;
+use TypePHP\Internal\Util\ClassNameValidator;
 
 describe('ClassNameValidator', function () {
     test('accepts valid simple and namespaced PHP class names', function () {

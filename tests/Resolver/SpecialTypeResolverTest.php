@@ -21,7 +21,7 @@ use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ThisTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
-use TypePHP\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Tests\Fixtures\Generics\InlineTraitUseService;
 use TypePHP\Tests\Fixtures\Services\BaseService;
 use TypePHP\Tests\Fixtures\Services\UserService;

@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace TypePHP;
 
-use TypePHP\Internal\Config;
-use TypePHP\Internal\StreamWrapper;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\Generics\TemplateManager;
 
 final class TypePHP

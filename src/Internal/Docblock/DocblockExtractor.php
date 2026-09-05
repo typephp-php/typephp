@@ -17,9 +17,9 @@ use PHPStan\PhpDocParser\Parser\PhpDocParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
-use TypePHP\Internal\ClassNameValidator;
-use TypePHP\Internal\StubManager;
-use TypePHP\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\ClassNameValidator;
+use TypePHP\Internal\Util\StubManager;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 
 /**
  * @internal Encapsulates PHPDoc AST parsing, tokenizing, and tag extractions.

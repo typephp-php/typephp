@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Internal;
+namespace TypePHP\Internal\Util;
+
+use TypePHP\Internal\Io\CacheManager;
 
 require_once __DIR__ . '/CacheManager.php';
 
