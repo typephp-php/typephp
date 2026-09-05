@@ -35,7 +35,7 @@ describe('Class Constant Keys in Array Shapes (array{self::CONST_KEY: T})', func
     test('throws TypeError when array shape item with class constant key violates type contract', function () {
         $container = new ConstKeyContainer();
 
-        expect(fn() => $container->process([
+        expect(fn () => $container->process([
             'user_id' => -5,
             'user_role' => 'admin',
         ]))->toThrow(TypeError::class, "['user_id'] must be of type positive-int");
@@ -44,8 +44,9 @@ describe('Class Constant Keys in Array Shapes (array{self::CONST_KEY: T})', func
     test('throws TypeError when array shape references a non-existent class constant key', function () {
         $container = new MissingConstKeyContainer();
 
-        expect(fn() => $container->process(['user_id' => 42]))
-            ->toThrow(TypeError::class, "is missing required key 'self::NON_EXISTENT_KEY'");
+        expect(fn () => $container->process(['user_id' => 42]))
+            ->toThrow(TypeError::class, "is missing required key 'self::NON_EXISTENT_KEY'")
+        ;
     });
 
     test('resolves PHP 8.2+ trait constants inside array shapes', function () {

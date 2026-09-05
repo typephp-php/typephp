@@ -74,15 +74,6 @@ final class ParamChecker
 
         $contract = DocblockParser::parse($effectiveFunction);
 
-        if (str_contains($effectiveFunction, 'ConstKeyContainer') || str_contains($effectiveFunction, 'OffsetAccessContainer')) {
-            fwrite(STDERR, "[PARAM_CHECKER] $effectiveFunction\n");
-            fwrite(STDERR, "  - hasParamContract: " . ($contract['hasParamContract'] ? 'true' : 'false') . "\n");
-            fwrite(STDERR, "  - types count: " . count($contract['types']) . "\n");
-            foreach ($contract['types'] as $pName => $tNode) {
-                fwrite(STDERR, "  - param '$pName' AST class: " . get_class($tNode) . " => (string): " . (string) $tNode . "\n");
-            }
-        }
-
         if (! $contract['hasParamContract']) {
             return null;
         }
