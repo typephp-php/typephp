@@ -190,7 +190,7 @@ final class PathMatcher
     public static function isLibraryInternal(string $normalizedPath): bool
     {
         if (self::$cachedLibSrcDir === null) {
-            $parentDir = realpath(dirname(__DIR__, 2));
+            $parentDir = realpath(\dirname(__DIR__, 2));
             self::$cachedLibSrcDir = $parentDir !== false ? rtrim(self::normalizePath($parentDir), '/') . '/' : '';
         }
 

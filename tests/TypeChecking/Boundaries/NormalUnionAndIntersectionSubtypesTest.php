@@ -419,7 +419,8 @@ describe('Normal Non-Generic Union, Intersection, and DNF Subtyping', function (
 
         test('strictly rejects completely unrelated object', function () {
             expect(fn () => processNormalDnf(new Car()))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
         });
     });
 });

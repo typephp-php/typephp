@@ -62,6 +62,11 @@ final class ParamChecker
             $effectiveFunction = self::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
         }
 
+        // Fast-path: If no arguments were passed and it's not a magic __call dispatch, exit immediately
+        if ($vars === [] && ! str_ends_with($effectiveFunction, '::__call') && ! str_ends_with($effectiveFunction, '::__callStatic')) {
+            return null;
+        }
+
         $magicError = self::handleMagicCall($effectiveFunction, $vars, $thisObj, $registry);
         if ($magicError !== null) {
             return $magicError;

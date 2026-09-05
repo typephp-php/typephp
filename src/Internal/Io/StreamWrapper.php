@@ -8,6 +8,7 @@ require_once __DIR__ . '/../Util/PathMatcher.php';
 
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\CloningVisitor;
+use PhpParser\Parser;
 use PhpParser\ParserFactory;
 use TypePHP\Internal\Ast\ContractVisitor;
 use TypePHP\Internal\Ast\TypePHPPrinter;
@@ -50,6 +51,21 @@ final class StreamWrapper implements StreamWrapperInterface
     private static bool $cacheEnabled = true;
 
     /**
+     * Reusable AST parser singleton.
+     */
+    private static ?Parser $parser = null;
+
+    /**
+     * Reusable AST printer singleton.
+     */
+    private static ?TypePHPPrinter $printer = null;
+
+    /**
+     * Reusable AST cloning visitor singleton.
+     */
+    private static ?CloningVisitor $cloningVisitor = null;
+
+    /**
      * In-memory cache for positive url_stat results.
      *
      * @var array<string, array<int|string, int>>
@@ -83,6 +99,30 @@ final class StreamWrapper implements StreamWrapperInterface
         'show_source' => true,
         'token_get_all' => true,
     ];
+
+    /**
+     * Returns a shared singleton instance of the PHP-Parser parser.
+     */
+    public static function getParser(): Parser
+    {
+        return self::$parser ??= (new ParserFactory())->createForNewestSupportedVersion();
+    }
+
+    /**
+     * Returns a shared singleton instance of the TypePHP format-preserving printer.
+     */
+    public static function getPrinter(): TypePHPPrinter
+    {
+        return self::$printer ??= new TypePHPPrinter();
+    }
+
+    /**
+     * Returns a shared singleton instance of the AST CloningVisitor.
+     */
+    public static function getCloningVisitor(): CloningVisitor
+    {
+        return self::$cloningVisitor ??= new CloningVisitor();
+    }
 
     /**
      * Resets all internal in-memory caches and path matchers.
@@ -144,7 +184,7 @@ final class StreamWrapper implements StreamWrapperInterface
 
         $originalLineCount = substr_count($source, "\n");
 
-        $parser = (new ParserFactory())->createForNewestSupportedVersion();
+        $parser = self::getParser();
 
         try {
             $oldStmts = $parser->parse($source);
@@ -160,7 +200,7 @@ final class StreamWrapper implements StreamWrapperInterface
         $oldTokens = $parser->getTokens();
 
         $traverser1 = new NodeTraverser();
-        $traverser1->addVisitor(new CloningVisitor());
+        $traverser1->addVisitor(self::getCloningVisitor());
 
         /** @var array<\PhpParser\Node\Stmt> $nodesToTraverse */
         $nodesToTraverse = $oldStmts;
@@ -170,8 +210,9 @@ final class StreamWrapper implements StreamWrapperInterface
         $traverser2->addVisitor(new ContractVisitor());
         $newStmts = $traverser2->traverse($newStmts);
 
-        $printer = new TypePHPPrinter();
+        $printer = self::getPrinter();
         $transformed = $printer->printFormatPreserving($newStmts, $oldStmts, $oldTokens);
+
         $transformed = self::neutralizeTrailingLineComments($transformed);
         $transformed = preg_replace('/[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\//', ' /*__TYPEPHP_INJECTED_START__*/', $transformed) ?? $transformed;
 
@@ -195,6 +236,58 @@ final class StreamWrapper implements StreamWrapperInterface
         }
 
         return str_replace(['/*__TYPEPHP_INJECTED_START__*/', '/*__TYPEPHP_INJECTED_END__*/'], '', $transformed);
+    }
+
+    /**
+     * Safely neutralizes trailing single-line comments (// or #) preceding an injected check
+     * into block comments without corrupting string literals containing '//' or '#'.
+     */
+    private static function neutralizeTrailingLineComments(string $code): string
+    {
+        if (! str_contains($code, '/*__TYPEPHP_INJECTED_START__*/')) {
+            return $code;
+        }
+
+        try {
+            $tokens = \PhpToken::tokenize($code);
+            $count = \count($tokens);
+            $result = '';
+
+            for ($i = 0; $i < $count; $i++) {
+                $token = $tokens[$i];
+
+                if ($token->id === T_COMMENT && (str_starts_with($token->text, '//') || str_starts_with($token->text, '#'))) {
+                    $isPrecedingInjection = false;
+
+                    for ($j = $i + 1; $j < $count; $j++) {
+                        $next = $tokens[$j];
+                        if ($next->id === T_WHITESPACE) {
+                            continue;
+                        }
+                        if ($next->id === T_COMMENT && str_starts_with($next->text, '/*__TYPEPHP_INJECTED_START__*/')) {
+                            $isPrecedingInjection = true;
+                        }
+
+                        break;
+                    }
+
+                    if ($isPrecedingInjection) {
+                        $commentText = rtrim($token->text, "\r\n");
+                        $trailingNewlines = substr($token->text, \strlen($commentText));
+                        $cleaned = ltrim($commentText, '/# ');
+                        $result .= '/* ' . $cleaned . ' */' . $trailingNewlines;
+
+                        continue;
+                    }
+                }
+
+                $result .= $token->text;
+            }
+
+            return $result;
+        } catch (\Throwable $e) {
+            return $code;
+        }
     }
 
     /**
@@ -223,14 +316,14 @@ final class StreamWrapper implements StreamWrapperInterface
 
         self::unregister();
 
-        $exists = (bool) self::silent(static fn() => file_exists($path));
-        $resolvedPath = $exists ? self::silent(static fn() => realpath($path)) : false;
+        $exists = (bool) self::silent(static fn () => file_exists($path));
+        $resolvedPath = $exists ? self::silent(static fn () => realpath($path)) : false;
 
         if (! $exists || $resolvedPath === false || ! self::isApplicationFile($path, $resolvedPath)) {
             $target = ($resolvedPath !== false) ? $resolvedPath : $path;
             /** @var resource|false $handle */
             $handle = self::silent(
-                fn() => ($this->context !== null)
+                fn () => ($this->context !== null)
                     ? fopen($target, $mode, false, $this->context)
                     : fopen($target, $mode)
             );
@@ -274,7 +367,7 @@ final class StreamWrapper implements StreamWrapperInterface
         self::unregister();
         /** @var resource|false $handle */
         $handle = self::silent(
-            fn() => ($this->context !== null)
+            fn () => ($this->context !== null)
                 ? fopen($targetFile, $mode, $useIncludePath, $this->context)
                 : fopen($targetFile, $mode, $useIncludePath)
         );
@@ -429,7 +522,7 @@ final class StreamWrapper implements StreamWrapperInterface
 
         self::unregister();
         /** @var array<int|string, int>|false $result */
-        $result = self::silent(static fn() => $isLink ? @lstat($path) : @stat($path));
+        $result = self::silent(static fn () => $isLink ? @lstat($path) : @stat($path));
         self::register();
 
         if ($result !== false) {
@@ -466,11 +559,11 @@ final class StreamWrapper implements StreamWrapperInterface
             $valueArray = \is_array($value) ? $value : [];
             $time = $valueArray[0] ?? time();
             $atime = $valueArray[1] ?? $time;
-            $result = (bool) self::silent(fn() => @touch($path, (int) $time, (int) $atime));
+            $result = (bool) self::silent(fn () => @touch($path, (int) $time, (int) $atime));
         } elseif ($option === STREAM_META_ACCESS) {
             /** @var int $mode */
             $mode = \is_int($value) ? $value : 0777;
-            $result = (bool) self::silent(fn() => @chmod($path, $mode));
+            $result = (bool) self::silent(fn () => @chmod($path, $mode));
         }
         self::register();
 
@@ -482,7 +575,7 @@ final class StreamWrapper implements StreamWrapperInterface
         self::unregister();
         /** @var resource|false $dh */
         $dh = self::silent(
-            fn() => ($this->context !== null)
+            fn () => ($this->context !== null)
                 ? @opendir($path, $this->context)
                 : @opendir($path)
         );
@@ -609,7 +702,7 @@ final class StreamWrapper implements StreamWrapperInterface
      */
     private static function silent(callable $callback): mixed
     {
-        set_error_handler(static fn() => true);
+        set_error_handler(static fn () => true);
 
         try {
             return $callback();
@@ -706,58 +799,6 @@ final class StreamWrapper implements StreamWrapperInterface
         $this->handle = $cacheHandle !== false ? $cacheHandle : null;
 
         return $this->handle !== null;
-    }
-
-    /**
-     * Safely neutralizes trailing single-line comments (// or #) preceding an injected check
-     * into block comments (/* ... *\/) without corrupting string literals containing '//' or '#'.
-     */
-    private static function neutralizeTrailingLineComments(string $code): string
-    {
-        if (! str_contains($code, '/*__TYPEPHP_INJECTED_START__*/')) {
-            return $code;
-        }
-
-        try {
-            $tokens = \PhpToken::tokenize($code);
-            $count = \count($tokens);
-            $result = '';
-
-            for ($i = 0; $i < $count; $i++) {
-                $token = $tokens[$i];
-
-                if ($token->id === T_COMMENT && (str_starts_with($token->text, '//') || str_starts_with($token->text, '#'))) {
-                    $isPrecedingInjection = false;
-
-                    for ($j = $i + 1; $j < $count; $j++) {
-                        $next = $tokens[$j];
-                        if ($next->id === T_WHITESPACE) {
-                            continue;
-                        }
-                        if ($next->id === T_COMMENT && str_starts_with($next->text, '/*__TYPEPHP_INJECTED_START__*/')) {
-                            $isPrecedingInjection = true;
-                        }
-
-                        break;
-                    }
-
-                    if ($isPrecedingInjection) {
-                        $commentText = rtrim($token->text, "\r\n");
-                        $trailingNewlines = substr($token->text, \strlen($commentText));
-                        $cleaned = ltrim($commentText, '/# ');
-                        $result .= '/* ' . $cleaned . ' */' . $trailingNewlines;
-
-                        continue;
-                    }
-                }
-
-                $result .= $token->text;
-            }
-
-            return $result;
-        } catch (\Throwable $e) {
-            return $code;
-        }
     }
 
     /**

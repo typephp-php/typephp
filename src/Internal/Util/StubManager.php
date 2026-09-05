@@ -6,11 +6,11 @@ namespace TypePHP\Internal\Util;
 
 use FilesystemIterator;
 use PhpParser\Node;
-use PhpParser\ParserFactory;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use SplFileInfo;
 use Throwable;
+use TypePHP\Internal\Io\StreamWrapper;
 
 /**
  * @internal Indexes and resolves DocBlock stub overrides for third-party classes, methods, properties, and functions.
@@ -136,7 +136,7 @@ final class StubManager
     private static function loadStubFiles(array $globs): void
     {
         $projectRoot = Config::getProjectRoot();
-        $parser = (new ParserFactory())->createForNewestSupportedVersion();
+        $parser = StreamWrapper::getParser();
 
         foreach ($globs as $pattern) {
             $files = self::resolveStubFiles($pattern, $projectRoot);

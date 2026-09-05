@@ -13,11 +13,7 @@ use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
-use PHPStan\PhpDocParser\Lexer\Lexer;
-use PHPStan\PhpDocParser\Parser\ConstExprParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
-use PHPStan\PhpDocParser\Parser\TypeParser;
-use PHPStan\PhpDocParser\ParserConfig;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\ContractParser;
@@ -63,6 +59,13 @@ final class TemplateManager
      * @var array<string, array<string, TypeNode>>
      */
     private static array $classInheritedBindingsCache = [];
+
+    /**
+     * In-memory cache for subclass hierarchy (is_a) lookups.
+     *
+     * @var array<string, bool>
+     */
+    private static array $subclassCache = [];
 
     /**
      * Temporary storage for an original object instance being cloned.
@@ -310,6 +313,7 @@ final class TemplateManager
         self::$callStackBindings = [];
         self::$classHierarchyTemplatesCache = [];
         self::$classInheritedBindingsCache = [];
+        self::$subclassCache = [];
         self::$pendingCloneSource = null;
     }
 
@@ -444,7 +448,7 @@ final class TemplateManager
     }
 
     /**
-     * Retrieves all declared template variances ('covariant', 'contravariant', 'invariant') for an object instance.
+     * Retrieves all declared template variances ('covariant', 'contravariant', or 'invariant') for an object instance.
      *
      * @return array<string, string>
      */
@@ -1122,11 +1126,18 @@ final class TemplateManager
 
     private static function isSubclass(string $sub, string $super): bool
     {
+        $cacheKey = $sub . '|' . $super;
+        if (isset(self::$subclassCache[$cacheKey])) {
+            return self::$subclassCache[$cacheKey];
+        }
+
         $baseSub = ($pos = strpos($sub, '<')) !== false ? substr($sub, 0, $pos) : $sub;
         $baseSuper = ($pos = strpos($super, '<')) !== false ? substr($super, 0, $pos) : $super;
 
         $baseSub = ltrim(trim($baseSub), '\\');
         $baseSuper = ltrim(trim($baseSuper), '\\');
+
+        $result = false;
 
         if (
             ClassNameValidator::isValid($baseSub)
@@ -1134,10 +1145,10 @@ final class TemplateManager
             && (class_exists($baseSub) || interface_exists($baseSub) || trait_exists($baseSub) || enum_exists($baseSub))
             && (class_exists($baseSuper) || interface_exists($baseSuper) || trait_exists($baseSuper) || enum_exists($baseSuper))
         ) {
-            return is_a($baseSub, $baseSuper, true);
+            $result = is_a($baseSub, $baseSuper, true);
         }
 
-        return false;
+        return self::$subclassCache[$cacheKey] = $result;
     }
 
     /**
@@ -1146,7 +1157,7 @@ final class TemplateManager
     public static function bindInstance(object $instance, string $typeString, string $file = ''): object
     {
         try {
-            [$typeParser, $lexer] = self::getTypeParserComponents();
+            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
 
             $tokens = new TokenIterator($lexer->tokenize($typeString));
             $typeNode = $typeParser->parse($tokens);
@@ -1242,27 +1253,5 @@ final class TemplateManager
         }
 
         return $n;
-    }
-
-    /**
-     * Returns shared static instances of PHPStan's TypeParser and Lexer.
-     *
-     * @return array{TypeParser, Lexer}
-     */
-    private static function getTypeParserComponents(): array
-    {
-        /** @var TypeParser|null $typeParser */
-        static $typeParser = null;
-        /** @var Lexer|null $lexer */
-        static $lexer = null;
-
-        if ($typeParser === null || $lexer === null) {
-            $configParser = new ParserConfig(usedAttributes: []);
-            $lexer = new Lexer($configParser);
-            $constExprParser = new ConstExprParser($configParser);
-            $typeParser = new TypeParser($configParser, $constExprParser);
-        }
-
-        return [$typeParser, $lexer];
     }
 }

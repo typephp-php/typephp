@@ -46,7 +46,8 @@ describe('PathMatcher Unit Tests', function () {
 
         test('returns unchanged path when no dots or traversals exist', function () {
             expect(PathMatcher::canonicalizePath('src/Services/UserService.php'))
-                ->toBe('src/Services/UserService.php');
+                ->toBe('src/Services/UserService.php')
+            ;
         });
 
         test('collapses relative directory traversals (..) and current directory dots (.)', function () {
@@ -110,21 +111,21 @@ describe('PathMatcher Unit Tests', function () {
         test('identifies TypePHP internal engine directories correctly', function () {
             $projectRoot = PathMatcher::normalizePath(Config::getProjectRoot());
 
-            $internalFile  = $projectRoot . '/src/Internal/RuntimeTypeChecker.php';
-            $utilFile      = $projectRoot . '/src/Internal/Util/FileFilter.php';
-            $cliFile       = $projectRoot . '/src/Internal/Cli/RunCommand.php';
+            $internalFile = $projectRoot . '/src/Internal/RuntimeTypeChecker.php';
+            $utilFile = $projectRoot . '/src/Internal/Util/FileFilter.php';
+            $cliFile = $projectRoot . '/src/Internal/Cli/RunCommand.php';
             $validatorFile = $projectRoot . '/src/Internal/Validator/ArrayValidator.php';
-            $wrapperFile   = $projectRoot . '/src/Internal/Wrapper/CallableWrapper.php';
-            $resolverFile  = $projectRoot . '/src/Internal/Resolver/SpecialTypeResolver.php';
-            $docblockFile  = $projectRoot . '/src/Internal/Docblock/DocblockExtractor.php';
-            $genericsFile  = $projectRoot . '/src/Internal/Generics/TemplateManager.php';
-            $ioFile        = $projectRoot . '/src/Internal/Io/StreamWrapper.php';
+            $wrapperFile = $projectRoot . '/src/Internal/Wrapper/CallableWrapper.php';
+            $resolverFile = $projectRoot . '/src/Internal/Resolver/SpecialTypeResolver.php';
+            $docblockFile = $projectRoot . '/src/Internal/Docblock/DocblockExtractor.php';
+            $genericsFile = $projectRoot . '/src/Internal/Generics/TemplateManager.php';
+            $ioFile = $projectRoot . '/src/Internal/Io/StreamWrapper.php';
             $extensionFile = $projectRoot . '/src/Extension/ExtensionInterface.php';
             $exceptionFile = $projectRoot . '/src/Exception/TypeError.php';
-            $entryFile     = $projectRoot . '/src/TypePHP.php';
+            $entryFile = $projectRoot . '/src/TypePHP.php';
             $bootstrapFile = $projectRoot . '/src/bootstrap.php';
-            $mockAppFile   = $projectRoot . '/src/Service.php';
-            $externalFile  = '/var/www/app/Models/User.php';
+            $mockAppFile = $projectRoot . '/src/Service.php';
+            $externalFile = '/var/www/app/Models/User.php';
 
             expect(PathMatcher::isLibraryInternal($internalFile))->toBeTrue()
                 ->and(PathMatcher::isLibraryInternal($utilFile))->toBeTrue()

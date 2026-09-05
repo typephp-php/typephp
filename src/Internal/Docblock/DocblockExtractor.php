@@ -33,6 +33,12 @@ final class DocblockExtractor
      */
     private static array $docParseCache = [];
 
+    private static ?PhpDocParser $phpDocParser = null;
+
+    private static ?TypeParser $typeParser = null;
+
+    private static ?Lexer $lexer = null;
+
     /**
      * Resets the parsed docblock cache. Useful for test isolation.
      */
@@ -48,20 +54,42 @@ final class DocblockExtractor
      */
     public static function getParserComponents(): array
     {
-        /** @var PhpDocParser|null $phpDocParser */
-        static $phpDocParser = null;
-        /** @var Lexer|null $lexer */
-        static $lexer = null;
+        self::initParserComponents();
 
-        if ($phpDocParser === null || $lexer === null) {
+        /** @var PhpDocParser $docParser */
+        $docParser = self::$phpDocParser;
+        /** @var Lexer $lexer */
+        $lexer = self::$lexer;
+
+        return [$docParser, $lexer];
+    }
+
+    /**
+     * Returns shared static instances of PHPStan's TypeParser and Lexer.
+     *
+     * @return array{TypeParser, Lexer}
+     */
+    public static function getTypeParserComponents(): array
+    {
+        self::initParserComponents();
+
+        /** @var TypeParser $typeParser */
+        $typeParser = self::$typeParser;
+        /** @var Lexer $lexer */
+        $lexer = self::$lexer;
+
+        return [$typeParser, $lexer];
+    }
+
+    private static function initParserComponents(): void
+    {
+        if (self::$phpDocParser === null || self::$typeParser === null || self::$lexer === null) {
             $config = new ParserConfig(usedAttributes: []);
-            $lexer = new Lexer($config);
+            self::$lexer = new Lexer($config);
             $constExprParser = new ConstExprParser($config);
-            $typeParser = new TypeParser($config, $constExprParser);
-            $phpDocParser = new PhpDocParser($config, $typeParser, $constExprParser);
+            self::$typeParser = new TypeParser($config, $constExprParser);
+            self::$phpDocParser = new PhpDocParser($config, self::$typeParser, $constExprParser);
         }
-
-        return [$phpDocParser, $lexer];
     }
 
     /**
