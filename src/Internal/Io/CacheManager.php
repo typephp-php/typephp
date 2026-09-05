@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Io;
 
-use TypePHP\Contract\FileFilter;
 use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\FileFilter;
 
 /**
  * @internal
