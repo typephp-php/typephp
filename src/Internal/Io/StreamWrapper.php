@@ -235,7 +235,13 @@ final class StreamWrapper implements StreamWrapperInterface
             $transformed = preg_replace('/\/\*__TYPEPHP_INJECTED_END__\*\/[ \t]*\r?\n[ \t]*/', '/*__TYPEPHP_INJECTED_END__*/ ', $transformed, $drift) ?? $transformed;
         }
 
-        return str_replace(['/*__TYPEPHP_INJECTED_START__*/', '/*__TYPEPHP_INJECTED_END__*/'], '', $transformed);
+        $finalCode = str_replace(['/*__TYPEPHP_INJECTED_START__*/', '/*__TYPEPHP_INJECTED_END__*/'], '', $transformed);
+
+        if (str_contains($filePath, 'ConstKeyContainer')) {
+            fwrite(STDERR, "=== TRANSFORMED ConstKeyContainer.php ===\n" . $finalCode . "\n=========================================\n");
+        }
+
+        return $finalCode;
     }
 
     /**
