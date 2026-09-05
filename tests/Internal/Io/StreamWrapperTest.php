@@ -407,6 +407,11 @@ PHP;
     });
 
     describe('File Functions Non-Interference (STREAM_OPEN_FOR_INCLUDE)', function () {
+        afterEach(function () {
+            Config::reset();
+            StreamWrapper::reset();
+        });
+
         test('file_get_contents() returns raw source code without AST transformation', function () {
             StreamWrapper::register();
 
@@ -476,6 +481,7 @@ PHP;
                 if (is_dir($tempDir)) {
                     @rmdir($tempDir);
                 }
+                Config::reset();
             }
         });
 
@@ -567,6 +573,7 @@ PHP;
                 if (is_dir($tempDir)) {
                     @rmdir($tempDir);
                 }
+                Config::reset();
             }
         });
     });
