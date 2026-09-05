@@ -15,7 +15,7 @@ foreach ($autoloadFiles as $file) {
     }
 }
 
-use TypePHP\Command\CommandRunner;
+use TypePHP\Internal\Cli\CommandRunner;
 
 $exitCode = CommandRunner::run(array_slice($argv, 1));
 exit($exitCode);

@@ -13,17 +13,17 @@ use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
-use TypePHP\Contract\ContractParser;
-use TypePHP\Contract\HierarchyResolver;
-use TypePHP\Internal\ClassNameValidator;
-use TypePHP\Internal\Config;
-use TypePHP\Internal\ErrorFactory;
-use TypePHP\Internal\ErrorMessage;
-use TypePHP\Internal\TypeFormatter;
-use TypePHP\Resolver\SpecialTypeResolver;
-use TypePHP\Resolver\TemplateManager;
-use TypePHP\Resolver\TemplateSubstitutor;
-use TypePHP\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Diagnostic\TypeFormatter;
+use TypePHP\Internal\Docblock\DocblockParser;
+use TypePHP\Internal\Generics\TemplateManager;
+use TypePHP\Internal\Generics\TemplateSubstitutor;
+use TypePHP\Internal\Resolver\HierarchyResolver;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\ClassNameValidator;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
  * @internal Evaluates function and method parameter contract validations (including dynamic @method calls via __call / __callStatic).
@@ -62,12 +62,17 @@ final class ParamChecker
             $effectiveFunction = self::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
         }
 
+        // Fast-path: If no arguments were passed and it's not a magic __call dispatch, exit immediately
+        if ($vars === [] && ! str_ends_with($effectiveFunction, '::__call') && ! str_ends_with($effectiveFunction, '::__callStatic')) {
+            return null;
+        }
+
         $magicError = self::handleMagicCall($effectiveFunction, $vars, $thisObj, $registry);
         if ($magicError !== null) {
             return $magicError;
         }
 
-        $contract = ContractParser::parse($effectiveFunction);
+        $contract = DocblockParser::parse($effectiveFunction);
 
         if (! $contract['hasParamContract']) {
             return null;
@@ -218,7 +223,7 @@ final class ParamChecker
         }
 
         $className = explode('::', $effectiveFunction, 2)[0];
-        $magicContract = ContractParser::parseMagicMethod($className, $magicMethodName);
+        $magicContract = DocblockParser::parseMagicMethod($className, $magicMethodName);
 
         if ($magicContract === null) {
             return null;
@@ -266,7 +271,7 @@ final class ParamChecker
             return;
         }
 
-        $contract = ContractParser::parse($effectiveFunction);
+        $contract = DocblockParser::parse($effectiveFunction);
         $classTemplates = $contract['classTemplates'] ?? [];
 
         foreach ($callableNodes as $cParamName => $cTypeNode) {
@@ -509,7 +514,7 @@ final class ParamChecker
         ?object $thisObj,
         array $templates
     ): void {
-        $contract = ContractParser::parse($effectiveFunction);
+        $contract = DocblockParser::parse($effectiveFunction);
         $classTemplates = $contract['classTemplates'] ?? [];
         $isClassLevelTemplate = isset($classTemplates[$templateName]);
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
@@ -700,7 +705,7 @@ final class ParamChecker
         $templateName = $innerType->name;
         $templateNode = $templates[$templateName];
 
-        $contract = ContractParser::parse($function);
+        $contract = DocblockParser::parse($function);
         $classTemplates = $contract['classTemplates'] ?? [];
         $isClassLevelTemplate = isset($classTemplates[$templateName]);
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
@@ -824,7 +829,7 @@ final class ParamChecker
         $isVariadic = $typeNode instanceof ArrayTypeNode;
         $isNullable = ($typeNode instanceof NullableTypeNode) || ($typeNode instanceof UnionTypeNode && self::typeContainsNull($typeNode));
 
-        $contract = ContractParser::parse($function);
+        $contract = DocblockParser::parse($function);
         $classTemplates = $contract['classTemplates'] ?? [];
         $isClassLevelTemplate = isset($classTemplates[$templateName]);
         $targetObj = $isClassLevelTemplate ? $thisObj : null;

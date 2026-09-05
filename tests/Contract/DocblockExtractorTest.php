@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\PhpDocNode;
-use TypePHP\Contract\DocblockExtractor;
+use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Tests\Fixtures\Services\HelperService;
 use TypePHP\Tests\Fixtures\Services\UserService;
 use TypePHP\Tests\Fixtures\Shopware\Metric\Type as MetricTypeEnum;
@@ -274,7 +274,7 @@ PHP;
         file_put_contents($stubPath, $stubContent);
 
         try {
-            TypePHP\Internal\Config::set([
+            TypePHP\Internal\Util\Config::set([
                 'stubs' => [
                     str_replace('\\', '/', $tempDir) . '/**',
                 ],
@@ -293,7 +293,7 @@ PHP;
             if (is_dir($tempDir)) {
                 @rmdir($tempDir);
             }
-            TypePHP\Internal\Config::reset();
+            TypePHP\Internal\Util\Config::reset();
         }
     });
 

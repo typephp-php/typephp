@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\StreamWrapper;
+use TypePHP\Internal\Io\StreamWrapper;
 
 describe('Line Number Preservation', function () {
     test('transforms code without shifting original line numbers for parameter checks', function () {
@@ -155,6 +155,57 @@ PHP;
 
         expect($transformed)->toContain('/* Single line trailing comment before return */')
             ->and($transformed)->toContain('RuntimeTypeChecker::checkReturn')
+        ;
+    });
+
+    test('does not corrupt URLs containing double slashes in string literals', function () {
+        $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App;
+
+class Example
+{
+    public function show(): void
+    {
+        echo 'https://example.test/path';
+    }
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_url.php');
+
+        expect($transformed)->toContain("'https://example.test/path'")
+            ->and($transformed)->not()->toContain('https:/*')
+        ;
+
+        $tokens = token_get_all($transformed);
+        expect($tokens)->toBeArray();
+    });
+
+    test('does not corrupt strings containing hashtags in string literals', function () {
+        $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App;
+
+class HashExample
+{
+    public function show(): void
+    {
+        $color = '#FF0000';
+    }
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_hash.php');
+
+        expect($transformed)->toContain("'#FF0000'")
+            ->and($transformed)->not()->toContain('/*')
         ;
     });
 });

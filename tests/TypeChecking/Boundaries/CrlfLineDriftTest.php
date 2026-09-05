@@ -6,7 +6,7 @@ if (PHP_OS_FAMILY !== 'Windows') {
     return;
 }
 
-use TypePHP\Internal\StreamWrapper;
+use TypePHP\Internal\Io\StreamWrapper;
 
 describe('CRLF (\r\n) Windows Line-Drift Stress Test', function () {
     test('transforms CRLF (\r\n) functions with zero line-drift', function () {

@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use TypePHP\Exception\TypeError;
-use TypePHP\Internal\Config;
 use TypePHP\Tests\Fixtures\Domain\Animal;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Cat;
@@ -16,35 +15,99 @@ class ArraySubtypeBird extends Animal
 class ArrayTripleInterfaceObject implements Countable, ArrayAccess, Iterator
 {
     private array $data = ['a' => 1];
-    public function count(): int { return count($this->data); }
-    public function offsetExists(mixed $offset): bool { return isset($this->data[$offset]); }
-    public function offsetGet(mixed $offset): mixed { return $this->data[$offset] ?? null; }
-    public function offsetSet(mixed $offset, mixed $value): void { $this->data[$offset] = $value; }
-    public function offsetUnset(mixed $offset): void { unset($this->data[$offset]); }
-    public function rewind(): void { reset($this->data); }
-    public function current(): mixed { return current($this->data); }
-    public function key(): mixed { return key($this->data); }
-    public function next(): void { next($this->data); }
-    public function valid(): bool { return key($this->data) !== null; }
+
+    public function count(): int
+    {
+        return \count($this->data);
+    }
+
+    public function offsetExists(mixed $offset): bool
+    {
+        return isset($this->data[$offset]);
+    }
+
+    public function offsetGet(mixed $offset): mixed
+    {
+        return $this->data[$offset] ?? null;
+    }
+
+    public function offsetSet(mixed $offset, mixed $value): void
+    {
+        $this->data[$offset] = $value;
+    }
+
+    public function offsetUnset(mixed $offset): void
+    {
+        unset($this->data[$offset]);
+    }
+
+    public function rewind(): void
+    {
+        reset($this->data);
+    }
+
+    public function current(): mixed
+    {
+        return current($this->data);
+    }
+
+    public function key(): mixed
+    {
+        return key($this->data);
+    }
+
+    public function next(): void
+    {
+        next($this->data);
+    }
+
+    public function valid(): bool
+    {
+        return key($this->data) !== null;
+    }
 }
 
 class ArrayDoubleInterfaceObject implements Countable, ArrayAccess
 {
     private array $data = ['a' => 1];
-    public function count(): int { return count($this->data); }
-    public function offsetExists(mixed $offset): bool { return isset($this->data[$offset]); }
-    public function offsetGet(mixed $offset): mixed { return $this->data[$offset] ?? null; }
-    public function offsetSet(mixed $offset, mixed $value): void { $this->data[$offset] = $value; }
-    public function offsetUnset(mixed $offset): void { unset($this->data[$offset]); }
+
+    public function count(): int
+    {
+        return \count($this->data);
+    }
+
+    public function offsetExists(mixed $offset): bool
+    {
+        return isset($this->data[$offset]);
+    }
+
+    public function offsetGet(mixed $offset): mixed
+    {
+        return $this->data[$offset] ?? null;
+    }
+
+    public function offsetSet(mixed $offset, mixed $value): void
+    {
+        $this->data[$offset] = $value;
+    }
+
+    public function offsetUnset(mixed $offset): void
+    {
+        unset($this->data[$offset]);
+    }
 }
 
 class ArrayCountableOnly implements Countable
 {
-    public function count(): int { return 1; }
+    public function count(): int
+    {
+        return 1;
+    }
 }
 
 /**
  * @param list<Dog|Cat|ArraySubtypeBird> $animals
+ *
  * @return list<Dog|Cat|ArraySubtypeBird>
  */
 function acceptSupersetAnimalList(array $animals): array
@@ -54,6 +117,7 @@ function acceptSupersetAnimalList(array $animals): array
 
 /**
  * @param list<Dog|Cat> $animals
+ *
  * @return list<Dog|Cat>
  */
 function acceptSubsetAnimalList(array $animals): array
@@ -161,14 +225,16 @@ describe('Array Complex Subtypes (Unions, Intersections, DNF)', function () {
             $broadArray = [new Dog(), new Cat(), new ArraySubtypeBird()];
 
             expect(fn () => acceptSubsetAnimalList($broadArray))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
         });
 
         test('strictly rejects array containing incompatible element not in union', function () {
             $incompatibleArray = [new Dog(), new Car()];
 
             expect(fn () => acceptSupersetAnimalList($incompatibleArray))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
         });
     });
 
@@ -192,7 +258,8 @@ describe('Array Complex Subtypes (Unions, Intersections, DNF)', function () {
             $incompleteList = [new ArrayCountableOnly()];
 
             expect(fn () => acceptIntersectionList($incompleteList))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
         });
     });
 
@@ -206,7 +273,7 @@ describe('Array Complex Subtypes (Unions, Intersections, DNF)', function () {
         test('allows array with heterogeneous items satisfying different branches of DNF', function () {
             $mixedDnfList = [
                 new ArrayDoubleInterfaceObject(),
-                new ArrayTripleInterfaceObject(), 
+                new ArrayTripleInterfaceObject(),
             ];
 
             expect(acceptDnfList($mixedDnfList))->toBe($mixedDnfList);
@@ -215,11 +282,12 @@ describe('Array Complex Subtypes (Unions, Intersections, DNF)', function () {
         test('strictly rejects array containing an object that fails all DNF branches', function () {
             $badList = [
                 new ArrayDoubleInterfaceObject(),
-                new ArrayCountableOnly(), 
+                new ArrayCountableOnly(),
             ];
 
             expect(fn () => acceptDnfList($badList))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
         });
     });
 
@@ -240,7 +308,8 @@ describe('Array Complex Subtypes (Unions, Intersections, DNF)', function () {
             ];
 
             expect(fn () => acceptNestedAnimalList($nestedBad))
-                ->toThrow(TypeError::class);
+                ->toThrow(TypeError::class)
+            ;
         });
     });
 });

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Tests\TypeChecking\InheritanceAndAttributes;
 
 use ReflectionMethod;
-use TypePHP\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Tests\Fixtures\Shopware\Error\Error;
 use TypePHP\Tests\Fixtures\Shopware\Error\ErrorCollection;
 use TypePHP\Tests\Fixtures\Shopware\Error\TestError;

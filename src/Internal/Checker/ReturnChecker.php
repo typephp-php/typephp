@@ -13,15 +13,14 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use ReflectionClass;
 use Traversable;
-use TypePHP\Contract\ContractParser;
-use TypePHP\Contract\HierarchyResolver;
-use TypePHP\Internal\ClassNameValidator;
-use TypePHP\Internal\Config;
-use TypePHP\Resolver\SpecialTypeResolver;
-use TypePHP\Resolver\TemplateManager;
-use TypePHP\Resolver\TemplateSubstitutor;
-use TypePHP\Validator\TypeValidatorRegistry;
-use TypePHP\Wrapper\CallableWrapper;
+use TypePHP\Internal\Docblock\DocblockParser;
+use TypePHP\Internal\Generics\TemplateManager;
+use TypePHP\Internal\Generics\TemplateSubstitutor;
+use TypePHP\Internal\Resolver\HierarchyResolver;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Wrapper\CallableWrapper;
 
 /**
  * @internal Evaluates function and method return contract validations (including dynamic @method calls via __call / __callStatic).
@@ -72,7 +71,7 @@ final class ReturnChecker
             return $magicResult;
         }
 
-        $contract = ContractParser::parse($effectiveFunction);
+        $contract = DocblockParser::parse($effectiveFunction);
 
         if (! ($contract['hasReturnContract'] ?? ($contract['return'] !== null))) {
             return $value;
@@ -186,7 +185,7 @@ final class ReturnChecker
         }
 
         $className = explode('::', $effectiveFunction, 2)[0];
-        $magicContract = ContractParser::parseMagicMethod($className, $magicMethodName);
+        $magicContract = DocblockParser::parseMagicMethod($className, $magicMethodName);
 
         if ($magicContract === null || $magicContract['return'] === null) {
             return null;

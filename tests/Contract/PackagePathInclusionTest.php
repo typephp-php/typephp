@@ -4,21 +4,17 @@ declare(strict_types=1);
 
 namespace TypePHP\Tests\Contract;
 
-use TypePHP\Contract\FileFilter;
-use TypePHP\Internal\Config;
-use TypePHP\Internal\PathMatcher;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\FileFilter;
+use TypePHP\Internal\Util\PathMatcher;
 
 describe('Packages and Monorepo Path Inclusion (packages/**/src/**)', function () {
     beforeEach(function () {
         Config::reset();
-        FileFilter::reset();
-        PathMatcher::reset();
     });
 
     afterEach(function () {
         Config::reset();
-        FileFilter::reset();
-        PathMatcher::reset();
     });
 
     test('correctly includes package source files with packages/**/src/** glob', function () {

@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-use TypePHP\Contract\FileFilter;
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\FileFilter;
 
 describe('FileFilter Unit Tests', function () {
     test('returns false for null, empty, or false file paths', function () {

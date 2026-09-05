@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Tests\TypeChecking\Generics;
 
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
-use TypePHP\Resolver\TemplateManager;
+use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\TypePHP;
 
 /**

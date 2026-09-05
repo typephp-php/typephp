@@ -6,7 +6,7 @@ if (PHP_VERSION_ID < 80500) {
     return;
 }
 
-use TypePHP\Internal\StreamWrapper;
+use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Tests\Fixtures\Pipes\NativePipeRunner;
 use TypePHP\Tests\Fixtures\Pipes\PipePipelineService;
 

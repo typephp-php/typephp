@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Tests\Fixtures\Types\ConfigApp;
 use TypePHP\Tests\Fixtures\Types\StatusEnum;
 use TypePHP\Tests\Fixtures\Types\UserObjectShape;

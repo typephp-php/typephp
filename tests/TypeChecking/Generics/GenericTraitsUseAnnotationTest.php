@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use TypePHP\Exception\TypeError;
-use TypePHP\Resolver\TemplateManager;
+use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Generics\ClassLevelTraitService;

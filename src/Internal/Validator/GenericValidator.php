@@ -1,0 +1,573 @@
+<?php
+
+declare(strict_types=1);
+
+namespace TypePHP\Internal\Validator;
+
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Diagnostic\TypeFormatter;
+use TypePHP\Internal\RuntimeTypeChecker;
+use TypePHP\Internal\Util\ClassNameValidator;
+use TypePHP\Internal\Util\Config;
+
+/**
+ * @internal Validates values against generic AST structures (int ranges, class-string<T>, list<T>, array<K,V>, object generics, key-of, value-of, int-mask, int-mask-of).
+ */
+final class GenericValidator implements TypeValidatorInterface
+{
+    /**
+     * @var array<string, mixed>
+     */
+    private static array $constantCache = [];
+
+    /**
+     * @var array<string, array<int, string>>
+     */
+    private static array $enumKeyCache = [];
+
+    /**
+     * @var array<string, array<int, string|int>>
+     */
+    private static array $enumValueCache = [];
+
+    /**
+     * Validates a value against a GenericTypeNode AST.
+     */
+    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    {
+        /** @var GenericTypeNode $genericNode */
+        $genericNode = $node;
+        $baseType = strtolower($genericNode->type->name);
+
+        return match ($baseType) {
+            'int', 'integer' => $this->validateIntRange($value, $genericNode, $context),
+            'class-string' => $this->validateClassString($value, $genericNode, $context),
+            'list', 'non-empty-list', 'non-empty-array-list' => $this->validateList($value, $genericNode, $context, $registry),
+            'array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator' => $this->validateArray($value, $genericNode, $context, $registry),
+            'key-of' => $this->validateKeyOf($value, $genericNode, $context),
+            'value-of' => $this->validateValueOf($value, $genericNode, $context),
+            'int-mask' => $this->validateIntMask($value, $genericNode, $context),
+            'int-mask-of' => $this->validateIntMaskOf($value, $genericNode, $context),
+            default => $this->validateObjectGeneric($value, $genericNode, $context),
+        };
+    }
+
+    /**
+     * Helper to resolve and cache class or global constant values in static memory.
+     */
+    private function resolveConstantValue(string $fqcn, string $constName): mixed
+    {
+        $cacheKey = $fqcn !== '' ? "$fqcn::$constName" : $constName;
+
+        if (! \array_key_exists($cacheKey, self::$constantCache)) {
+            $constValue = false;
+            if ($fqcn !== '') {
+                if (class_exists($fqcn) || interface_exists($fqcn)) {
+                    try {
+                        $refClass = new \ReflectionClass($fqcn);
+                        if ($refClass->hasConstant($constName)) {
+                            $constValue = $refClass->getConstant($constName);
+                        }
+                    } catch (\ReflectionException $e) {
+                        // Silently ignore reflection errors
+                    }
+                }
+            } else {
+                if (\defined($constName)) {
+                    $constValue = \constant($constName);
+                }
+            }
+            self::$constantCache[$cacheKey] = $constValue;
+        }
+
+        return self::$constantCache[$cacheKey];
+    }
+
+    /**
+     * Validates key-of<T> generic structures with O(1) in-memory caching.
+     */
+    private function validateKeyOf(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    {
+        $targetType = $node->genericTypes[0] ?? null;
+
+        if ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstFetchNode) {
+            $constExpr = $targetType->constExpr;
+            $fqcn = $constExpr->className;
+            $constName = $constExpr->name;
+            $cacheKey = $fqcn !== '' ? "$fqcn::$constName" : $constName;
+
+            $constValue = $this->resolveConstantValue($fqcn, $constName);
+
+            if (\is_array($constValue)) {
+                if ((! \is_int($value) && ! \is_string($value)) || ! \array_key_exists($value, $constValue)) {
+                    return ErrorFactory::createError($context . " must be a key of $cacheKey, " . TypeFormatter::formatGivenValue($value) . ' given');
+                }
+
+                return null;
+            }
+        } elseif ($targetType instanceof IdentifierTypeNode) {
+            $enumClass = $targetType->name;
+            if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass)) {
+                if (! isset(self::$enumKeyCache[$enumClass])) {
+                    self::$enumKeyCache[$enumClass] = array_map(fn ($case) => $case->name, $enumClass::cases());
+                }
+
+                if (! \in_array($value, self::$enumKeyCache[$enumClass], strict: true)) {
+                    return ErrorFactory::createError($context . " must be a key of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
+                }
+
+                return null;
+            }
+        } elseif ($targetType instanceof ArrayShapeNode) {
+            $validKeys = [];
+            $nextAutoIndex = 0;
+
+            foreach ($targetType->items as $item) {
+                if ($item->keyName instanceof ConstExprStringNode) {
+                    $validKeys[] = $item->keyName->value;
+                } elseif ($item->keyName instanceof IdentifierTypeNode) {
+                    $validKeys[] = $item->keyName->name;
+                } elseif ($item->keyName instanceof ConstExprIntegerNode) {
+                    $key = (int) $item->keyName->value;
+                    $validKeys[] = $key;
+                    $nextAutoIndex = max($nextAutoIndex, $key + 1);
+                } elseif ($item->keyName !== null) {
+                    $validKeys[] = (string) $item->keyName;
+                } else {
+                    $validKeys[] = $nextAutoIndex;
+                    $nextAutoIndex++;
+                }
+            }
+
+            if (! \in_array($value, $validKeys, strict: true)) {
+                return ErrorFactory::createError($context . ' must be a key of the specified array shape, ' . TypeFormatter::formatGivenValue($value) . ' given');
+            }
+
+            return null;
+        }
+
+        return null;
+    }
+
+    /**
+     * Validates value-of<T> generic structures with O(1) in-memory caching.
+     */
+    private function validateValueOf(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    {
+        $targetType = $node->genericTypes[0] ?? null;
+
+        if ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstFetchNode) {
+            $constExpr = $targetType->constExpr;
+            $fqcn = $constExpr->className;
+            $constName = $constExpr->name;
+            $cacheKey = $fqcn !== '' ? "$fqcn::$constName" : $constName;
+
+            $constValue = $this->resolveConstantValue($fqcn, $constName);
+
+            if (\is_array($constValue)) {
+                if (! \in_array($value, $constValue, strict: true)) {
+                    return ErrorFactory::createError($context . " must be a value of $cacheKey, " . TypeFormatter::formatGivenValue($value) . ' given');
+                }
+
+                return null;
+            }
+        } elseif ($targetType instanceof IdentifierTypeNode) {
+            $enumClass = $targetType->name;
+            if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass)) {
+                if (is_subclass_of($enumClass, \BackedEnum::class)) {
+                    if (! isset(self::$enumValueCache[$enumClass])) {
+                        self::$enumValueCache[$enumClass] = array_map(fn ($case) => $case->value, $enumClass::cases());
+                    }
+
+                    if (! \in_array($value, self::$enumValueCache[$enumClass], strict: true)) {
+                        return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
+                    }
+
+                    return null;
+                }
+
+                return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Validates int-mask<1, 2, 4> bitmask flags combinations.
+     */
+    private function validateIntMask(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    {
+        if (! \is_int($value)) {
+            return ErrorFactory::createError($context . ' must be of type int (bitmask), ' . TypeFormatter::formatGivenValue($value) . ' given');
+        }
+
+        $allowedMask = 0;
+
+        foreach ($node->genericTypes as $typeNode) {
+            if ($typeNode instanceof ConstTypeNode) {
+                $expr = $typeNode->constExpr;
+                if ($expr instanceof ConstExprIntegerNode) {
+                    $allowedMask |= (int) $expr->value;
+                } elseif ($expr instanceof ConstFetchNode) {
+                    $constVal = $this->resolveConstantValue($expr->className, $expr->name);
+                    if (\is_int($constVal)) {
+                        $allowedMask |= $constVal;
+                    }
+                }
+            }
+        }
+
+        if (($value & ~$allowedMask) !== 0) {
+            return ErrorFactory::createError($context . ' must be a valid bitmask combination of the allowed flags, ' . TypeFormatter::formatGivenValue($value) . ' given');
+        }
+
+        return null;
+    }
+
+    /**
+     * Validates int-mask-of<self::FLAG_*> bitmask flags combinations from constant patterns.
+     */
+    private function validateIntMaskOf(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    {
+        if (! \is_int($value)) {
+            return ErrorFactory::createError($context . ' must be of type int (bitmask), ' . TypeFormatter::formatGivenValue($value) . ' given');
+        }
+
+        $targetType = $node->genericTypes[0] ?? null;
+        $allowedMask = 0;
+        $foundFlags = false;
+
+        if ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstFetchNode) {
+            $constExpr = $targetType->constExpr;
+            $fqcn = $constExpr->className;
+            $pattern = $constExpr->name;
+
+            if ($fqcn !== '' && (class_exists($fqcn) || interface_exists($fqcn))) {
+                try {
+                    $refClass = new \ReflectionClass($fqcn);
+
+                    if (str_contains($pattern, '*')) {
+                        $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
+                        foreach ($refClass->getConstants() as $cName => $cValue) {
+                            if (\is_int($cValue) && preg_match($regex, $cName) === 1) {
+                                $allowedMask |= $cValue;
+                                $foundFlags = true;
+                            }
+                        }
+                    } else {
+                        $cValue = $this->resolveConstantValue($fqcn, $pattern);
+                        if (\is_int($cValue)) {
+                            $allowedMask |= $cValue;
+                            $foundFlags = true;
+                        } elseif (\is_array($cValue)) {
+                            foreach ($cValue as $item) {
+                                if (\is_int($item)) {
+                                    $allowedMask |= $item;
+                                    $foundFlags = true;
+                                }
+                            }
+                        }
+                    }
+                } catch (\ReflectionException $e) {
+                    // Silently ignore reflection errors
+                }
+            }
+        }
+
+        if ($foundFlags && ($value & ~$allowedMask) !== 0) {
+            return ErrorFactory::createError($context . ' must be a valid bitmask combination of the allowed flags, ' . TypeFormatter::formatGivenValue($value) . ' given');
+        }
+
+        return null;
+    }
+
+    /**
+     * Validates integer ranges (e.g. int<1, 100> or int<min, max>).
+     */
+    private function validateIntRange(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    {
+        if (! \is_int($value)) {
+            return ErrorFactory::createError($context . ' must be of type int, ' . TypeFormatter::formatGivenValue($value) . ' given');
+        }
+
+        $minNode = $node->genericTypes[0] ?? null;
+        $maxNode = $node->genericTypes[1] ?? null;
+
+        if ($minNode !== null) {
+            $minStr = strtolower(trim((string) $minNode));
+            if ($minStr !== 'min' && $minStr !== '*') {
+                $minVal = (int) $minStr;
+                if ($value < $minVal) {
+                    return ErrorFactory::createError($context . " must be >= $minVal, $value given");
+                }
+            }
+        }
+
+        if ($maxNode !== null) {
+            $maxStr = strtolower(trim((string) $maxNode));
+            if ($maxStr !== 'max' && $maxStr !== '*') {
+                $maxVal = (int) $maxStr;
+                if ($value > $maxVal) {
+                    return ErrorFactory::createError($context . " must be <= $maxVal, $value given");
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Validates class-string<T> parameters against declared class bounds.
+     */
+    private function validateClassString(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    {
+        if (! \is_string($value) || ! ClassNameValidator::isValidClassString($value)) {
+            return ErrorFactory::createError($context . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($value) . ' given');
+        }
+
+        $targetClassNode = $node->genericTypes[0] ?? null;
+        if ($targetClassNode === null) {
+            return null;
+        }
+
+        return $this->validateClassStringBound($value, $targetClassNode, $context);
+    }
+
+    private function validateClassStringBound(string $value, TypeNode $targetNode, string $context): ?ErrorMessage
+    {
+        if ($targetNode instanceof IdentifierTypeNode) {
+            $targetName = $targetNode->name;
+            $lower = strtolower($targetName);
+            if ($lower === 'object' || $lower === 'mixed') {
+                return null;
+            }
+
+            if (class_exists($targetName) || interface_exists($targetName) || trait_exists($targetName) || enum_exists($targetName)) {
+                if (! is_a($value, $targetName, allow_string: true)) {
+                    return ErrorFactory::createError($context . ' must be a class-string of ' . $targetName . ", '$value' given");
+                }
+            }
+
+            return null;
+        }
+
+        if ($targetNode instanceof UnionTypeNode) {
+            foreach ($targetNode->types as $unionType) {
+                if ($this->validateClassStringBound($value, $unionType, $context) === null) {
+                    return null;
+                }
+            }
+
+            return ErrorFactory::createError($context . ' must be a class-string of ' . (string) $targetNode . ", '$value' given");
+        }
+
+        if ($targetNode instanceof IntersectionTypeNode) {
+            foreach ($targetNode->types as $intersectionType) {
+                $err = $this->validateClassStringBound($value, $intersectionType, $context);
+                if ($err !== null) {
+                    return $err;
+                }
+            }
+
+            return null;
+        }
+
+        return null;
+    }
+
+    /**
+     * Validates sequential list structures (e.g. list<string> or non-empty-list<int>).
+     */
+    private function validateList(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    {
+        $baseType = strtolower($node->type->name);
+
+        if (! \is_array($value) || (\count($value) > 0 && ! array_is_list($value))) {
+            return ErrorFactory::createError($context . ' must be a list, ' . TypeFormatter::formatGivenValue($value) . ' given');
+        }
+
+        $count = \count($value);
+
+        if (str_contains($baseType, 'non-empty') && $count === 0) {
+            return ErrorFactory::createError($context . ' must be a non-empty list, empty array given');
+        }
+
+        $valueTypeNode = $node->genericTypes[0] ?? null;
+        if ($valueTypeNode !== null && $count > 0) {
+            $isComplexObjectGeneric = ($valueTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valueTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
+
+            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+                $sampleIndices = [0, $count - 1];
+                $samplesToTake = min(3, $count - 2);
+                for ($i = 0; $i < $samplesToTake; $i++) {
+                    $sampleIndices[] = mt_rand(1, $count - 2);
+                }
+
+                foreach ($sampleIndices as $k) {
+                    $v = $value[$k];
+                    $err = $isComplexObjectGeneric
+                        ? $this->validateObjectGeneric($v, $valueTypeNode, '')
+                        : $registry->validate($v, $valueTypeNode, '');
+
+                    if ($err !== null) {
+                        return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
+                    }
+                }
+
+                return null;
+            }
+
+            foreach ($value as $k => $v) {
+                $err = $isComplexObjectGeneric
+                    ? $this->validateObjectGeneric($v, $valueTypeNode, '')
+                    : $registry->validate($v, $valueTypeNode, '');
+
+                if ($err !== null) {
+                    return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Validates key-value array structures (e.g. array<string, int>).
+     */
+    private function validateArray(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    {
+        $baseType = strtolower($node->type->name);
+
+        if (! \is_array($value) && ! ($value instanceof \Traversable)) {
+            return ErrorFactory::createError($context . ' must be of type ' . $node->type->name . ', ' . TypeFormatter::formatGivenValue($value) . ' given');
+        }
+
+        if (! \is_array($value)) {
+            return null;
+        }
+
+        $count = \count($value);
+
+        if (str_contains($baseType, 'non-empty') && $count === 0) {
+            return ErrorFactory::createError($context . ' must be a non-empty array, empty array given');
+        }
+
+        if ($count === 0) {
+            return null;
+        }
+
+        $typesCount = \count($node->genericTypes);
+        if ($typesCount === 1) {
+            $valTypeNode = $node->genericTypes[0];
+            $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
+            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+                $keys = array_keys($value);
+                $sampleKeys = [$keys[0], $keys[$count - 1]];
+                $samplesToTake = min(3, $count - 2);
+                for ($i = 0; $i < $samplesToTake; $i++) {
+                    $sampleKeys[] = $keys[mt_rand(1, $count - 2)];
+                }
+
+                foreach ($sampleKeys as $k) {
+                    $v = $value[$k];
+                    $err = $isComplexObjectGeneric
+                        ? $this->validateObjectGeneric($v, $valTypeNode, '')
+                        : $registry->validate($v, $valTypeNode, '');
+
+                    if ($err !== null) {
+                        return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
+                    }
+                }
+
+                return null;
+            }
+
+            foreach ($value as $k => $v) {
+                $err = $isComplexObjectGeneric
+                    ? $this->validateObjectGeneric($v, $valTypeNode, '')
+                    : $registry->validate($v, $valTypeNode, '');
+
+                if ($err !== null) {
+                    return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
+                }
+            }
+        } elseif ($typesCount >= 2) {
+            $keyTypeNode = $node->genericTypes[0];
+            $valTypeNode = $node->genericTypes[1];
+            $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
+
+            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+                $keys = array_keys($value);
+                $sampleKeys = [$keys[0], $keys[$count - 1]];
+                $samplesToTake = min(3, $count - 2);
+                for ($i = 0; $i < $samplesToTake; $i++) {
+                    $sampleKeys[] = $keys[mt_rand(1, $count - 2)];
+                }
+
+                foreach ($sampleKeys as $k) {
+                    $err = $registry->validate($k, $keyTypeNode, '');
+                    if ($err !== null) {
+                        return ErrorFactory::createError($context . ' key' . $err->getMessage());
+                    }
+
+                    $v = $value[$k];
+                    $err = $isComplexObjectGeneric
+                        ? $this->validateObjectGeneric($v, $valTypeNode, '')
+                        : $registry->validate($v, $valTypeNode, '');
+
+                    if ($err !== null) {
+                        return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
+                    }
+                }
+
+                return null;
+            }
+
+            foreach ($value as $k => $v) {
+                $err = $registry->validate($k, $keyTypeNode, '');
+                if ($err !== null) {
+                    return ErrorFactory::createError($context . ' key' . $err->getMessage());
+                }
+
+                $err = $isComplexObjectGeneric
+                    ? $this->validateObjectGeneric($v, $valTypeNode, '')
+                    : $registry->validate($v, $valTypeNode, '');
+
+                if ($err !== null) {
+                    return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function validateObjectGeneric(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    {
+        if (! ClassNameValidator::isValid($node->type->name)) {
+            return null;
+        }
+
+        if (! \is_object($value)) {
+            return ErrorFactory::createError($context . ' must be an object of type ' . $node->type->name . ', ' . TypeFormatter::formatGivenValue($value) . ' given');
+        }
+
+        if (! is_a($value, $node->type->name)) {
+            return ErrorFactory::createError($context . ' must be an instance of ' . $node->type->name . ', ' . TypeFormatter::formatGivenValue($value) . ' given');
+        }
+
+        return RuntimeTypeChecker::bindInstanceFromNode($value, $node, $context);
+    }
+}

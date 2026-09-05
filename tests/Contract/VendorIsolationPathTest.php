@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-use TypePHP\Contract\FileFilter;
-use TypePHP\Internal\Config;
-use TypePHP\Internal\StreamWrapper;
+use TypePHP\Internal\Io\StreamWrapper;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\FileFilter;
 
 describe('Vendor Path Isolation & Whitelisting (Shopware Doctrine DBAL Reproduction)', function () {
     beforeEach(function () {

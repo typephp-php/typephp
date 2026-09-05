@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace TypePHP\Tests\Extension;
 
-use TypePHP\Contract\FileFilter;
-use TypePHP\Extension\ExtensionManager;
-use TypePHP\Internal\Config;
+use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\ExtensionManager;
+use TypePHP\Internal\Util\FileFilter;
 use TypePHP\Tests\Fixtures\Extensions\SampleRegisteredExtension;
 
 describe('ExtensionManager Unit Tests', function () {
