@@ -373,8 +373,11 @@ final class TemplateManager
      */
     public static function popCallFrame(string $function): void
     {
-        if (self::hasCallFrame($function)) {
+        if (isset(self::$callStackBindings[$function])) {
             array_pop(self::$callStackBindings[$function]);
+            if (empty(self::$callStackBindings[$function])) {
+                unset(self::$callStackBindings[$function]);
+            }
         }
     }
 
@@ -412,17 +415,7 @@ final class TemplateManager
         if (self::hasCallFrame($function)) {
             $topFrame = end(self::$callStackBindings[$function]);
             if ($topFrame !== false) {
-                if ($thisObj !== null) {
-                    $contract = DocblockParser::parse($function);
-                    $methodTemplates = $contract['templates'] ?? [];
-                    foreach ($topFrame as $tName => $tNode) {
-                        if (isset($methodTemplates[$tName])) {
-                            $bindings[$tName] = $tNode;
-                        }
-                    }
-                } else {
-                    $bindings = [...$bindings, ...$topFrame];
-                }
+                $bindings = [...$bindings, ...$topFrame];
             }
         }
 
@@ -748,18 +741,15 @@ final class TemplateManager
     {
         $actualClassName = \get_class($instance);
 
-        if (isset(self::$classInheritedBindingsCache[$actualClassName])) {
-            if (self::$instanceTemplateBindings === null) {
-                self::$instanceTemplateBindings = new WeakMap();
-            }
+        if (self::$instanceTemplateBindings === null) {
+            self::$instanceTemplateBindings = new WeakMap();
+        }
 
+        if (isset(self::$classInheritedBindingsCache[$actualClassName])) {
             /** @var array<string, TypeNode> $cachedBindings */
             $cachedBindings = self::$classInheritedBindingsCache[$actualClassName];
-            if (\count($cachedBindings) > 0) {
-                /** @var array<string, TypeNode> $existing */
-                $existing = self::$instanceTemplateBindings[$instance] ?? [];
-                self::$instanceTemplateBindings[$instance] = [...$cachedBindings, ...$existing];
-            }
+            $existing = self::$instanceTemplateBindings[$instance] ?? [];
+            self::$instanceTemplateBindings[$instance] = [...$cachedBindings, ...$existing];
 
             return;
         }
@@ -767,15 +757,10 @@ final class TemplateManager
         $resolvedClassBindings = self::computeClassInheritedBindings($actualClassName);
         self::$classInheritedBindingsCache[$actualClassName] = $resolvedClassBindings;
 
-        if (\count($resolvedClassBindings) > 0) {
-            if (self::$instanceTemplateBindings === null) {
-                self::$instanceTemplateBindings = new WeakMap();
-            }
-            /** @var array<string, TypeNode> $existing */
-            $existing = self::$instanceTemplateBindings[$instance] ?? [];
-            self::$instanceTemplateBindings[$instance] = [...$resolvedClassBindings, ...$existing];
-        }
+        $existing = self::$instanceTemplateBindings[$instance] ?? [];
+        self::$instanceTemplateBindings[$instance] = [...$resolvedClassBindings, ...$existing];
     }
+
 
     /**
      * @return array<string, TypeNode>
@@ -1225,7 +1210,7 @@ final class TemplateManager
      */
     private static function hasCallFrame(string $function): bool
     {
-        return isset(self::$callStackBindings[$function]) && \count(self::$callStackBindings[$function]) > 0;
+        return isset(self::$callStackBindings[$function]);
     }
 
     /**
@@ -1240,7 +1225,7 @@ final class TemplateManager
         }
         if ($n instanceof GenericTypeNode) {
             $base = new IdentifierTypeNode(SpecialTypeResolver::resolveFqcn($n->type->name, $ref));
-            $generics = array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
+            $generics = array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
 
             return new GenericTypeNode($base, $generics, $n->variances);
         }
@@ -1251,10 +1236,10 @@ final class TemplateManager
             return new NullableTypeNode(self::resolveTypeNodeAst($n->type, $ref));
         }
         if ($n instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new UnionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
         if ($n instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new IntersectionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
 
         return $n;

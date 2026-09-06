@@ -165,7 +165,9 @@ final class ParamChecker
             self::preInferGenericTemplates($contract['types'], $vars, $effectiveFunction, $thisObj, $allTemplates, $classTemplates);
         }
 
-        $boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates);
+        $boundTemplates = (\count($allTemplates) > 0)
+            ? TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates)
+            : [];
         $declaredTemplates = $allTemplates;
 
         foreach ($contract['types'] as $paramName => $typeNode) {

@@ -13,6 +13,7 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use ReflectionClass;
 use Traversable;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
@@ -209,9 +210,11 @@ final class ReturnChecker
         callable $wrapIterableCallback,
         array $contract = []
     ): mixed {
-        $err = SpecialTypeResolver::checkThisIdentity($returnTypeNode, $value, $thisObj, $function);
-        if ($err !== null) {
-            return $err;
+        if ($contract['returnIsThis'] ?? false) {
+            $err = SpecialTypeResolver::checkThisIdentity($returnTypeNode, $value, $thisObj, $function);
+            if ($err !== null) {
+                return $err;
+            }
         }
 
         $hasGenerics = (\count($templates) > 0);
@@ -227,9 +230,9 @@ final class ReturnChecker
                 $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
             }
 
-            $err = $registry->validate($value, $resolvedType, $function . '(): Return value');
+            $err = $registry->validate($value, $resolvedType, 'Return value');
             if ($err !== null) {
-                return $err;
+                return ErrorFactory::createError($function . '(): ' . $err->getMessage());
             }
 
             if ($value instanceof Traversable) {
@@ -270,9 +273,9 @@ final class ReturnChecker
 
         $resolvedType = self::resolveConditionalReturnType($resolvedType, $vars, $boundTemplates, $registry, $function);
 
-        $err = $registry->validate($value, $resolvedType, $function . '(): Return value');
+        $err = $registry->validate($value, $resolvedType, 'Return value');
         if ($err !== null) {
-            return $err;
+            return ErrorFactory::createError($function . '(): ' . $err->getMessage());
         }
 
         if ($resolvedType instanceof CallableTypeNode && CallableWrapper::isCallable($value)) {
