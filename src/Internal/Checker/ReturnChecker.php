@@ -227,15 +227,22 @@ final class ReturnChecker
 
         $hasGenerics = (\count($templates) > 0);
         $hasAliases = (\count($aliases) > 0);
-        $isConditional = ($returnTypeNode instanceof ConditionalTypeForParameterNode || $returnTypeNode instanceof ConditionalTypeNode);
+        $isParamConditional = ($returnTypeNode instanceof ConditionalTypeForParameterNode);
 
-        if (! $hasGenerics && ! $hasAliases && ! $isConditional && ! ($returnTypeNode instanceof CallableTypeNode)) {
+        if (! $hasGenerics && ! $hasAliases && ! $isParamConditional && ! ($returnTypeNode instanceof CallableTypeNode)) {
             $isDynamic = $contract['returnIsDynamic'] ?? (str_contains((string) $returnTypeNode, 'static') || str_contains((string) $returnTypeNode, '$this'));
 
             if (! $isDynamic) {
                 $resolvedType = self::$resolvedStaticReturnCache[$function] ??= SpecialTypeResolver::resolve($returnTypeNode, $function, null);
             } else {
                 $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
+            }
+
+            if ($resolvedType instanceof IdentifierTypeNode) {
+                $name = strtolower($resolvedType->name);
+                if ($name === 'mixed' || ($name === 'array' && \is_array($value))) {
+                    return $value;
+                }
             }
 
             $err = $registry->validate($value, $resolvedType, 'Return value');
@@ -263,7 +270,7 @@ final class ReturnChecker
         $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
 
         $cacheKey = null;
-        if (\count($boundTemplates) <= 2 && ! $isConditional && \count($aliases) === 0 && $thisObj === null) {
+        if (\count($boundTemplates) <= 2 && ! $isParamConditional && \count($aliases) === 0 && $thisObj === null) {
             $cacheKey = $function;
             foreach ($boundTemplates as $k => $v) {
                 $cacheKey .= '|' . $k . ':' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v);
@@ -280,7 +287,7 @@ final class ReturnChecker
                 $resolvedType = $aliases[$resolvedType->name];
             }
 
-            if (\count($boundTemplates) === 0 && \count($templates) > 0 && ! $isConditional && $thisObj === null) {
+            if (\count($boundTemplates) === 0 && \count($templates) > 0 && ! $isParamConditional && $thisObj === null) {
                 $resolvedType = self::$unboundReturnCache[$function] ??= SpecialTypeResolver::resolve(
                     TemplateSubstitutor::substitute($returnTypeNode, [], $templates),
                     $function,
@@ -295,6 +302,13 @@ final class ReturnChecker
 
             if ($cacheKey !== null) {
                 self::$substitutedReturnCache[$cacheKey] = $resolvedType;
+            }
+        }
+
+        if ($resolvedType instanceof IdentifierTypeNode) {
+            $name = strtolower($resolvedType->name);
+            if ($name === 'mixed' || ($name === 'array' && \is_array($value))) {
+                return $value;
             }
         }
 

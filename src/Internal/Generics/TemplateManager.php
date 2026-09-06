@@ -322,7 +322,7 @@ final class TemplateManager
     /**
      * @var array<string, IdentifierTypeNode>
      */
-    private static array $classNodeCache = [];
+    public static array $classNodeCache = [];
 
     /**
      * Resets all static generic template bindings and call stack frames.

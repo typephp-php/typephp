@@ -214,8 +214,12 @@ final class ParamChecker
             return $function;
         }
 
-        $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : '');
+        $actualClassName = \is_object($thisOrClass) ? $thisOrClass::class : (\is_string($thisOrClass) ? $thisOrClass : '');
         if ($actualClassName === '') {
+            return $function;
+        }
+
+        if (str_starts_with($function, $actualClassName . '::') && empty(HierarchyResolver::getTraitAliases($actualClassName))) {
             return $function;
         }
 
@@ -796,15 +800,19 @@ final class ParamChecker
             }
 
             if ($templateNode->bound !== null) {
-                $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
-                if (! self::checkClassStringSatisfiesBound($val, $resolvedBound)) {
-                    $boundDisplay = (string) $resolvedBound;
+                $boundLower = $templateNode->bound instanceof IdentifierTypeNode ? strtolower($templateNode->bound->name) : '';
+                if ($boundLower !== 'object' && $boundLower !== 'mixed') {
+                    $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
+                    if (! self::checkClassStringSatisfiesBound($val, $resolvedBound)) {
+                        $boundDisplay = (string) $resolvedBound;
 
-                    return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a class-string of ' . $boundDisplay . ", '" . $val . "' given");
+                        return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a class-string of ' . $boundDisplay . ", '" . $val . "' given");
+                    }
                 }
             }
 
-            TemplateManager::bindTemplate($function, $targetObj, $templateName, new IdentifierTypeNode($val));
+            $classNode = TemplateManager::$classNodeCache[$val] ??= new IdentifierTypeNode($val);
+            TemplateManager::bindTemplate($function, $targetObj, $templateName, $classNode);
         } else {
             $expectedTypeNode = TemplateManager::getBoundType($function, $targetObj, $templateName);
             if ($expectedTypeNode !== null) {
