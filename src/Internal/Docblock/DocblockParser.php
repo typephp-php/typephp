@@ -37,7 +37,7 @@ final class DocblockParser
     /**
      * Cache for resolved contract metadata.
      *
-     * @var array<string, array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool}>
+     * @var array<string, array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool, paramsUseGenerics: bool, returnUsesGenerics: bool}>
      */
     private static array $cache = [];
 
@@ -146,9 +146,92 @@ final class DocblockParser
     }
 
     /**
+     * Checks recursively whether an AST TypeNode references any declared generic templates.
+     *
+     * @param array<string, mixed> $templateNames
+     */
+    public static function typeReferencesTemplate(?TypeNode $node, array $templateNames): bool
+    {
+        if ($node === null || $templateNames === []) {
+            return false;
+        }
+
+        if ($node instanceof IdentifierTypeNode) {
+            return isset($templateNames[$node->name]);
+        }
+
+        if ($node instanceof GenericTypeNode) {
+            if (isset($templateNames[$node->type->name])) {
+                return true;
+            }
+            foreach ($node->genericTypes as $gt) {
+                if (self::typeReferencesTemplate($gt, $templateNames)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if ($node instanceof ArrayTypeNode || $node instanceof NullableTypeNode) {
+            return self::typeReferencesTemplate($node->type, $templateNames);
+        }
+
+        if ($node instanceof UnionTypeNode || $node instanceof IntersectionTypeNode) {
+            foreach ($node->types as $t) {
+                if (self::typeReferencesTemplate($t, $templateNames)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if ($node instanceof ArrayShapeNode) {
+            foreach ($node->items as $item) {
+                if (self::typeReferencesTemplate($item->valueType, $templateNames)) {
+                    return true;
+                }
+            }
+
+            if ($node->unsealedType !== null) {
+                if ($node->unsealedType->keyType !== null && self::typeReferencesTemplate($node->unsealedType->keyType, $templateNames)) {
+                    return true;
+                }
+
+                return self::typeReferencesTemplate($node->unsealedType->valueType, $templateNames);
+            }
+
+            return false;
+        }
+
+        if ($node instanceof ObjectShapeNode) {
+            foreach ($node->items as $item) {
+                if (self::typeReferencesTemplate($item->valueType, $templateNames)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if ($node instanceof CallableTypeNode) {
+            foreach ($node->parameters as $p) {
+                if (self::typeReferencesTemplate($p->type, $templateNames)) {
+                    return true;
+                }
+            }
+
+            return self::typeReferencesTemplate($node->returnType, $templateNames);
+        }
+
+        return false;
+    }
+
+    /**
      * Parses PHPDoc contracts for a function or class method.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool}
+     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool, paramsUseGenerics: bool, returnUsesGenerics: bool}
      */
     public static function parse(string $function): array
     {
@@ -178,6 +261,8 @@ final class DocblockParser
                             'aliases' => $aliases,
                             'hasParamContract' => false,
                             'hasReturnContract' => false,
+                            'paramsUseGenerics' => false,
+                            'returnUsesGenerics' => false,
                         ];
                     }
                 } else {
@@ -189,6 +274,8 @@ final class DocblockParser
                         'aliases' => [],
                         'hasParamContract' => false,
                         'hasReturnContract' => false,
+                        'paramsUseGenerics' => false,
+                        'returnUsesGenerics' => false,
                     ];
                 }
             } else {
@@ -204,6 +291,8 @@ final class DocblockParser
                 'aliases' => [],
                 'hasParamContract' => false,
                 'hasReturnContract' => false,
+                'paramsUseGenerics' => false,
+                'returnUsesGenerics' => false,
             ];
         }
 
@@ -548,7 +637,7 @@ final class DocblockParser
     /**
      * Orchestrates parsing for class methods across the inheritance hierarchy.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool}
+     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool, paramsUseGenerics: bool, returnUsesGenerics: bool}
      */
     private static function parseMethod(\ReflectionMethod $ref): array
     {
@@ -565,6 +654,22 @@ final class DocblockParser
             self::applyConstructorPromotionFallback($ref, $types, $classTemplates, $aliases);
         }
 
+        $paramsUseGenerics = \count($methodTemplates) > 0;
+        if (! $paramsUseGenerics && \count($classTemplates) > 0) {
+            foreach ($types as $tNode) {
+                if (self::typeReferencesTemplate($tNode, $classTemplates)) {
+                    $paramsUseGenerics = true;
+
+                    break;
+                }
+            }
+        }
+
+        $returnUsesGenerics = \count($methodTemplates) > 0;
+        if (! $returnUsesGenerics && $returnType !== null && \count($classTemplates) > 0) {
+            $returnUsesGenerics = self::typeReferencesTemplate($returnType, $classTemplates);
+        }
+
         return [
             'types' => $types,
             'templates' => $methodTemplates,
@@ -573,13 +678,15 @@ final class DocblockParser
             'aliases' => $aliases,
             'hasParamContract' => \count($types) > 0,
             'hasReturnContract' => $returnType !== null,
+            'paramsUseGenerics' => $paramsUseGenerics,
+            'returnUsesGenerics' => $returnUsesGenerics,
         ];
     }
 
     /**
      * Orchestrates parsing for standalone global or namespaced functions.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool}
+     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool, paramsUseGenerics: bool, returnUsesGenerics: bool}
      */
     private static function parseFunction(\ReflectionFunction $ref): array
     {
@@ -601,6 +708,8 @@ final class DocblockParser
                 'aliases' => [],
                 'hasParamContract' => false,
                 'hasReturnContract' => false,
+                'paramsUseGenerics' => false,
+                'returnUsesGenerics' => false,
             ];
         }
 
@@ -666,6 +775,8 @@ final class DocblockParser
             'aliases' => $aliases,
             'hasParamContract' => \count($types) > 0,
             'hasReturnContract' => $returnType !== null,
+            'paramsUseGenerics' => \count($templates) > 0,
+            'returnUsesGenerics' => \count($templates) > 0,
         ];
     }
 
@@ -1119,7 +1230,7 @@ final class DocblockParser
 
         if ($node instanceof CallableTypeNode) {
             $parameters = array_map(
-                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+                fn(CallableTypeParameterNode $param) => new CallableTypeParameterNode(
                     self::substituteAliases($param->type, $aliases),
                     $param->isReference,
                     $param->isVariadic,
@@ -1153,7 +1264,7 @@ final class DocblockParser
         if ($node instanceof GenericTypeNode) {
             $genericType = self::substituteAliases($node->type, $aliases);
             $genericTypes = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->genericTypes
             );
 
@@ -1170,7 +1281,7 @@ final class DocblockParser
 
         if ($node instanceof UnionTypeNode) {
             $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 
@@ -1185,7 +1296,7 @@ final class DocblockParser
 
         if ($node instanceof IntersectionTypeNode) {
             $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 

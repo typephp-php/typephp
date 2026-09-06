@@ -118,13 +118,15 @@ final class RuntimeTypeChecker
     /**
      * Validates a function or method's return value against its declared contract and returns value or ErrorMessage.
      *
-     * @param array<string, mixed> $vars
+     * @param array<string, mixed>|null $vars
      */
-    public static function checkReturn(string $function, mixed $value, object|string|null $thisOrClass = null, array $vars = []): mixed
+    public static function checkReturn(string $function, mixed $value, object|string|null $thisOrClass = null, ?array $vars = []): mixed
     {
         if (! Config::isEnabled()) {
             return $value;
         }
+
+        $vars ??= [];
 
         return ReturnChecker::checkReturn($function, $value, $thisOrClass, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
     }

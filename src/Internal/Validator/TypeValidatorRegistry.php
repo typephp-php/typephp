@@ -39,19 +39,8 @@ final class TypeValidatorRegistry
 
     private ConstValidator $constValidator;
 
-    /**
-     * WeakMap memoizing previously validated object instances against TypeNode signatures.
-     *
-     * @var \WeakMap<object, array<string, bool>>|null
-     */
-    private static ?\WeakMap $validatedObjectCache = null;
-
-    /**
-     * Resets the validated object cache. Useful for test isolation.
-     */
     public static function reset(): void
     {
-        self::$validatedObjectCache = null;
     }
 
     public function __construct()
@@ -72,20 +61,7 @@ final class TypeValidatorRegistry
      */
     public function validate(mixed $value, TypeNode $node, string $context = ''): ?ErrorMessage
     {
-        $isObj = \is_object($value);
-        $nodeKey = null;
-
-        // Object Validation Memoization Optimization (O(1) lookup for repeated object checks)
-        if ($isObj) {
-            self::$validatedObjectCache ??= new \WeakMap();
-            $nodeKey = ($node instanceof IdentifierTypeNode) ? $node->name : (string) $node;
-
-            if (isset(self::$validatedObjectCache[$value][$nodeKey])) {
-                return null;
-            }
-        }
-
-        $err = match ($node::class) {
+        return match ($node::class) {
             IdentifierTypeNode::class => $this->identifierValidator->validate($value, $node, $context, $this),
             GenericTypeNode::class => $this->genericValidator->validate($value, $node, $context, $this),
             UnionTypeNode::class => $this->unionValidator->validate($value, $node, $context, $this),
@@ -97,13 +73,5 @@ final class TypeValidatorRegistry
             ConstTypeNode::class => $this->constValidator->validate($value, $node, $context, $this),
             default => null,
         };
-
-        if ($err === null && $isObj && $nodeKey !== null) {
-            $cache = self::$validatedObjectCache[$value] ?? [];
-            $cache[$nodeKey] = true;
-            self::$validatedObjectCache[$value] = $cache;
-        }
-
-        return $err;
     }
 }

@@ -429,6 +429,11 @@ final class TemplateManager
         return $bindings;
     }
 
+    public static function hasInstanceBindings(object $instance): bool
+    {
+        return self::$instanceTemplateBindings !== null && isset(self::$instanceTemplateBindings[$instance]);
+    }
+
     /**
      * Retrieves all bound template TypeNodes for a specific object instance.
      *

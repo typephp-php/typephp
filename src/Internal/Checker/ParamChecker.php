@@ -72,12 +72,10 @@ final class ParamChecker
 
         $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
 
-        // Fast-path 1: Known zero-contract method (magic calls are dynamic and cannot be short-circuited here)
         if (! $isMagicCall && isset(self::$noParamContractCache[$effectiveFunction])) {
             return null;
         }
 
-        // Fast-path 2: If no arguments were passed and it's not a magic __call dispatch, exit immediately
         if ($vars === [] && ! $isMagicCall) {
             return null;
         }
@@ -99,12 +97,13 @@ final class ParamChecker
             return null;
         }
 
+        $paramsUseGenerics = (bool) ($contract['paramsUseGenerics'] ?? true);
         $methodTemplates = $contract['templates'];
         $classTemplates = $contract['classTemplates'] ?? [];
         $aliases = $contract['aliases'];
-        $hasGenerics = (\count($methodTemplates) > 0 || \count($classTemplates) > 0);
+        $hasMethodTemplates = (\count($methodTemplates) > 0);
 
-        if (! $hasGenerics && \count($aliases) === 0) {
+        if (! $paramsUseGenerics && ! $hasMethodTemplates && \count($aliases) === 0) {
             foreach ($contract['types'] as $paramName => $typeNode) {
                 if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
                     $err = $registry->validate($vars[$paramName], $typeNode, $effectiveFunction . '(): Argument $' . $paramName);
@@ -117,17 +116,17 @@ final class ParamChecker
             return null;
         }
 
-        if (\count($methodTemplates) > 0) {
+        if ($hasMethodTemplates) {
             TemplateManager::clearCallBindings($effectiveFunction, $methodTemplates);
         }
 
-        if ($thisObj !== null && \count($classTemplates) > 0 && str_contains($effectiveFunction, '::')) {
+        if ($thisObj !== null && \count($classTemplates) > 0 && ! TemplateManager::hasInstanceBindings($thisObj) && str_contains($effectiveFunction, '::')) {
             $declaringClass = explode('::', $effectiveFunction, 2)[0];
             TemplateManager::resolveInheritedTemplates($thisObj, $declaringClass);
         }
 
         $allTemplates = [...$classTemplates, ...$methodTemplates];
-        if (\count($allTemplates) > 0) {
+        if (\count($allTemplates) > 0 && $paramsUseGenerics) {
             self::preInferGenericTemplates($contract['types'], $vars, $effectiveFunction, $thisObj, $allTemplates);
         }
 
