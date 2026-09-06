@@ -36,11 +36,19 @@ final class ParamChecker
     private static array $effectiveFunctionCache = [];
 
     /**
-     * Resets the effective function cache. Useful for test isolation.
+     * O(1) Fast-path cache for methods determined to have no parameter contracts.
+     *
+     * @var array<string, true>
+     */
+    private static array $noParamContractCache = [];
+
+    /**
+     * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
     {
         self::$effectiveFunctionCache = [];
+        self::$noParamContractCache = [];
     }
 
     /**
@@ -62,8 +70,15 @@ final class ParamChecker
             $effectiveFunction = self::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
         }
 
-        // Fast-path: If no arguments were passed and it's not a magic __call dispatch, exit immediately
-        if ($vars === [] && ! str_ends_with($effectiveFunction, '::__call') && ! str_ends_with($effectiveFunction, '::__callStatic')) {
+        $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
+
+        // Fast-path 1: Known zero-contract method (magic calls are dynamic and cannot be short-circuited here)
+        if (! $isMagicCall && isset(self::$noParamContractCache[$effectiveFunction])) {
+            return null;
+        }
+
+        // Fast-path 2: If no arguments were passed and it's not a magic __call dispatch, exit immediately
+        if ($vars === [] && ! $isMagicCall) {
             return null;
         }
 
@@ -72,9 +87,15 @@ final class ParamChecker
             return $magicError;
         }
 
+        if ($isMagicCall) {
+            return null;
+        }
+
         $contract = DocblockParser::parse($effectiveFunction);
 
         if (! $contract['hasParamContract']) {
+            self::$noParamContractCache[$effectiveFunction] = true;
+
             return null;
         }
 
@@ -85,7 +106,7 @@ final class ParamChecker
 
         if (! $hasGenerics && \count($aliases) === 0) {
             foreach ($contract['types'] as $paramName => $typeNode) {
-                if (\array_key_exists($paramName, $vars)) {
+                if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
                     $err = $registry->validate($vars[$paramName], $typeNode, $effectiveFunction . '(): Argument $' . $paramName);
                     if ($err !== null) {
                         return $err;
@@ -114,7 +135,7 @@ final class ParamChecker
         $declaredTemplates = $allTemplates;
 
         foreach ($contract['types'] as $paramName => $typeNode) {
-            if (! \array_key_exists($paramName, $vars)) {
+            if (! isset($vars[$paramName]) && ! \array_key_exists($paramName, $vars)) {
                 continue;
             }
 
@@ -153,40 +174,37 @@ final class ParamChecker
             return $function;
         }
 
-        [$classOrTrait, $methodName] = explode('::', $function, 2);
-
         $cacheKey = $function . '|' . $actualClassName;
         if (isset(self::$effectiveFunctionCache[$cacheKey])) {
             return self::$effectiveFunctionCache[$cacheKey];
         }
+
+        [$classOrTrait, $methodName] = explode('::', $function, 2);
 
         $effectiveFunction = ($actualClassName !== $classOrTrait)
             ? $actualClassName . '::' . $methodName
             : $function;
 
         if ($thisObj !== null) {
-            $targetClass = $actualClassName;
-            $traitAliases = HierarchyResolver::getTraitAliases($targetClass);
+            $traitAliases = HierarchyResolver::getTraitAliases($actualClassName);
 
             if (\count($traitAliases) > 0) {
-                $isPotentialAlias = isset($traitAliases[$methodName]);
-                if (! $isPotentialAlias) {
-                    foreach ($traitAliases as $originalTarget) {
-                        if (str_ends_with($originalTarget, '::' . $methodName)) {
-                            $isPotentialAlias = true;
+                $isTargetOfAlias = false;
+                foreach ($traitAliases as $originalTarget) {
+                    if (str_ends_with($originalTarget, '::' . $methodName)) {
+                        $isTargetOfAlias = true;
 
-                            break;
-                        }
+                        break;
                     }
                 }
 
-                if ($isPotentialAlias) {
+                if ($isTargetOfAlias) {
                     $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
                     foreach ($trace as $frame) {
                         $frameFunc = $frame['function'];
                         $frameClass = $frame['class'] ?? '';
                         if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
-                            return self::$effectiveFunctionCache[$cacheKey] = $targetClass . '::' . $frameFunc;
+                            return self::$effectiveFunctionCache[$cacheKey] = $actualClassName . '::' . $frameFunc;
                         }
                     }
                 }
@@ -275,7 +293,7 @@ final class ParamChecker
         $classTemplates = $contract['classTemplates'] ?? [];
 
         foreach ($callableNodes as $cParamName => $cTypeNode) {
-            if (! \array_key_exists($cParamName, $vars) || ! ($vars[$cParamName] instanceof \Closure)) {
+            if (! isset($vars[$cParamName]) || ! ($vars[$cParamName] instanceof \Closure)) {
                 continue;
             }
 
@@ -384,7 +402,7 @@ final class ParamChecker
         array $templates
     ): void {
         foreach ($types as $paramName => $typeNode) {
-            if (! \array_key_exists($paramName, $vars) || ! \is_array($vars[$paramName]) || \count($vars[$paramName]) === 0) {
+            if (! isset($vars[$paramName]) || ! \is_array($vars[$paramName]) || \count($vars[$paramName]) === 0) {
                 continue;
             }
 

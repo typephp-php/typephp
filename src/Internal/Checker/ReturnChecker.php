@@ -33,11 +33,27 @@ final class ReturnChecker
     private static array $effectiveFunctionCache = [];
 
     /**
-     * Resets the effective function cache. Useful for test isolation.
+     * O(1) Fast-path cache for methods determined to have no return contracts.
+     *
+     * @var array<string, true>
+     */
+    private static array $noReturnContractCache = [];
+
+    /**
+     * Memoized static return type resolutions for non-dynamic methods.
+     *
+     * @var array<string, TypeNode>
+     */
+    private static array $resolvedStaticReturnCache = [];
+
+    /**
+     * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
     {
         self::$effectiveFunctionCache = [];
+        self::$noReturnContractCache = [];
+        self::$resolvedStaticReturnCache = [];
     }
 
     /**
@@ -58,6 +74,13 @@ final class ReturnChecker
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = self::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
+        $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
+
+        // Fast-path: Known zero-contract method (magic calls are dynamic and cannot be short-circuited here)
+        if (! $isMagicCall && isset(self::$noReturnContractCache[$effectiveFunction])) {
+            return $value;
+        }
+
         $magicResult = self::handleMagicReturn(
             $effectiveFunction,
             $value,
@@ -71,14 +94,22 @@ final class ReturnChecker
             return $magicResult;
         }
 
+        if ($isMagicCall) {
+            return $value;
+        }
+
         $contract = DocblockParser::parse($effectiveFunction);
 
         if (! ($contract['hasReturnContract'] ?? ($contract['return'] !== null))) {
+            self::$noReturnContractCache[$effectiveFunction] = true;
+
             return $value;
         }
 
         $returnTypeNode = $contract['return'];
         if ($returnTypeNode === null) {
+            self::$noReturnContractCache[$effectiveFunction] = true;
+
             return $value;
         }
 
@@ -111,40 +142,37 @@ final class ReturnChecker
             return $function;
         }
 
-        [$classOrTrait, $methodName] = explode('::', $function, 2);
-
         $cacheKey = $function . '|' . $actualClassName;
         if (isset(self::$effectiveFunctionCache[$cacheKey])) {
             return self::$effectiveFunctionCache[$cacheKey];
         }
+
+        [$classOrTrait, $methodName] = explode('::', $function, 2);
 
         $effectiveFunction = ($actualClassName !== $classOrTrait)
             ? $actualClassName . '::' . $methodName
             : $function;
 
         if ($thisObj !== null) {
-            $targetClass = $actualClassName;
-            $traitAliases = HierarchyResolver::getTraitAliases($targetClass);
+            $traitAliases = HierarchyResolver::getTraitAliases($actualClassName);
 
             if (\count($traitAliases) > 0) {
-                $isPotentialAlias = isset($traitAliases[$methodName]);
-                if (! $isPotentialAlias) {
-                    foreach ($traitAliases as $originalTarget) {
-                        if (str_ends_with($originalTarget, '::' . $methodName)) {
-                            $isPotentialAlias = true;
+                $isTargetOfAlias = false;
+                foreach ($traitAliases as $originalTarget) {
+                    if (str_ends_with($originalTarget, '::' . $methodName)) {
+                        $isTargetOfAlias = true;
 
-                            break;
-                        }
+                        break;
                     }
                 }
 
-                if ($isPotentialAlias) {
+                if ($isTargetOfAlias) {
                     $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
                     foreach ($trace as $frame) {
                         $frameFunc = $frame['function'];
                         $frameClass = $frame['class'] ?? '';
                         if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
-                            return self::$effectiveFunctionCache[$cacheKey] = $targetClass . '::' . $frameFunc;
+                            return self::$effectiveFunctionCache[$cacheKey] = $actualClassName . '::' . $frameFunc;
                         }
                     }
                 }
@@ -234,7 +262,15 @@ final class ReturnChecker
         $isConditional = ($returnTypeNode instanceof ConditionalTypeForParameterNode || $returnTypeNode instanceof ConditionalTypeNode);
 
         if (! $hasGenerics && ! $hasAliases && ! $isConditional && ! ($returnTypeNode instanceof CallableTypeNode)) {
-            $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
+            $typeStr = (string) $returnTypeNode;
+            $isDynamic = str_contains($typeStr, 'static') || str_contains($typeStr, '$this');
+
+            if (! $isDynamic) {
+                $resolvedType = self::$resolvedStaticReturnCache[$function] ??= SpecialTypeResolver::resolve($returnTypeNode, $function, null);
+            } else {
+                $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
+            }
+
             $err = $registry->validate($value, $resolvedType, $function . '(): Return value');
             if ($err !== null) {
                 return $err;
@@ -338,7 +374,7 @@ final class ReturnChecker
         $paramName = ltrim($node->parameterName, '$');
         $paramValue = null;
 
-        if (\array_key_exists($paramName, $vars)) {
+        if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
             $paramValue = $vars[$paramName];
         } elseif (\count($vars) > 0 && $function !== '' && str_contains($function, '::')) {
             $paramValue = self::resolveRenamedParamValue($function, $paramName, $vars);
@@ -392,7 +428,7 @@ final class ReturnChecker
 
             if ($targetIndex !== null) {
                 $values = array_values($vars);
-                if (\array_key_exists($targetIndex, $values)) {
+                if (isset($values[$targetIndex]) || \array_key_exists($targetIndex, $values)) {
                     return $values[$targetIndex];
                 }
             }

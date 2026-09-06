@@ -1068,7 +1068,7 @@ final class TemplateManager
     {
         if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
             foreach ($expected->types as $intersectionMember) {
-                if (self::checkVariance($existing, $intersectionMember, $variance)) {
+                if (! self::checkVariance($existing, $intersectionMember, $variance)) {
                     return true;
                 }
             }
