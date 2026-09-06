@@ -95,6 +95,11 @@ final class RuntimeTypeChecker
      */
     public static function checkProperty(mixed $value, mixed $objectOrClass, string $propName, string $file): mixed
     {
+        $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
+        if ($className !== '' && isset(InlineChecker::$nullPropertyCache[$className . '::$' . $propName])) {
+            return $value;
+        }
+
         if (! Config::isEnabled()) {
             return $value;
         }
@@ -123,11 +128,11 @@ final class RuntimeTypeChecker
      */
     public static function setupScope(string $function, array $vars, object|string|null $thisOrClass = null): ErrorMessage|ScopeCleaner|null
     {
-        if (! Config::isEnabled()) {
+        if (isset(ParamChecker::$noParamContractCache[$function]) && ! (self::$hasMethodTemplatesCache[$function] ?? false)) {
             return null;
         }
 
-        if (isset(ParamChecker::$noParamContractCache[$function]) && ! (self::$hasMethodTemplatesCache[$function] ?? false)) {
+        if (! Config::isEnabled()) {
             return null;
         }
 
@@ -188,6 +193,10 @@ final class RuntimeTypeChecker
      */
     public static function checkReturn(string $function, mixed $value, object|string|null $thisOrClass = null, ?array $vars = []): mixed
     {
+        if (isset(ReturnChecker::$noReturnContractCache[$function])) {
+            return $value;
+        }
+
         if (! Config::isEnabled()) {
             return $value;
         }

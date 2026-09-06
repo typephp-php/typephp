@@ -652,7 +652,7 @@ final class DocblockParser
     /**
      * Orchestrates parsing for class methods across the inheritance hierarchy.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool, paramsUseGenerics: bool, returnUsesGenerics: bool}
+     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool, paramsUseGenerics: bool, returnUsesGenerics: bool, returnIsThis: bool, returnIsDynamic: bool}
      */
     private static function parseMethod(\ReflectionMethod $ref): array
     {
@@ -685,6 +685,15 @@ final class DocblockParser
             $returnUsesGenerics = self::typeReferencesTemplate($returnType, $classTemplates);
         }
 
+        $returnIsThis = false;
+        $returnIsDynamic = false;
+        if ($returnType !== null) {
+            $retStr = (string) $returnType;
+            $returnIsThis = ($returnType instanceof \PHPStan\PhpDocParser\Ast\Type\ThisTypeNode)
+                || ($returnType instanceof IdentifierTypeNode && strtolower($returnType->name) === '$this');
+            $returnIsDynamic = $returnIsThis || str_contains($retStr, 'static') || str_contains($retStr, '$this');
+        }
+
         return [
             'types' => $types,
             'templates' => $methodTemplates,
@@ -695,13 +704,15 @@ final class DocblockParser
             'hasReturnContract' => $returnType !== null,
             'paramsUseGenerics' => $paramsUseGenerics,
             'returnUsesGenerics' => $returnUsesGenerics,
+            'returnIsThis' => $returnIsThis,
+            'returnIsDynamic' => $returnIsDynamic,
         ];
     }
 
     /**
      * Orchestrates parsing for standalone global or namespaced functions.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool, paramsUseGenerics: bool, returnUsesGenerics: bool}
+     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool, paramsUseGenerics: bool, returnUsesGenerics: bool, returnIsThis: bool, returnIsDynamic: bool}
      */
     private static function parseFunction(\ReflectionFunction $ref): array
     {
@@ -725,6 +736,8 @@ final class DocblockParser
                 'hasReturnContract' => false,
                 'paramsUseGenerics' => false,
                 'returnUsesGenerics' => false,
+                'returnIsThis' => false,
+                'returnIsDynamic' => false,
             ];
         }
 
@@ -782,6 +795,15 @@ final class DocblockParser
             }
         }
 
+        $returnIsThis = false;
+        $returnIsDynamic = false;
+        if ($returnType !== null) {
+            $retStr = (string) $returnType;
+            $returnIsThis = ($returnType instanceof \PHPStan\PhpDocParser\Ast\Type\ThisTypeNode)
+                || ($returnType instanceof IdentifierTypeNode && strtolower($returnType->name) === '$this');
+            $returnIsDynamic = $returnIsThis || str_contains($retStr, 'static') || str_contains($retStr, '$this');
+        }
+
         return [
             'types' => $types,
             'templates' => $templates,
@@ -792,6 +814,8 @@ final class DocblockParser
             'hasReturnContract' => $returnType !== null,
             'paramsUseGenerics' => \count($templates) > 0,
             'returnUsesGenerics' => \count($templates) > 0,
+            'returnIsThis' => $returnIsThis,
+            'returnIsDynamic' => $returnIsDynamic,
         ];
     }
 
@@ -1242,7 +1266,7 @@ final class DocblockParser
 
         if ($node instanceof CallableTypeNode) {
             $parameters = array_map(
-                fn(CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
                     self::substituteAliases($param->type, $aliases),
                     $param->isReference,
                     $param->isVariadic,
@@ -1276,7 +1300,7 @@ final class DocblockParser
         if ($node instanceof GenericTypeNode) {
             $genericType = self::substituteAliases($node->type, $aliases);
             $genericTypes = array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->genericTypes
             );
 
@@ -1293,7 +1317,7 @@ final class DocblockParser
 
         if ($node instanceof UnionTypeNode) {
             $types = array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 
@@ -1308,7 +1332,7 @@ final class DocblockParser
 
         if ($node instanceof IntersectionTypeNode) {
             $types = array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 

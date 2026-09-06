@@ -89,29 +89,17 @@ final class ContractVisitor extends NodeVisitorAbstract
                 'name' => $typeName,
                 'isAnonymous' => false,
                 'hasInheritance' => true,
+                'hasPropertyWithDoc' => false,
             ];
         } elseif ($node instanceof Node\Stmt\Trait_) {
             $typeName = $node->name !== null
                 ? ($this->currentNamespace !== '' ? $this->currentNamespace . '\\' . $node->name->toString() : $node->name->toString())
                 : null;
-            $hasTraits = false;
-            foreach ($node->stmts as $stmt) {
-                if ($stmt instanceof Node\Stmt\TraitUse) {
-                    $hasTraits = true;
-
-                    break;
-                }
-            }
-            $doc = $node->getDocComment();
-            $hasClassDoc = $doc !== null && (
-                str_contains($doc->getText(), '@template')
-                || str_contains($doc->getText(), '@phpstan-')
-                || str_contains($doc->getText(), '@psalm-')
-            );
             $this->classStack[] = [
                 'name' => $typeName,
                 'isAnonymous' => false,
-                'hasInheritance' => ($hasTraits || $hasClassDoc),
+                'hasInheritance' => true,
+                'hasPropertyWithDoc' => false,
             ];
         } elseif ($node instanceof Node\Stmt\Enum_) {
             $typeName = $node->name !== null
@@ -121,6 +109,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                 'name' => $typeName,
                 'isAnonymous' => false,
                 'hasInheritance' => ! empty($node->implements),
+                'hasPropertyWithDoc' => false,
             ];
         } elseif ($node instanceof Node\Stmt\ClassMethod) {
             $this->methodStack[] = ['name' => $node->name->toString(), 'isStatic' => $node->isStatic()];
@@ -131,7 +120,7 @@ final class ContractVisitor extends NodeVisitorAbstract
             $this->thisAvailableStack[] = false;
         } elseif ($node instanceof Node\Expr\Closure || $node instanceof Node\Expr\ArrowFunction) {
             $parentHasThis = ! empty($this->thisAvailableStack) && end($this->thisAvailableStack);
-            $this->thisAvailableStack[] = $parentHasThis && ! $node->static;
+            $this->thisAvailableStack[] = ! $node->static;
         }
 
         if (
@@ -152,7 +141,8 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
-            FunctionContractInjector::inject($node);
+            $classContext = ! empty($this->classStack) ? end($this->classStack) : null;
+            FunctionContractInjector::inject($node, $classContext);
 
             return null;
         }
@@ -361,7 +351,9 @@ final class ContractVisitor extends NodeVisitorAbstract
 
     private function getCurrentThisExpr(): Node\Expr
     {
-        $hasThis = ! empty($this->thisAvailableStack) && end($this->thisAvailableStack);
+        $hasThis = ! empty($this->classStack)
+            && ! empty($this->thisAvailableStack)
+            && end($this->thisAvailableStack);
 
         return $hasThis
             ? new Node\Expr\Variable('this')

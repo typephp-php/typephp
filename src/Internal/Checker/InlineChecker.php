@@ -66,7 +66,7 @@ final class InlineChecker
      *
      * @var array<string, true>
      */
-    private static array $nullPropertyCache = [];
+    public static array $nullPropertyCache = [];
 
     /**
      * Resets internal type node and function caches. Useful for test isolation.

@@ -32,7 +32,14 @@ final class ReturnChecker
      *
      * @var array<string, true>
      */
-    private static array $noReturnContractCache = [];
+    public static array $noReturnContractCache = [];
+
+    /**
+     * In-memory cache for unbound generic return types.
+     *
+     * @var array<string, TypeNode>
+     */
+    public static array $unboundReturnCache = [];
 
     /**
      * Memoized static return type resolutions for non-dynamic, non-generic methods.
@@ -48,6 +55,7 @@ final class ReturnChecker
     {
         self::$noReturnContractCache = [];
         self::$resolvedStaticReturnCache = [];
+        self::$unboundReturnCache = [];
     }
 
     /**
@@ -65,7 +73,6 @@ final class ReturnChecker
             return $value;
         }
 
-        // Fast-path: Check if direct function is already known to have zero contracts
         if (isset(self::$noReturnContractCache[$function])) {
             return $value;
         }
@@ -73,7 +80,6 @@ final class ReturnChecker
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        // Fast-path: Check effective function cache
         if (isset(self::$noReturnContractCache[$effectiveFunction])) {
             self::$noReturnContractCache[$function] = true;
 
@@ -127,7 +133,8 @@ final class ReturnChecker
             $contract['aliases'] ?? [],
             $allTemplates,
             $registry,
-            $wrapIterableCallback
+            $wrapIterableCallback,
+            $contract
         );
     }
 
@@ -199,7 +206,8 @@ final class ReturnChecker
         array $aliases,
         array $templates,
         TypeValidatorRegistry $registry,
-        callable $wrapIterableCallback
+        callable $wrapIterableCallback,
+        array $contract = []
     ): mixed {
         $err = SpecialTypeResolver::checkThisIdentity($returnTypeNode, $value, $thisObj, $function);
         if ($err !== null) {
@@ -211,8 +219,7 @@ final class ReturnChecker
         $isConditional = ($returnTypeNode instanceof ConditionalTypeForParameterNode || $returnTypeNode instanceof ConditionalTypeNode);
 
         if (! $hasGenerics && ! $hasAliases && ! $isConditional && ! ($returnTypeNode instanceof CallableTypeNode)) {
-            $typeStr = (string) $returnTypeNode;
-            $isDynamic = str_contains($typeStr, 'static') || str_contains($typeStr, '$this');
+            $isDynamic = $contract['returnIsDynamic'] ?? (str_contains((string) $returnTypeNode, 'static') || str_contains((string) $returnTypeNode, '$this'));
 
             if (! $isDynamic) {
                 $resolvedType = self::$resolvedStaticReturnCache[$function] ??= SpecialTypeResolver::resolve($returnTypeNode, $function, null);
@@ -250,7 +257,13 @@ final class ReturnChecker
 
         $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
 
-        if (\count($boundTemplates) > 0 || \count($templates) > 0) {
+        if (\count($boundTemplates) === 0 && \count($templates) > 0 && ! $isConditional && $thisObj === null) {
+            $resolvedType = self::$unboundReturnCache[$function] ??= SpecialTypeResolver::resolve(
+                TemplateSubstitutor::substitute($returnTypeNode, [], $templates),
+                $function,
+                null
+            );
+        } elseif (\count($boundTemplates) > 0 || \count($templates) > 0) {
             $resolvedType = TemplateSubstitutor::substitute($resolvedType, $boundTemplates, $templates);
             $resolvedType = SpecialTypeResolver::resolve($resolvedType, $function, $thisObj);
         }

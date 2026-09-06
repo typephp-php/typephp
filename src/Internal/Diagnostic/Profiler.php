@@ -15,23 +15,38 @@ final class Profiler
 
     // Call Counts
     public static int $scopeCount = 0;
+
     public static int $paramCheckCount = 0;
+
     public static int $paramCheckSkips = 0;
+
     public static int $returnCount = 0;
+
     public static int $variableCount = 0;
+
     public static int $propertyCount = 0;
+
     public static int $docblockParseCount = 0;
+
     public static int $docblockParseHits = 0;
+
     public static int $streamTransformCount = 0;
+
     public static int $streamCachedCount = 0;
 
     // Timing (nanoseconds via hrtime)
     public static int $scopeTimeNs = 0;
+
     public static int $paramCheckTimeNs = 0;
+
     public static int $returnTimeNs = 0;
+
     public static int $variableTimeNs = 0;
+
     public static int $propertyTimeNs = 0;
+
     public static int $docblockParseTimeNs = 0;
+
     public static int $transformTimeNs = 0;
 
     /**
@@ -181,13 +196,13 @@ final class Profiler
 
         if (! empty(self::$hotspots)) {
             arsort(self::$hotspots);
-            $topHotspots = array_slice(self::$hotspots, 0, 10, true);
+            $topHotspots = \array_slice(self::$hotspots, 0, 10, true);
 
             $output .= "\n  " . $c('TOP 10 METHOD HOTSPOTS (MOST FREQUENTLY CALLED)', 'yellow') . "\n";
             $output .= '  ' . str_repeat('─', 90) . "\n";
             $rank = 1;
             foreach ($topHotspots as $func => $count) {
-                $output .= sprintf("  %2d. %-67s %12s calls\n", $rank++, $func, number_format($count));
+                $output .= \sprintf("  %2d. %-67s %12s calls\n", $rank++, $func, number_format($count));
             }
         }
 

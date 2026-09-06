@@ -24,6 +24,33 @@ final class FunctionContractInjector
 
         $isClassMethod = $node instanceof Node\Stmt\ClassMethod;
         $doc = $node->getDocComment();
+        if ($doc === null) {
+            foreach ($node->getComments() as $comment) {
+                if ($comment instanceof \PhpParser\Comment\Doc) {
+                    $doc = $comment;
+
+                    break;
+                }
+            }
+        }
+        if ($doc === null && ! empty($node->attrGroups)) {
+            foreach ($node->attrGroups as $group) {
+                $groupDoc = $group->getDocComment();
+                if ($groupDoc !== null) {
+                    $doc = $groupDoc;
+
+                    break;
+                }
+                foreach ($group->getComments() as $comment) {
+                    if ($comment instanceof \PhpParser\Comment\Doc) {
+                        $doc = $comment;
+
+                        break 2;
+                    }
+                }
+            }
+        }
+
         $docText = $doc !== null ? $doc->getText() : '';
 
         $hasInheritance = $classContext['hasInheritance'] ?? true;
@@ -38,8 +65,13 @@ final class FunctionContractInjector
         $isPrivate = $isClassMethod && $node->isPrivate();
 
         $paramCount = \count($node->params);
-        $hasParam = self::hasParamContracts($docText, $isClassMethod, $hasInheritance, $paramCount, $isPrivate, $isConstructor, $hasPropertyWithDoc, $classContext === null);
-        $hasReturn = ! $isMagicLifecycle && ! $isNativeNever && ! ($isNativeVoid && $docText === '') && self::hasReturnContracts($docText, $isClassMethod, $hasInheritance, $isPrivate);
+        $hasParam = self::hasParamContracts($docText, $isClassMethod, $hasInheritance, $paramCount, $isPrivate, $isConstructor, $hasPropertyWithDoc, $classContext === null, ! empty($node->attrGroups));
+
+        $hasReturnDoc = str_contains($docText, '@return') || str_contains($docText, '@phpstan-return') || str_contains($docText, '@psalm-return');
+        $hasReturn = ! $isMagicLifecycle
+            && ! $isNativeNever
+            && ! ($isNativeVoid && ! $hasReturnDoc)
+            && self::hasReturnContracts($docText, $isClassMethod, $hasInheritance, $isPrivate);
 
         if (! $hasParam && ! $hasReturn) {
             return;
@@ -47,7 +79,7 @@ final class FunctionContractInjector
 
         $thisArg = self::resolveThisArg($isClassMethod, $node);
         $needsReturnVars = $hasParam && ($paramCount > 0) && (
-            $isClassMethod || str_contains($docText, ' is ') || (str_contains($docText, '@return') && str_contains($docText, '$'))
+            $hasInheritance || str_contains($docText, ' is ') || ($hasReturnDoc && str_contains($docText, '$'))
         );
 
         $injectedStmts = [];
@@ -72,28 +104,30 @@ final class FunctionContractInjector
         bool $isPrivate,
         bool $isConstructor,
         bool $hasPropertyWithDoc,
-        bool $isDirectUnitTest
+        bool $isDirectUnitTest,
+        bool $hasAttributes = false
     ): bool {
+        if ($paramCount === 0 && ! str_contains($docText, '@template')) {
+            if ($isDirectUnitTest && $isClassMethod) {
+                return true;
+            }
+
+            return false;
+        }
+
         if ($isDirectUnitTest && $isClassMethod) {
             return true;
         }
 
-        if ($paramCount === 0 && ! str_contains($docText, '@template')) {
-            return false;
-        }
-
-        // Constructors cannot inherit parameter contracts from interfaces/parents, only from class properties
         if ($isConstructor && $docText === '' && ! $hasPropertyWithDoc) {
             return false;
         }
 
-        // Private methods cannot inherit contracts from interfaces or parents
         if ($isPrivate && $docText === '') {
             return false;
         }
 
-        // Standalone classes without inheritance cannot inherit contracts
-        if (! $hasInheritance && $docText === '') {
+        if (! $hasInheritance && $docText === '' && ! ($isConstructor && $hasPropertyWithDoc) && ! $hasAttributes) {
             return false;
         }
 
@@ -123,7 +157,7 @@ final class FunctionContractInjector
             return false;
         }
 
-        return $isClassMethod && $hasInheritance && ! $isPrivate;
+        return $isClassMethod && ! $isPrivate;
     }
 
     private static function hasReturnContracts(
@@ -136,15 +170,16 @@ final class FunctionContractInjector
             return false;
         }
 
-        if (! $hasInheritance && $docText === '') {
-            return false;
-        }
-
-        if (str_contains($docText, '@template') || str_contains($docText, '@phpstan-return') || str_contains($docText, '@psalm-return')) {
+        if (
+            str_contains($docText, '@template')
+            || str_contains($docText, '@phpstan-return')
+            || str_contains($docText, '@psalm-return')
+            || str_contains($docText, '$this')
+        ) {
             return true;
         }
 
-        if (preg_match('/@return\s+([^\s$]+)/', $docText, $matches) === 1) {
+        if (preg_match('/@return\s+([^\s]+)/', $docText, $matches) === 1) {
             $returnTypeStr = $matches[1];
             $unionParts = explode('|', $returnTypeStr);
             foreach ($unionParts as $part) {
@@ -156,7 +191,7 @@ final class FunctionContractInjector
             return true;
         }
 
-        return $isClassMethod && $hasInheritance && ! $isPrivate;
+        return $isClassMethod && ! $isPrivate;
     }
 
     private static function resolveThisArg(bool $isClassMethod, Node\Stmt\Function_|Node\Stmt\ClassMethod $node): Node\Expr
