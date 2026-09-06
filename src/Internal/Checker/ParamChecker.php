@@ -15,6 +15,7 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Diagnostic\Profiler;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
@@ -40,7 +41,7 @@ final class ParamChecker
      *
      * @var array<string, true>
      */
-    private static array $noParamContractCache = [];
+    public static array $noParamContractCache = [];
 
     /**
      * Resets internal caches. Useful for test isolation.
@@ -49,6 +50,7 @@ final class ParamChecker
     {
         self::$effectiveFunctionCache = [];
         self::$noParamContractCache = [];
+        ClassNameValidator::reset();
     }
 
     /**
@@ -65,6 +67,12 @@ final class ParamChecker
             return null;
         }
 
+        $start = 0;
+        if (Profiler::$enabled) {
+            Profiler::$paramCheckCount++;
+            $start = hrtime(true);
+        }
+
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         if ($effectiveFunction === '') {
             $effectiveFunction = self::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
@@ -73,19 +81,37 @@ final class ParamChecker
         $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
 
         if (! $isMagicCall && isset(self::$noParamContractCache[$effectiveFunction])) {
+            if (Profiler::$enabled) {
+                Profiler::$paramCheckSkips++;
+                Profiler::$paramCheckTimeNs += hrtime(true) - $start;
+            }
+
             return null;
         }
 
         if ($vars === [] && ! $isMagicCall) {
+            if (Profiler::$enabled) {
+                Profiler::$paramCheckSkips++;
+                Profiler::$paramCheckTimeNs += hrtime(true) - $start;
+            }
+
             return null;
         }
 
         $magicError = self::handleMagicCall($effectiveFunction, $vars, $thisObj, $registry);
         if ($magicError !== null) {
+            if (Profiler::$enabled) {
+                Profiler::$paramCheckTimeNs += hrtime(true) - $start;
+            }
+
             return $magicError;
         }
 
         if ($isMagicCall) {
+            if (Profiler::$enabled) {
+                Profiler::$paramCheckTimeNs += hrtime(true) - $start;
+            }
+
             return null;
         }
 
@@ -93,6 +119,12 @@ final class ParamChecker
 
         if (! $contract['hasParamContract']) {
             self::$noParamContractCache[$effectiveFunction] = true;
+            self::$noParamContractCache[$function] = true;
+
+            if (Profiler::$enabled) {
+                Profiler::$paramCheckSkips++;
+                Profiler::$paramCheckTimeNs += hrtime(true) - $start;
+            }
 
             return null;
         }
@@ -108,9 +140,17 @@ final class ParamChecker
                 if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
                     $err = $registry->validate($vars[$paramName], $typeNode, $effectiveFunction . '(): Argument $' . $paramName);
                     if ($err !== null) {
+                        if (Profiler::$enabled) {
+                            Profiler::$paramCheckTimeNs += hrtime(true) - $start;
+                        }
+
                         return $err;
                     }
                 }
+            }
+
+            if (Profiler::$enabled) {
+                Profiler::$paramCheckTimeNs += hrtime(true) - $start;
             }
 
             return null;
@@ -152,8 +192,16 @@ final class ParamChecker
             );
 
             if ($err !== null) {
+                if (Profiler::$enabled) {
+                    Profiler::$paramCheckTimeNs += hrtime(true) - $start;
+                }
+
                 return $err;
             }
+        }
+
+        if (Profiler::$enabled) {
+            Profiler::$paramCheckTimeNs += hrtime(true) - $start;
         }
 
         return null;
@@ -266,7 +314,10 @@ final class ParamChecker
         array $templates
     ): void {
         self::inferTemplatesFromClosures($types, $vars, $effectiveFunction, $thisObj, $templates);
-        self::inferTemplatesFromArrays($types, $vars, $effectiveFunction, $thisObj, $templates);
+
+        if (\count($types) > 1) {
+            self::inferTemplatesFromArrays($types, $vars, $effectiveFunction, $thisObj, $templates);
+        }
     }
 
     /**

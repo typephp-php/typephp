@@ -55,12 +55,28 @@ final class InlineChecker
     private static array $internalFunctionsCache = [];
 
     /**
+     * In-memory cache for resolved class contexts with static bounds.
+     *
+     * @var array<string, TypeNode>
+     */
+    private static array $resolvedClassContextCache = [];
+
+    /**
+     * In-memory cache for properties known to have no DocBlock annotations.
+     *
+     * @var array<string, true>
+     */
+    private static array $nullPropertyCache = [];
+
+    /**
      * Resets internal type node and function caches. Useful for test isolation.
      */
     public static function reset(): void
     {
         self::$parsedTypeNodeCache = [];
         self::$internalFunctionsCache = [];
+        self::$resolvedClassContextCache = [];
+        self::$nullPropertyCache = [];
     }
 
     /**
@@ -113,8 +129,15 @@ final class InlineChecker
     /**
      * Evaluates inline variable validation dynamically based on configuration.
      */
-    public static function checkVariable(mixed $value, string $typeString, string $varName, string $file, TypeValidatorRegistry $registry): mixed
-    {
+    public static function checkVariable(
+        mixed $value,
+        string $typeString,
+        string $varName,
+        string $file,
+        TypeValidatorRegistry $registry,
+        ?string $caller = null,
+        mixed $thisOrClass = null
+    ): mixed {
         $rawConfig = Config::get()['inline_vars'] ?? [];
         /** @var array<string, bool> $config */
         $config = \is_array($rawConfig) ? $rawConfig : [];
@@ -132,7 +155,7 @@ final class InlineChecker
             }
 
             if ($needsContext) {
-                $typeNode = self::resolveCallerContext($typeNode);
+                $typeNode = self::resolveCallerContext($typeNode, $caller, $thisOrClass);
             }
 
             if (! self::shouldValidateType($typeNode, $config)) {
@@ -203,6 +226,13 @@ final class InlineChecker
             return $value;
         }
 
+        $className = \is_string($objectOrClass) ? $objectOrClass : \get_class($objectOrClass);
+        $cacheKey = $className . '::$' . $propName;
+
+        if (isset(self::$nullPropertyCache[$cacheKey])) {
+            return $value;
+        }
+
         $rawConfig = Config::get()['inline_vars'] ?? [];
         /** @var array<string, bool> $config */
         $config = \is_array($rawConfig) ? $rawConfig : [];
@@ -211,10 +241,10 @@ final class InlineChecker
             return $value;
         }
 
-        $className = \is_string($objectOrClass) ? $objectOrClass : \get_class($objectOrClass);
-
         $typeNode = DocblockParser::parseProperty($className, $propName);
         if ($typeNode === null) {
+            self::$nullPropertyCache[$cacheKey] = true;
+
             return $value;
         }
 
@@ -255,8 +285,28 @@ final class InlineChecker
     /**
      * Resolves caller class or function context and applies templates & type aliases to the AST.
      */
-    private static function resolveCallerContext(TypeNode $typeNode): TypeNode
+    private static function resolveCallerContext(TypeNode $typeNode, ?string $caller = null, mixed $thisOrClass = null): TypeNode
     {
+        if ($caller !== null) {
+            if ($caller === '') {
+                return $typeNode;
+            }
+
+            if (str_contains($caller, '::')) {
+                [$className, $methodName] = explode('::', $caller, 2);
+                $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+
+                return self::resolveClassContext(
+                    $typeNode,
+                    $className,
+                    $methodName,
+                    $thisObj
+                );
+            }
+
+            return self::resolveFunctionContext($typeNode, $caller);
+        }
+
         $frameInfo = self::findCallerFrame();
 
         if ($frameInfo['functionName'] !== null) {
@@ -408,6 +458,14 @@ final class InlineChecker
             return $typeNode;
         }
 
+        $cacheKey = null;
+        if ($thisObj === null) {
+            $cacheKey = ((string) $typeNode) . '|' . $className . '|' . ($methodName ?? '');
+            if (isset(self::$resolvedClassContextCache[$cacheKey])) {
+                return self::$resolvedClassContextCache[$cacheKey];
+            }
+        }
+
         try {
             /** @var class-string<object> $className */
             $refClass = new \ReflectionClass($className);
@@ -415,14 +473,22 @@ final class InlineChecker
 
             $classAliases = DocblockParser::parseClassAliases($className);
 
-            $targetFunc = ($methodName !== '{closure}' && $methodName !== null)
+            $targetFunc = ($methodName !== '{closure}' && $methodName !== null && ! str_starts_with($methodName, '{closure'))
                 ? $className . '::' . $methodName
                 : $className . '::__construct';
 
             $contract = DocblockParser::parse($targetFunc);
             $declaredTemplates = $contract['allTemplates'] ?? ($contract['classTemplates'] ?? []);
-            $boundTemplates = TemplateManager::getBoundTemplates($targetFunc, $thisObj, $declaredTemplates);
 
+            if (\count($classAliases) === 0 && \count($declaredTemplates) === 0) {
+                if ($cacheKey !== null) {
+                    return self::$resolvedClassContextCache[$cacheKey] = $typeNode;
+                }
+
+                return $typeNode;
+            }
+
+            $boundTemplates = TemplateManager::getBoundTemplates($targetFunc, $thisObj, $declaredTemplates);
             $activeBindings = [...$classAliases, ...$boundTemplates];
 
             if (\count($activeBindings) > 0 || \count($declaredTemplates) > 0) {
@@ -431,6 +497,10 @@ final class InlineChecker
             }
         } catch (\ReflectionException $e) {
             // Silently continue if reflection fails
+        }
+
+        if ($cacheKey !== null) {
+            return self::$resolvedClassContextCache[$cacheKey] = $typeNode;
         }
 
         return $typeNode;

@@ -12,6 +12,7 @@ use TypePHP\Internal\Checker\InlineChecker;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Diagnostic\Profiler;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Util\Config;
@@ -49,13 +50,44 @@ final class RuntimeTypeChecker
     /**
      * Evaluates inline variable validation dynamically based on configuration.
      */
-    public static function checkVariable(mixed $value, string $typeString, string $varName, string $file): mixed
-    {
+    public static function checkVariable(
+        mixed $value,
+        string $typeString,
+        string $varName,
+        string $file,
+        ?string $caller = null,
+        mixed $thisOrClass = null
+    ): mixed {
         if (! Config::isEnabled()) {
             return $value;
         }
 
-        return InlineChecker::checkVariable($value, $typeString, $varName, $file, self::getRegistry());
+        if (Profiler::$enabled) {
+            Profiler::$variableCount++;
+            $start = hrtime(true);
+            $res = InlineChecker::checkVariable(
+                $value,
+                $typeString,
+                $varName,
+                $file,
+                self::getRegistry(),
+                $caller,
+                $thisOrClass
+            );
+            Profiler::$variableTimeNs += hrtime(true) - $start;
+
+            return $res;
+        }
+
+        return InlineChecker::checkVariable(
+            $value,
+            $typeString,
+            $varName,
+            $file,
+            self::getRegistry(),
+            $caller,
+            $thisOrClass
+        );
     }
 
     /**
@@ -67,8 +99,22 @@ final class RuntimeTypeChecker
             return $value;
         }
 
+        if (Profiler::$enabled) {
+            Profiler::$propertyCount++;
+            $start = hrtime(true);
+            $res = InlineChecker::checkProperty($value, $objectOrClass, $propName, $file, self::getRegistry());
+            Profiler::$propertyTimeNs += hrtime(true) - $start;
+
+            return $res;
+        }
+
         return InlineChecker::checkProperty($value, $objectOrClass, $propName, $file, self::getRegistry());
     }
+
+    /**
+     * @var array<string, bool>
+     */
+    private static array $hasMethodTemplatesCache = [];
 
     /**
      * Initializes generic call frames and returns a ScopeCleaner that pops the call frame on destruction.
@@ -81,21 +127,41 @@ final class RuntimeTypeChecker
             return null;
         }
 
+        if (isset(ParamChecker::$noParamContractCache[$function]) && ! (self::$hasMethodTemplatesCache[$function] ?? false)) {
+            return null;
+        }
+
+        $start = 0;
+        if (Profiler::$enabled) {
+            Profiler::$scopeCount++;
+            Profiler::recordHotspot($function);
+            $start = hrtime(true);
+        }
+
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
         $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry(), $effectiveFunction);
 
-        $contract = DocblockParser::parse($effectiveFunction);
-        $methodTemplates = $contract['templates'] ?? [];
-        $hasMethodTemplates = \count($methodTemplates) > 0;
-
         if ($err !== null) {
-            if ($hasMethodTemplates) {
-                TemplateManager::popCallFrame($effectiveFunction);
+            if (Profiler::$enabled) {
+                Profiler::$scopeTimeNs += hrtime(true) - $start;
             }
 
+            TemplateManager::popCallFrame($effectiveFunction);
+
             return $err;
+        }
+
+        $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] ?? null;
+        if ($hasMethodTemplates === null) {
+            $contract = DocblockParser::parse($effectiveFunction);
+            $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] = (\count($contract['templates'] ?? []) > 0);
+            self::$hasMethodTemplatesCache[$function] = $hasMethodTemplates;
+        }
+
+        if (Profiler::$enabled) {
+            Profiler::$scopeTimeNs += hrtime(true) - $start;
         }
 
         return $hasMethodTemplates ? new ScopeCleaner($effectiveFunction) : null;
@@ -126,9 +192,20 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        $vars ??= [];
+        $start = 0;
+        if (Profiler::$enabled) {
+            Profiler::$returnCount++;
+            $start = hrtime(true);
+        }
 
-        return ReturnChecker::checkReturn($function, $value, $thisOrClass, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
+        $vars ??= [];
+        $res = ReturnChecker::checkReturn($function, $value, $thisOrClass, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
+
+        if (Profiler::$enabled) {
+            Profiler::$returnTimeNs += hrtime(true) - $start;
+        }
+
+        return $res;
     }
 
     /**

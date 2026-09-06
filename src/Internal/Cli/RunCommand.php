@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Cli;
 
+use TypePHP\Internal\Diagnostic\Profiler;
 use TypePHP\TypePHP;
 
 /**
@@ -71,6 +72,10 @@ final class RunCommand implements CommandInterface
             fwrite($errorStream, "  thrown in {$file} on line {$line}\n");
 
             return 255;
+        } finally {
+            if (Profiler::$enabled) {
+                Profiler::report();
+            }
         }
 
         return 0;

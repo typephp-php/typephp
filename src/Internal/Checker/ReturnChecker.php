@@ -28,11 +28,6 @@ use TypePHP\Internal\Wrapper\CallableWrapper;
 final class ReturnChecker
 {
     /**
-     * @var array<string, string>
-     */
-    private static array $effectiveFunctionCache = [];
-
-    /**
      * O(1) Fast-path cache for methods determined to have no return contracts.
      *
      * @var array<string, true>
@@ -40,7 +35,7 @@ final class ReturnChecker
     private static array $noReturnContractCache = [];
 
     /**
-     * Memoized static return type resolutions for non-dynamic methods.
+     * Memoized static return type resolutions for non-dynamic, non-generic methods.
      *
      * @var array<string, TypeNode>
      */
@@ -51,7 +46,6 @@ final class ReturnChecker
      */
     public static function reset(): void
     {
-        self::$effectiveFunctionCache = [];
         self::$noReturnContractCache = [];
         self::$resolvedStaticReturnCache = [];
     }
@@ -71,15 +65,22 @@ final class ReturnChecker
             return $value;
         }
 
-        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $effectiveFunction = self::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
-
-        $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
-
-        // Fast-path: Known zero-contract method (magic calls are dynamic and cannot be short-circuited here)
-        if (! $isMagicCall && isset(self::$noReturnContractCache[$effectiveFunction])) {
+        // Fast-path: Check if direct function is already known to have zero contracts
+        if (isset(self::$noReturnContractCache[$function])) {
             return $value;
         }
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        // Fast-path: Check effective function cache
+        if (isset(self::$noReturnContractCache[$effectiveFunction])) {
+            self::$noReturnContractCache[$function] = true;
+
+            return $value;
+        }
+
+        $isMagicCall = str_contains($effectiveFunction, '__call');
 
         $magicResult = self::handleMagicReturn(
             $effectiveFunction,
@@ -102,6 +103,7 @@ final class ReturnChecker
 
         if (! ($contract['hasReturnContract'] ?? ($contract['return'] !== null))) {
             self::$noReturnContractCache[$effectiveFunction] = true;
+            self::$noReturnContractCache[$function] = true;
 
             return $value;
         }
@@ -109,6 +111,7 @@ final class ReturnChecker
         $returnTypeNode = $contract['return'];
         if ($returnTypeNode === null) {
             self::$noReturnContractCache[$effectiveFunction] = true;
+            self::$noReturnContractCache[$function] = true;
 
             return $value;
         }
@@ -126,60 +129,6 @@ final class ReturnChecker
             $registry,
             $wrapIterableCallback
         );
-    }
-
-    /**
-     * Resolves the actual runtime class name vs trait name with O(1) memoization.
-     */
-    private static function resolveEffectiveFunction(string $function, object|string|null $thisOrClass, ?object $thisObj): string
-    {
-        if (! str_contains($function, '::')) {
-            return $function;
-        }
-
-        $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : '');
-        if ($actualClassName === '') {
-            return $function;
-        }
-
-        $cacheKey = $function . '|' . $actualClassName;
-        if (isset(self::$effectiveFunctionCache[$cacheKey])) {
-            return self::$effectiveFunctionCache[$cacheKey];
-        }
-
-        [$classOrTrait, $methodName] = explode('::', $function, 2);
-
-        $effectiveFunction = ($actualClassName !== $classOrTrait)
-            ? $actualClassName . '::' . $methodName
-            : $function;
-
-        if ($thisObj !== null) {
-            $traitAliases = HierarchyResolver::getTraitAliases($actualClassName);
-
-            if (\count($traitAliases) > 0) {
-                $isTargetOfAlias = false;
-                foreach ($traitAliases as $originalTarget) {
-                    if (str_ends_with($originalTarget, '::' . $methodName)) {
-                        $isTargetOfAlias = true;
-
-                        break;
-                    }
-                }
-
-                if ($isTargetOfAlias) {
-                    $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
-                    foreach ($trace as $frame) {
-                        $frameFunc = $frame['function'];
-                        $frameClass = $frame['class'] ?? '';
-                        if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
-                            return self::$effectiveFunctionCache[$cacheKey] = $actualClassName . '::' . $frameFunc;
-                        }
-                    }
-                }
-            }
-        }
-
-        return self::$effectiveFunctionCache[$cacheKey] = $effectiveFunction;
     }
 
     /**

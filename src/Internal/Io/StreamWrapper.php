@@ -12,6 +12,7 @@ use PhpParser\Parser;
 use PhpParser\ParserFactory;
 use TypePHP\Internal\Ast\ContractVisitor;
 use TypePHP\Internal\Ast\TypePHPPrinter;
+use TypePHP\Internal\Diagnostic\Profiler;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\PathMatcher;
@@ -178,7 +179,16 @@ final class StreamWrapper implements StreamWrapperInterface
      */
     public static function transformSource(string $source, string $filePath = ''): string
     {
+        if (Profiler::$enabled) {
+            Profiler::$streamTransformCount++;
+            $start = hrtime(true);
+        }
+
         if (Config::isRespectIgnoreTagsEnabled() && (str_contains($source, '@typephp-ignore-file') || str_contains($source, '@typephp-disable-file'))) {
+            if (Profiler::$enabled) {
+                Profiler::$transformTimeNs += hrtime(true) - $start;
+            }
+
             return $source;
         }
 
@@ -189,9 +199,17 @@ final class StreamWrapper implements StreamWrapperInterface
         try {
             $oldStmts = $parser->parse($source);
             if ($oldStmts === null) {
+                if (Profiler::$enabled) {
+                    Profiler::$transformTimeNs += hrtime(true) - $start;
+                }
+
                 return $source;
             }
         } catch (\Throwable $e) {
+            if (Profiler::$enabled) {
+                Profiler::$transformTimeNs += hrtime(true) - $start;
+            }
+
             return $source;
         }
 
@@ -233,6 +251,10 @@ final class StreamWrapper implements StreamWrapperInterface
 
         if ($drift > 0) {
             $transformed = preg_replace('/\/\*__TYPEPHP_INJECTED_END__\*\/[ \t]*\r?\n[ \t]*/', '/*__TYPEPHP_INJECTED_END__*/ ', $transformed, $drift) ?? $transformed;
+        }
+
+        if (Profiler::$enabled) {
+            Profiler::$transformTimeNs += hrtime(true) - $start;
         }
 
         return str_replace(['/*__TYPEPHP_INJECTED_START__*/', '/*__TYPEPHP_INJECTED_END__*/'], '', $transformed);
@@ -790,6 +812,10 @@ final class StreamWrapper implements StreamWrapperInterface
             $transformed = self::transformSource($source, $resolvedPath);
             if (! CacheManager::writeCachedFileSafely($cachedFile, $transformed)) {
                 return $this->openMemoryStream($resolvedPath);
+            }
+        } else {
+            if (Profiler::$enabled) {
+                Profiler::$streamCachedCount++;
             }
         }
 

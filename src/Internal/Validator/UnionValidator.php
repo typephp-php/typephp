@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Validator;
 
+use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
+use TypePHP\Internal\Util\ClassNameValidator;
 
 /**
  * @internal Class for validating union types like int | string.
@@ -19,6 +21,30 @@ final class UnionValidator implements TypeValidatorInterface
     {
         /** @var UnionTypeNode $unionNode */
         $unionNode = $node;
+
+        foreach ($unionNode->types as $type) {
+            if ($type instanceof IdentifierTypeNode) {
+                $name = strtolower($type->name);
+                if ($name === 'object' && \is_object($value)) {
+                    return null;
+                }
+                if (($name === 'int' || $name === 'integer') && \is_int($value)) {
+                    return null;
+                }
+                if ($name === 'string' && \is_string($value)) {
+                    return null;
+                }
+                if (($name === 'bool' || $name === 'boolean') && \is_bool($value)) {
+                    return null;
+                }
+                if ($name === 'null' && $value === null) {
+                    return null;
+                }
+                if ($name === 'class-string' && \is_string($value) && ClassNameValidator::isValidClassString($value)) {
+                    return null;
+                }
+            }
+        }
 
         $deepErrors = [];
 

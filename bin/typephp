@@ -16,6 +16,9 @@ foreach ($autoloadFiles as $file) {
 }
 
 use TypePHP\Internal\Cli\CommandRunner;
+use TypePHP\Internal\Diagnostic\Profiler;
+
+Profiler::init();
 
 $exitCode = CommandRunner::run(array_slice($argv, 1));
 exit($exitCode);
