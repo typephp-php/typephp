@@ -313,7 +313,18 @@ final class ParamChecker
         array $templates,
         array $classTemplates = []
     ): void {
-        self::inferTemplatesFromClosures($types, $vars, $effectiveFunction, $thisObj, $templates, $classTemplates);
+        $hasClosure = false;
+        foreach ($vars as $v) {
+            if ($v instanceof \Closure) {
+                $hasClosure = true;
+
+                break;
+            }
+        }
+
+        if ($hasClosure) {
+            self::inferTemplatesFromClosures($types, $vars, $effectiveFunction, $thisObj, $templates, $classTemplates);
+        }
 
         if (\count($types) > 1) {
             self::inferTemplatesFromArrays($types, $vars, $effectiveFunction, $thisObj, $templates);

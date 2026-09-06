@@ -400,7 +400,7 @@ final class FunctionContractInjector
         return false;
     }
 
-  private static function isIterableCandidate(Node\Param $param, string $docText): bool
+    private static function isIterableCandidate(Node\Param $param, string $docText): bool
     {
         $iterableTypes = [
             'iterable' => true,

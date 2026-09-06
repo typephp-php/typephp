@@ -669,10 +669,11 @@ final class DocblockParser
             self::applyConstructorPromotionFallback($ref, $types, $classTemplates, $aliases);
         }
 
-        $paramsUseGenerics = \count($methodTemplates) > 0;
-        if (! $paramsUseGenerics && \count($classTemplates) > 0) {
+        $allTemplates = [...$classTemplates, ...$methodTemplates];
+        $paramsUseGenerics = false;
+        if (\count($allTemplates) > 0) {
             foreach ($types as $tNode) {
-                if (self::typeReferencesTemplate($tNode, $classTemplates)) {
+                if (self::typeReferencesTemplate($tNode, $allTemplates)) {
                     $paramsUseGenerics = true;
 
                     break;
@@ -802,6 +803,17 @@ final class DocblockParser
             }
         }
 
+        $paramsUseGenerics = false;
+        if (\count($templates) > 0) {
+            foreach ($types as $tNode) {
+                if (self::typeReferencesTemplate($tNode, $templates)) {
+                    $paramsUseGenerics = true;
+
+                    break;
+                }
+            }
+        }
+
         $returnUsesMethodTemplates = false;
         if ($returnType !== null && \count($templates) > 0) {
             $returnUsesMethodTemplates = self::typeReferencesTemplate($returnType, $templates);
@@ -824,7 +836,7 @@ final class DocblockParser
             'aliases' => $aliases,
             'hasParamContract' => \count($types) > 0,
             'hasReturnContract' => $returnType !== null,
-            'paramsUseGenerics' => \count($templates) > 0,
+            'paramsUseGenerics' => $paramsUseGenerics,
             'returnUsesGenerics' => $returnUsesMethodTemplates,
             'returnUsesMethodTemplates' => $returnUsesMethodTemplates,
             'returnIsThis' => $returnIsThis,
@@ -1279,7 +1291,7 @@ final class DocblockParser
 
         if ($node instanceof CallableTypeNode) {
             $parameters = array_map(
-                fn(CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
                     self::substituteAliases($param->type, $aliases),
                     $param->isReference,
                     $param->isVariadic,
@@ -1313,7 +1325,7 @@ final class DocblockParser
         if ($node instanceof GenericTypeNode) {
             $genericType = self::substituteAliases($node->type, $aliases);
             $genericTypes = array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->genericTypes
             );
 
@@ -1330,7 +1342,7 @@ final class DocblockParser
 
         if ($node instanceof UnionTypeNode) {
             $types = array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 
@@ -1345,7 +1357,7 @@ final class DocblockParser
 
         if ($node instanceof IntersectionTypeNode) {
             $types = array_map(
-                fn($t) => self::substituteAliases($t, $aliases),
+                fn ($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 

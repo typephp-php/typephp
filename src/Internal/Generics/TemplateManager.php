@@ -17,7 +17,6 @@ use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockExtractor;
-use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\ClassNameValidator;
@@ -305,13 +304,25 @@ final class TemplateManager
     ];
 
     private static ?IdentifierTypeNode $intNode = null;
+
     private static ?IdentifierTypeNode $stringNode = null;
+
     private static ?IdentifierTypeNode $floatNode = null;
+
     private static ?IdentifierTypeNode $boolNode = null;
+
     private static ?IdentifierTypeNode $listNode = null;
+
     private static ?IdentifierTypeNode $arrayNode = null;
+
     private static ?IdentifierTypeNode $nullNode = null;
+
     private static ?IdentifierTypeNode $mixedNode = null;
+
+    /**
+     * @var array<string, IdentifierTypeNode>
+     */
+    private static array $classNodeCache = [];
 
     /**
      * Resets all static generic template bindings and call stack frames.
@@ -770,7 +781,6 @@ final class TemplateManager
         self::$instanceTemplateBindings[$instance] = [...$resolvedClassBindings, ...$existing];
     }
 
-
     /**
      * @return array<string, TypeNode>
      */
@@ -1200,13 +1210,14 @@ final class TemplateManager
 
         if (\is_object($value)) {
             $className = \get_class($value);
+
             if (self::$instanceTemplateBindings !== null && isset(self::$instanceTemplateBindings[$value]) && \count(self::$instanceTemplateBindings[$value]) > 0) {
                 $genericTypes = array_values(self::$instanceTemplateBindings[$value]);
 
-                return new GenericTypeNode(new IdentifierTypeNode($className), $genericTypes);
+                return new GenericTypeNode(self::$classNodeCache[$className] ??= new IdentifierTypeNode($className), $genericTypes);
             }
 
-            return new IdentifierTypeNode($className);
+            return self::$classNodeCache[$className] ??= new IdentifierTypeNode($className);
         }
 
         if ($value === null) {
@@ -1236,7 +1247,7 @@ final class TemplateManager
         }
         if ($n instanceof GenericTypeNode) {
             $base = new IdentifierTypeNode(SpecialTypeResolver::resolveFqcn($n->type->name, $ref));
-            $generics = array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
+            $generics = array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
 
             return new GenericTypeNode($base, $generics, $n->variances);
         }
@@ -1247,10 +1258,10 @@ final class TemplateManager
             return new NullableTypeNode(self::resolveTypeNodeAst($n->type, $ref));
         }
         if ($n instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new UnionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
         if ($n instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new IntersectionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
 
         return $n;
