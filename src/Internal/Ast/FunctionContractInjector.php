@@ -400,18 +400,8 @@ final class FunctionContractInjector
         return false;
     }
 
-    private static function isIterableCandidate(Node\Param $param, string $docText): bool
+  private static function isIterableCandidate(Node\Param $param, string $docText): bool
     {
-        if (
-            str_contains($docText, 'iterable')
-            || str_contains($docText, 'Traversable')
-            || str_contains($docText, 'Generator')
-            || str_contains($docText, 'Iterator')
-            || str_contains($docText, 'IteratorAggregate')
-        ) {
-            return true;
-        }
-
         $iterableTypes = [
             'iterable' => true,
             'traversable' => true,
@@ -420,12 +410,12 @@ final class FunctionContractInjector
             'iteratoraggregate' => true,
         ];
 
-        if ($param->type instanceof Node\Identifier) {
-            return isset($iterableTypes[strtolower($param->type->name)]);
+        if ($param->type instanceof Node\Identifier && isset($iterableTypes[strtolower($param->type->name)])) {
+            return true;
         }
 
-        if ($param->type instanceof Node\Name) {
-            return isset($iterableTypes[strtolower($param->type->getLast())]);
+        if ($param->type instanceof Node\Name && isset($iterableTypes[strtolower($param->type->getLast())])) {
+            return true;
         }
 
         if ($param->type instanceof Node\UnionType || $param->type instanceof Node\IntersectionType) {
@@ -437,6 +427,11 @@ final class FunctionContractInjector
                     return true;
                 }
             }
+        }
+
+        $paramName = $param->var instanceof Node\Expr\Variable && \is_string($param->var->name) ? $param->var->name : '';
+        if ($paramName !== '' && preg_match('/@(?:param|phpstan-param|psalm-param)\s+[^\$]*?(?:iterable|Traversable|Generator|Iterator)\b[^\$]*?\$' . preg_quote($paramName, '/') . '\b/i', $docText) === 1) {
+            return true;
         }
 
         return false;

@@ -161,7 +161,9 @@ final class RuntimeTypeChecker
         $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] ?? null;
         if ($hasMethodTemplates === null) {
             $contract = DocblockParser::parse($effectiveFunction);
-            $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] = (\count($contract['templates'] ?? []) > 0);
+            $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] = (
+                $contract['returnUsesMethodTemplates'] ?? false
+            );
             self::$hasMethodTemplatesCache[$function] = $hasMethodTemplates;
         }
 

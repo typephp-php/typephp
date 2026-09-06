@@ -304,6 +304,15 @@ final class TemplateManager
         'scalar' => true,
     ];
 
+    private static ?IdentifierTypeNode $intNode = null;
+    private static ?IdentifierTypeNode $stringNode = null;
+    private static ?IdentifierTypeNode $floatNode = null;
+    private static ?IdentifierTypeNode $boolNode = null;
+    private static ?IdentifierTypeNode $listNode = null;
+    private static ?IdentifierTypeNode $arrayNode = null;
+    private static ?IdentifierTypeNode $nullNode = null;
+    private static ?IdentifierTypeNode $mixedNode = null;
+
     /**
      * Resets all static generic template bindings and call stack frames.
      */
@@ -1167,24 +1176,26 @@ final class TemplateManager
     }
 
     /**
-     * Infers a TypeNode AST representation from a raw PHP value.
+     * Infers a TypeNode AST representation from a raw PHP value using cached singleton nodes.
      */
     public static function inferTypeFromValue(mixed $value): TypeNode
     {
         if (\is_int($value)) {
-            return new IdentifierTypeNode('int');
+            return self::$intNode ??= new IdentifierTypeNode('int');
         }
         if (\is_string($value)) {
-            return new IdentifierTypeNode('string');
+            return self::$stringNode ??= new IdentifierTypeNode('string');
         }
         if (\is_float($value)) {
-            return new IdentifierTypeNode('float');
+            return self::$floatNode ??= new IdentifierTypeNode('float');
         }
         if (\is_bool($value)) {
-            return new IdentifierTypeNode('bool');
+            return self::$boolNode ??= new IdentifierTypeNode('bool');
         }
         if (\is_array($value)) {
-            return new IdentifierTypeNode(array_is_list($value) ? 'list' : 'array');
+            return array_is_list($value)
+                ? (self::$listNode ??= new IdentifierTypeNode('list'))
+                : (self::$arrayNode ??= new IdentifierTypeNode('array'));
         }
 
         if (\is_object($value)) {
@@ -1199,10 +1210,10 @@ final class TemplateManager
         }
 
         if ($value === null) {
-            return new IdentifierTypeNode('null');
+            return self::$nullNode ??= new IdentifierTypeNode('null');
         }
 
-        return new IdentifierTypeNode('mixed');
+        return self::$mixedNode ??= new IdentifierTypeNode('mixed');
     }
 
     /**

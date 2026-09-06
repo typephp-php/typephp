@@ -120,7 +120,7 @@ final class GenericValidator implements TypeValidatorInterface
             $enumClass = $targetType->name;
             if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass)) {
                 if (! isset(self::$enumKeyCache[$enumClass])) {
-                    self::$enumKeyCache[$enumClass] = array_map(fn ($case) => $case->name, $enumClass::cases());
+                    self::$enumKeyCache[$enumClass] = array_map(fn($case) => $case->name, $enumClass::cases());
                 }
 
                 if (! \in_array($value, self::$enumKeyCache[$enumClass], strict: true)) {
@@ -187,7 +187,7 @@ final class GenericValidator implements TypeValidatorInterface
             if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass)) {
                 if (is_subclass_of($enumClass, \BackedEnum::class)) {
                     if (! isset(self::$enumValueCache[$enumClass])) {
-                        self::$enumValueCache[$enumClass] = array_map(fn ($case) => $case->value, $enumClass::cases());
+                        self::$enumValueCache[$enumClass] = array_map(fn($case) => $case->value, $enumClass::cases());
                     }
 
                     if (! \in_array($value, self::$enumValueCache[$enumClass], strict: true)) {
@@ -409,8 +409,7 @@ final class GenericValidator implements TypeValidatorInterface
             return null;
         }
 
-        // Fast-path: list<mixed> only needs array_is_list check; all items already satisfy mixed
-        if ($valueTypeNode instanceof IdentifierTypeNode && strtolower($valueTypeNode->name) === 'mixed') {
+        if ($valueTypeNode instanceof IdentifierTypeNode && \in_array(strtolower($valueTypeNode->name), ['mixed', 't', 'tvalue', 'v', 'value', 'telement'], true)) {
             return null;
         }
 
@@ -479,8 +478,7 @@ final class GenericValidator implements TypeValidatorInterface
         if ($typesCount === 1) {
             $valTypeNode = $node->genericTypes[0];
 
-            // Fast-path: array<mixed> needs zero item iteration
-            if ($valTypeNode instanceof IdentifierTypeNode && strtolower($valTypeNode->name) === 'mixed') {
+            if ($valTypeNode instanceof IdentifierTypeNode && \in_array(strtolower($valTypeNode->name), ['mixed', 't', 'tvalue', 'v', 'value', 'telement'], true)) {
                 return null;
             }
 
@@ -520,8 +518,8 @@ final class GenericValidator implements TypeValidatorInterface
             $keyTypeNode = $node->genericTypes[0];
             $valTypeNode = $node->genericTypes[1];
 
-            $keyIsArrayKey = ($keyTypeNode instanceof IdentifierTypeNode) && \in_array(strtolower($keyTypeNode->name), ['array-key', 'mixed'], true);
-            $valIsMixed = ($valTypeNode instanceof IdentifierTypeNode) && strtolower($valTypeNode->name) === 'mixed';
+            $keyIsArrayKey = ($keyTypeNode instanceof IdentifierTypeNode) && \in_array(strtolower($keyTypeNode->name), ['array-key', 'mixed', 'tkey', 'key', 'k'], true);
+            $valIsMixed = ($valTypeNode instanceof IdentifierTypeNode) && \in_array(strtolower($valTypeNode->name), ['mixed', 'tvalue', 'v', 'value', 't'], true);
 
             if ($keyIsArrayKey && $valIsMixed) {
                 return null;

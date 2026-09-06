@@ -50,6 +50,13 @@ final class ReturnChecker
     private static array $resolvedStaticReturnCache = [];
 
     /**
+     * In-memory cache for concrete substituted generic return types.
+     *
+     * @var array<string, TypeNode>
+     */
+    public static array $substitutedReturnCache = [];
+
+    /**
      * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
@@ -57,6 +64,7 @@ final class ReturnChecker
         self::$noReturnContractCache = [];
         self::$resolvedStaticReturnCache = [];
         self::$unboundReturnCache = [];
+        self::$substitutedReturnCache = [];
     }
 
     /**
@@ -252,26 +260,43 @@ final class ReturnChecker
             return $value;
         }
 
-        $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
-
-        if ($resolvedType instanceof IdentifierTypeNode && isset($aliases[$resolvedType->name])) {
-            $resolvedType = $aliases[$resolvedType->name];
-        }
-
         $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
 
-        if (\count($boundTemplates) === 0 && \count($templates) > 0 && ! $isConditional && $thisObj === null) {
-            $resolvedType = self::$unboundReturnCache[$function] ??= SpecialTypeResolver::resolve(
-                TemplateSubstitutor::substitute($returnTypeNode, [], $templates),
-                $function,
-                null
-            );
-        } elseif (\count($boundTemplates) > 0 || \count($templates) > 0) {
-            $resolvedType = TemplateSubstitutor::substitute($resolvedType, $boundTemplates, $templates);
-            $resolvedType = SpecialTypeResolver::resolve($resolvedType, $function, $thisObj);
+        $cacheKey = null;
+        if (\count($boundTemplates) <= 2 && ! $isConditional && \count($aliases) === 0 && $thisObj === null) {
+            $cacheKey = $function;
+            foreach ($boundTemplates as $k => $v) {
+                $cacheKey .= '|' . $k . ':' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v);
+            }
+            if (isset(self::$substitutedReturnCache[$cacheKey])) {
+                $resolvedType = self::$substitutedReturnCache[$cacheKey];
+            }
         }
 
-        $resolvedType = self::resolveConditionalReturnType($resolvedType, $vars, $boundTemplates, $registry, $function);
+        if (! isset($resolvedType)) {
+            $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
+
+            if ($resolvedType instanceof IdentifierTypeNode && isset($aliases[$resolvedType->name])) {
+                $resolvedType = $aliases[$resolvedType->name];
+            }
+
+            if (\count($boundTemplates) === 0 && \count($templates) > 0 && ! $isConditional && $thisObj === null) {
+                $resolvedType = self::$unboundReturnCache[$function] ??= SpecialTypeResolver::resolve(
+                    TemplateSubstitutor::substitute($returnTypeNode, [], $templates),
+                    $function,
+                    null
+                );
+            } elseif (\count($boundTemplates) > 0 || \count($templates) > 0) {
+                $resolvedType = TemplateSubstitutor::substitute($resolvedType, $boundTemplates, $templates);
+                $resolvedType = SpecialTypeResolver::resolve($resolvedType, $function, $thisObj);
+            }
+
+            $resolvedType = self::resolveConditionalReturnType($resolvedType, $vars, $boundTemplates, $registry, $function);
+
+            if ($cacheKey !== null) {
+                self::$substitutedReturnCache[$cacheKey] = $resolvedType;
+            }
+        }
 
         $err = $registry->validate($value, $resolvedType, 'Return value');
         if ($err !== null) {
