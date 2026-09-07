@@ -20,6 +20,7 @@ use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\ClassNameValidator;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\FileFilter;
 use TypePHP\Internal\Util\StubManager;
 use WeakMap;
@@ -696,10 +697,14 @@ final class TemplateManager
 
         $declaredVariance = $classVariances[$templateTag->name] ?? GenericTypeNode::VARIANCE_INVARIANT;
         $isReturnContext = str_contains($context, 'Return value');
+        $strictInvariance = Config::isStrictReturnGenericInvarianceEnabled();
 
-        $variance = ($usageVariance !== GenericTypeNode::VARIANCE_INVARIANT)
-            ? $usageVariance
-            : ($isReturnContext ? GenericTypeNode::VARIANCE_COVARIANT : $declaredVariance);
+        $variance = match (true) {
+            $usageVariance !== GenericTypeNode::VARIANCE_INVARIANT => $usageVariance,
+            $declaredVariance === GenericTypeNode::VARIANCE_CONTRAVARIANT => GenericTypeNode::VARIANCE_CONTRAVARIANT,
+            $isReturnContext && ! $strictInvariance => GenericTypeNode::VARIANCE_COVARIANT,
+            default => $declaredVariance,
+        };
 
         $templateName = $templateTag->name;
         $existingBindings = self::$instanceTemplateBindings[$instance] ?? [];
@@ -717,7 +722,7 @@ final class TemplateManager
                 );
 
                 if (self::checkVariance($expectedTypeNode, $existingTypeNode, GenericTypeNode::VARIANCE_COVARIANT)) {
-                    if ($isDefaultOrBound || $isReturnContext) {
+                    if ($isDefaultOrBound || ($isReturnContext && ! $strictInvariance)) {
                         $bindings = self::$instanceTemplateBindings[$instance] ?? [];
                         $bindings[$templateName] = $expectedTypeNode;
                         self::$instanceTemplateBindings[$instance] = $bindings;
