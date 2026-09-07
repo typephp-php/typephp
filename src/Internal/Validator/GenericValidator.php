@@ -405,31 +405,25 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         $valueTypeNode = $node->genericTypes[0] ?? null;
-        if ($valueTypeNode !== null && $count > 0) {
-            $isComplexObjectGeneric = ($valueTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valueTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
+        if ($valueTypeNode === null || $count === 0) {
+            return null;
+        }
 
-            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
-                $sampleIndices = [0, $count - 1];
-                $samplesToTake = min(3, $count - 2);
-                for ($i = 0; $i < $samplesToTake; $i++) {
-                    $sampleIndices[] = mt_rand(1, $count - 2);
-                }
+        if ($valueTypeNode instanceof IdentifierTypeNode && \in_array(strtolower($valueTypeNode->name), ['mixed', 't', 'tvalue', 'v', 'value', 'telement'], true)) {
+            return null;
+        }
 
-                foreach ($sampleIndices as $k) {
-                    $v = $value[$k];
-                    $err = $isComplexObjectGeneric
-                        ? $this->validateObjectGeneric($v, $valueTypeNode, '')
-                        : $registry->validate($v, $valueTypeNode, '');
+        $isComplexObjectGeneric = ($valueTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valueTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
 
-                    if ($err !== null) {
-                        return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
-                    }
-                }
-
-                return null;
+        if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+            $sampleIndices = [0, $count - 1];
+            $samplesToTake = min(3, $count - 2);
+            for ($i = 0; $i < $samplesToTake; $i++) {
+                $sampleIndices[] = mt_rand(1, $count - 2);
             }
 
-            foreach ($value as $k => $v) {
+            foreach ($sampleIndices as $k) {
+                $v = $value[$k];
                 $err = $isComplexObjectGeneric
                     ? $this->validateObjectGeneric($v, $valueTypeNode, '')
                     : $registry->validate($v, $valueTypeNode, '');
@@ -437,6 +431,18 @@ final class GenericValidator implements TypeValidatorInterface
                 if ($err !== null) {
                     return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
                 }
+            }
+
+            return null;
+        }
+
+        foreach ($value as $k => $v) {
+            $err = $isComplexObjectGeneric
+                ? $this->validateObjectGeneric($v, $valueTypeNode, '')
+                : $registry->validate($v, $valueTypeNode, '');
+
+            if ($err !== null) {
+                return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
             }
         }
 
@@ -471,6 +477,11 @@ final class GenericValidator implements TypeValidatorInterface
         $typesCount = \count($node->genericTypes);
         if ($typesCount === 1) {
             $valTypeNode = $node->genericTypes[0];
+
+            if ($valTypeNode instanceof IdentifierTypeNode && \in_array(strtolower($valTypeNode->name), ['mixed', 't', 'tvalue', 'v', 'value', 'telement'], true)) {
+                return null;
+            }
+
             $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
             if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 $keys = array_keys($value);
@@ -506,6 +517,14 @@ final class GenericValidator implements TypeValidatorInterface
         } elseif ($typesCount >= 2) {
             $keyTypeNode = $node->genericTypes[0];
             $valTypeNode = $node->genericTypes[1];
+
+            $keyIsArrayKey = ($keyTypeNode instanceof IdentifierTypeNode) && \in_array(strtolower($keyTypeNode->name), ['array-key', 'mixed', 'tkey', 'key', 'k'], true);
+            $valIsMixed = ($valTypeNode instanceof IdentifierTypeNode) && \in_array(strtolower($valTypeNode->name), ['mixed', 'tvalue', 'v', 'value', 't'], true);
+
+            if ($keyIsArrayKey && $valIsMixed) {
+                return null;
+            }
+
             $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
 
             if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
@@ -517,18 +536,22 @@ final class GenericValidator implements TypeValidatorInterface
                 }
 
                 foreach ($sampleKeys as $k) {
-                    $err = $registry->validate($k, $keyTypeNode, '');
-                    if ($err !== null) {
-                        return ErrorFactory::createError($context . ' key' . $err->getMessage());
+                    if (! $keyIsArrayKey) {
+                        $err = $registry->validate($k, $keyTypeNode, '');
+                        if ($err !== null) {
+                            return ErrorFactory::createError($context . ' key' . $err->getMessage());
+                        }
                     }
 
-                    $v = $value[$k];
-                    $err = $isComplexObjectGeneric
-                        ? $this->validateObjectGeneric($v, $valTypeNode, '')
-                        : $registry->validate($v, $valTypeNode, '');
+                    if (! $valIsMixed) {
+                        $v = $value[$k];
+                        $err = $isComplexObjectGeneric
+                            ? $this->validateObjectGeneric($v, $valTypeNode, '')
+                            : $registry->validate($v, $valTypeNode, '');
 
-                    if ($err !== null) {
-                        return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
+                        if ($err !== null) {
+                            return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
+                        }
                     }
                 }
 
@@ -536,17 +559,21 @@ final class GenericValidator implements TypeValidatorInterface
             }
 
             foreach ($value as $k => $v) {
-                $err = $registry->validate($k, $keyTypeNode, '');
-                if ($err !== null) {
-                    return ErrorFactory::createError($context . ' key' . $err->getMessage());
+                if (! $keyIsArrayKey) {
+                    $err = $registry->validate($k, $keyTypeNode, '');
+                    if ($err !== null) {
+                        return ErrorFactory::createError($context . ' key' . $err->getMessage());
+                    }
                 }
 
-                $err = $isComplexObjectGeneric
-                    ? $this->validateObjectGeneric($v, $valTypeNode, '')
-                    : $registry->validate($v, $valTypeNode, '');
+                if (! $valIsMixed) {
+                    $err = $isComplexObjectGeneric
+                        ? $this->validateObjectGeneric($v, $valTypeNode, '')
+                        : $registry->validate($v, $valTypeNode, '');
 
-                if ($err !== null) {
-                    return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
+                    if ($err !== null) {
+                        return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
+                    }
                 }
             }
         }

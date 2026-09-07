@@ -40,18 +40,14 @@ final class TypeValidatorRegistry
     private ConstValidator $constValidator;
 
     /**
-     * WeakMap memoizing previously validated object instances against TypeNode signatures.
+     * Static map for fast validator resolution.
      *
-     * @var \WeakMap<object, array<string, bool>>|null
+     * @var array<string, TypeValidatorInterface>
      */
-    private static ?\WeakMap $validatedObjectCache = null;
+    private array $validatorMap;
 
-    /**
-     * Resets the validated object cache. Useful for test isolation.
-     */
     public static function reset(): void
     {
-        self::$validatedObjectCache = null;
     }
 
     public function __construct()
@@ -65,6 +61,18 @@ final class TypeValidatorRegistry
         $this->arrayShapeValidator = new ArrayShapeValidator();
         $this->objectShapeValidator = new ObjectShapeValidator();
         $this->constValidator = new ConstValidator();
+
+        $this->validatorMap = [
+            IdentifierTypeNode::class => $this->identifierValidator,
+            GenericTypeNode::class => $this->genericValidator,
+            UnionTypeNode::class => $this->unionValidator,
+            NullableTypeNode::class => $this->nullableValidator,
+            ArrayTypeNode::class => $this->arrayValidator,
+            ArrayShapeNode::class => $this->arrayShapeValidator,
+            ObjectShapeNode::class => $this->objectShapeValidator,
+            IntersectionTypeNode::class => $this->intersectionValidator,
+            ConstTypeNode::class => $this->constValidator,
+        ];
     }
 
     /**
@@ -72,38 +80,11 @@ final class TypeValidatorRegistry
      */
     public function validate(mixed $value, TypeNode $node, string $context = ''): ?ErrorMessage
     {
-        $isObj = \is_object($value);
-        $nodeKey = null;
-
-        // Object Validation Memoization Optimization (O(1) lookup for repeated object checks)
-        if ($isObj) {
-            self::$validatedObjectCache ??= new \WeakMap();
-            $nodeKey = ($node instanceof IdentifierTypeNode) ? $node->name : (string) $node;
-
-            if (isset(self::$validatedObjectCache[$value][$nodeKey])) {
-                return null;
-            }
+        $validator = $this->validatorMap[$node::class] ?? null;
+        if ($validator === null) {
+            return null;
         }
 
-        $err = match ($node::class) {
-            IdentifierTypeNode::class => $this->identifierValidator->validate($value, $node, $context, $this),
-            GenericTypeNode::class => $this->genericValidator->validate($value, $node, $context, $this),
-            UnionTypeNode::class => $this->unionValidator->validate($value, $node, $context, $this),
-            NullableTypeNode::class => $this->nullableValidator->validate($value, $node, $context, $this),
-            ArrayTypeNode::class => $this->arrayValidator->validate($value, $node, $context, $this),
-            ArrayShapeNode::class => $this->arrayShapeValidator->validate($value, $node, $context, $this),
-            ObjectShapeNode::class => $this->objectShapeValidator->validate($value, $node, $context, $this),
-            IntersectionTypeNode::class => $this->intersectionValidator->validate($value, $node, $context, $this),
-            ConstTypeNode::class => $this->constValidator->validate($value, $node, $context, $this),
-            default => null,
-        };
-
-        if ($err === null && $isObj && $nodeKey !== null) {
-            $cache = self::$validatedObjectCache[$value] ?? [];
-            $cache[$nodeKey] = true;
-            self::$validatedObjectCache[$value] = $cache;
-        }
-
-        return $err;
+        return $validator->validate($value, $node, $context, $this);
     }
 }

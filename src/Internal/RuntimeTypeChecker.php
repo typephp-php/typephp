@@ -49,13 +49,27 @@ final class RuntimeTypeChecker
     /**
      * Evaluates inline variable validation dynamically based on configuration.
      */
-    public static function checkVariable(mixed $value, string $typeString, string $varName, string $file): mixed
-    {
+    public static function checkVariable(
+        mixed $value,
+        string $typeString,
+        string $varName,
+        string $file,
+        ?string $caller = null,
+        mixed $thisOrClass = null
+    ): mixed {
         if (! Config::isEnabled()) {
             return $value;
         }
 
-        return InlineChecker::checkVariable($value, $typeString, $varName, $file, self::getRegistry());
+        return InlineChecker::checkVariable(
+            $value,
+            $typeString,
+            $varName,
+            $file,
+            self::getRegistry(),
+            $caller,
+            $thisOrClass
+        );
     }
 
     /**
@@ -63,6 +77,11 @@ final class RuntimeTypeChecker
      */
     public static function checkProperty(mixed $value, mixed $objectOrClass, string $propName, string $file): mixed
     {
+        $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
+        if ($className !== '' && isset(InlineChecker::$nullPropertyCache[$className . '::$' . $propName])) {
+            return $value;
+        }
+
         if (! Config::isEnabled()) {
             return $value;
         }
@@ -71,12 +90,25 @@ final class RuntimeTypeChecker
     }
 
     /**
-     * Initializes generic call frames and returns a ScopeCleaner that pops the call frame on destruction.
+     * @var array<string, bool>
+     */
+    private static array $hasMethodTemplatesCache = [];
+
+    /**
+     * Initialises generic call frames and returns a ScopeCleaner that pops the call frame on destruction.
      *
      * @param array<string, mixed> $vars
      */
     public static function setupScope(string $function, array $vars, object|string|null $thisOrClass = null): ErrorMessage|ScopeCleaner|null
     {
+        if (! Config::isParamsEnabled()) {
+            return null;
+        }
+
+        if (isset(ParamChecker::$noParamContractCache[$function]) && ! (self::$hasMethodTemplatesCache[$function] ?? false)) {
+            return null;
+        }
+
         if (! Config::isEnabled()) {
             return null;
         }
@@ -84,18 +116,25 @@ final class RuntimeTypeChecker
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
+        if (ParamChecker::areAllParamsUnconstrained($effectiveFunction)) {
+            return null;
+        }
+
         $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry(), $effectiveFunction);
 
-        $contract = DocblockParser::parse($effectiveFunction);
-        $methodTemplates = $contract['templates'] ?? [];
-        $hasMethodTemplates = \count($methodTemplates) > 0;
-
         if ($err !== null) {
-            if ($hasMethodTemplates) {
-                TemplateManager::popCallFrame($effectiveFunction);
-            }
+            TemplateManager::popCallFrame($effectiveFunction);
 
             return $err;
+        }
+
+        $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] ?? null;
+        if ($hasMethodTemplates === null) {
+            $contract = DocblockParser::parse($effectiveFunction);
+            $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] = (
+                $contract['returnUsesMethodTemplates'] ?? false
+            );
+            self::$hasMethodTemplatesCache[$function] = $hasMethodTemplates;
         }
 
         return $hasMethodTemplates ? new ScopeCleaner($effectiveFunction) : null;
@@ -118,13 +157,27 @@ final class RuntimeTypeChecker
     /**
      * Validates a function or method's return value against its declared contract and returns value or ErrorMessage.
      *
-     * @param array<string, mixed> $vars
+     * @param array<string, mixed>|null $vars
      */
-    public static function checkReturn(string $function, mixed $value, object|string|null $thisOrClass = null, array $vars = []): mixed
+    public static function checkReturn(string $function, mixed $value, object|string|null $thisOrClass = null, ?array $vars = []): mixed
     {
+        if (isset(ReturnChecker::$noReturnContractCache[$function])) {
+            return $value;
+        }
+
         if (! Config::isEnabled()) {
             return $value;
         }
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        // Fast-path: if return type is unconstrained, skip validation.
+        if (ReturnChecker::isReturnUnconstrained($effectiveFunction)) {
+            return $value;
+        }
+
+        $vars ??= [];
 
         return ReturnChecker::checkReturn($function, $value, $thisOrClass, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
     }

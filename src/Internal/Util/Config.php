@@ -42,6 +42,8 @@ final class Config
 
     private static bool $returns = true;
 
+    private static bool $strictReturnGenericInvariance = true;
+
     private static bool $magicProperties = true;
 
     private static bool $magicMethods = true;
@@ -77,6 +79,15 @@ final class Config
         }
 
         return self::$returns;
+    }
+
+    public static function isStrictReturnGenericInvarianceEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$strictReturnGenericInvariance;
     }
 
     public static function isMagicPropertiesEnabled(): bool
@@ -133,14 +144,6 @@ final class Config
         return self::$arrayValidation;
     }
 
-    /**
-     * Locates the project root directory by searching upwards for vendor/autoload.php, composer.json, or typephp.php.
-     * Caches the result in memory so the search happens exactly once.
-     */
-    /**
-     * Locates the project root directory by searching upwards for vendor/autoload.php or composer.json.
-     * Caches the result in memory so the search happens exactly once.
-     */
     /**
      * Locates the project root directory by searching upwards for vendor/autoload.php or composer.json.
      * Caches the result in memory so the search happens exactly once.
@@ -211,6 +214,7 @@ final class Config
             'enabled' => true,
             'params' => true,
             'returns' => true,
+            'strict_return_generic_invariance' => true,
             'magic_properties' => true,
             'magic_methods' => true,
             'respect_ignore_tags' => true,
@@ -348,6 +352,7 @@ final class Config
         self::$enabled = true;
         self::$params = true;
         self::$returns = true;
+        self::$strictReturnGenericInvariance = true;
         self::$magicProperties = true;
         self::$magicMethods = true;
         self::$respectIgnoreTags = true;
@@ -377,6 +382,7 @@ final class Config
         self::$enabled = (bool) ($config['enabled'] ?? true);
         self::$params = (bool) ($config['params'] ?? true);
         self::$returns = (bool) ($config['returns'] ?? true);
+        self::$strictReturnGenericInvariance = (bool) ($config['strict_return_generic_invariance'] ?? true);
         self::$magicProperties = (bool) ($config['magic_properties'] ?? true);
         self::$magicMethods = (bool) ($config['magic_methods'] ?? true);
         self::$respectIgnoreTags = (bool) ($config['respect_ignore_tags'] ?? true);

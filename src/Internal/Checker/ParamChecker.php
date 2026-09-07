@@ -36,11 +36,77 @@ final class ParamChecker
     private static array $effectiveFunctionCache = [];
 
     /**
-     * Resets the effective function cache. Useful for test isolation.
+     * O(1) Fast-path cache for methods determined to have no parameter contracts.
+     *
+     * @var array<string, true>
+     */
+    public static array $noParamContractCache = [];
+
+    /**
+     * Cache for resolved parameter base types (after alias and special type resolution).
+     *
+     * @var array<string, TypeNode>
+     */
+    private static array $baseTypeCache = [];
+
+    /**
+     * Cache for whether all parameters of a function are unconstrained (mixed or array).
+     *
+     * @var array<string, bool>
+     */
+    private static array $allParamsUnconstrainedCache = [];
+
+    /**
+     * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
     {
         self::$effectiveFunctionCache = [];
+        self::$noParamContractCache = [];
+        ClassNameValidator::reset();
+        self::$baseTypeCache = [];
+        self::$allParamsUnconstrainedCache = [];
+    }
+
+    /**
+     * Checks if all parameters of a function are unconstrained (mixed or array).
+     * Uses memoization to avoid repeated docblock parsing.
+     */
+    public static function areAllParamsUnconstrained(string $effectiveFunction): bool
+    {
+        if (str_contains($effectiveFunction, '__call')) {
+            return false;
+        }
+
+        $cacheKey = $effectiveFunction . '|unconstrained';
+        if (! isset(self::$allParamsUnconstrainedCache[$cacheKey])) {
+            $contract = DocblockParser::parse($effectiveFunction);
+            $allUnconstrained = true;
+            foreach ($contract['types'] as $typeNode) {
+                if (! self::isUnconstrained($typeNode)) {
+                    $allUnconstrained = false;
+
+                    break;
+                }
+            }
+            self::$allParamsUnconstrainedCache[$cacheKey] = $allUnconstrained;
+        }
+
+        return self::$allParamsUnconstrainedCache[$cacheKey];
+    }
+
+    /**
+     * Checks if a TypeNode represents an unconstrained type (mixed or array).
+     */
+    private static function isUnconstrained(TypeNode $typeNode): bool
+    {
+        if (! ($typeNode instanceof IdentifierTypeNode)) {
+            return false;
+        }
+
+        $lower = strtolower($typeNode->name);
+
+        return $lower === 'mixed' || $lower === 'array';
     }
 
     /**
@@ -62,8 +128,13 @@ final class ParamChecker
             $effectiveFunction = self::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
         }
 
-        // Fast-path: If no arguments were passed and it's not a magic __call dispatch, exit immediately
-        if ($vars === [] && ! str_ends_with($effectiveFunction, '::__call') && ! str_ends_with($effectiveFunction, '::__callStatic')) {
+        $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
+
+        if (! $isMagicCall && isset(self::$noParamContractCache[$effectiveFunction])) {
+            return null;
+        }
+
+        if ($vars === [] && ! $isMagicCall) {
             return null;
         }
 
@@ -72,55 +143,175 @@ final class ParamChecker
             return $magicError;
         }
 
+        if ($isMagicCall) {
+            return null;
+        }
+
         $contract = DocblockParser::parse($effectiveFunction);
 
         if (! $contract['hasParamContract']) {
+            self::$noParamContractCache[$effectiveFunction] = true;
+            self::$noParamContractCache[$function] = true;
+
             return null;
         }
 
+        $paramsUseGenerics = (bool) ($contract['paramsUseGenerics'] ?? true);
         $methodTemplates = $contract['templates'];
         $classTemplates = $contract['classTemplates'] ?? [];
         $aliases = $contract['aliases'];
-        $hasGenerics = (\count($methodTemplates) > 0 || \count($classTemplates) > 0);
+        $hasMethodTemplates = (\count($methodTemplates) > 0);
 
-        if (! $hasGenerics && \count($aliases) === 0) {
-            foreach ($contract['types'] as $paramName => $typeNode) {
-                if (\array_key_exists($paramName, $vars)) {
-                    $err = $registry->validate($vars[$paramName], $typeNode, $effectiveFunction . '(): Argument $' . $paramName);
-                    if ($err !== null) {
-                        return $err;
-                    }
-                }
-            }
-
-            return null;
+        if (! $paramsUseGenerics && ! $hasMethodTemplates && \count($aliases) === 0) {
+            return self::validateSimpleParams($contract['types'], $vars, $effectiveFunction, $registry);
         }
 
+        self::prepareGenericBindings($effectiveFunction, $methodTemplates, $thisObj, $classTemplates);
+
+        /** @var array<string, TemplateTagValueNode> $allTemplates */
+        $allTemplates = [...$classTemplates, ...$methodTemplates];
+
+        if (\count($allTemplates) > 0 && $paramsUseGenerics) {
+            self::preInferGenericTemplates($contract['types'], $vars, $effectiveFunction, $thisObj, $allTemplates, $classTemplates);
+        }
+
+        $boundTemplates = (\count($allTemplates) > 0)
+            ? TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates)
+            : [];
+        $declaredTemplates = $allTemplates;
+
+        $baseTypes = self::resolveBaseTypes($contract['types'], $effectiveFunction, $thisObj, $aliases);
+
+        return self::validateAllParameters(
+            $contract['types'],
+            $baseTypes,
+            $vars,
+            $effectiveFunction,
+            $thisObj,
+            $allTemplates,
+            $aliases,
+            $boundTemplates,
+            $declaredTemplates,
+            $registry,
+            $classTemplates
+        );
+    }
+
+    /**
+     * Validates simple parameters when no generics/aliases are involved.
+     *
+     * @param array<string, TypeNode> $types
+     * @param array<string, mixed> $vars
+     */
+    private static function validateSimpleParams(
+        array $types,
+        array $vars,
+        string $effectiveFunction,
+        TypeValidatorRegistry $registry
+    ): ?ErrorMessage {
+        foreach ($types as $paramName => $typeNode) {
+            if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
+                if (self::isUnconstrained($typeNode)) {
+                    continue;
+                }
+                $err = $registry->validate($vars[$paramName], $typeNode, '');
+                if ($err !== null) {
+                    return ErrorFactory::createError($effectiveFunction . '(): Argument $' . $paramName . $err->getMessage());
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Prepares generic bindings: clears call bindings and resolves inherited templates.
+     *
+     * @param array<string, TemplateTagValueNode> $methodTemplates
+     * @param array<string, TemplateTagValueNode> $classTemplates
+     */
+    private static function prepareGenericBindings(
+        string $effectiveFunction,
+        array $methodTemplates,
+        ?object $thisObj,
+        array $classTemplates
+    ): void {
         if (\count($methodTemplates) > 0) {
             TemplateManager::clearCallBindings($effectiveFunction, $methodTemplates);
         }
 
-        if ($thisObj !== null && \count($classTemplates) > 0 && str_contains($effectiveFunction, '::')) {
+        if ($thisObj !== null && \count($classTemplates) > 0 && ! TemplateManager::hasInstanceBindings($thisObj) && str_contains($effectiveFunction, '::')) {
             $declaringClass = explode('::', $effectiveFunction, 2)[0];
             TemplateManager::resolveInheritedTemplates($thisObj, $declaringClass);
         }
+    }
 
-        $allTemplates = [...$classTemplates, ...$methodTemplates];
-        if (\count($allTemplates) > 0) {
-            self::preInferGenericTemplates($contract['types'], $vars, $effectiveFunction, $thisObj, $allTemplates);
+    /**
+     * Pre‑resolves and caches base types for each parameter.
+     *
+     * @param array<string, TypeNode> $types
+     * @param array<string, TypeNode> $aliases
+     *
+     * @return array<string, TypeNode>
+     */
+    private static function resolveBaseTypes(
+        array $types,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $aliases
+    ): array {
+        $baseTypes = [];
+        foreach ($types as $paramName => $typeNode) {
+            $cacheKey = $effectiveFunction . '|' . $paramName;
+            if (! isset(self::$baseTypeCache[$cacheKey])) {
+                if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
+                    $typeNode = $aliases[$typeNode->name];
+                }
+                $resolved = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+                self::$baseTypeCache[$cacheKey] = $resolved;
+            }
+            $baseTypes[$paramName] = self::$baseTypeCache[$cacheKey];
         }
 
-        $boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates);
-        $declaredTemplates = $allTemplates;
+        return $baseTypes;
+    }
 
-        foreach ($contract['types'] as $paramName => $typeNode) {
-            if (! \array_key_exists($paramName, $vars)) {
+    /**
+     * Validates all parameters against their resolved base types.
+     *
+     * @param array<string, TypeNode> $contractTypes
+     * @param array<string, TypeNode> $baseTypes
+     * @param array<string, mixed> $vars
+     * @param string $effectiveFunction
+     * @param object|null $thisObj
+     * @param array<string, TemplateTagValueNode> $allTemplates
+     * @param array<string, TypeNode> $aliases
+     * @param array<string, TypeNode> $boundTemplates
+     * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param TypeValidatorRegistry $registry
+     * @param array<string, TemplateTagValueNode> $classTemplates
+     */
+    private static function validateAllParameters(
+        array $contractTypes,
+        array $baseTypes,
+        array $vars,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $allTemplates,
+        array $aliases,
+        array $boundTemplates,
+        array $declaredTemplates,
+        TypeValidatorRegistry $registry,
+        array $classTemplates
+    ): ?ErrorMessage {
+        foreach ($contractTypes as $paramName => $_) {
+            if (! isset($vars[$paramName]) && ! \array_key_exists($paramName, $vars)) {
                 continue;
             }
 
             $err = self::validateSingleParam(
                 $paramName,
-                $typeNode,
+                $baseTypes[$paramName],
                 $vars[$paramName],
                 $effectiveFunction,
                 $thisObj,
@@ -128,7 +319,8 @@ final class ParamChecker
                 $aliases,
                 $boundTemplates,
                 $declaredTemplates,
-                $registry
+                $registry,
+                $classTemplates
             );
 
             if ($err !== null) {
@@ -148,45 +340,46 @@ final class ParamChecker
             return $function;
         }
 
-        $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : '');
+        $actualClassName = \is_object($thisOrClass) ? $thisOrClass::class : (\is_string($thisOrClass) ? $thisOrClass : '');
         if ($actualClassName === '') {
             return $function;
         }
 
-        [$classOrTrait, $methodName] = explode('::', $function, 2);
+        if (str_starts_with($function, $actualClassName . '::') && HierarchyResolver::getTraitAliases($actualClassName) === []) {
+            return $function;
+        }
 
         $cacheKey = $function . '|' . $actualClassName;
         if (isset(self::$effectiveFunctionCache[$cacheKey])) {
             return self::$effectiveFunctionCache[$cacheKey];
         }
 
+        [$classOrTrait, $methodName] = explode('::', $function, 2);
+
         $effectiveFunction = ($actualClassName !== $classOrTrait)
             ? $actualClassName . '::' . $methodName
             : $function;
 
         if ($thisObj !== null) {
-            $targetClass = $actualClassName;
-            $traitAliases = HierarchyResolver::getTraitAliases($targetClass);
+            $traitAliases = HierarchyResolver::getTraitAliases($actualClassName);
 
             if (\count($traitAliases) > 0) {
-                $isPotentialAlias = isset($traitAliases[$methodName]);
-                if (! $isPotentialAlias) {
-                    foreach ($traitAliases as $originalTarget) {
-                        if (str_ends_with($originalTarget, '::' . $methodName)) {
-                            $isPotentialAlias = true;
+                $isTargetOfAlias = false;
+                foreach ($traitAliases as $originalTarget) {
+                    if (str_ends_with($originalTarget, '::' . $methodName)) {
+                        $isTargetOfAlias = true;
 
-                            break;
-                        }
+                        break;
                     }
                 }
 
-                if ($isPotentialAlias) {
+                if ($isTargetOfAlias) {
                     $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
                     foreach ($trace as $frame) {
                         $frameFunc = $frame['function'];
                         $frameClass = $frame['class'] ?? '';
                         if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
-                            return self::$effectiveFunctionCache[$cacheKey] = $targetClass . '::' . $frameFunc;
+                            return self::$effectiveFunctionCache[$cacheKey] = $actualClassName . '::' . $frameFunc;
                         }
                     }
                 }
@@ -240,16 +433,32 @@ final class ParamChecker
      * @param array<string, TypeNode> $types
      * @param array<string, mixed> $vars
      * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
      */
     private static function preInferGenericTemplates(
         array $types,
         array $vars,
         string $effectiveFunction,
         ?object $thisObj,
-        array $templates
+        array $templates,
+        array $classTemplates = []
     ): void {
-        self::inferTemplatesFromClosures($types, $vars, $effectiveFunction, $thisObj, $templates);
-        self::inferTemplatesFromArrays($types, $vars, $effectiveFunction, $thisObj, $templates);
+        $hasClosure = false;
+        foreach ($vars as $v) {
+            if ($v instanceof \Closure) {
+                $hasClosure = true;
+
+                break;
+            }
+        }
+
+        if ($hasClosure) {
+            self::inferTemplatesFromClosures($types, $vars, $effectiveFunction, $thisObj, $templates, $classTemplates);
+        }
+
+        if (\count($types) > 1) {
+            self::inferTemplatesFromArrays($types, $vars, $effectiveFunction, $thisObj, $templates);
+        }
     }
 
     /**
@@ -258,24 +467,23 @@ final class ParamChecker
      * @param array<string, TypeNode> $types
      * @param array<string, mixed> $vars
      * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
      */
     private static function inferTemplatesFromClosures(
         array $types,
         array $vars,
         string $effectiveFunction,
         ?object $thisObj,
-        array $templates
+        array $templates,
+        array $classTemplates = []
     ): void {
         $callableNodes = self::extractCallableNodes($types);
         if (\count($callableNodes) === 0) {
             return;
         }
 
-        $contract = DocblockParser::parse($effectiveFunction);
-        $classTemplates = $contract['classTemplates'] ?? [];
-
         foreach ($callableNodes as $cParamName => $cTypeNode) {
-            if (! \array_key_exists($cParamName, $vars) || ! ($vars[$cParamName] instanceof \Closure)) {
+            if (! isset($vars[$cParamName]) || ! ($vars[$cParamName] instanceof \Closure)) {
                 continue;
             }
 
@@ -384,7 +592,7 @@ final class ParamChecker
         array $templates
     ): void {
         foreach ($types as $paramName => $typeNode) {
-            if (! \array_key_exists($paramName, $vars) || ! \is_array($vars[$paramName]) || \count($vars[$paramName]) === 0) {
+            if (! isset($vars[$paramName]) || ! \is_array($vars[$paramName]) || \count($vars[$paramName]) === 0) {
                 continue;
             }
 
@@ -531,6 +739,7 @@ final class ParamChecker
      * @param array<string, TypeNode> $aliases
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param array<string, TemplateTagValueNode> $classTemplates
      */
     private static function validateSingleParam(
         string $paramName,
@@ -542,16 +751,11 @@ final class ParamChecker
         array $aliases,
         array $boundTemplates,
         array $declaredTemplates,
-        TypeValidatorRegistry $registry
+        TypeValidatorRegistry $registry,
+        array $classTemplates = []
     ): ?ErrorMessage {
-        if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
-            $typeNode = $aliases[$typeNode->name];
-        }
-
-        $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
-
-        if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
-            $typeNode = $aliases[$typeNode->name];
+        if (self::isUnconstrained($typeNode)) {
+            return null;
         }
 
         $isClassStringT = ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates));
@@ -564,11 +768,11 @@ final class ParamChecker
         }
 
         if ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates)) {
-            return self::resolveClassStringTemplate($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates);
+            return self::resolveClassStringTemplate($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $classTemplates);
         }
 
         if (self::getTemplateName($typeNode, $templates) !== null) {
-            return self::resolveTemplateParam($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $registry);
+            return self::resolveTemplateParam($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $registry, $classTemplates);
         }
 
         return $registry->validate($val, $typeNode, $effectiveFunction . '(): Argument $' . $paramName);
@@ -691,6 +895,7 @@ final class ParamChecker
 
     /**
      * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
      */
     private static function resolveClassStringTemplate(
         GenericTypeNode $typeNode,
@@ -698,15 +903,14 @@ final class ParamChecker
         string $paramName,
         string $function,
         ?object $thisObj,
-        array $templates
+        array $templates,
+        array $classTemplates = []
     ): ?ErrorMessage {
         /** @var IdentifierTypeNode $innerType */
         $innerType = $typeNode->genericTypes[0];
         $templateName = $innerType->name;
         $templateNode = $templates[$templateName];
 
-        $contract = DocblockParser::parse($function);
-        $classTemplates = $contract['classTemplates'] ?? [];
         $isClassLevelTemplate = isset($classTemplates[$templateName]);
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
 
@@ -716,15 +920,19 @@ final class ParamChecker
             }
 
             if ($templateNode->bound !== null) {
-                $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
-                if (! self::checkClassStringSatisfiesBound($val, $resolvedBound)) {
-                    $boundDisplay = (string) $resolvedBound;
+                $boundLower = $templateNode->bound instanceof IdentifierTypeNode ? strtolower($templateNode->bound->name) : '';
+                if ($boundLower !== 'object' && $boundLower !== 'mixed') {
+                    $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
+                    if (! self::checkClassStringSatisfiesBound($val, $resolvedBound)) {
+                        $boundDisplay = (string) $resolvedBound;
 
-                    return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a class-string of ' . $boundDisplay . ", '" . $val . "' given");
+                        return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a class-string of ' . $boundDisplay . ", '" . $val . "' given");
+                    }
                 }
             }
 
-            TemplateManager::bindTemplate($function, $targetObj, $templateName, new IdentifierTypeNode($val));
+            $classNode = TemplateManager::$classNodeCache[$val] ??= new IdentifierTypeNode($val);
+            TemplateManager::bindTemplate($function, $targetObj, $templateName, $classNode);
         } else {
             $expectedTypeNode = TemplateManager::getBoundType($function, $targetObj, $templateName);
             if ($expectedTypeNode !== null) {
@@ -810,6 +1018,7 @@ final class ParamChecker
 
     /**
      * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
      */
     private static function resolveTemplateParam(
         TypeNode $typeNode,
@@ -818,7 +1027,8 @@ final class ParamChecker
         string $function,
         ?object $thisObj,
         array $templates,
-        TypeValidatorRegistry $registry
+        TypeValidatorRegistry $registry,
+        array $classTemplates = []
     ): ?ErrorMessage {
         $templateName = self::getTemplateName($typeNode, $templates);
         if ($templateName === null || ! isset($templates[$templateName])) {
@@ -829,8 +1039,6 @@ final class ParamChecker
         $isVariadic = $typeNode instanceof ArrayTypeNode;
         $isNullable = ($typeNode instanceof NullableTypeNode) || ($typeNode instanceof UnionTypeNode && self::typeContainsNull($typeNode));
 
-        $contract = DocblockParser::parse($function);
-        $classTemplates = $contract['classTemplates'] ?? [];
         $isClassLevelTemplate = isset($classTemplates[$templateName]);
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
 

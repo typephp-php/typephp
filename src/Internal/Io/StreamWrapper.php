@@ -239,7 +239,7 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Safely neutralizes trailing single-line comments (// or #) preceding an injected check
+     * Safely neutralises trailing single-line comments (// or #) preceding an injected check
      * into block comments without corrupting string literals containing '//' or '#'.
      */
     private static function neutralizeTrailingLineComments(string $code): string
