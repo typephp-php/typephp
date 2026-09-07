@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace TypePHP;
 
-use TypePHP\Internal\Diagnostic\Profiler;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\Util\Config;
@@ -16,7 +15,6 @@ final class TypePHP
      */
     public static function boot(): void
     {
-        Profiler::init();
         StreamWrapper::register(Config::get());
     }
 

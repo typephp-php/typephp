@@ -154,7 +154,8 @@ final class InlineChecker
                 $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
             }
 
-            if ($needsContext) {
+            // Caller and thisOrClass are always provided by the injected AST; no backtrace fallback needed.
+            if ($needsContext && $caller !== null) {
                 $typeNode = self::resolveCallerContext($typeNode, $caller, $thisOrClass);
             }
 
@@ -307,89 +308,7 @@ final class InlineChecker
             return self::resolveFunctionContext($typeNode, $caller);
         }
 
-        $frameInfo = self::findCallerFrame();
-
-        if ($frameInfo['functionName'] !== null) {
-            return self::resolveFunctionContext($typeNode, $frameInfo['functionName']);
-        }
-
-        if ($frameInfo['className'] !== null) {
-            return self::resolveClassContext(
-                $typeNode,
-                $frameInfo['className'],
-                $frameInfo['methodName'],
-                $frameInfo['thisObj']
-            );
-        }
-
         return $typeNode;
-    }
-
-    /**
-     * Inspects the backtrace to find the nearest non-internal caller frame.
-     *
-     * @return array{className: ?string, methodName: ?string, functionName: ?string, thisObj: ?object}
-     */
-    private static function findCallerFrame(): array
-    {
-        $className = null;
-        $methodName = null;
-        $functionName = null;
-        $thisObj = null;
-
-        $trace = debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT, 15);
-
-        foreach ($trace as $frame) {
-            $classCandidate = $frame['class'] ?? null;
-            $funcCandidate = $frame['function'];
-
-            if ($classCandidate === 'Closure' || $classCandidate === 'Generator') {
-                if ($thisObj === null && isset($frame['object']) && ! ($frame['object'] instanceof \Closure) && ! ($frame['object'] instanceof \Generator)) {
-                    $thisObj = $frame['object'];
-                }
-
-                continue;
-            }
-
-            if ($funcCandidate === '{closure}' || str_starts_with($funcCandidate, '{closure')) {
-                if ($thisObj === null && isset($frame['object']) && ! ($frame['object'] instanceof \Closure) && ! ($frame['object'] instanceof \Generator)) {
-                    $thisObj = $frame['object'];
-                }
-
-                continue;
-            }
-
-            if ($classCandidate !== null) {
-                if (! str_starts_with($classCandidate, 'TypePHP\\Internal\\') && ! str_starts_with($classCandidate, 'TypePHP\\Wrapper\\')) {
-                    $className = $classCandidate;
-                    $methodName = $funcCandidate;
-                    if ($thisObj === null) {
-                        $thisObj = $frame['object'] ?? null;
-                    }
-
-                    break;
-                }
-            } else {
-                if (! str_starts_with($funcCandidate, 'TypePHP\\')) {
-                    if (! \in_array($funcCandidate, ['include', 'include_once', 'require', 'require_once', 'eval'], true)) {
-                        if (self::isInternalFunction($funcCandidate)) {
-                            continue;
-                        }
-
-                        $functionName = $funcCandidate;
-
-                        break;
-                    }
-                }
-            }
-        }
-
-        return [
-            'className' => $className,
-            'methodName' => $methodName,
-            'functionName' => $functionName,
-            'thisObj' => $thisObj,
-        ];
     }
 
     /**

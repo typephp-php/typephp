@@ -12,7 +12,6 @@ use TypePHP\Internal\Checker\InlineChecker;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
-use TypePHP\Internal\Diagnostic\Profiler;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Util\Config;
@@ -62,23 +61,6 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        if (Profiler::$enabled) {
-            Profiler::$variableCount++;
-            $start = hrtime(true);
-            $res = InlineChecker::checkVariable(
-                $value,
-                $typeString,
-                $varName,
-                $file,
-                self::getRegistry(),
-                $caller,
-                $thisOrClass
-            );
-            Profiler::$variableTimeNs += hrtime(true) - $start;
-
-            return $res;
-        }
-
         return InlineChecker::checkVariable(
             $value,
             $typeString,
@@ -104,15 +86,6 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        if (Profiler::$enabled) {
-            Profiler::$propertyCount++;
-            $start = hrtime(true);
-            $res = InlineChecker::checkProperty($value, $objectOrClass, $propName, $file, self::getRegistry());
-            Profiler::$propertyTimeNs += hrtime(true) - $start;
-
-            return $res;
-        }
-
         return InlineChecker::checkProperty($value, $objectOrClass, $propName, $file, self::getRegistry());
     }
 
@@ -122,12 +95,16 @@ final class RuntimeTypeChecker
     private static array $hasMethodTemplatesCache = [];
 
     /**
-     * Initializes generic call frames and returns a ScopeCleaner that pops the call frame on destruction.
+     * Initialises generic call frames and returns a ScopeCleaner that pops the call frame on destruction.
      *
      * @param array<string, mixed> $vars
      */
     public static function setupScope(string $function, array $vars, object|string|null $thisOrClass = null): ErrorMessage|ScopeCleaner|null
     {
+        if (! Config::isParamsEnabled()) {
+            return null;
+        }
+
         if (isset(ParamChecker::$noParamContractCache[$function]) && ! (self::$hasMethodTemplatesCache[$function] ?? false)) {
             return null;
         }
@@ -136,25 +113,17 @@ final class RuntimeTypeChecker
             return null;
         }
 
-        $start = 0;
-        if (Profiler::$enabled) {
-            Profiler::$scopeCount++;
-            Profiler::recordHotspot($function);
-            $start = hrtime(true);
-        }
-
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        if (ParamChecker::areAllParamsUnconstrained($effectiveFunction)) {
+            return null;
+        }
 
         $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry(), $effectiveFunction);
 
         if ($err !== null) {
-            if (Profiler::$enabled) {
-                Profiler::$scopeTimeNs += hrtime(true) - $start;
-            }
-
             TemplateManager::popCallFrame($effectiveFunction);
-
             return $err;
         }
 
@@ -165,10 +134,6 @@ final class RuntimeTypeChecker
                 $contract['returnUsesMethodTemplates'] ?? false
             );
             self::$hasMethodTemplatesCache[$function] = $hasMethodTemplates;
-        }
-
-        if (Profiler::$enabled) {
-            Profiler::$scopeTimeNs += hrtime(true) - $start;
         }
 
         return $hasMethodTemplates ? new ScopeCleaner($effectiveFunction) : null;
@@ -203,20 +168,16 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        $start = 0;
-        if (Profiler::$enabled) {
-            Profiler::$returnCount++;
-            $start = hrtime(true);
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        // Fast-path: if return type is unconstrained, skip validation.
+        if (ReturnChecker::isReturnUnconstrained($effectiveFunction)) {
+            return $value;
         }
 
         $vars ??= [];
-        $res = ReturnChecker::checkReturn($function, $value, $thisOrClass, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
-
-        if (Profiler::$enabled) {
-            Profiler::$returnTimeNs += hrtime(true) - $start;
-        }
-
-        return $res;
+        return ReturnChecker::checkReturn($function, $value, $thisOrClass, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
     }
 
     /**

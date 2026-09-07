@@ -63,7 +63,6 @@ if (class_exists(TypePHP::class) && ! \defined('TYPEPHP_BOOTED')) {
     }
 
     if (! $isDisabledEnv && ! $isDisabledConst && ! $isTooling && ! $isParallelParent) {
-        Internal\Diagnostic\Profiler::init();
         TypePHP::boot();
     }
 }

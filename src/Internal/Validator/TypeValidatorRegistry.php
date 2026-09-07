@@ -39,9 +39,14 @@ final class TypeValidatorRegistry
 
     private ConstValidator $constValidator;
 
-    public static function reset(): void
-    {
-    }
+    /**
+     * Static map for fast validator resolution.
+     *
+     * @var array<string, TypeValidatorInterface>
+     */
+    private array $validatorMap;
+
+    public static function reset(): void {}
 
     public function __construct()
     {
@@ -54,6 +59,18 @@ final class TypeValidatorRegistry
         $this->arrayShapeValidator = new ArrayShapeValidator();
         $this->objectShapeValidator = new ObjectShapeValidator();
         $this->constValidator = new ConstValidator();
+
+        $this->validatorMap = [
+            IdentifierTypeNode::class => $this->identifierValidator,
+            GenericTypeNode::class => $this->genericValidator,
+            UnionTypeNode::class => $this->unionValidator,
+            NullableTypeNode::class => $this->nullableValidator,
+            ArrayTypeNode::class => $this->arrayValidator,
+            ArrayShapeNode::class => $this->arrayShapeValidator,
+            ObjectShapeNode::class => $this->objectShapeValidator,
+            IntersectionTypeNode::class => $this->intersectionValidator,
+            ConstTypeNode::class => $this->constValidator,
+        ];
     }
 
     /**
@@ -61,17 +78,11 @@ final class TypeValidatorRegistry
      */
     public function validate(mixed $value, TypeNode $node, string $context = ''): ?ErrorMessage
     {
-        return match ($node::class) {
-            IdentifierTypeNode::class => $this->identifierValidator->validate($value, $node, $context, $this),
-            GenericTypeNode::class => $this->genericValidator->validate($value, $node, $context, $this),
-            UnionTypeNode::class => $this->unionValidator->validate($value, $node, $context, $this),
-            NullableTypeNode::class => $this->nullableValidator->validate($value, $node, $context, $this),
-            ArrayTypeNode::class => $this->arrayValidator->validate($value, $node, $context, $this),
-            ArrayShapeNode::class => $this->arrayShapeValidator->validate($value, $node, $context, $this),
-            ObjectShapeNode::class => $this->objectShapeValidator->validate($value, $node, $context, $this),
-            IntersectionTypeNode::class => $this->intersectionValidator->validate($value, $node, $context, $this),
-            ConstTypeNode::class => $this->constValidator->validate($value, $node, $context, $this),
-            default => null,
-        };
+        $validator = $this->validatorMap[$node::class] ?? null;
+        if ($validator === null) {
+            return null;
+        }
+
+        return $validator->validate($value, $node, $context, $this);
     }
 }

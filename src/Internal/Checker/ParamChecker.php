@@ -15,7 +15,6 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
-use TypePHP\Internal\Diagnostic\Profiler;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
@@ -44,6 +43,20 @@ final class ParamChecker
     public static array $noParamContractCache = [];
 
     /**
+     * Cache for resolved parameter base types (after alias and special type resolution).
+     *
+     * @var array<string, TypeNode>
+     */
+    private static array $baseTypeCache = [];
+
+    /**
+     * Cache for whether all parameters of a function are unconstrained (mixed or array).
+     *
+     * @var array<string, bool>
+     */
+    private static array $allParamsUnconstrainedCache = [];
+
+    /**
      * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
@@ -51,6 +64,34 @@ final class ParamChecker
         self::$effectiveFunctionCache = [];
         self::$noParamContractCache = [];
         ClassNameValidator::reset();
+        self::$baseTypeCache = [];
+        self::$allParamsUnconstrainedCache = [];
+    }
+
+    /**
+     * Checks if all parameters of a function are unconstrained (mixed or array).
+     * Uses memoization to avoid repeated docblock parsing.
+     */
+    public static function areAllParamsUnconstrained(string $effectiveFunction): bool
+    {
+        $cacheKey = $effectiveFunction . '|unconstrained';
+        if (!isset(self::$allParamsUnconstrainedCache[$cacheKey])) {
+            $contract = DocblockParser::parse($effectiveFunction);
+            $allUnconstrained = true;
+            foreach ($contract['types'] as $typeNode) {
+                if (!($typeNode instanceof IdentifierTypeNode)) {
+                    $allUnconstrained = false;
+                    break;
+                }
+                $lower = strtolower($typeNode->name);
+                if ($lower !== 'mixed' && $lower !== 'array') {
+                    $allUnconstrained = false;
+                    break;
+                }
+            }
+            self::$allParamsUnconstrainedCache[$cacheKey] = $allUnconstrained;
+        }
+        return self::$allParamsUnconstrainedCache[$cacheKey];
     }
 
     /**
@@ -78,35 +119,16 @@ final class ParamChecker
             return null;
         }
 
-        $start = 0;
-        if (Profiler::$enabled) {
-            Profiler::$paramCheckCount++;
-            $start = hrtime(true);
-        }
-
         if ($vars === [] && ! $isMagicCall) {
-            if (Profiler::$enabled) {
-                Profiler::$paramCheckSkips++;
-                Profiler::$paramCheckTimeNs += hrtime(true) - $start;
-            }
-
             return null;
         }
 
         $magicError = self::handleMagicCall($effectiveFunction, $vars, $thisObj, $registry);
         if ($magicError !== null) {
-            if (Profiler::$enabled) {
-                Profiler::$paramCheckTimeNs += hrtime(true) - $start;
-            }
-
             return $magicError;
         }
 
         if ($isMagicCall) {
-            if (Profiler::$enabled) {
-                Profiler::$paramCheckTimeNs += hrtime(true) - $start;
-            }
-
             return null;
         }
 
@@ -115,12 +137,6 @@ final class ParamChecker
         if (! $contract['hasParamContract']) {
             self::$noParamContractCache[$effectiveFunction] = true;
             self::$noParamContractCache[$function] = true;
-
-            if (Profiler::$enabled) {
-                Profiler::$paramCheckSkips++;
-                Profiler::$paramCheckTimeNs += hrtime(true) - $start;
-            }
-
             return null;
         }
 
@@ -133,21 +149,18 @@ final class ParamChecker
         if (! $paramsUseGenerics && ! $hasMethodTemplates && \count($aliases) === 0) {
             foreach ($contract['types'] as $paramName => $typeNode) {
                 if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
+                    if ($typeNode instanceof IdentifierTypeNode) {
+                        $lower = strtolower($typeNode->name);
+                        if ($lower === 'mixed' || $lower === 'array') {
+                            continue;
+                        }
+                    }
                     $err = $registry->validate($vars[$paramName], $typeNode, '');
                     if ($err !== null) {
-                        if (Profiler::$enabled) {
-                            Profiler::$paramCheckTimeNs += hrtime(true) - $start;
-                        }
-
                         return ErrorFactory::createError($effectiveFunction . '(): Argument $' . $paramName . $err->getMessage());
                     }
                 }
             }
-
-            if (Profiler::$enabled) {
-                Profiler::$paramCheckTimeNs += hrtime(true) - $start;
-            }
-
             return null;
         }
 
@@ -170,6 +183,19 @@ final class ParamChecker
             : [];
         $declaredTemplates = $allTemplates;
 
+        $baseTypes = [];
+        foreach ($contract['types'] as $paramName => $typeNode) {
+            $cacheKey = $effectiveFunction . '|' . $paramName;
+            if (!isset(self::$baseTypeCache[$cacheKey])) {
+                if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
+                    $typeNode = $aliases[$typeNode->name];
+                }
+                $resolved = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+                self::$baseTypeCache[$cacheKey] = $resolved;
+            }
+            $baseTypes[$paramName] = self::$baseTypeCache[$cacheKey];
+        }
+
         foreach ($contract['types'] as $paramName => $typeNode) {
             if (! isset($vars[$paramName]) && ! \array_key_exists($paramName, $vars)) {
                 continue;
@@ -177,7 +203,7 @@ final class ParamChecker
 
             $err = self::validateSingleParam(
                 $paramName,
-                $typeNode,
+                $baseTypes[$paramName],
                 $vars[$paramName],
                 $effectiveFunction,
                 $thisObj,
@@ -190,16 +216,8 @@ final class ParamChecker
             );
 
             if ($err !== null) {
-                if (Profiler::$enabled) {
-                    Profiler::$paramCheckTimeNs += hrtime(true) - $start;
-                }
-
                 return $err;
             }
-        }
-
-        if (Profiler::$enabled) {
-            Profiler::$paramCheckTimeNs += hrtime(true) - $start;
         }
 
         return null;
@@ -628,14 +646,12 @@ final class ParamChecker
         TypeValidatorRegistry $registry,
         array $classTemplates = []
     ): ?ErrorMessage {
-        if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
-            $typeNode = $aliases[$typeNode->name];
-        }
-
-        $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
-
-        if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
-            $typeNode = $aliases[$typeNode->name];
+        // Fast-path for mixed or array (unconstrained)
+        if ($typeNode instanceof IdentifierTypeNode) {
+            $lower = strtolower($typeNode->name);
+            if ($lower === 'mixed' || $lower === 'array') {
+                return null;
+            }
         }
 
         $isClassStringT = ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates));

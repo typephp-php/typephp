@@ -22,7 +22,6 @@ use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Checker\InlineChecker;
-use TypePHP\Internal\Diagnostic\Profiler;
 use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
@@ -236,19 +235,9 @@ final class DocblockParser
      */
     public static function parse(string $function): array
     {
-        if (Profiler::$enabled) {
-            Profiler::$docblockParseCount++;
-        }
-
         if (isset(self::$cache[$function])) {
-            if (Profiler::$enabled) {
-                Profiler::$docblockParseHits++;
-            }
-
             return self::$cache[$function];
         }
-
-        $start = Profiler::$enabled ? hrtime(true) : 0;
 
         try {
             if (str_contains($function, '::')) {
@@ -305,10 +294,6 @@ final class DocblockParser
                 'paramsUseGenerics' => false,
                 'returnUsesGenerics' => false,
             ];
-        }
-
-        if (Profiler::$enabled) {
-            Profiler::$docblockParseTimeNs += hrtime(true) - $start;
         }
 
         return self::$cache[$function] = $contract;
@@ -1225,7 +1210,7 @@ final class DocblockParser
     }
 
     /**
-     * Checks if a reflection function or method explicitly declares a nullable native return type (excluding mixed, void, and never).
+     * Checks if a reflection function or method explicitly declares a nullable native return type (excluding void, mixed, and never).
      */
     private static function returnTypeExplicitlyAllowsNull(\ReflectionFunctionAbstract $ref): bool
     {

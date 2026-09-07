@@ -57,6 +57,13 @@ final class ReturnChecker
     public static array $substitutedReturnCache = [];
 
     /**
+     * Cache for whether a return type is unconstrained (mixed or array).
+     *
+     * @var array<string, bool>
+     */
+    private static array $returnUnconstrainedCache = [];
+
+    /**
      * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
@@ -65,6 +72,29 @@ final class ReturnChecker
         self::$resolvedStaticReturnCache = [];
         self::$unboundReturnCache = [];
         self::$substitutedReturnCache = [];
+        self::$returnUnconstrainedCache = [];
+    }
+
+    /**
+     * Checks if the return type of a function is unconstrained (mixed or array).
+     * Uses memoization to avoid repeated docblock parsing.
+     */
+    public static function isReturnUnconstrained(string $effectiveFunction): bool
+    {
+        $cacheKey = $effectiveFunction . '|return_unconstrained';
+        if (!isset(self::$returnUnconstrainedCache[$cacheKey])) {
+            $contract = DocblockParser::parse($effectiveFunction);
+            $returnNode = $contract['return'] ?? null;
+            $unconstrained = false;
+            if ($returnNode instanceof IdentifierTypeNode) {
+                $lower = strtolower($returnNode->name);
+                if ($lower === 'mixed' || $lower === 'array') {
+                    $unconstrained = true;
+                }
+            }
+            self::$returnUnconstrainedCache[$cacheKey] = $unconstrained;
+        }
+        return self::$returnUnconstrainedCache[$cacheKey];
     }
 
     /**
@@ -91,7 +121,6 @@ final class ReturnChecker
 
         if (isset(self::$noReturnContractCache[$effectiveFunction])) {
             self::$noReturnContractCache[$function] = true;
-
             return $value;
         }
 
@@ -119,7 +148,6 @@ final class ReturnChecker
         if (! ($contract['hasReturnContract'] ?? ($contract['return'] !== null))) {
             self::$noReturnContractCache[$effectiveFunction] = true;
             self::$noReturnContractCache[$function] = true;
-
             return $value;
         }
 
@@ -127,7 +155,6 @@ final class ReturnChecker
         if ($returnTypeNode === null) {
             self::$noReturnContractCache[$effectiveFunction] = true;
             self::$noReturnContractCache[$function] = true;
-
             return $value;
         }
 
@@ -238,9 +265,10 @@ final class ReturnChecker
                 $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
             }
 
+            // Fast-path: if return type is mixed or array, skip validation entirely.
             if ($resolvedType instanceof IdentifierTypeNode) {
-                $name = strtolower($resolvedType->name);
-                if ($name === 'mixed' || ($name === 'array' && \is_array($value))) {
+                $lower = strtolower($resolvedType->name);
+                if ($lower === 'mixed' || $lower === 'array') {
                     return $value;
                 }
             }
@@ -305,9 +333,10 @@ final class ReturnChecker
             }
         }
 
+        // Fast-path: if return type is mixed or array, skip validation.
         if ($resolvedType instanceof IdentifierTypeNode) {
-            $name = strtolower($resolvedType->name);
-            if ($name === 'mixed' || ($name === 'array' && \is_array($value))) {
+            $lower = strtolower($resolvedType->name);
+            if ($lower === 'mixed' || $lower === 'array') {
                 return $value;
             }
         }
