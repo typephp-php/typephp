@@ -89,7 +89,7 @@ describe('Strict Return Generic Invariance Configuration', function () {
 
     test('default strict mode rejects returning InvariantTestBox<Dog> for InvariantTestBox<Animal> (PHPStan Parity)', function () {
         expect(fn () => produceAnimalBox())
-            ->toThrow(TypeError::class, 'expects TypePHP\Tests\TypeChecking\Generics\InvariantTestBox<invariant TypePHP\Tests\Fixtures\Domain\Animal>, but TypePHP\Tests\TypeChecking\Generics\InvariantTestBox<TypePHP\Tests\Fixtures\Domain\Dog> was returned')
+            ->toThrow(TypeError::class, 'expects InvariantTestBox<invariant TypePHP\Tests\Fixtures\Domain\Animal>, but InvariantTestBox<TypePHP\Tests\Fixtures\Domain\Dog> was returned')
         ;
     });
 
