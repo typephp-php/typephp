@@ -72,6 +72,28 @@ final class TemplateManager
     public static ?object $pendingCloneSource = null;
 
     /**
+     * Fast O(1) hashmap for recognized key template names.
+     *
+     * @var array<string, true>
+     */
+    private const KEY_TEMPLATE_NAMES = [
+        'tkey' => true,
+        'key' => true,
+        'k' => true,
+    ];
+
+    /**
+     * Fast O(1) hashmap for class context self-referencing keywords.
+     *
+     * @var array<string, true>
+     */
+    private const CONTEXT_SELF_REFERENCES = [
+        'self' => true,
+        'static' => true,
+        '$this' => true,
+    ];
+
+    /**
      * O(1) direct hash-table matrix for scalar subtype relationships.
      *
      * @var array<string, array<string, bool>>
@@ -356,8 +378,7 @@ final class TemplateManager
             $firstBound = $firstTemplate->bound !== null ? strtolower((string) $firstTemplate->bound) : '';
             $firstName = strtolower($firstTemplate->name);
 
-            $isKeyTemplate = $firstBound === 'array-key'
-                || \in_array($firstName, ['tkey', 'key', 'k'], true);
+            $isKeyTemplate = $firstBound === 'array-key' || isset(self::KEY_TEMPLATE_NAMES[$firstName]);
 
             if ($isKeyTemplate) {
                 $defaultKeyNode = $firstTemplate->default ?? $firstTemplate->bound ?? new IdentifierTypeNode('array-key');
@@ -395,7 +416,7 @@ final class TemplateManager
     {
         if (isset(self::$callStackBindings[$function])) {
             array_pop(self::$callStackBindings[$function]);
-            if (empty(self::$callStackBindings[$function])) {
+            if (self::$callStackBindings[$function] === []) {
                 unset(self::$callStackBindings[$function]);
             }
         }
@@ -423,24 +444,18 @@ final class TemplateManager
         $bindings = [];
 
         if ($thisObj !== null) {
-            if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$thisObj])) {
-                self::resolveInheritedTemplates($thisObj, \get_class($thisObj));
-            }
+            self::ensureInstanceInherited($thisObj);
 
             if (isset(self::$instanceTemplateBindings[$thisObj])) {
                 $bindings = self::$instanceTemplateBindings[$thisObj];
             }
         }
 
-        if (self::hasCallFrame($function)) {
-            $topFrame = end(self::$callStackBindings[$function]);
-            if ($topFrame !== false) {
-                if (empty($bindings)) {
-                    $bindings = $topFrame;
-                } else {
-                    $bindings = [...$bindings, ...$topFrame];
-                }
-            }
+        $topFrame = self::getTopCallFrame($function);
+        if ($topFrame !== null) {
+            $bindings = $bindings === []
+                ? $topFrame
+                : [...$bindings, ...$topFrame];
         }
 
         return $bindings;
@@ -458,9 +473,7 @@ final class TemplateManager
      */
     public static function getBoundTemplatesForInstance(object $instance): array
     {
-        if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$instance])) {
-            self::resolveInheritedTemplates($instance, \get_class($instance));
-        }
+        self::ensureInstanceInherited($instance);
 
         if (self::$instanceTemplateBindings !== null && isset(self::$instanceTemplateBindings[$instance])) {
             return self::$instanceTemplateBindings[$instance];
@@ -476,12 +489,11 @@ final class TemplateManager
      */
     public static function getTemplateVariances(object $instance): array
     {
-        $className = \get_class($instance);
+        $className = $instance::class;
 
         try {
             $stubDoc = StubManager::getClassDoc($className);
-            /** @var class-string<object> $className */
-            $ref = new \ReflectionClass($className);
+            $ref = new \ReflectionClass($instance);
             $classDoc = $stubDoc ?? $ref->getDocComment();
 
             if ($classDoc !== false && $classDoc !== null) {
@@ -501,17 +513,13 @@ final class TemplateManager
      */
     public static function isBound(string $function, ?object $thisObj, string $templateName): bool
     {
-        if (self::hasCallFrame($function)) {
-            $topFrame = end(self::$callStackBindings[$function]);
-            if ($topFrame !== false && isset($topFrame[$templateName])) {
-                return true;
-            }
+        $topFrame = self::getTopCallFrame($function);
+        if ($topFrame !== null && isset($topFrame[$templateName])) {
+            return true;
         }
 
         if ($thisObj !== null) {
-            if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$thisObj])) {
-                self::resolveInheritedTemplates($thisObj, \get_class($thisObj));
-            }
+            self::ensureInstanceInherited($thisObj);
 
             return isset(self::$instanceTemplateBindings[$thisObj][$templateName]);
         }
@@ -524,17 +532,13 @@ final class TemplateManager
      */
     public static function getBoundType(string $function, ?object $thisObj, string $templateName): ?TypeNode
     {
-        if (self::hasCallFrame($function)) {
-            $topFrame = end(self::$callStackBindings[$function]);
-            if ($topFrame !== false && isset($topFrame[$templateName])) {
-                return $topFrame[$templateName];
-            }
+        $topFrame = self::getTopCallFrame($function);
+        if ($topFrame !== null && isset($topFrame[$templateName])) {
+            return $topFrame[$templateName];
         }
 
         if ($thisObj !== null) {
-            if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$thisObj])) {
-                self::resolveInheritedTemplates($thisObj, \get_class($thisObj));
-            }
+            self::ensureInstanceInherited($thisObj);
 
             return self::$instanceTemplateBindings[$thisObj][$templateName] ?? null;
         }
@@ -567,11 +571,11 @@ final class TemplateManager
     public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false): ?ErrorMessage
     {
         $className = $typeNode->type->name;
-        if (\in_array(strtolower($className), ['self', 'static', '$this'], true)) {
-            $className = \get_class($instance);
+        if (isset(self::CONTEXT_SELF_REFERENCES[strtolower($className)])) {
+            $className = $instance::class;
         }
 
-        if (! is_a($instance, $className) || ! ClassNameValidator::isValid($className) || (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className))) {
+        if (! is_a($instance, $className) || ! ClassNameValidator::isValid($className) || ! self::isRealTypeSymbol($className)) {
             return null;
         }
 
@@ -671,7 +675,7 @@ final class TemplateManager
     ): ?ErrorMessage {
         if ($expectedTypeNode instanceof IdentifierTypeNode) {
             $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($expectedTypeNode->name);
-            $isRealType = class_exists($expectedTypeNode->name) || interface_exists($expectedTypeNode->name) || enum_exists($expectedTypeNode->name) || trait_exists($expectedTypeNode->name);
+            $isRealType = self::isRealTypeSymbol($expectedTypeNode->name);
 
             if (! $isBuiltIn && ! $isRealType) {
                 return null;
@@ -688,13 +692,9 @@ final class TemplateManager
             }
         }
 
-        if (self::$instanceTemplateBindings === null) {
-            self::$instanceTemplateBindings = new WeakMap();
-        }
+        self::$instanceTemplateBindings ??= new WeakMap();
 
         $declaredVariance = $classVariances[$templateTag->name] ?? GenericTypeNode::VARIANCE_INVARIANT;
-
-        // Return values are naturally in a covariant position under Liskov Substitution Principle
         $isReturnContext = str_contains($context, 'Return value');
 
         $variance = ($usageVariance !== GenericTypeNode::VARIANCE_INVARIANT)
@@ -763,11 +763,8 @@ final class TemplateManager
      */
     public static function resolveInheritedTemplates(object $instance, string $targetClassName): void
     {
-        $actualClassName = \get_class($instance);
-
-        if (self::$instanceTemplateBindings === null) {
-            self::$instanceTemplateBindings = new WeakMap();
-        }
+        $actualClassName = $instance::class;
+        self::$instanceTemplateBindings ??= new WeakMap();
 
         if (isset(self::$classInheritedBindingsCache[$actualClassName])) {
             /** @var array<string, TypeNode> $cachedBindings */
@@ -859,7 +856,7 @@ final class TemplateManager
             return;
         }
 
-        if (! class_exists($parentName) && ! interface_exists($parentName) && ! trait_exists($parentName)) {
+        if (! self::isRealTypeSymbol($parentName)) {
             return;
         }
 
@@ -884,7 +881,7 @@ final class TemplateManager
 
                     if ($resolved instanceof IdentifierTypeNode) {
                         $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($resolved->name);
-                        $isRealType = class_exists($resolved->name) || interface_exists($resolved->name) || enum_exists($resolved->name) || trait_exists($resolved->name);
+                        $isRealType = self::isRealTypeSymbol($resolved->name);
 
                         if (! $isBuiltIn && ! $isRealType) {
                             continue;
@@ -1155,8 +1152,8 @@ final class TemplateManager
         if (
             ClassNameValidator::isValid($baseSub)
             && ClassNameValidator::isValid($baseSuper)
-            && (class_exists($baseSub) || interface_exists($baseSub) || trait_exists($baseSub) || enum_exists($baseSub))
-            && (class_exists($baseSuper) || interface_exists($baseSuper) || trait_exists($baseSuper) || enum_exists($baseSuper))
+            && self::isRealTypeSymbol($baseSub)
+            && self::isRealTypeSymbol($baseSuper)
         ) {
             $result = is_a($baseSub, $baseSuper, true);
         }
@@ -1213,7 +1210,7 @@ final class TemplateManager
         }
 
         if (\is_object($value)) {
-            $className = \get_class($value);
+            $className = $value::class;
 
             if (self::$instanceTemplateBindings !== null && isset(self::$instanceTemplateBindings[$value]) && \count(self::$instanceTemplateBindings[$value]) > 0) {
                 $genericTypes = array_values(self::$instanceTemplateBindings[$value]);
@@ -1237,6 +1234,32 @@ final class TemplateManager
     private static function hasCallFrame(string $function): bool
     {
         return isset(self::$callStackBindings[$function]);
+    }
+
+    /**
+     * @return array<string, TypeNode>|null
+     */
+    private static function getTopCallFrame(string $function): ?array
+    {
+        if (! isset(self::$callStackBindings[$function]) || self::$callStackBindings[$function] === []) {
+            return null;
+        }
+
+        $top = end(self::$callStackBindings[$function]);
+
+        return $top !== false ? $top : null;
+    }
+
+    private static function ensureInstanceInherited(object $instance): void
+    {
+        if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$instance])) {
+            self::resolveInheritedTemplates($instance, $instance::class);
+        }
+    }
+
+    private static function isRealTypeSymbol(string $name): bool
+    {
+        return class_exists($name) || interface_exists($name) || enum_exists($name) || trait_exists($name);
     }
 
     /**

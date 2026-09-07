@@ -48,13 +48,6 @@ final class InlineChecker
     private static array $parsedTypeNodeCache = [];
 
     /**
-     * Memoized cache for PHP internal function determinations.
-     *
-     * @var array<string, bool>
-     */
-    private static array $internalFunctionsCache = [];
-
-    /**
      * In-memory cache for resolved class contexts with static bounds.
      *
      * @var array<string, TypeNode>
@@ -74,7 +67,6 @@ final class InlineChecker
     public static function reset(): void
     {
         self::$parsedTypeNodeCache = [];
-        self::$internalFunctionsCache = [];
         self::$resolvedClassContextCache = [];
         self::$nullPropertyCache = [];
     }
@@ -308,28 +300,6 @@ final class InlineChecker
         }
 
         return $typeNode;
-    }
-
-    /**
-     * Fast check if a function name represents an internal PHP built-in function.
-     */
-    private static function isInternalFunction(string $funcName): bool
-    {
-        if (! \function_exists($funcName)) {
-            return false;
-        }
-
-        if (isset(self::$internalFunctionsCache[$funcName])) {
-            return self::$internalFunctionsCache[$funcName];
-        }
-
-        try {
-            $rf = new \ReflectionFunction($funcName);
-
-            return self::$internalFunctionsCache[$funcName] = $rf->isInternal();
-        } catch (\ReflectionException $e) {
-            return self::$internalFunctionsCache[$funcName] = false;
-        }
     }
 
     /**

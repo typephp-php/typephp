@@ -83,13 +83,7 @@ final class ParamChecker
             $contract = DocblockParser::parse($effectiveFunction);
             $allUnconstrained = true;
             foreach ($contract['types'] as $typeNode) {
-                if (! ($typeNode instanceof IdentifierTypeNode)) {
-                    $allUnconstrained = false;
-
-                    break;
-                }
-                $lower = strtolower($typeNode->name);
-                if ($lower !== 'mixed' && $lower !== 'array') {
+                if (! self::isUnconstrained($typeNode)) {
                     $allUnconstrained = false;
 
                     break;
@@ -99,6 +93,20 @@ final class ParamChecker
         }
 
         return self::$allParamsUnconstrainedCache[$cacheKey];
+    }
+
+    /**
+     * Checks if a TypeNode represents an unconstrained type (mixed or array).
+     */
+    private static function isUnconstrained(TypeNode $typeNode): bool
+    {
+        if (! ($typeNode instanceof IdentifierTypeNode)) {
+            return false;
+        }
+
+        $lower = strtolower($typeNode->name);
+
+        return $lower === 'mixed' || $lower === 'array';
     }
 
     /**
@@ -160,6 +168,7 @@ final class ParamChecker
 
         self::prepareGenericBindings($effectiveFunction, $methodTemplates, $thisObj, $classTemplates);
 
+        /** @var array<string, TemplateTagValueNode> $allTemplates */
         $allTemplates = [...$classTemplates, ...$methodTemplates];
 
         if (\count($allTemplates) > 0 && $paramsUseGenerics) {
@@ -202,11 +211,8 @@ final class ParamChecker
     ): ?ErrorMessage {
         foreach ($types as $paramName => $typeNode) {
             if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
-                if ($typeNode instanceof IdentifierTypeNode) {
-                    $lower = strtolower($typeNode->name);
-                    if ($lower === 'mixed' || $lower === 'array') {
-                        continue;
-                    }
+                if (self::isUnconstrained($typeNode)) {
+                    continue;
                 }
                 $err = $registry->validate($vars[$paramName], $typeNode, '');
                 if ($err !== null) {
@@ -276,9 +282,13 @@ final class ParamChecker
      * @param array<string, TypeNode> $contractTypes
      * @param array<string, TypeNode> $baseTypes
      * @param array<string, mixed> $vars
+     * @param string $effectiveFunction
+     * @param object|null $thisObj
+     * @param array<string, TemplateTagValueNode> $allTemplates
      * @param array<string, TypeNode> $aliases
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param TypeValidatorRegistry $registry
      * @param array<string, TemplateTagValueNode> $classTemplates
      */
     private static function validateAllParameters(
@@ -335,7 +345,7 @@ final class ParamChecker
             return $function;
         }
 
-        if (str_starts_with($function, $actualClassName . '::') && empty(HierarchyResolver::getTraitAliases($actualClassName))) {
+        if (str_starts_with($function, $actualClassName . '::') && HierarchyResolver::getTraitAliases($actualClassName) === []) {
             return $function;
         }
 
@@ -744,12 +754,8 @@ final class ParamChecker
         TypeValidatorRegistry $registry,
         array $classTemplates = []
     ): ?ErrorMessage {
-        // Fast-path for mixed or array (unconstrained)
-        if ($typeNode instanceof IdentifierTypeNode) {
-            $lower = strtolower($typeNode->name);
-            if ($lower === 'mixed' || $lower === 'array') {
-                return null;
-            }
+        if (self::isUnconstrained($typeNode)) {
+            return null;
         }
 
         $isClassStringT = ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates));

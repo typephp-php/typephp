@@ -56,7 +56,7 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
-            $classContext = ! empty($this->classStack) ? end($this->classStack) : null;
+            $classContext = $this->classStack !== [] ? end($this->classStack) : null;
             FunctionContractInjector::inject($node, $classContext);
 
             return null;
@@ -164,7 +164,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         if ($node instanceof Node\Stmt\Class_) {
             $hasExtends = $node->extends !== null;
-            $hasImplements = ! empty($node->implements);
+            $hasImplements = $node->implements !== [];
             $hasTraits = false;
 
             foreach ($node->stmts as $stmt) {
@@ -184,7 +184,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
             $hasInheritance = $hasExtends || $hasImplements || $hasTraits || $hasClassDoc;
         } elseif ($node instanceof Node\Stmt\Enum_) {
-            $hasInheritance = ! empty($node->implements);
+            $hasInheritance = $node->implements !== [];
         }
 
         $this->classStack[] = [
@@ -363,7 +363,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
     private function getCurrentCallerExpr(): Node\Expr
     {
-        if (! empty($this->methodStack) && ! empty($this->classStack)) {
+        if ($this->methodStack !== [] && $this->classStack !== []) {
             $classInfo = end($this->classStack);
             $methodInfo = end($this->methodStack);
 
@@ -377,7 +377,7 @@ final class ContractVisitor extends NodeVisitorAbstract
             );
         }
 
-        if (! empty($this->functionStack)) {
+        if ($this->functionStack !== []) {
             return new Node\Scalar\String_(end($this->functionStack));
         }
 
@@ -386,8 +386,8 @@ final class ContractVisitor extends NodeVisitorAbstract
 
     private function getCurrentThisExpr(): Node\Expr
     {
-        $hasThis = ! empty($this->classStack)
-            && ! empty($this->thisAvailableStack)
+        $hasThis = $this->classStack !== []
+            && $this->thisAvailableStack !== []
             && end($this->thisAvailableStack);
 
         return $hasThis

@@ -240,6 +240,15 @@ final class ReturnChecker
      * @param array<int|string, mixed> $vars
      * @param array<string, TypeNode> $aliases
      * @param array<string, TemplateTagValueNode> $templates
+     * @param array{
+     *     return?: TypeNode|null,
+     *     hasReturnContract?: bool,
+     *     returnIsThis?: bool,
+     *     returnIsDynamic?: bool,
+     *     aliases?: array<string, TypeNode>,
+     *     templates?: array<string, TemplateTagValueNode>,
+     *     classTemplates?: array<string, TemplateTagValueNode>
+     * } $contract
      */
     private static function evaluateReturn(
         TypeNode $returnTypeNode,
@@ -273,7 +282,6 @@ final class ReturnChecker
                 $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
             }
 
-            // Fast-path: if return type is mixed or array, skip validation entirely.
             if ($resolvedType instanceof IdentifierTypeNode) {
                 $lower = strtolower($resolvedType->name);
                 if ($lower === 'mixed' || $lower === 'array') {
