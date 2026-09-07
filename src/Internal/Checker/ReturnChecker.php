@@ -81,8 +81,12 @@ final class ReturnChecker
      */
     public static function isReturnUnconstrained(string $effectiveFunction): bool
     {
+        if (str_contains($effectiveFunction, '__call')) {
+            return false;
+        }
+
         $cacheKey = $effectiveFunction . '|return_unconstrained';
-        if (!isset(self::$returnUnconstrainedCache[$cacheKey])) {
+        if (! isset(self::$returnUnconstrainedCache[$cacheKey])) {
             $contract = DocblockParser::parse($effectiveFunction);
             $returnNode = $contract['return'] ?? null;
             $unconstrained = false;
@@ -94,6 +98,7 @@ final class ReturnChecker
             }
             self::$returnUnconstrainedCache[$cacheKey] = $unconstrained;
         }
+
         return self::$returnUnconstrainedCache[$cacheKey];
     }
 
@@ -121,6 +126,7 @@ final class ReturnChecker
 
         if (isset(self::$noReturnContractCache[$effectiveFunction])) {
             self::$noReturnContractCache[$function] = true;
+
             return $value;
         }
 
@@ -148,6 +154,7 @@ final class ReturnChecker
         if (! ($contract['hasReturnContract'] ?? ($contract['return'] !== null))) {
             self::$noReturnContractCache[$effectiveFunction] = true;
             self::$noReturnContractCache[$function] = true;
+
             return $value;
         }
 
@@ -155,6 +162,7 @@ final class ReturnChecker
         if ($returnTypeNode === null) {
             self::$noReturnContractCache[$effectiveFunction] = true;
             self::$noReturnContractCache[$function] = true;
+
             return $value;
         }
 

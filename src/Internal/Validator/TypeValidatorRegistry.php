@@ -46,7 +46,9 @@ final class TypeValidatorRegistry
      */
     private array $validatorMap;
 
-    public static function reset(): void {}
+    public static function reset(): void
+    {
+    }
 
     public function __construct()
     {

@@ -124,6 +124,7 @@ final class RuntimeTypeChecker
 
         if ($err !== null) {
             TemplateManager::popCallFrame($effectiveFunction);
+
             return $err;
         }
 
@@ -177,6 +178,7 @@ final class RuntimeTypeChecker
         }
 
         $vars ??= [];
+
         return ReturnChecker::checkReturn($function, $value, $thisOrClass, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
     }
 

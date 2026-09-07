@@ -18,7 +18,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     private string $currentNamespace = '';
 
     /**
-     * @var list<array{name: ?string, isAnonymous: bool}>
+     * @var list<array{name: ?string, isAnonymous: bool, hasInheritance: bool, hasPropertyWithDoc: bool}>
      */
     private array $classStack = [];
 
@@ -49,94 +49,9 @@ final class ContractVisitor extends NodeVisitorAbstract
      */
     public function enterNode(Node $node): ?array
     {
-        if ($node instanceof Node\Stmt\Namespace_) {
-            $this->currentNamespace = $node->name !== null ? $node->name->toString() : '';
-        } elseif ($node instanceof Node\Stmt\Class_) {
-            $className = $node->name !== null
-                ? ($this->currentNamespace !== '' ? $this->currentNamespace . '\\' . $node->name->toString() : $node->name->toString())
-                : null;
-            $hasExtends = $node->extends !== null;
-            $hasImplements = ! empty($node->implements);
-            $hasTraits = false;
-            $hasPropertyWithDoc = false;
+        $this->trackDeclarationEntry($node);
 
-            foreach ($node->stmts as $stmt) {
-                if ($stmt instanceof Node\Stmt\TraitUse) {
-                    $hasTraits = true;
-                } elseif ($stmt instanceof Node\Stmt\Property && $stmt->getDocComment() !== null) {
-                    $hasPropertyWithDoc = true;
-                }
-            }
-
-            $doc = $node->getDocComment();
-            $hasClassDoc = $doc !== null && (
-                str_contains($doc->getText(), '@template')
-                || str_contains($doc->getText(), '@phpstan-')
-                || str_contains($doc->getText(), '@psalm-')
-            );
-
-            $this->classStack[] = [
-                'name' => $className,
-                'isAnonymous' => ($node->name === null),
-                'hasInheritance' => ($hasExtends || $hasImplements || $hasTraits || $hasClassDoc),
-                'hasPropertyWithDoc' => $hasPropertyWithDoc,
-            ];
-        } elseif ($node instanceof Node\Stmt\Interface_) {
-            $typeName = $node->name !== null
-                ? ($this->currentNamespace !== '' ? $this->currentNamespace . '\\' . $node->name->toString() : $node->name->toString())
-                : null;
-            $this->classStack[] = [
-                'name' => $typeName,
-                'isAnonymous' => false,
-                'hasInheritance' => true,
-                'hasPropertyWithDoc' => false,
-            ];
-        } elseif ($node instanceof Node\Stmt\Trait_) {
-            $typeName = $node->name !== null
-                ? ($this->currentNamespace !== '' ? $this->currentNamespace . '\\' . $node->name->toString() : $node->name->toString())
-                : null;
-            $this->classStack[] = [
-                'name' => $typeName,
-                'isAnonymous' => false,
-                'hasInheritance' => true,
-                'hasPropertyWithDoc' => false,
-            ];
-        } elseif ($node instanceof Node\Stmt\Enum_) {
-            $typeName = $node->name !== null
-                ? ($this->currentNamespace !== '' ? $this->currentNamespace . '\\' . $node->name->toString() : $node->name->toString())
-                : null;
-            $this->classStack[] = [
-                'name' => $typeName,
-                'isAnonymous' => false,
-                'hasInheritance' => ! empty($node->implements),
-                'hasPropertyWithDoc' => false,
-            ];
-        } elseif ($node instanceof Node\Stmt\ClassMethod) {
-            $this->methodStack[] = ['name' => $node->name->toString(), 'isStatic' => $node->isStatic()];
-            $this->thisAvailableStack[] = ! $node->isStatic();
-        } elseif ($node instanceof Node\Stmt\Function_) {
-            $funcName = $this->currentNamespace !== '' ? $this->currentNamespace . '\\' . $node->name->toString() : $node->name->toString();
-            $this->functionStack[] = $funcName;
-            $this->thisAvailableStack[] = false;
-        } elseif ($node instanceof Node\Expr\Closure || $node instanceof Node\Expr\ArrowFunction) {
-            $parentHasThis = ! empty($this->thisAvailableStack) && end($this->thisAvailableStack);
-            $this->thisAvailableStack[] = ! $node->static;
-        }
-
-        if (
-            $node instanceof Node\Stmt\Function_
-            || $node instanceof Node\Stmt\ClassMethod
-            || $node instanceof Node\Expr\Closure
-            || $node instanceof Node\Expr\ArrowFunction
-            || $node instanceof Node\Stmt\If_
-            || $node instanceof Node\Stmt\Else_
-            || $node instanceof Node\Stmt\ElseIf_
-            || $node instanceof Node\Stmt\Foreach_
-            || $node instanceof Node\Stmt\While_
-            || $node instanceof Node\Stmt\For_
-            || $node instanceof Node\Stmt\Do_
-            || $node instanceof Node\Stmt\TryCatch
-        ) {
+        if ($this->isScopeBoundary($node)) {
             $this->scopeManager->pushScope();
         }
 
@@ -154,70 +69,13 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         if ($node instanceof Node\Stmt\Return_ && $node->expr !== null) {
-            $doc = $node->getDocComment();
-            if ($doc !== null && str_contains($doc->getText(), '@var')) {
-                $extracted = DocblockExtractor::extractVarTagFromDoc($doc->getText());
-                if ($extracted !== null) {
-                    [$typeString, $varName] = $extracted;
-                    $isApplicableToReturn = ($varName === '')
-                        || ($node->expr instanceof Node\Expr\Variable && $node->expr->name === $varName);
+            $this->handleReturn($node);
 
-                    if ($isApplicableToReturn) {
-                        $effectiveVarName = ($varName !== '') ? $varName : 'return';
-                        $checkCall = NodeBuilder::createVariableCheckCall(
-                            $node->expr,
-                            $typeString,
-                            $effectiveVarName,
-                            $this->getCurrentCallerExpr(),
-                            $this->getCurrentThisExpr()
-                        );
-                        $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall, $node->getStartLine());
-                        $node->setAttribute('typephp_var_wrapped', true);
-                    }
-                }
-            }
+            return null;
         }
 
         if ($node instanceof Node\Stmt\Expression) {
-            $doc = $node->getDocComment();
-            if ($doc !== null && str_contains($doc->getText(), '@var')) {
-                $this->scopeManager->extractVarDocblock($doc->getText(), $node->expr);
-            }
-
-            if ($node->expr instanceof Node\Expr\Assign) {
-                $assign = $node->expr;
-                if ($assign->var instanceof Node\Expr\List_ || ($assign->var instanceof Node\Expr\Array_ && $assign->var->getAttribute('kind') === Node\Expr\Array_::KIND_SHORT)) {
-                    $destructuredVars = $this->extractDestructuringVariables($assign->var);
-                    $checkStmts = [];
-
-                    foreach ($destructuredVars as $dVar) {
-                        $varName = $dVar['varName'];
-                        $typeString = $this->scopeManager->getVarTypeFromScope($varName);
-
-                        if ($typeString !== null) {
-                            $checkCall = NodeBuilder::createVariableCheckCall(
-                                $dVar['expr'],
-                                $typeString,
-                                $varName,
-                                $this->getCurrentCallerExpr(),
-                                $this->getCurrentThisExpr()
-                            );
-                            $checkStmt = new Node\Stmt\Expression(
-                                new Node\Expr\Assign(
-                                    $dVar['expr'],
-                                    NodeBuilder::createTernaryThrowExpr($checkCall, $dVar['expr']->getStartLine())
-                                )
-                            );
-                            $checkStmt->setAttribute('typephp_injected', value: true);
-                            $checkStmts[] = $checkStmt;
-                        }
-                    }
-
-                    if ($checkStmts !== []) {
-                        return array_merge([$node], $checkStmts);
-                    }
-                }
-            }
+            return $this->handleExpression($node);
         }
 
         if ($node instanceof Node\Stmt\Foreach_) {
@@ -225,40 +83,12 @@ final class ContractVisitor extends NodeVisitorAbstract
             if ($doc !== null && str_contains($doc->getText(), '@var')) {
                 $this->scopeManager->extractVarDocblock($doc->getText(), $node->valueVar);
             }
+
+            return null;
         }
 
         if ($node instanceof Node\Expr\Assign) {
-            if ($node->var instanceof Node\Expr\Variable && \is_string($node->var->name)) {
-                $varName = $node->var->name;
-                $typeString = $this->scopeManager->getVarTypeFromScope($varName);
-
-                if ($typeString !== null) {
-                    $checkCall = NodeBuilder::createVariableCheckCall(
-                        $node->expr,
-                        $typeString,
-                        $varName,
-                        $this->getCurrentCallerExpr(),
-                        $this->getCurrentThisExpr()
-                    );
-                    $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall, $node->var->getStartLine());
-                }
-            } elseif ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
-                $propName = $node->var->name->toString();
-                $objExpr = $node->var->var;
-
-                $checkCall = NodeBuilder::createPropertyCheckCall($node->expr, $objExpr, $propName);
-                $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall, $node->var->getStartLine());
-            } elseif ($node->var instanceof Node\Expr\StaticPropertyFetch && $node->var->name instanceof Node\VarLikeIdentifier) {
-                $propName = $node->var->name->toString();
-                $classExpr = $node->var->class;
-
-                $classArg = $classExpr instanceof Node\Name
-                    ? new Node\Expr\ClassConstFetch($classExpr, 'class')
-                    : $classExpr;
-
-                $checkCall = NodeBuilder::createPropertyCheckCall($node->expr, $classArg, $propName);
-                $node->expr = NodeBuilder::createTernaryThrowExpr($checkCall, $node->var->getStartLine());
-            }
+            $this->handleAssign($node);
         }
 
         return null;
@@ -267,11 +97,53 @@ final class ContractVisitor extends NodeVisitorAbstract
     /**
      * Pops the current lexical scope stack frame or replaces transformed expressions upon leaving a node.
      */
-    public function leaveNode(Node $node): Node|null
+    public function leaveNode(Node $node): ?Node
+    {
+        $this->trackDeclarationExit($node);
+
+        if ($node instanceof Node\Expr\Clone_) {
+            return $this->wrapClone($node);
+        }
+
+        if ($this->isScopeBoundary($node)) {
+            $this->scopeManager->popScope();
+        }
+
+        return null;
+    }
+
+    private function trackDeclarationEntry(Node $node): void
+    {
+        if ($node instanceof Node\Stmt\Namespace_) {
+            $this->currentNamespace = $node->name !== null ? $node->name->toString() : '';
+        } elseif (
+            $node instanceof Node\Stmt\Class_
+            || $node instanceof Node\Stmt\Interface_
+            || $node instanceof Node\Stmt\Trait_
+            || $node instanceof Node\Stmt\Enum_
+        ) {
+            $this->enterClassLike($node);
+        } elseif ($node instanceof Node\Stmt\ClassMethod) {
+            $this->methodStack[] = ['name' => $node->name->toString(), 'isStatic' => $node->isStatic()];
+            $this->thisAvailableStack[] = ! $node->isStatic();
+        } elseif ($node instanceof Node\Stmt\Function_) {
+            $this->functionStack[] = $this->resolveQualifiedName($node->name) ?? '';
+            $this->thisAvailableStack[] = false;
+        } elseif ($node instanceof Node\Expr\Closure || $node instanceof Node\Expr\ArrowFunction) {
+            $this->thisAvailableStack[] = ! $node->static;
+        }
+    }
+
+    private function trackDeclarationExit(Node $node): void
     {
         if ($node instanceof Node\Stmt\Namespace_) {
             $this->currentNamespace = '';
-        } elseif ($node instanceof Node\Stmt\Class_ || $node instanceof Node\Stmt\Interface_ || $node instanceof Node\Stmt\Trait_ || $node instanceof Node\Stmt\Enum_) {
+        } elseif (
+            $node instanceof Node\Stmt\Class_
+            || $node instanceof Node\Stmt\Interface_
+            || $node instanceof Node\Stmt\Trait_
+            || $node instanceof Node\Stmt\Enum_
+        ) {
             array_pop($this->classStack);
         } elseif ($node instanceof Node\Stmt\ClassMethod) {
             array_pop($this->methodStack);
@@ -282,32 +154,183 @@ final class ContractVisitor extends NodeVisitorAbstract
         } elseif ($node instanceof Node\Expr\Closure || $node instanceof Node\Expr\ArrowFunction) {
             array_pop($this->thisAvailableStack);
         }
+    }
 
-        if ($node instanceof Node\Expr\Clone_) {
-            if ($node->getAttribute('typephp_wrapped') === true) {
-                return null;
+    private function enterClassLike(Node\Stmt\Class_|Node\Stmt\Interface_|Node\Stmt\Trait_|Node\Stmt\Enum_ $node): void
+    {
+        $typeName = $this->resolveQualifiedName($node->name);
+        $hasInheritance = true;
+        $hasPropertyWithDoc = false;
+
+        if ($node instanceof Node\Stmt\Class_) {
+            $hasExtends = $node->extends !== null;
+            $hasImplements = ! empty($node->implements);
+            $hasTraits = false;
+
+            foreach ($node->stmts as $stmt) {
+                if ($stmt instanceof Node\Stmt\TraitUse) {
+                    $hasTraits = true;
+                } elseif ($stmt instanceof Node\Stmt\Property && $stmt->getDocComment() !== null) {
+                    $hasPropertyWithDoc = true;
+                }
             }
 
-            $node->setAttribute('typephp_wrapped', value: true);
-
-            return new Node\Expr\FuncCall(
-                new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::cloneInstance'),
-                [
-                    new Node\Arg(
-                        new Node\Expr\Clone_(
-                            new Node\Expr\FuncCall(
-                                new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::prepareClone'),
-                                [new Node\Arg($node->expr)]
-                            )
-                        )
-                    ),
-                    new Node\Arg($node->expr),
-                ]
+            $doc = $node->getDocComment();
+            $hasClassDoc = $doc !== null && (
+                str_contains($doc->getText(), '@template')
+                || str_contains($doc->getText(), '@phpstan-')
+                || str_contains($doc->getText(), '@psalm-')
             );
+
+            $hasInheritance = $hasExtends || $hasImplements || $hasTraits || $hasClassDoc;
+        } elseif ($node instanceof Node\Stmt\Enum_) {
+            $hasInheritance = ! empty($node->implements);
         }
 
-        if (
-            $node instanceof Node\Stmt\Function_
+        $this->classStack[] = [
+            'name' => $typeName,
+            'isAnonymous' => ($node instanceof Node\Stmt\Class_ && $node->name === null),
+            'hasInheritance' => $hasInheritance,
+            'hasPropertyWithDoc' => $hasPropertyWithDoc,
+        ];
+    }
+
+    private function handleReturn(Node\Stmt\Return_ $node): void
+    {
+        if ($node->expr === null) {
+            return;
+        }
+
+        $doc = $node->getDocComment();
+        if ($doc === null || ! str_contains($doc->getText(), '@var')) {
+            return;
+        }
+
+        $extracted = DocblockExtractor::extractVarTagFromDoc($doc->getText());
+        if ($extracted === null) {
+            return;
+        }
+
+        [$typeString, $varName] = $extracted;
+        $isApplicable = ($varName === '')
+            || ($node->expr instanceof Node\Expr\Variable && $node->expr->name === $varName);
+
+        if ($isApplicable) {
+            $node->expr = $this->wrapVariableCheck(
+                $node->expr,
+                $typeString,
+                $varName !== '' ? $varName : 'return',
+                $node->getStartLine()
+            );
+            $node->setAttribute('typephp_var_wrapped', true);
+        }
+    }
+
+    /**
+     * @return array<Node>|null
+     */
+    private function handleExpression(Node\Stmt\Expression $node): ?array
+    {
+        $doc = $node->getDocComment();
+        if ($doc !== null && str_contains($doc->getText(), '@var')) {
+            $this->scopeManager->extractVarDocblock($doc->getText(), $node->expr);
+        }
+
+        if (! ($node->expr instanceof Node\Expr\Assign) || ! $this->isDestructuring($node->expr->var)) {
+            return null;
+        }
+
+        /** @var Node\Expr\List_|Node\Expr\Array_ $destructuringVar */
+        $destructuringVar = $node->expr->var;
+        $destructuredVars = $this->extractDestructuringVariables($destructuringVar);
+        $checkStmts = [];
+
+        foreach ($destructuredVars as $dVar) {
+            $varName = $dVar['varName'];
+            $typeString = $this->scopeManager->getVarTypeFromScope($varName);
+
+            if ($typeString !== null) {
+                $checkStmt = new Node\Stmt\Expression(
+                    new Node\Expr\Assign(
+                        $dVar['expr'],
+                        $this->wrapVariableCheck($dVar['expr'], $typeString, $varName, $dVar['expr']->getStartLine())
+                    )
+                );
+                $checkStmt->setAttribute('typephp_injected', true);
+                $checkStmts[] = $checkStmt;
+            }
+        }
+
+        return $checkStmts !== [] ? array_merge([$node], $checkStmts) : null;
+    }
+
+    private function handleAssign(Node\Expr\Assign $node): void
+    {
+        if ($node->var instanceof Node\Expr\Variable && \is_string($node->var->name)) {
+            $varName = $node->var->name;
+            $typeString = $this->scopeManager->getVarTypeFromScope($varName);
+
+            if ($typeString !== null) {
+                $node->expr = $this->wrapVariableCheck($node->expr, $typeString, $varName, $node->var->getStartLine());
+            }
+        } elseif ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
+            $node->expr = $this->wrapPropertyCheck($node->expr, $node->var->var, $node->var->name->toString(), $node->var->getStartLine());
+        } elseif ($node->var instanceof Node\Expr\StaticPropertyFetch && $node->var->name instanceof Node\VarLikeIdentifier) {
+            $classArg = $node->var->class instanceof Node\Name
+                ? new Node\Expr\ClassConstFetch($node->var->class, 'class')
+                : $node->var->class;
+
+            $node->expr = $this->wrapPropertyCheck($node->expr, $classArg, $node->var->name->toString(), $node->var->getStartLine());
+        }
+    }
+
+    private function wrapVariableCheck(Node\Expr $expr, string $typeString, string $varName, int $line): Node\Expr\Ternary
+    {
+        $checkCall = NodeBuilder::createVariableCheckCall(
+            $expr,
+            $typeString,
+            $varName,
+            $this->getCurrentCallerExpr(),
+            $this->getCurrentThisExpr()
+        );
+
+        return NodeBuilder::createTernaryThrowExpr($checkCall, $line);
+    }
+
+    private function wrapPropertyCheck(Node\Expr $valueExpr, Node\Expr $targetExpr, string $propName, int $line): Node\Expr\Ternary
+    {
+        $checkCall = NodeBuilder::createPropertyCheckCall($valueExpr, $targetExpr, $propName);
+
+        return NodeBuilder::createTernaryThrowExpr($checkCall, $line);
+    }
+
+    private function wrapClone(Node\Expr\Clone_ $node): ?Node\Expr\FuncCall
+    {
+        if ($node->getAttribute('typephp_wrapped') === true) {
+            return null;
+        }
+
+        $node->setAttribute('typephp_wrapped', true);
+
+        return new Node\Expr\FuncCall(
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::cloneInstance'),
+            [
+                new Node\Arg(
+                    new Node\Expr\Clone_(
+                        new Node\Expr\FuncCall(
+                            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::prepareClone'),
+                            [new Node\Arg($node->expr)]
+                        )
+                    )
+                ),
+                new Node\Arg($node->expr),
+            ]
+        );
+    }
+
+    private function isScopeBoundary(Node $node): bool
+    {
+        return $node instanceof Node\Stmt\Function_
             || $node instanceof Node\Stmt\ClassMethod
             || $node instanceof Node\Expr\Closure
             || $node instanceof Node\Expr\ArrowFunction
@@ -318,12 +341,24 @@ final class ContractVisitor extends NodeVisitorAbstract
             || $node instanceof Node\Stmt\While_
             || $node instanceof Node\Stmt\For_
             || $node instanceof Node\Stmt\Do_
-            || $node instanceof Node\Stmt\TryCatch
-        ) {
-            $this->scopeManager->popScope();
+            || $node instanceof Node\Stmt\TryCatch;
+    }
+
+    private function isDestructuring(Node\Expr $expr): bool
+    {
+        return $expr instanceof Node\Expr\List_
+            || ($expr instanceof Node\Expr\Array_ && $expr->getAttribute('kind') === Node\Expr\Array_::KIND_SHORT);
+    }
+
+    private function resolveQualifiedName(?Node\Identifier $name): ?string
+    {
+        if ($name === null) {
+            return null;
         }
 
-        return null;
+        return $this->currentNamespace !== ''
+            ? $this->currentNamespace . '\\' . $name->toString()
+            : $name->toString();
     }
 
     private function getCurrentCallerExpr(): Node\Expr
@@ -363,7 +398,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     /**
      * Recursively extracts target variables assigned inside a list() or [] destructuring node.
      *
-     * @return array<int, array{varName: string, expr: Node\Expr\Variable}>
+     * @return list<array{varName: string, expr: Node\Expr\Variable}>
      */
     private function extractDestructuringVariables(Node\Expr\List_|Node\Expr\Array_ $listNode): array
     {

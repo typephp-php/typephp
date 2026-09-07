@@ -154,7 +154,6 @@ final class InlineChecker
                 $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
             }
 
-            // Caller and thisOrClass are always provided by the injected AST; no backtrace fallback needed.
             if ($needsContext && $caller !== null) {
                 $typeNode = self::resolveCallerContext($typeNode, $caller, $thisOrClass);
             }
