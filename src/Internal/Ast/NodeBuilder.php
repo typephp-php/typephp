@@ -24,16 +24,30 @@ final class NodeBuilder
         );
     }
 
-    public static function createVariableCheckCall(Node\Expr $valueExpr, string $typeString, string $varName): Node\Expr\FuncCall
-    {
+    public static function createVariableCheckCall(
+        Node\Expr $valueExpr,
+        string $typeString,
+        string $varName,
+        ?Node\Expr $callerExpr = null,
+        ?Node\Expr $thisArg = null
+    ): Node\Expr\FuncCall {
+        $args = [
+            new Node\Arg($valueExpr),
+            new Node\Arg(new Node\Scalar\String_($typeString)),
+            new Node\Arg(new Node\Scalar\String_($varName)),
+            new Node\Arg(new Node\Scalar\MagicConst\File()),
+        ];
+
+        if ($callerExpr !== null) {
+            $args[] = new Node\Arg($callerExpr);
+            if ($thisArg !== null) {
+                $args[] = new Node\Arg($thisArg);
+            }
+        }
+
         return new Node\Expr\FuncCall(
             new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkVariable'),
-            [
-                new Node\Arg($valueExpr),
-                new Node\Arg(new Node\Scalar\String_($typeString)),
-                new Node\Arg(new Node\Scalar\String_($varName)),
-                new Node\Arg(new Node\Scalar\MagicConst\File()),
-            ]
+            $args
         );
     }
 

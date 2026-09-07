@@ -10,10 +10,24 @@ namespace TypePHP\Internal\Util;
 final class ClassNameValidator
 {
     /**
+     * @var array<string, bool>
+     */
+    private static array $validSyntaxCache = [];
+
+    /**
+     * @var array<string, bool>
+     */
+    private static array $validClassStringCache = [];
+
+    public static function reset(): void
+    {
+        self::$validSyntaxCache = [];
+        self::$validClassStringCache = [];
+    }
+
+    /**
      * Validates whether a given value is a syntactically valid PHP class, interface, trait, or enum identifier,
      * or a valid anonymous class name registered in memory.
-     * Handles fully-qualified names with leading backslashes.
-     * Returns false for non-strings, empty strings, complex PHPDoc strings like "Producer<Dog>", "array{id: int}", or unions.
      */
     public static function isValid(mixed $name): bool
     {
@@ -21,16 +35,22 @@ final class ClassNameValidator
             return false;
         }
 
+        if (isset(self::$validSyntaxCache[$name])) {
+            return self::$validSyntaxCache[$name];
+        }
+
         if (str_contains($name, '@anonymous')) {
-            return class_exists($name, false);
+            return self::$validSyntaxCache[$name] = class_exists($name, false);
         }
 
         $trimmed = ltrim($name, '\\');
         if ($trimmed === '') {
-            return false;
+            return self::$validSyntaxCache[$name] = false;
         }
 
-        return preg_match('/^[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*(?:\\\\[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)*$/', $trimmed) === 1;
+        $valid = preg_match('/^[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*(?:\\\\[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)*$/', $trimmed) === 1;
+
+        return self::$validSyntaxCache[$name] = $valid;
     }
 
     /**
@@ -40,16 +60,28 @@ final class ClassNameValidator
      */
     public static function isValidClassString(mixed $name): bool
     {
-        if (! \is_string($name) || ! self::isValid($name)) {
+        if (! \is_string($name) || $name === '') {
             return false;
         }
 
+        if (isset(self::$validClassStringCache[$name])) {
+            return self::$validClassStringCache[$name];
+        }
+
+        if (! self::isValid($name)) {
+            return self::$validClassStringCache[$name] = false;
+        }
+
+        if (class_exists($name, false) || interface_exists($name, false) || trait_exists($name, false) || enum_exists($name, false)) {
+            return self::$validClassStringCache[$name] = true;
+        }
+
         if (class_exists($name) || interface_exists($name) || trait_exists($name) || enum_exists($name)) {
-            return true;
+            return self::$validClassStringCache[$name] = true;
         }
 
         $trimmed = ltrim($name, '\\');
 
-        return str_contains($trimmed, '\\');
+        return self::$validClassStringCache[$name] = str_contains($trimmed, '\\');
     }
 }

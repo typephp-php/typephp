@@ -13,6 +13,7 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use ReflectionClass;
 use Traversable;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
@@ -28,16 +29,77 @@ use TypePHP\Internal\Wrapper\CallableWrapper;
 final class ReturnChecker
 {
     /**
-     * @var array<string, string>
+     * O(1) Fast-path cache for methods determined to have no return contracts.
+     *
+     * @var array<string, true>
      */
-    private static array $effectiveFunctionCache = [];
+    public static array $noReturnContractCache = [];
 
     /**
-     * Resets the effective function cache. Useful for test isolation.
+     * In-memory cache for unbound generic return types.
+     *
+     * @var array<string, TypeNode>
+     */
+    public static array $unboundReturnCache = [];
+
+    /**
+     * Memoized static return type resolutions for non-dynamic, non-generic methods.
+     *
+     * @var array<string, TypeNode>
+     */
+    private static array $resolvedStaticReturnCache = [];
+
+    /**
+     * In-memory cache for concrete substituted generic return types.
+     *
+     * @var array<string, TypeNode>
+     */
+    public static array $substitutedReturnCache = [];
+
+    /**
+     * Cache for whether a return type is unconstrained (mixed or array).
+     *
+     * @var array<string, bool>
+     */
+    private static array $returnUnconstrainedCache = [];
+
+    /**
+     * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
     {
-        self::$effectiveFunctionCache = [];
+        self::$noReturnContractCache = [];
+        self::$resolvedStaticReturnCache = [];
+        self::$unboundReturnCache = [];
+        self::$substitutedReturnCache = [];
+        self::$returnUnconstrainedCache = [];
+    }
+
+    /**
+     * Checks if the return type of a function is unconstrained (mixed or array).
+     * Uses memoization to avoid repeated docblock parsing.
+     */
+    public static function isReturnUnconstrained(string $effectiveFunction): bool
+    {
+        if (str_contains($effectiveFunction, '__call')) {
+            return false;
+        }
+
+        $cacheKey = $effectiveFunction . '|return_unconstrained';
+        if (! isset(self::$returnUnconstrainedCache[$cacheKey])) {
+            $contract = DocblockParser::parse($effectiveFunction);
+            $returnNode = $contract['return'] ?? null;
+            $unconstrained = false;
+            if ($returnNode instanceof IdentifierTypeNode) {
+                $lower = strtolower($returnNode->name);
+                if ($lower === 'mixed' || $lower === 'array') {
+                    $unconstrained = true;
+                }
+            }
+            self::$returnUnconstrainedCache[$cacheKey] = $unconstrained;
+        }
+
+        return self::$returnUnconstrainedCache[$cacheKey];
     }
 
     /**
@@ -55,8 +117,20 @@ final class ReturnChecker
             return $value;
         }
 
+        if (isset(self::$noReturnContractCache[$function])) {
+            return $value;
+        }
+
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $effectiveFunction = self::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        if (isset(self::$noReturnContractCache[$effectiveFunction])) {
+            self::$noReturnContractCache[$function] = true;
+
+            return $value;
+        }
+
+        $isMagicCall = str_contains($effectiveFunction, '__call');
 
         $magicResult = self::handleMagicReturn(
             $effectiveFunction,
@@ -71,14 +145,24 @@ final class ReturnChecker
             return $magicResult;
         }
 
+        if ($isMagicCall) {
+            return $value;
+        }
+
         $contract = DocblockParser::parse($effectiveFunction);
 
         if (! ($contract['hasReturnContract'] ?? ($contract['return'] !== null))) {
+            self::$noReturnContractCache[$effectiveFunction] = true;
+            self::$noReturnContractCache[$function] = true;
+
             return $value;
         }
 
         $returnTypeNode = $contract['return'];
         if ($returnTypeNode === null) {
+            self::$noReturnContractCache[$effectiveFunction] = true;
+            self::$noReturnContractCache[$function] = true;
+
             return $value;
         }
 
@@ -93,65 +177,9 @@ final class ReturnChecker
             $contract['aliases'] ?? [],
             $allTemplates,
             $registry,
-            $wrapIterableCallback
+            $wrapIterableCallback,
+            $contract
         );
-    }
-
-    /**
-     * Resolves the actual runtime class name vs trait name with O(1) memoization.
-     */
-    private static function resolveEffectiveFunction(string $function, object|string|null $thisOrClass, ?object $thisObj): string
-    {
-        if (! str_contains($function, '::')) {
-            return $function;
-        }
-
-        $actualClassName = \is_object($thisOrClass) ? \get_class($thisOrClass) : (\is_string($thisOrClass) ? $thisOrClass : '');
-        if ($actualClassName === '') {
-            return $function;
-        }
-
-        [$classOrTrait, $methodName] = explode('::', $function, 2);
-
-        $cacheKey = $function . '|' . $actualClassName;
-        if (isset(self::$effectiveFunctionCache[$cacheKey])) {
-            return self::$effectiveFunctionCache[$cacheKey];
-        }
-
-        $effectiveFunction = ($actualClassName !== $classOrTrait)
-            ? $actualClassName . '::' . $methodName
-            : $function;
-
-        if ($thisObj !== null) {
-            $targetClass = $actualClassName;
-            $traitAliases = HierarchyResolver::getTraitAliases($targetClass);
-
-            if (\count($traitAliases) > 0) {
-                $isPotentialAlias = isset($traitAliases[$methodName]);
-                if (! $isPotentialAlias) {
-                    foreach ($traitAliases as $originalTarget) {
-                        if (str_ends_with($originalTarget, '::' . $methodName)) {
-                            $isPotentialAlias = true;
-
-                            break;
-                        }
-                    }
-                }
-
-                if ($isPotentialAlias) {
-                    $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
-                    foreach ($trace as $frame) {
-                        $frameFunc = $frame['function'];
-                        $frameClass = $frame['class'] ?? '';
-                        if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
-                            return self::$effectiveFunctionCache[$cacheKey] = $targetClass . '::' . $frameFunc;
-                        }
-                    }
-                }
-            }
-        }
-
-        return self::$effectiveFunctionCache[$cacheKey] = $effectiveFunction;
     }
 
     /**
@@ -212,6 +240,15 @@ final class ReturnChecker
      * @param array<int|string, mixed> $vars
      * @param array<string, TypeNode> $aliases
      * @param array<string, TemplateTagValueNode> $templates
+     * @param array{
+     *     return?: TypeNode|null,
+     *     hasReturnContract?: bool,
+     *     returnIsThis?: bool,
+     *     returnIsDynamic?: bool,
+     *     aliases?: array<string, TypeNode>,
+     *     templates?: array<string, TemplateTagValueNode>,
+     *     classTemplates?: array<string, TemplateTagValueNode>
+     * } $contract
      */
     private static function evaluateReturn(
         TypeNode $returnTypeNode,
@@ -222,22 +259,39 @@ final class ReturnChecker
         array $aliases,
         array $templates,
         TypeValidatorRegistry $registry,
-        callable $wrapIterableCallback
+        callable $wrapIterableCallback,
+        array $contract = []
     ): mixed {
-        $err = SpecialTypeResolver::checkThisIdentity($returnTypeNode, $value, $thisObj, $function);
-        if ($err !== null) {
-            return $err;
+        if ($contract['returnIsThis'] ?? false) {
+            $err = SpecialTypeResolver::checkThisIdentity($returnTypeNode, $value, $thisObj, $function);
+            if ($err !== null) {
+                return $err;
+            }
         }
 
         $hasGenerics = (\count($templates) > 0);
         $hasAliases = (\count($aliases) > 0);
-        $isConditional = ($returnTypeNode instanceof ConditionalTypeForParameterNode || $returnTypeNode instanceof ConditionalTypeNode);
+        $isParamConditional = ($returnTypeNode instanceof ConditionalTypeForParameterNode);
 
-        if (! $hasGenerics && ! $hasAliases && ! $isConditional && ! ($returnTypeNode instanceof CallableTypeNode)) {
-            $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
-            $err = $registry->validate($value, $resolvedType, $function . '(): Return value');
+        if (! $hasGenerics && ! $hasAliases && ! $isParamConditional && ! ($returnTypeNode instanceof CallableTypeNode)) {
+            $isDynamic = $contract['returnIsDynamic'] ?? (str_contains((string) $returnTypeNode, 'static') || str_contains((string) $returnTypeNode, '$this'));
+
+            if (! $isDynamic) {
+                $resolvedType = self::$resolvedStaticReturnCache[$function] ??= SpecialTypeResolver::resolve($returnTypeNode, $function, null);
+            } else {
+                $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
+            }
+
+            if ($resolvedType instanceof IdentifierTypeNode) {
+                $lower = strtolower($resolvedType->name);
+                if ($lower === 'mixed' || $lower === 'array') {
+                    return $value;
+                }
+            }
+
+            $err = $registry->validate($value, $resolvedType, 'Return value');
             if ($err !== null) {
-                return $err;
+                return ErrorFactory::createError($function . '(): ' . $err->getMessage());
             }
 
             if ($value instanceof Traversable) {
@@ -257,24 +311,55 @@ final class ReturnChecker
             return $value;
         }
 
-        $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
-
-        if ($resolvedType instanceof IdentifierTypeNode && isset($aliases[$resolvedType->name])) {
-            $resolvedType = $aliases[$resolvedType->name];
-        }
-
         $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
 
-        if (\count($boundTemplates) > 0 || \count($templates) > 0) {
-            $resolvedType = TemplateSubstitutor::substitute($resolvedType, $boundTemplates, $templates);
-            $resolvedType = SpecialTypeResolver::resolve($resolvedType, $function, $thisObj);
+        $cacheKey = null;
+        if (\count($boundTemplates) <= 2 && ! $isParamConditional && \count($aliases) === 0 && $thisObj === null) {
+            $cacheKey = $function;
+            foreach ($boundTemplates as $k => $v) {
+                $cacheKey .= '|' . $k . ':' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v);
+            }
+            if (isset(self::$substitutedReturnCache[$cacheKey])) {
+                $resolvedType = self::$substitutedReturnCache[$cacheKey];
+            }
         }
 
-        $resolvedType = self::resolveConditionalReturnType($resolvedType, $vars, $boundTemplates, $registry, $function);
+        if (! isset($resolvedType)) {
+            $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
 
-        $err = $registry->validate($value, $resolvedType, $function . '(): Return value');
+            if ($resolvedType instanceof IdentifierTypeNode && isset($aliases[$resolvedType->name])) {
+                $resolvedType = $aliases[$resolvedType->name];
+            }
+
+            if (\count($boundTemplates) === 0 && \count($templates) > 0 && ! $isParamConditional && $thisObj === null) {
+                $resolvedType = self::$unboundReturnCache[$function] ??= SpecialTypeResolver::resolve(
+                    TemplateSubstitutor::substitute($returnTypeNode, [], $templates),
+                    $function,
+                    null
+                );
+            } elseif (\count($boundTemplates) > 0 || \count($templates) > 0) {
+                $resolvedType = TemplateSubstitutor::substitute($resolvedType, $boundTemplates, $templates);
+                $resolvedType = SpecialTypeResolver::resolve($resolvedType, $function, $thisObj);
+            }
+
+            $resolvedType = self::resolveConditionalReturnType($resolvedType, $vars, $boundTemplates, $registry, $function);
+
+            if ($cacheKey !== null) {
+                self::$substitutedReturnCache[$cacheKey] = $resolvedType;
+            }
+        }
+
+        // Fast-path: if return type is mixed or array, skip validation.
+        if ($resolvedType instanceof IdentifierTypeNode) {
+            $lower = strtolower($resolvedType->name);
+            if ($lower === 'mixed' || $lower === 'array') {
+                return $value;
+            }
+        }
+
+        $err = $registry->validate($value, $resolvedType, 'Return value');
         if ($err !== null) {
-            return $err;
+            return ErrorFactory::createError($function . '(): ' . $err->getMessage());
         }
 
         if ($resolvedType instanceof CallableTypeNode && CallableWrapper::isCallable($value)) {
@@ -338,7 +423,7 @@ final class ReturnChecker
         $paramName = ltrim($node->parameterName, '$');
         $paramValue = null;
 
-        if (\array_key_exists($paramName, $vars)) {
+        if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
             $paramValue = $vars[$paramName];
         } elseif (\count($vars) > 0 && $function !== '' && str_contains($function, '::')) {
             $paramValue = self::resolveRenamedParamValue($function, $paramName, $vars);
@@ -392,7 +477,7 @@ final class ReturnChecker
 
             if ($targetIndex !== null) {
                 $values = array_values($vars);
-                if (\array_key_exists($targetIndex, $values)) {
+                if (isset($values[$targetIndex]) || \array_key_exists($targetIndex, $values)) {
                     return $values[$targetIndex];
                 }
             }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Ast;
 
+use PhpParser\Comment\Doc;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
@@ -13,36 +14,73 @@ use PhpParser\NodeVisitorAbstract;
  */
 final class FunctionContractInjector
 {
-    public static function inject(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): void
+    private const ITERABLE_TYPES = [
+        'iterable' => true,
+        'traversable' => true,
+        'generator' => true,
+        'iterator' => true,
+        'iteratoraggregate' => true,
+    ];
+
+    private const CALLABLE_TYPES = [
+        'callable' => true,
+        'closure' => true,
+    ];
+
+    /**
+     * @param array{hasInheritance?: bool, hasPropertyWithDoc?: bool}|null $classContext
+     */
+    public static function inject(Node\Stmt\Function_|Node\Stmt\ClassMethod $node, ?array $classContext = null): void
     {
         if ($node->stmts === null) {
             return;
         }
 
         $isClassMethod = $node instanceof Node\Stmt\ClassMethod;
-        $doc = $node->getDocComment();
-
-        if ($doc === null && ! $isClassMethod) {
-            return;
-        }
-
+        $doc = self::resolveDocComment($node);
         $docText = $doc !== null ? $doc->getText() : '';
 
+        $hasInheritance = $classContext['hasInheritance'] ?? true;
+        $hasPropertyWithDoc = $classContext['hasPropertyWithDoc'] ?? true;
+
         $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
+        $isConstructor = $isClassMethod && $methodName === '__construct';
         $isMagicLifecycle = $isClassMethod && \in_array($methodName, ['__construct', '__destruct', '__clone'], true);
 
         $isNativeNever = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'never';
-
-        $thisArg = self::resolveThisArg($isClassMethod, $node);
         $isNativeVoid = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'void';
-        $needsReturnVars = $isClassMethod || str_contains($docText, ' is ') || (str_contains($docText, '@return') && str_contains($docText, '$'));
+        $isPrivate = $isClassMethod && $node->isPrivate();
 
-        $hasParam = self::hasParamContracts($docText, $isClassMethod) || $needsReturnVars;
-        $hasReturn = ! $isMagicLifecycle && ! $isNativeNever && self::hasReturnContracts($docText, $isClassMethod);
+        $paramCount = \count($node->params);
+        $hasParam = self::hasParamContracts(
+            $docText,
+            $isClassMethod,
+            $hasInheritance,
+            $paramCount,
+            $isPrivate,
+            $isConstructor,
+            $hasPropertyWithDoc,
+            $classContext === null,
+            $node->attrGroups !== []
+        );
+
+        $hasReturnDoc = str_contains($docText, '@return')
+            || str_contains($docText, '@phpstan-return')
+            || str_contains($docText, '@psalm-return');
+
+        $hasReturn = ! $isMagicLifecycle
+            && ! $isNativeNever
+            && ! ($isNativeVoid && ! $hasReturnDoc)
+            && self::hasReturnContracts($docText, $isClassMethod, $isPrivate);
 
         if (! $hasParam && ! $hasReturn) {
             return;
         }
+
+        $thisArg = self::resolveThisArg($isClassMethod, $node);
+        $needsReturnVars = $hasParam && ($paramCount > 0) && (
+            $hasInheritance || str_contains($docText, ' is ') || ($hasReturnDoc && str_contains($docText, '$'))
+        );
 
         $injectedStmts = [];
         if ($hasParam) {
@@ -58,13 +96,64 @@ final class FunctionContractInjector
         $node->stmts = [...$injectedStmts, ...$node->stmts];
     }
 
-    private static function hasParamContracts(string $docText, bool $isClassMethod): bool
+    private static function resolveDocComment(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): ?Doc
     {
-        if ($isClassMethod) {
+        $doc = $node->getDocComment();
+        if ($doc !== null) {
+            return $doc;
+        }
+
+        foreach ($node->getComments() as $comment) {
+            if ($comment instanceof Doc) {
+                return $comment;
+            }
+        }
+
+        if ($node->attrGroups !== []) {
+            foreach ($node->attrGroups as $group) {
+                $groupDoc = $group->getDocComment();
+                if ($groupDoc !== null) {
+                    return $groupDoc;
+                }
+                foreach ($group->getComments() as $comment) {
+                    if ($comment instanceof Doc) {
+                        return $comment;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static function hasParamContracts(
+        string $docText,
+        bool $isClassMethod,
+        bool $hasInheritance,
+        int $paramCount,
+        bool $isPrivate,
+        bool $isConstructor,
+        bool $hasPropertyWithDoc,
+        bool $isDirectUnitTest,
+        bool $hasAttributes = false
+    ): bool {
+        if ($paramCount === 0 && ! str_contains($docText, '@template')) {
+            return $isDirectUnitTest && $isClassMethod;
+        }
+
+        if ($isDirectUnitTest && $isClassMethod) {
             return true;
         }
 
-        if (! str_contains($docText, '@param') && ! str_contains($docText, '@phpstan-param') && ! str_contains($docText, '@psalm-param') && ! str_contains($docText, '@template')) {
+        if ($isConstructor && $docText === '' && ! $hasPropertyWithDoc) {
+            return false;
+        }
+
+        if ($isPrivate && $docText === '') {
+            return false;
+        }
+
+        if (! $hasInheritance && $docText === '' && ! ($isConstructor && $hasPropertyWithDoc) && ! $hasAttributes) {
             return false;
         }
 
@@ -72,52 +161,69 @@ final class FunctionContractInjector
             return true;
         }
 
-        if ((int) preg_match_all('/@param\s+([^\s$]+)/', $docText, $matches) > 0) {
-            foreach ($matches[1] as $typeStr) {
-                $unionParts = explode('|', $typeStr);
-                $hasMixed = false;
-                foreach ($unionParts as $part) {
-                    if (strtolower(trim($part)) === 'mixed') {
-                        $hasMixed = true;
+        if (str_contains($docText, '@param')) {
+            return self::hasNonMixedParam($docText);
+        }
 
-                        break;
-                    }
-                }
+        return $isClassMethod && ! $isPrivate;
+    }
 
-                if (! $hasMixed) {
-                    return true;
+    private static function hasNonMixedParam(string $docText): bool
+    {
+        if ((int) preg_match_all('/@param\s+([^\s$]+)/', $docText, $matches) === 0) {
+            return false;
+        }
+
+        foreach ($matches[1] as $typeStr) {
+            $unionParts = explode('|', $typeStr);
+            $hasMixed = false;
+            foreach ($unionParts as $part) {
+                if (strtolower(trim($part)) === 'mixed') {
+                    $hasMixed = true;
+
+                    break;
                 }
             }
 
-            return false;
+            if (! $hasMixed) {
+                return true;
+            }
         }
 
         return false;
     }
 
-    private static function hasReturnContracts(string $docText, bool $isClassMethod): bool
-    {
-        if ($isClassMethod) {
+    private static function hasReturnContracts(
+        string $docText,
+        bool $isClassMethod,
+        bool $isPrivate
+    ): bool {
+        if ($isPrivate && $docText === '') {
+            return false;
+        }
+
+        if (
+            str_contains($docText, '@template')
+            || str_contains($docText, '@phpstan-return')
+            || str_contains($docText, '@psalm-return')
+            || str_contains($docText, '$this')
+        ) {
             return true;
         }
 
-        if (str_contains($docText, '@template') || str_contains($docText, '@phpstan-return') || str_contains($docText, '@psalm-return')) {
-            return true;
-        }
-
-        if (preg_match('/@return\s+([^\s$]+)/', $docText, $matches) === 1) {
+        if (preg_match('/@return\s+([^\s]+)/', $docText, $matches) === 1) {
             $returnTypeStr = $matches[1];
             $unionParts = explode('|', $returnTypeStr);
             foreach ($unionParts as $part) {
                 if (strtolower(trim($part)) === 'mixed') {
-                    return false; // Collapses to mixed
+                    return false;
                 }
             }
 
             return true;
         }
 
-        return false;
+        return $isClassMethod && ! $isPrivate;
     }
 
     private static function resolveThisArg(bool $isClassMethod, Node\Stmt\Function_|Node\Stmt\ClassMethod $node): Node\Expr
@@ -176,8 +282,8 @@ final class FunctionContractInjector
     ): array {
         $injectedStmts = [self::buildSetupScopeStmt($params, $thisArg)];
 
-        $callableWrappers = self::buildCallableParamWrappers($params, $docText, $thisArg);
-        $iterableWrappers = self::buildIterableParamWrappers($params, $docText, $thisArg);
+        $callableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isCallableCandidate'], 'wrapCallable');
+        $iterableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isIterableCandidate'], 'wrapIterable');
 
         return [...$injectedStmts, ...$callableWrappers, ...$iterableWrappers];
     }
@@ -229,53 +335,26 @@ final class FunctionContractInjector
 
     /**
      * @param array<Node\Param> $params
+     * @param callable(Node\Param, string): bool $predicate
      *
      * @return array<Node\Stmt>
      */
-    private static function buildCallableParamWrappers(array $params, string $docText, Node\Expr $thisArg): array
-    {
+    private static function buildParamWrappers(
+        array $params,
+        string $docText,
+        Node\Expr $thisArg,
+        callable $predicate,
+        string $wrapperMethod
+    ): array {
         $wrappers = [];
         foreach ($params as $param) {
-            if (self::isCallableCandidate($param, $docText) && $param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
+            if ($predicate($param, $docText) && $param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
                 $paramName = $param->var->name;
                 $expr = new Node\Stmt\Expression(
                     new Node\Expr\Assign(
                         new Node\Expr\Variable($paramName),
                         new Node\Expr\FuncCall(
-                            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::wrapCallable'),
-                            [
-                                new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                                new Node\Arg(new Node\Scalar\String_($paramName)),
-                                new Node\Arg(new Node\Expr\Variable($paramName)),
-                                new Node\Arg($thisArg),
-                            ]
-                        )
-                    )
-                );
-                $expr->setAttribute('typephp_injected', true);
-                $wrappers[] = $expr;
-            }
-        }
-
-        return $wrappers;
-    }
-
-    /**
-     * @param array<Node\Param> $params
-     *
-     * @return array<Node\Stmt>
-     */
-    private static function buildIterableParamWrappers(array $params, string $docText, Node\Expr $thisArg): array
-    {
-        $wrappers = [];
-        foreach ($params as $param) {
-            if (self::isIterableCandidate($param, $docText) && $param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
-                $paramName = $param->var->name;
-                $expr = new Node\Stmt\Expression(
-                    new Node\Expr\Assign(
-                        new Node\Expr\Variable($paramName),
-                        new Node\Expr\FuncCall(
-                            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::wrapIterable'),
+                            new Node\Name\FullyQualified("TypePHP\\Internal\\RuntimeTypeChecker::{$wrapperMethod}"),
                             [
                                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
                                 new Node\Arg(new Node\Scalar\String_($paramName)),
@@ -304,62 +383,39 @@ final class FunctionContractInjector
             return true;
         }
 
-        if ($param->type instanceof Node\Identifier) {
-            return strtolower($param->type->name) === 'callable';
-        }
-
-        if ($param->type instanceof Node\Name) {
-            return strtolower($param->type->getLast()) === 'closure';
-        }
-
-        if ($param->type instanceof Node\UnionType || $param->type instanceof Node\IntersectionType) {
-            foreach ($param->type->types as $t) {
-                if ($t instanceof Node\Identifier && strtolower($t->name) === 'callable') {
-                    return true;
-                }
-                if ($t instanceof Node\Name && strtolower($t->getLast()) === 'closure') {
-                    return true;
-                }
-            }
-        }
-
-        return false;
+        return self::typeMatchesName($param->type, self::CALLABLE_TYPES);
     }
 
     private static function isIterableCandidate(Node\Param $param, string $docText): bool
     {
-        if (
-            str_contains($docText, 'iterable')
-            || str_contains($docText, 'Traversable')
-            || str_contains($docText, 'Generator')
-            || str_contains($docText, 'Iterator')
-            || str_contains($docText, 'IteratorAggregate')
-        ) {
+        if (self::typeMatchesName($param->type, self::ITERABLE_TYPES)) {
             return true;
         }
 
-        $iterableTypes = [
-            'iterable' => true,
-            'traversable' => true,
-            'generator' => true,
-            'iterator' => true,
-            'iteratoraggregate' => true,
-        ];
-
-        if ($param->type instanceof Node\Identifier) {
-            return isset($iterableTypes[strtolower($param->type->name)]);
+        $paramName = $param->var instanceof Node\Expr\Variable && \is_string($param->var->name) ? $param->var->name : '';
+        if ($paramName !== '' && preg_match('/@(?:param|phpstan-param|psalm-param)\s+[^\$]*?(?:iterable|Traversable|Generator|Iterator)\b[^\$]*?\$' . preg_quote($paramName, '/') . '\b/i', $docText) === 1) {
+            return true;
         }
 
-        if ($param->type instanceof Node\Name) {
-            return isset($iterableTypes[strtolower($param->type->getLast())]);
+        return false;
+    }
+
+    /**
+     * @param array<string, true> $targetNames
+     */
+    private static function typeMatchesName(Node\Identifier|Node\Name|Node\ComplexType|null $type, array $targetNames): bool
+    {
+        if ($type instanceof Node\Identifier) {
+            return isset($targetNames[strtolower($type->name)]);
         }
 
-        if ($param->type instanceof Node\UnionType || $param->type instanceof Node\IntersectionType) {
-            foreach ($param->type->types as $t) {
-                if ($t instanceof Node\Identifier && isset($iterableTypes[strtolower($t->name)])) {
-                    return true;
-                }
-                if ($t instanceof Node\Name && isset($iterableTypes[strtolower($t->getLast())])) {
+        if ($type instanceof Node\Name) {
+            return isset($targetNames[strtolower($type->getLast())]);
+        }
+
+        if ($type instanceof Node\UnionType || $type instanceof Node\IntersectionType) {
+            foreach ($type->types as $t) {
+                if (self::typeMatchesName($t, $targetNames)) {
                     return true;
                 }
             }
@@ -368,28 +424,37 @@ final class FunctionContractInjector
         return false;
     }
 
-    public static function buildTypeErrorThrowStmt(Node\Expr $errorVar): Node\Stmt\Expression
+    public static function buildTypeErrorThrowExpr(Node\Expr $errorVar, ?int $line = null): Node\Expr\Throw_
     {
-        return new Node\Stmt\Expression(
-            new Node\Expr\Throw_(
-                new Node\Expr\StaticCall(
-                    new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorFactory'),
-                    'prepareException',
+        $args = [
+            new Node\Arg(
+                new Node\Expr\New_(
+                    new Node\Name\FullyQualified('TypePHP\Exception\TypeError'),
                     [
                         new Node\Arg(
-                            new Node\Expr\New_(
-                                new Node\Name\FullyQualified('TypePHP\Exception\TypeError'),
-                                [
-                                    new Node\Arg(
-                                        new Node\Expr\MethodCall($errorVar, 'getMessage')
-                                    ),
-                                ]
-                            )
+                            new Node\Expr\MethodCall($errorVar, 'getMessage')
                         ),
                     ]
                 )
+            ),
+        ];
+
+        if ($line !== null) {
+            $args[] = new Node\Arg(new Node\Scalar\LNumber($line));
+        }
+
+        return new Node\Expr\Throw_(
+            new Node\Expr\StaticCall(
+                new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorFactory'),
+                'prepareException',
+                $args
             )
         );
+    }
+
+    public static function buildTypeErrorThrowStmt(Node\Expr $errorVar): Node\Stmt\Expression
+    {
+        return new Node\Stmt\Expression(self::buildTypeErrorThrowExpr($errorVar));
     }
 
     public static function buildReturnCheckCall(Node\Expr $exprToWrap, Node\Expr $thisArg, bool $needsReturnVars = false): Node\Expr\FuncCall
@@ -436,24 +501,7 @@ final class FunctionContractInjector
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpRet'), $checkCall),
                 new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
-            new Node\Expr\Throw_(
-                new Node\Expr\StaticCall(
-                    new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorFactory'),
-                    'prepareException',
-                    [
-                        new Node\Arg(
-                            new Node\Expr\New_(
-                                new Node\Name\FullyQualified('TypePHP\Exception\TypeError'),
-                                [
-                                    new Node\Arg(
-                                        new Node\Expr\MethodCall(new Node\Expr\Variable('__typephpRet'), 'getMessage')
-                                    ),
-                                ]
-                            )
-                        ),
-                    ]
-                )
-            ),
+            self::buildTypeErrorThrowExpr(new Node\Expr\Variable('__typephpRet')),
             new Node\Expr\Variable('__typephpRet')
         );
     }
@@ -475,25 +523,7 @@ final class FunctionContractInjector
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpYld'), $checkYieldCall),
                 new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
-            new Node\Expr\Throw_(
-                new Node\Expr\StaticCall(
-                    new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorFactory'),
-                    'prepareException',
-                    [
-                        new Node\Arg(
-                            new Node\Expr\New_(
-                                new Node\Name\FullyQualified('TypePHP\Exception\TypeError'),
-                                [
-                                    new Node\Arg(
-                                        new Node\Expr\MethodCall(new Node\Expr\Variable('__typephpYld'), 'getMessage')
-                                    ),
-                                ]
-                            )
-                        ),
-                        new Node\Arg(new Node\Scalar\LNumber($n->getStartLine())),
-                    ]
-                )
-            ),
+            self::buildTypeErrorThrowExpr(new Node\Expr\Variable('__typephpYld'), $n->getStartLine()),
             new Node\Expr\Variable('__typephpYld')
         );
 
@@ -511,24 +541,7 @@ final class FunctionContractInjector
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpSnd'), $checkSendCall),
                 new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
-            new Node\Expr\Throw_(
-                new Node\Expr\StaticCall(
-                    new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorFactory'),
-                    'prepareException',
-                    [
-                        new Node\Arg(
-                            new Node\Expr\New_(
-                                new Node\Name\FullyQualified('TypePHP\Exception\TypeError'),
-                                [
-                                    new Node\Arg(
-                                        new Node\Expr\MethodCall(new Node\Expr\Variable('__typephpSnd'), 'getMessage')
-                                    ),
-                                ]
-                            )
-                        ),
-                    ]
-                )
-            ),
+            self::buildTypeErrorThrowExpr(new Node\Expr\Variable('__typephpSnd')),
             new Node\Expr\Variable('__typephpSnd')
         );
     }

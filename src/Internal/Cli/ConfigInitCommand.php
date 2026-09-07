@@ -66,6 +66,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Strict Generic Return Invariance (PHPStan / Psalm Parity)
+    |--------------------------------------------------------------------------
+    | When true (default / strict), generic return types enforce invariance
+    | matching PHPStan Level MAX. Returning Collection<Dog> when Collection<Animal>
+    | is promised will be rejected unless the class declares '@template-covariant'
+    | or the return type specifies use-site covariance '<covariant Animal>'.
+    |
+    | Set to false (pragmatic mode) when integrating with frameworks like Shopware,
+    | Laravel, or legacy codebases where collection classes omit '@template-covariant'.
+    */
+    'strict_return_generic_invariance' => true,
+
+    /*
+    |--------------------------------------------------------------------------
     | Magic Annotations (@property & @method)
     |--------------------------------------------------------------------------
     | Enforces class-level annotations for dynamic properties and magic methods
