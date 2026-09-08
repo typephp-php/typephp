@@ -15,6 +15,7 @@ use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\IgnoreManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Internal\Wrapper\CallableWrapper;
 use TypePHP\Internal\Wrapper\IterableWrapper;
@@ -25,6 +26,20 @@ use TypePHP\Internal\Wrapper\IterableWrapper;
 final class RuntimeTypeChecker
 {
     private static ?TypeValidatorRegistry $registry = null;
+
+    /**
+     * @var array<string, bool>
+     */
+    private static array $hasMethodTemplatesCache = [];
+
+    /**
+     * Resets runtime caches.
+     */
+    public static function reset(): void
+    {
+        self::$hasMethodTemplatesCache = [];
+        IgnoreManager::reset();
+    }
 
     /**
      * Returns whether TypePHP is globally enabled in configuration.
@@ -39,7 +54,7 @@ final class RuntimeTypeChecker
      */
     public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false): ?ErrorMessage
     {
-        if (! Config::isEnabled()) {
+        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
             return null;
         }
 
@@ -57,7 +72,7 @@ final class RuntimeTypeChecker
         ?string $caller = null,
         mixed $thisOrClass = null
     ): mixed {
-        if (! Config::isEnabled()) {
+        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
             return $value;
         }
 
@@ -82,17 +97,12 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        if (! Config::isEnabled()) {
+        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
             return $value;
         }
 
         return InlineChecker::checkProperty($value, $objectOrClass, $propName, $file, self::getRegistry());
     }
-
-    /**
-     * @var array<string, bool>
-     */
-    private static array $hasMethodTemplatesCache = [];
 
     /**
      * Initialises generic call frames and returns a ScopeCleaner that pops the call frame on destruction.
@@ -109,7 +119,7 @@ final class RuntimeTypeChecker
             return null;
         }
 
-        if (! Config::isEnabled()) {
+        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
             return null;
         }
 
@@ -147,7 +157,7 @@ final class RuntimeTypeChecker
      */
     public static function checkParams(string $function, array $vars, object|string|null $thisOrClass = null): ?ErrorMessage
     {
-        if (! Config::isEnabled()) {
+        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
             return null;
         }
 
@@ -165,14 +175,13 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        if (! Config::isEnabled()) {
+        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
             return $value;
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        // Fast-path: if return type is unconstrained, skip validation.
         if (ReturnChecker::isReturnUnconstrained($effectiveFunction)) {
             return $value;
         }
@@ -187,7 +196,7 @@ final class RuntimeTypeChecker
      */
     public static function checkSend(string $function, mixed $sendValue, object|string|null $thisOrClass = null): mixed
     {
-        if (! Config::isEnabled()) {
+        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
             return $sendValue;
         }
 
@@ -199,7 +208,7 @@ final class RuntimeTypeChecker
      */
     public static function checkYield(string $function, mixed $key, mixed $value, object|string|null $thisOrClass = null): mixed
     {
-        if (! Config::isEnabled()) {
+        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
             return $value;
         }
 
@@ -211,7 +220,7 @@ final class RuntimeTypeChecker
      */
     public static function wrapCallable(string $function, string $paramName, mixed $callable, object|string|null $thisOrClass = null): mixed
     {
-        if (! Config::isEnabled()) {
+        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
             return $callable;
         }
 
@@ -223,7 +232,7 @@ final class RuntimeTypeChecker
      */
     public static function wrapIterable(string $function, string $paramName, mixed $iterable, object|string|null $thisOrClass = null): mixed
     {
-        if (! Config::isEnabled()) {
+        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
             return $iterable;
         }
 

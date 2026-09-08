@@ -13,6 +13,7 @@ use TypePHP\Internal\Io\CacheManager;
 use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\RuntimeTypeChecker;
 
 /**
  * Global configuration manager for loading and dynamically overriding settings.
@@ -370,6 +371,8 @@ final class Config
         StubManager::reset();
         SpecialTypeResolver::reset();
         CacheManager::reset();
+        IgnoreManager::reset();
+        RuntimeTypeChecker::reset();
     }
 
     /**
