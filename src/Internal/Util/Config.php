@@ -272,11 +272,6 @@ final class Config
         return self::$cachedConfig = $mergedConfig;
     }
 
-    /**
-     * Overrides the current configuration at runtime.
-     *
-     * @param array<string, mixed> $config
-     */
     public static function set(array $config): void
     {
         $current = self::$cachedConfig ?? self::get();
@@ -309,6 +304,8 @@ final class Config
         StubManager::reset();
         SpecialTypeResolver::reset();
         CacheManager::reset();
+        IgnoreManager::reset();
+        RuntimeTypeChecker::reset();
     }
 
     /**

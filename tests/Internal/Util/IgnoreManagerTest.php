@@ -59,6 +59,17 @@ class NormalCallerFixture
 }
 
 /**
+ * Fixture: Dedicated caller for stub-based ignore testing
+ */
+class StubIgnoredCallerFixture
+{
+    public static function execute(): bool
+    {
+        return IgnoreManager::isCallerIgnored();
+    }
+}
+
+/**
  * Standalone function with ignore tag
  *
  * @typephp-ignore
@@ -155,17 +166,27 @@ describe('IgnoreManager Unit Tests', function () {
     });
 
     describe('Stub-Based Caller Ignore Detection', function () {
+        beforeEach(function () {
+            Config::reset();
+            IgnoreManager::reset();
+        });
+
+        afterEach(function () {
+            Config::reset();
+            IgnoreManager::reset();
+        });
+
         test('identifies caller methods ignored via external stub files', function () {
             $tempDir = sys_get_temp_dir() . '/typephp_ignore_stub_' . uniqid();
             mkdir($tempDir, 0777, true);
 
-            $stubPath = $tempDir . '/NormalCallerFixture.stub';
+            $stubPath = $tempDir . '/StubIgnoredCallerFixture.stub';
             $stubContent = <<<'PHP'
 <?php
 
 namespace TypePHP\Tests\Internal\Util;
 
-class NormalCallerFixture
+class StubIgnoredCallerFixture
 {
     /**
      * @typephp-ignore
@@ -184,7 +205,7 @@ PHP;
                     ],
                 ]);
 
-                expect(NormalCallerFixture::execute())->toBeTrue();
+                expect(StubIgnoredCallerFixture::execute())->toBeTrue();
             } finally {
                 if (file_exists($stubPath)) {
                     @unlink($stubPath);
