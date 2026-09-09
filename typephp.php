@@ -148,7 +148,6 @@ return [
         'app/**',
         'internals/**',
         'tests/**',
-        // 'vendor/my-org/my-package/**', // Whitelist a vendor package
     ],
 
     /*
@@ -160,10 +159,10 @@ return [
     | single legacy files inside included directories (e.g. 'src/Legacy/File.php').
     */
     'exclude' => [
+        'app/BlacklistClass.php',
         'vendor/**',
         'storage/**',
         'var/**',
         'cache/**',
-        // 'src/Legacy/UnsafeFile.php', // Blacklist a single specific file
     ],
 ];

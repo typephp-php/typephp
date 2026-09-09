@@ -15,6 +15,7 @@ use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\IgnoreManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Internal\Wrapper\CallableWrapper;
 use TypePHP\Internal\Wrapper\IterableWrapper;
@@ -25,6 +26,20 @@ use TypePHP\Internal\Wrapper\IterableWrapper;
 final class RuntimeTypeChecker
 {
     private static ?TypeValidatorRegistry $registry = null;
+
+    /**
+     * @var array<string, bool>
+     */
+    private static array $hasMethodTemplatesCache = [];
+
+    /**
+     * Resets runtime caches.
+     */
+    public static function reset(): void
+    {
+        self::$hasMethodTemplatesCache = [];
+        IgnoreManager::reset();
+    }
 
     /**
      * Returns whether TypePHP is globally enabled in configuration.
@@ -43,7 +58,13 @@ final class RuntimeTypeChecker
             return null;
         }
 
-        return TemplateManager::bindInstanceFromNode($instance, $typeNode, $context, $forceBind);
+        $err = TemplateManager::bindInstanceFromNode($instance, $typeNode, $context, $forceBind);
+
+        if ($err !== null && IgnoreManager::isCallerIgnored()) {
+            return null;
+        }
+
+        return $err;
     }
 
     /**
@@ -61,7 +82,7 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        return InlineChecker::checkVariable(
+        $res = InlineChecker::checkVariable(
             $value,
             $typeString,
             $varName,
@@ -70,6 +91,12 @@ final class RuntimeTypeChecker
             $caller,
             $thisOrClass
         );
+
+        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+            return $value;
+        }
+
+        return $res;
     }
 
     /**
@@ -86,13 +113,14 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        return InlineChecker::checkProperty($value, $objectOrClass, $propName, $file, self::getRegistry());
-    }
+        $res = InlineChecker::checkProperty($value, $objectOrClass, $propName, $file, self::getRegistry());
 
-    /**
-     * @var array<string, bool>
-     */
-    private static array $hasMethodTemplatesCache = [];
+        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+            return $value;
+        }
+
+        return $res;
+    }
 
     /**
      * Initialises generic call frames and returns a ScopeCleaner that pops the call frame on destruction.
@@ -123,6 +151,10 @@ final class RuntimeTypeChecker
         $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry(), $effectiveFunction);
 
         if ($err !== null) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return null;
+            }
+
             TemplateManager::popCallFrame($effectiveFunction);
 
             return $err;
@@ -151,7 +183,13 @@ final class RuntimeTypeChecker
             return null;
         }
 
-        return ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry());
+        $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry());
+
+        if ($err !== null && IgnoreManager::isCallerIgnored()) {
+            return null;
+        }
+
+        return $err;
     }
 
     /**
@@ -172,14 +210,19 @@ final class RuntimeTypeChecker
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        // Fast-path: if return type is unconstrained, skip validation.
         if (ReturnChecker::isReturnUnconstrained($effectiveFunction)) {
             return $value;
         }
 
         $vars ??= [];
 
-        return ReturnChecker::checkReturn($function, $value, $thisOrClass, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
+        $res = ReturnChecker::checkReturn($function, $value, $thisOrClass, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
+
+        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+            return $value;
+        }
+
+        return $res;
     }
 
     /**
@@ -191,7 +234,13 @@ final class RuntimeTypeChecker
             return $sendValue;
         }
 
-        return GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass);
+        $res = GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass);
+
+        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+            return $sendValue;
+        }
+
+        return $res;
     }
 
     /**
@@ -203,7 +252,13 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        return GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass);
+        $res = GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass);
+
+        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+            return $value;
+        }
+
+        return $res;
     }
 
     /**

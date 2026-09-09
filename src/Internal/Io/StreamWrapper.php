@@ -14,6 +14,7 @@ use TypePHP\Internal\Ast\ContractVisitor;
 use TypePHP\Internal\Ast\TypePHPPrinter;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\IgnoreManager;
 use TypePHP\Internal\Util\PathMatcher;
 
 /**
@@ -178,8 +179,14 @@ final class StreamWrapper implements StreamWrapperInterface
      */
     public static function transformSource(string $source, string $filePath = ''): string
     {
-        if (Config::isRespectIgnoreTagsEnabled() && (str_contains($source, '@typephp-ignore-file') || str_contains($source, '@typephp-disable-file'))) {
-            return $source;
+        if (str_contains($source, '@typephp-ignore-file') || str_contains($source, '@typephp-disable-file')) {
+            if ($filePath !== '') {
+                IgnoreManager::registerIgnoredFile($filePath);
+            }
+
+            if (Config::isRespectIgnoreTagsEnabled()) {
+                return $source;
+            }
         }
 
         $originalLineCount = substr_count($source, "\n");
