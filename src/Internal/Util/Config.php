@@ -272,6 +272,11 @@ final class Config
         return self::$cachedConfig = $mergedConfig;
     }
 
+    /**
+     * Overrides the current configuration at runtime.
+     *
+     * @param array<string, mixed> $config
+     */
     public static function set(array $config): void
     {
         $current = self::$cachedConfig ?? self::get();
