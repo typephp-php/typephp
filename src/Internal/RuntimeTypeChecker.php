@@ -54,11 +54,17 @@ final class RuntimeTypeChecker
      */
     public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false): ?ErrorMessage
     {
-        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
+        if (! Config::isEnabled()) {
             return null;
         }
 
-        return TemplateManager::bindInstanceFromNode($instance, $typeNode, $context, $forceBind);
+        $err = TemplateManager::bindInstanceFromNode($instance, $typeNode, $context, $forceBind);
+
+        if ($err !== null && IgnoreManager::isCallerIgnored()) {
+            return null;
+        }
+
+        return $err;
     }
 
     /**
@@ -72,11 +78,11 @@ final class RuntimeTypeChecker
         ?string $caller = null,
         mixed $thisOrClass = null
     ): mixed {
-        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
+        if (! Config::isEnabled()) {
             return $value;
         }
 
-        return InlineChecker::checkVariable(
+        $res = InlineChecker::checkVariable(
             $value,
             $typeString,
             $varName,
@@ -85,6 +91,12 @@ final class RuntimeTypeChecker
             $caller,
             $thisOrClass
         );
+
+        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+            return $value;
+        }
+
+        return $res;
     }
 
     /**
@@ -97,11 +109,17 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
+        if (! Config::isEnabled()) {
             return $value;
         }
 
-        return InlineChecker::checkProperty($value, $objectOrClass, $propName, $file, self::getRegistry());
+        $res = InlineChecker::checkProperty($value, $objectOrClass, $propName, $file, self::getRegistry());
+
+        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+            return $value;
+        }
+
+        return $res;
     }
 
     /**
@@ -119,7 +137,7 @@ final class RuntimeTypeChecker
             return null;
         }
 
-        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
+        if (! Config::isEnabled()) {
             return null;
         }
 
@@ -133,6 +151,10 @@ final class RuntimeTypeChecker
         $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry(), $effectiveFunction);
 
         if ($err !== null) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return null;
+            }
+
             TemplateManager::popCallFrame($effectiveFunction);
 
             return $err;
@@ -157,11 +179,17 @@ final class RuntimeTypeChecker
      */
     public static function checkParams(string $function, array $vars, object|string|null $thisOrClass = null): ?ErrorMessage
     {
-        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
+        if (! Config::isEnabled()) {
             return null;
         }
 
-        return ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry());
+        $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry());
+
+        if ($err !== null && IgnoreManager::isCallerIgnored()) {
+            return null;
+        }
+
+        return $err;
     }
 
     /**
@@ -175,7 +203,7 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
+        if (! Config::isEnabled()) {
             return $value;
         }
 
@@ -188,7 +216,13 @@ final class RuntimeTypeChecker
 
         $vars ??= [];
 
-        return ReturnChecker::checkReturn($function, $value, $thisOrClass, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
+        $res = ReturnChecker::checkReturn($function, $value, $thisOrClass, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
+
+        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+            return $value;
+        }
+
+        return $res;
     }
 
     /**
@@ -196,11 +230,17 @@ final class RuntimeTypeChecker
      */
     public static function checkSend(string $function, mixed $sendValue, object|string|null $thisOrClass = null): mixed
     {
-        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
+        if (! Config::isEnabled()) {
             return $sendValue;
         }
 
-        return GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass);
+        $res = GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass);
+
+        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+            return $sendValue;
+        }
+
+        return $res;
     }
 
     /**
@@ -208,11 +248,17 @@ final class RuntimeTypeChecker
      */
     public static function checkYield(string $function, mixed $key, mixed $value, object|string|null $thisOrClass = null): mixed
     {
-        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
+        if (! Config::isEnabled()) {
             return $value;
         }
 
-        return GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass);
+        $res = GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass);
+
+        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+            return $value;
+        }
+
+        return $res;
     }
 
     /**
@@ -220,7 +266,7 @@ final class RuntimeTypeChecker
      */
     public static function wrapCallable(string $function, string $paramName, mixed $callable, object|string|null $thisOrClass = null): mixed
     {
-        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
+        if (! Config::isEnabled()) {
             return $callable;
         }
 
@@ -232,7 +278,7 @@ final class RuntimeTypeChecker
      */
     public static function wrapIterable(string $function, string $paramName, mixed $iterable, object|string|null $thisOrClass = null): mixed
     {
-        if (! Config::isEnabled() || IgnoreManager::isCallerIgnored()) {
+        if (! Config::isEnabled()) {
             return $iterable;
         }
 

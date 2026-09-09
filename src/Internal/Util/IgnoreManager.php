@@ -65,7 +65,7 @@ final class IgnoreManager
 
     /**
      * Determines whether the calling method, function, or file has @typephp-ignore annotations.
-     * Supports optional explicit caller overrides for direct inspection.
+     * Only executed when a type validation failure occurs.
      */
     public static function isCallerIgnored(?string $callerClass = null, ?string $callerFunction = null): bool
     {
@@ -95,7 +95,7 @@ final class IgnoreManager
         for ($i = 1; $i < \count($trace); $i++) {
             $frame = $trace[$i];
             $class = $frame['class'] ?? '';
-            $function = $frame['function'] ?? '';
+            $function = $frame['function'];
             $file = $frame['file'] ?? '';
 
             if ($class !== '' && (str_starts_with($class, 'TypePHP\\Internal\\') || $class === 'TypePHP\\TypePHP')) {
@@ -110,7 +110,7 @@ final class IgnoreManager
                 return true;
             }
 
-            if ($class !== '' && $function !== '') {
+            if ($class !== '') {
                 $key = $class . '::' . $function;
                 if (isset(self::$callerCache[$key])) {
                     if (self::$callerCache[$key]) {
@@ -125,7 +125,7 @@ final class IgnoreManager
                 }
 
                 self::$callerCache[$key] = false;
-            } elseif ($function !== '' && ! str_contains($function, '{closure}')) {
+            } elseif (! str_contains($function, '{closure}')) {
                 if (isset(self::$callerCache[$function])) {
                     if (self::$callerCache[$function]) {
                         return true;

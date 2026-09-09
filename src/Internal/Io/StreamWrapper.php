@@ -323,14 +323,14 @@ final class StreamWrapper implements StreamWrapperInterface
 
         self::unregister();
 
-        $exists = (bool) self::silent(static fn() => file_exists($path));
-        $resolvedPath = $exists ? self::silent(static fn() => realpath($path)) : false;
+        $exists = (bool) self::silent(static fn () => file_exists($path));
+        $resolvedPath = $exists ? self::silent(static fn () => realpath($path)) : false;
 
         if (! $exists || $resolvedPath === false || ! self::isApplicationFile($path, $resolvedPath)) {
             $target = ($resolvedPath !== false) ? $resolvedPath : $path;
             /** @var resource|false $handle */
             $handle = self::silent(
-                fn() => ($this->context !== null)
+                fn () => ($this->context !== null)
                     ? fopen($target, $mode, false, $this->context)
                     : fopen($target, $mode)
             );
@@ -374,7 +374,7 @@ final class StreamWrapper implements StreamWrapperInterface
         self::unregister();
         /** @var resource|false $handle */
         $handle = self::silent(
-            fn() => ($this->context !== null)
+            fn () => ($this->context !== null)
                 ? fopen($targetFile, $mode, $useIncludePath, $this->context)
                 : fopen($targetFile, $mode, $useIncludePath)
         );
@@ -529,7 +529,7 @@ final class StreamWrapper implements StreamWrapperInterface
 
         self::unregister();
         /** @var array<int|string, int>|false $result */
-        $result = self::silent(static fn() => $isLink ? @lstat($path) : @stat($path));
+        $result = self::silent(static fn () => $isLink ? @lstat($path) : @stat($path));
         self::register();
 
         if ($result !== false) {
@@ -566,11 +566,11 @@ final class StreamWrapper implements StreamWrapperInterface
             $valueArray = \is_array($value) ? $value : [];
             $time = $valueArray[0] ?? time();
             $atime = $valueArray[1] ?? $time;
-            $result = (bool) self::silent(fn() => @touch($path, (int) $time, (int) $atime));
+            $result = (bool) self::silent(fn () => @touch($path, (int) $time, (int) $atime));
         } elseif ($option === STREAM_META_ACCESS) {
             /** @var int $mode */
             $mode = \is_int($value) ? $value : 0777;
-            $result = (bool) self::silent(fn() => @chmod($path, $mode));
+            $result = (bool) self::silent(fn () => @chmod($path, $mode));
         }
         self::register();
 
@@ -582,7 +582,7 @@ final class StreamWrapper implements StreamWrapperInterface
         self::unregister();
         /** @var resource|false $dh */
         $dh = self::silent(
-            fn() => ($this->context !== null)
+            fn () => ($this->context !== null)
                 ? @opendir($path, $this->context)
                 : @opendir($path)
         );
@@ -709,7 +709,7 @@ final class StreamWrapper implements StreamWrapperInterface
      */
     private static function silent(callable $callback): mixed
     {
-        set_error_handler(static fn() => true);
+        set_error_handler(static fn () => true);
 
         try {
             return $callback();
