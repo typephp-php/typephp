@@ -37,7 +37,23 @@ final class DocblockParser
     /**
      * Cache for resolved contract metadata.
      *
-     * @var array<string, array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool, paramsUseGenerics: bool, returnUsesGenerics: bool}>
+     * @var array<string, array{
+     *     types: array<string, TypeNode>,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classTemplates: array<string, TemplateTagValueNode>,
+     *     return: ?TypeNode,
+     *     aliases: array<string, TypeNode>,
+     *     hasParamContract: bool,
+     *     hasReturnContract: bool,
+     *     paramsUseGenerics: bool,
+     *     returnUsesGenerics: bool,
+     *     returnUsesMethodTemplates: bool,
+     *     returnIsThis: bool,
+     *     returnIsDynamic: bool,
+     *     allParamsUnconstrained: bool,
+     *     returnUnconstrained: bool,
+     *     isSimple: bool
+     * }>
      */
     private static array $cache = [];
 
@@ -229,9 +245,84 @@ final class DocblockParser
     }
 
     /**
+     * Checks if a TypeNode represents an unconstrained type (mixed or array).
+     */
+    private static function isUnconstrainedType(TypeNode $typeNode): bool
+    {
+        if (! ($typeNode instanceof IdentifierTypeNode)) {
+            return false;
+        }
+        $lower = strtolower($typeNode->name);
+
+        return $lower === 'mixed' || $lower === 'array';
+    }
+
+    /**
+     * Computes pre-optimized flags for a contract to avoid redundant re-parsing.
+     *
+     * @param array<string, TypeNode> $types
+     * @param array<string, TypeNode> $aliases
+     * @param array<string, TemplateTagValueNode> $methodTemplates
+     *
+     * @return array{allParamsUnconstrained: bool, returnUnconstrained: bool, isSimple: bool}
+     */
+    private static function computeContractFlags(
+        array $types,
+        ?TypeNode $returnType,
+        bool $paramsUseGenerics,
+        bool $returnUsesGenerics,
+        array $aliases,
+        array $methodTemplates
+    ): array {
+        $allParamsUnconstrained = true;
+        if (\count($types) > 0) {
+            foreach ($types as $tNode) {
+                if (! self::isUnconstrainedType($tNode)) {
+                    $allParamsUnconstrained = false;
+
+                    break;
+                }
+            }
+        }
+
+        $returnUnconstrained = false;
+        if ($returnType instanceof IdentifierTypeNode) {
+            $lower = strtolower($returnType->name);
+            $returnUnconstrained = ($lower === 'mixed' || $lower === 'array');
+        }
+
+        $isSimple = ! $paramsUseGenerics
+            && ! $returnUsesGenerics
+            && \count($aliases) === 0
+            && \count($methodTemplates) === 0;
+
+        return [
+            'allParamsUnconstrained' => $allParamsUnconstrained,
+            'returnUnconstrained' => $returnUnconstrained,
+            'isSimple' => $isSimple,
+        ];
+    }
+
+    /**
      * Parses PHPDoc contracts for a function or class method.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool, paramsUseGenerics: bool, returnUsesGenerics: bool}
+     * @return array{
+     *     types: array<string, TypeNode>,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classTemplates: array<string, TemplateTagValueNode>,
+     *     return: ?TypeNode,
+     *     aliases: array<string, TypeNode>,
+     *     hasParamContract: bool,
+     *     hasReturnContract: bool,
+     *     paramsUseGenerics: bool,
+     *     returnUsesGenerics: bool,
+     *     returnUsesMethodTemplates: bool,
+     *     returnIsThis: bool,
+     *     returnIsDynamic: bool,
+     *     allParamsUnconstrained: bool,
+     *     returnUnconstrained: bool,
+     *     isSimple: bool
+     * }
      */
     public static function parse(string $function): array
     {
@@ -263,6 +354,12 @@ final class DocblockParser
                             'hasReturnContract' => false,
                             'paramsUseGenerics' => false,
                             'returnUsesGenerics' => false,
+                            'returnUsesMethodTemplates' => false,
+                            'returnIsThis' => false,
+                            'returnIsDynamic' => false,
+                            'allParamsUnconstrained' => true,
+                            'returnUnconstrained' => false,
+                            'isSimple' => true,
                         ];
                     }
                 } else {
@@ -276,6 +373,12 @@ final class DocblockParser
                         'hasReturnContract' => false,
                         'paramsUseGenerics' => false,
                         'returnUsesGenerics' => false,
+                        'returnUsesMethodTemplates' => false,
+                        'returnIsThis' => false,
+                        'returnIsDynamic' => false,
+                        'allParamsUnconstrained' => true,
+                        'returnUnconstrained' => false,
+                        'isSimple' => true,
                     ];
                 }
             } else {
@@ -293,6 +396,12 @@ final class DocblockParser
                 'hasReturnContract' => false,
                 'paramsUseGenerics' => false,
                 'returnUsesGenerics' => false,
+                'returnUsesMethodTemplates' => false,
+                'returnIsThis' => false,
+                'returnIsDynamic' => false,
+                'allParamsUnconstrained' => true,
+                'returnUnconstrained' => false,
+                'isSimple' => true,
             ];
         }
 
@@ -637,7 +746,23 @@ final class DocblockParser
     /**
      * Orchestrates parsing for class methods across the inheritance hierarchy.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool, paramsUseGenerics: bool, returnUsesGenerics: bool, returnUsesMethodTemplates: bool, returnIsThis: bool, returnIsDynamic: bool}
+     * @return array{
+     *     types: array<string, TypeNode>,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classTemplates: array<string, TemplateTagValueNode>,
+     *     return: ?TypeNode,
+     *     aliases: array<string, TypeNode>,
+     *     hasParamContract: bool,
+     *     hasReturnContract: bool,
+     *     paramsUseGenerics: bool,
+     *     returnUsesGenerics: bool,
+     *     returnUsesMethodTemplates: bool,
+     *     returnIsThis: bool,
+     *     returnIsDynamic: bool,
+     *     allParamsUnconstrained: bool,
+     *     returnUnconstrained: bool,
+     *     isSimple: bool
+     * }
      */
     private static function parseMethod(\ReflectionMethod $ref): array
     {
@@ -685,6 +810,16 @@ final class DocblockParser
             $returnIsDynamic = $returnIsThis || str_contains($retStr, 'static') || str_contains($retStr, '$this');
         }
 
+        // Compute pre-optimized flags
+        $flags = self::computeContractFlags(
+            $types,
+            $returnType,
+            $paramsUseGenerics,
+            $returnUsesGenerics,
+            $aliases,
+            $methodTemplates
+        );
+
         return [
             'types' => $types,
             'templates' => $methodTemplates,
@@ -698,13 +833,32 @@ final class DocblockParser
             'returnUsesMethodTemplates' => $returnUsesMethodTemplates,
             'returnIsThis' => $returnIsThis,
             'returnIsDynamic' => $returnIsDynamic,
+            'allParamsUnconstrained' => $flags['allParamsUnconstrained'],
+            'returnUnconstrained' => $flags['returnUnconstrained'],
+            'isSimple' => $flags['isSimple'],
         ];
     }
 
     /**
      * Orchestrates parsing for standalone global or namespaced functions.
      *
-     * @return array{types: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>, classTemplates: array<string, TemplateTagValueNode>, return: ?TypeNode, aliases: array<string, TypeNode>, hasParamContract: bool, hasReturnContract: bool, paramsUseGenerics: bool, returnUsesGenerics: bool, returnUsesMethodTemplates: bool, returnIsThis: bool, returnIsDynamic: bool}
+     * @return array{
+     *     types: array<string, TypeNode>,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classTemplates: array<string, TemplateTagValueNode>,
+     *     return: ?TypeNode,
+     *     aliases: array<string, TypeNode>,
+     *     hasParamContract: bool,
+     *     hasReturnContract: bool,
+     *     paramsUseGenerics: bool,
+     *     returnUsesGenerics: bool,
+     *     returnUsesMethodTemplates: bool,
+     *     returnIsThis: bool,
+     *     returnIsDynamic: bool,
+     *     allParamsUnconstrained: bool,
+     *     returnUnconstrained: bool,
+     *     isSimple: bool
+     * }
      */
     private static function parseFunction(\ReflectionFunction $ref): array
     {
@@ -731,6 +885,9 @@ final class DocblockParser
                 'returnUsesMethodTemplates' => false,
                 'returnIsThis' => false,
                 'returnIsDynamic' => false,
+                'allParamsUnconstrained' => true,
+                'returnUnconstrained' => false,
+                'isSimple' => true,
             ];
         }
 
@@ -813,6 +970,16 @@ final class DocblockParser
             $returnIsDynamic = $returnIsThis || str_contains($retStr, 'static') || str_contains($retStr, '$this');
         }
 
+        // Compute pre-optimized flags
+        $flags = self::computeContractFlags(
+            $types,
+            $returnType,
+            $paramsUseGenerics,
+            $returnUsesMethodTemplates,
+            $aliases,
+            $templates
+        );
+
         return [
             'types' => $types,
             'templates' => $templates,
@@ -826,6 +993,9 @@ final class DocblockParser
             'returnUsesMethodTemplates' => $returnUsesMethodTemplates,
             'returnIsThis' => $returnIsThis,
             'returnIsDynamic' => $returnIsDynamic,
+            'allParamsUnconstrained' => $flags['allParamsUnconstrained'],
+            'returnUnconstrained' => $flags['returnUnconstrained'],
+            'isSimple' => $flags['isSimple'],
         ];
     }
 

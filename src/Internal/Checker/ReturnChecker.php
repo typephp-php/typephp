@@ -57,13 +57,6 @@ final class ReturnChecker
     public static array $substitutedReturnCache = [];
 
     /**
-     * Cache for whether a return type is unconstrained (mixed or array).
-     *
-     * @var array<string, bool>
-     */
-    private static array $returnUnconstrainedCache = [];
-
-    /**
      * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
@@ -72,12 +65,11 @@ final class ReturnChecker
         self::$resolvedStaticReturnCache = [];
         self::$unboundReturnCache = [];
         self::$substitutedReturnCache = [];
-        self::$returnUnconstrainedCache = [];
     }
 
     /**
      * Checks if the return type of a function is unconstrained (mixed or array).
-     * Uses memoization to avoid repeated docblock parsing.
+     * Uses the pre-computed flag from DocblockParser contract when available.
      */
     public static function isReturnUnconstrained(string $effectiveFunction): bool
     {
@@ -85,25 +77,30 @@ final class ReturnChecker
             return false;
         }
 
-        $cacheKey = $effectiveFunction . '|return_unconstrained';
-        if (! isset(self::$returnUnconstrainedCache[$cacheKey])) {
-            $contract = DocblockParser::parse($effectiveFunction);
-            $returnNode = $contract['return'] ?? null;
-            $unconstrained = false;
-            if ($returnNode instanceof IdentifierTypeNode) {
-                $lower = strtolower($returnNode->name);
-                if ($lower === 'mixed' || $lower === 'array') {
-                    $unconstrained = true;
-                }
-            }
-            self::$returnUnconstrainedCache[$cacheKey] = $unconstrained;
-        }
+        $contract = DocblockParser::parse($effectiveFunction);
 
-        return self::$returnUnconstrainedCache[$cacheKey];
+        return $contract['returnUnconstrained'] ?? false;
     }
 
     /**
      * @param array<string, mixed> $vars
+     * @param array{
+     *     types: array<string, TypeNode>,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classTemplates: array<string, TemplateTagValueNode>,
+     *     return: ?TypeNode,
+     *     aliases: array<string, TypeNode>,
+     *     hasParamContract: bool,
+     *     hasReturnContract: bool,
+     *     paramsUseGenerics: bool,
+     *     returnUsesGenerics: bool,
+     *     returnUsesMethodTemplates: bool,
+     *     returnIsThis: bool,
+     *     returnIsDynamic: bool,
+     *     allParamsUnconstrained: bool,
+     *     returnUnconstrained: bool,
+     *     isSimple: bool
+     * }|null $contract Pre-resolved contract to avoid re-parsing
      */
     public static function checkReturn(
         string $function,
@@ -111,7 +108,9 @@ final class ReturnChecker
         object|string|null $thisOrClass,
         array $vars,
         TypeValidatorRegistry $registry,
-        callable $wrapIterableCallback
+        callable $wrapIterableCallback,
+        string $effectiveFunction = '',
+        ?array $contract = null
     ): mixed {
         if (! Config::isReturnsEnabled()) {
             return $value;
@@ -122,7 +121,10 @@ final class ReturnChecker
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        if ($effectiveFunction === '') {
+            $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+        }
 
         if (isset(self::$noReturnContractCache[$effectiveFunction])) {
             self::$noReturnContractCache[$function] = true;
@@ -131,7 +133,6 @@ final class ReturnChecker
         }
 
         $isMagicCall = str_contains($effectiveFunction, '__call');
-
         $magicResult = self::handleMagicReturn(
             $effectiveFunction,
             $value,
@@ -140,16 +141,15 @@ final class ReturnChecker
             $registry,
             $wrapIterableCallback
         );
-
         if ($magicResult !== null) {
             return $magicResult;
         }
-
         if ($isMagicCall) {
             return $value;
         }
 
-        $contract = DocblockParser::parse($effectiveFunction);
+        // Use pre-resolved contract or parse
+        $contract ??= DocblockParser::parse($effectiveFunction);
 
         if (! ($contract['hasReturnContract'] ?? ($contract['return'] !== null))) {
             self::$noReturnContractCache[$effectiveFunction] = true;
@@ -214,7 +214,6 @@ final class ReturnChecker
 
         $className = explode('::', $effectiveFunction, 2)[0];
         $magicContract = DocblockParser::parseMagicMethod($className, $magicMethodName);
-
         if ($magicContract === null || $magicContract['return'] === null) {
             return null;
         }
@@ -247,7 +246,10 @@ final class ReturnChecker
      *     returnIsDynamic?: bool,
      *     aliases?: array<string, TypeNode>,
      *     templates?: array<string, TemplateTagValueNode>,
-     *     classTemplates?: array<string, TemplateTagValueNode>
+     *     classTemplates?: array<string, TemplateTagValueNode>,
+     *     allParamsUnconstrained?: bool,
+     *     returnUnconstrained?: bool,
+     *     isSimple?: bool
      * } $contract
      */
     private static function evaluateReturn(
@@ -422,7 +424,6 @@ final class ReturnChecker
     ): TypeNode {
         $paramName = ltrim($node->parameterName, '$');
         $paramValue = null;
-
         if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
             $paramValue = $vars[$paramName];
         } elseif (\count($vars) > 0 && $function !== '' && str_contains($function, '::')) {
@@ -431,7 +432,6 @@ final class ReturnChecker
 
         $targetErr = $registry->validate($paramValue, $node->targetType, 'condition');
         $isTargetMatch = ($targetErr === null);
-
         if ($node->negated) {
             $isTargetMatch = ! $isTargetMatch;
         }
@@ -449,7 +449,6 @@ final class ReturnChecker
     private static function resolveRenamedParamValue(string $function, string $paramName, array $vars): mixed
     {
         [$className, $methodName] = explode('::', $function, 2);
-
         if (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className) && ! enum_exists($className)) {
             return null;
         }
@@ -501,13 +500,11 @@ final class ReturnChecker
         TypeValidatorRegistry $registry
     ): TypeNode {
         $subjectTypeNode = $node->subjectType;
-
         if ($subjectTypeNode instanceof IdentifierTypeNode && isset($boundTemplates[$subjectTypeNode->name])) {
             $subjectTypeNode = $boundTemplates[$subjectTypeNode->name];
         }
 
         $isTargetMatch = TemplateManager::checkVariance($subjectTypeNode, $node->targetType, GenericTypeNode::VARIANCE_COVARIANT);
-
         if ($node->negated) {
             $isTargetMatch = ! $isTargetMatch;
         }

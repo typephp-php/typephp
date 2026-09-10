@@ -511,6 +511,9 @@ final class StreamWrapper implements StreamWrapperInterface
      * 1. Differentiates between stat() and lstat() (STREAM_URL_STAT_LINK).
      * 2. Memoizes PHP files, vendor files, and static package source directories.
      *
+     * NOTE: stat() and lstat() DO trigger recursive url_stat calls when the
+     * file:// wrapper is registered. The unregister/register cycle is REQUIRED.
+     *
      * @return array<int|string, int>|false
      */
     public function url_stat(string $path, int $flags): array|false
