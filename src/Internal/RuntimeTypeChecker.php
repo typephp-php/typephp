@@ -28,9 +28,12 @@ final class RuntimeTypeChecker
     private static ?TypeValidatorRegistry $registry = null;
 
     /**
+     * Cache for whether a method's return type uses method-level templates.
+     * MUST be public so injected AST code can read it for call-site cache bypass.
+     *
      * @var array<string, bool>
      */
-    private static array $hasMethodTemplatesCache = [];
+    public static array $hasMethodTemplatesCache = [];
 
     /**
      * Resets runtime caches.
@@ -125,30 +128,46 @@ final class RuntimeTypeChecker
     /**
      * Initialises generic call frames and returns a ScopeCleaner that pops the call frame on destruction.
      *
+     * Optimized: combines Config checks, uses pre-computed contract flags,
+     * and passes contract through to checkParams to avoid re-parsing.
+     *
      * @param array<string, mixed> $vars
      */
     public static function setupScope(string $function, array $vars, object|string|null $thisOrClass = null): ErrorMessage|ScopeCleaner|null
     {
-        if (! Config::isParamsEnabled()) {
+        // Combined config gate — single check instead of two separate calls
+        if (! Config::isEnabled() || ! Config::isParamsEnabled()) {
             return null;
         }
 
-        if (isset(ParamChecker::$noParamContractCache[$function]) && ! (self::$hasMethodTemplatesCache[$function] ?? false)) {
-            return null;
-        }
-
-        if (! Config::isEnabled()) {
+        if (isset(ParamChecker::$noParamContractCache[$function])
+            && ! (self::$hasMethodTemplatesCache[$function] ?? false)) {
             return null;
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        if (ParamChecker::areAllParamsUnconstrained($effectiveFunction)) {
+        // FIX: Magic methods (__call/__callStatic) must NOT bail out early,
+        // even if __call itself has unconstrained (mixed) parameters,
+        // because the actual validation happens inside ParamChecker::handleMagicCall().
+        $isMagicCall = str_contains($effectiveFunction, '__call');
+
+        // Fast bail using pre-computed flag from contract (skip for magic calls)
+        $contract = DocblockParser::parse($effectiveFunction);
+        if (! $isMagicCall && ($contract['allParamsUnconstrained'] ?? false)) {
             return null;
         }
 
-        $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry(), $effectiveFunction);
+        // Pass effectiveFunction AND contract to checkParams to avoid re-parsing
+        $err = ParamChecker::checkParams(
+            $function,
+            $vars,
+            $thisOrClass,
+            self::getRegistry(),
+            $effectiveFunction,
+            $contract
+        );
 
         if ($err !== null) {
             if (IgnoreManager::isCallerIgnored()) {
@@ -162,7 +181,6 @@ final class RuntimeTypeChecker
 
         $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] ?? null;
         if ($hasMethodTemplates === null) {
-            $contract = DocblockParser::parse($effectiveFunction);
             $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] = (
                 $contract['returnUsesMethodTemplates'] ?? false
             );
@@ -195,28 +213,54 @@ final class RuntimeTypeChecker
     /**
      * Validates a function or method's return value against its declared contract and returns value or ErrorMessage.
      *
+     * Optimized: combines Config checks, resolves effectiveFunction once,
+     * uses pre-computed contract flags, and passes both effectiveFunction and contract
+     * to ReturnChecker to avoid redundant resolution and parsing.
+     *
      * @param array<string, mixed>|null $vars
      */
     public static function checkReturn(string $function, mixed $value, object|string|null $thisOrClass = null, ?array $vars = []): mixed
     {
-        if (isset(ReturnChecker::$noReturnContractCache[$function])) {
+        // Combined config gate — single check instead of two separate calls
+        if (! Config::isEnabled() || ! Config::isReturnsEnabled()) {
             return $value;
         }
 
-        if (! Config::isEnabled()) {
+        if (isset(ReturnChecker::$noReturnContractCache[$function])) {
             return $value;
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        if (ReturnChecker::isReturnUnconstrained($effectiveFunction)) {
+        if (isset(ReturnChecker::$noReturnContractCache[$effectiveFunction])) {
+            ReturnChecker::$noReturnContractCache[$function] = true;
+
+            return $value;
+        }
+
+        // FIX: Magic methods must NOT bail out early
+        $isMagicCall = str_contains($effectiveFunction, '__call');
+
+        // Fast bail using pre-computed flag from contract (skip for magic calls)
+        $contract = DocblockParser::parse($effectiveFunction);
+        if (! $isMagicCall && ($contract['returnUnconstrained'] ?? false)) {
             return $value;
         }
 
         $vars ??= [];
 
-        $res = ReturnChecker::checkReturn($function, $value, $thisOrClass, $vars, self::getRegistry(), [self::class, 'wrapIterable']);
+        // Pass effectiveFunction AND contract to ReturnChecker to avoid re-parsing
+        $res = ReturnChecker::checkReturn(
+            $function,
+            $value,
+            $thisOrClass,
+            $vars,
+            self::getRegistry(),
+            [self::class, 'wrapIterable'],
+            $effectiveFunction,
+            $contract
+        );
 
         if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
             return $value;

@@ -50,13 +50,6 @@ final class ParamChecker
     private static array $baseTypeCache = [];
 
     /**
-     * Cache for whether all parameters of a function are unconstrained (mixed or array).
-     *
-     * @var array<string, bool>
-     */
-    private static array $allParamsUnconstrainedCache = [];
-
-    /**
      * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
@@ -65,12 +58,11 @@ final class ParamChecker
         self::$noParamContractCache = [];
         ClassNameValidator::reset();
         self::$baseTypeCache = [];
-        self::$allParamsUnconstrainedCache = [];
     }
 
     /**
      * Checks if all parameters of a function are unconstrained (mixed or array).
-     * Uses memoization to avoid repeated docblock parsing.
+     * Uses the pre-computed flag from DocblockParser contract when available.
      */
     public static function areAllParamsUnconstrained(string $effectiveFunction): bool
     {
@@ -78,21 +70,9 @@ final class ParamChecker
             return false;
         }
 
-        $cacheKey = $effectiveFunction . '|unconstrained';
-        if (! isset(self::$allParamsUnconstrainedCache[$cacheKey])) {
-            $contract = DocblockParser::parse($effectiveFunction);
-            $allUnconstrained = true;
-            foreach ($contract['types'] as $typeNode) {
-                if (! self::isUnconstrained($typeNode)) {
-                    $allUnconstrained = false;
+        $contract = DocblockParser::parse($effectiveFunction);
 
-                    break;
-                }
-            }
-            self::$allParamsUnconstrainedCache[$cacheKey] = $allUnconstrained;
-        }
-
-        return self::$allParamsUnconstrainedCache[$cacheKey];
+        return $contract['allParamsUnconstrained'] ?? false;
     }
 
     /**
@@ -103,7 +83,6 @@ final class ParamChecker
         if (! ($typeNode instanceof IdentifierTypeNode)) {
             return false;
         }
-
         $lower = strtolower($typeNode->name);
 
         return $lower === 'mixed' || $lower === 'array';
@@ -111,19 +90,38 @@ final class ParamChecker
 
     /**
      * @param array<string, mixed> $vars
+     * @param array{
+     *     types: array<string, TypeNode>,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classTemplates: array<string, TemplateTagValueNode>,
+     *     return: ?TypeNode,
+     *     aliases: array<string, TypeNode>,
+     *     hasParamContract: bool,
+     *     hasReturnContract: bool,
+     *     paramsUseGenerics: bool,
+     *     returnUsesGenerics: bool,
+     *     returnUsesMethodTemplates: bool,
+     *     returnIsThis: bool,
+     *     returnIsDynamic: bool,
+     *     allParamsUnconstrained: bool,
+     *     returnUnconstrained: bool,
+     *     isSimple: bool
+     * }|null $contract Pre-resolved contract to avoid re-parsing
      */
     public static function checkParams(
         string $function,
         array $vars,
         object|string|null $thisOrClass,
         TypeValidatorRegistry $registry,
-        string $effectiveFunction = ''
+        string $effectiveFunction = '',
+        ?array $contract = null
     ): ?ErrorMessage {
         if (! Config::isParamsEnabled()) {
             return null;
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+
         if ($effectiveFunction === '') {
             $effectiveFunction = self::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
         }
@@ -142,12 +140,12 @@ final class ParamChecker
         if ($magicError !== null) {
             return $magicError;
         }
-
         if ($isMagicCall) {
             return null;
         }
 
-        $contract = DocblockParser::parse($effectiveFunction);
+        // Use pre-resolved contract or parse
+        $contract ??= DocblockParser::parse($effectiveFunction);
 
         if (! $contract['hasParamContract']) {
             self::$noParamContractCache[$effectiveFunction] = true;
@@ -341,6 +339,7 @@ final class ParamChecker
         }
 
         $actualClassName = \is_object($thisOrClass) ? $thisOrClass::class : (\is_string($thisOrClass) ? $thisOrClass : '');
+
         if ($actualClassName === '') {
             return $function;
         }
@@ -498,9 +497,11 @@ final class ParamChecker
                         $targetObj = $isClassLevel ? $thisObj : null;
 
                         $inferredCandidate = self::extractTypeFromClosureParameter($closureParams[$idx]);
+
                         if ($inferredCandidate !== null) {
                             $templateTag = $templates[$tName];
                             $satisfiesBound = true;
+
                             if ($templateTag->bound !== null) {
                                 $resolvedBound = SpecialTypeResolver::resolve($templateTag->bound, $effectiveFunction, $thisObj);
                                 $satisfiesBound = TemplateManager::checkVariance($inferredCandidate, $resolvedBound, GenericTypeNode::VARIANCE_COVARIANT);
@@ -526,7 +527,6 @@ final class ParamChecker
     private static function extractCallableNodes(array $types): array
     {
         $callableNodes = [];
-
         foreach ($types as $paramName => $tNode) {
             if ($tNode instanceof CallableTypeNode) {
                 $callableNodes[$paramName] = $tNode;
@@ -625,6 +625,7 @@ final class ParamChecker
             }
 
             $sampleItems = self::getSampleArraySlice($arrVal);
+
             $genericCount = \count($typeNode->genericTypes);
 
             if ($genericCount === 1 && $typeNode->genericTypes[0] instanceof IdentifierTypeNode) {
@@ -669,7 +670,6 @@ final class ParamChecker
         array $templates
     ): void {
         $inferredType = null;
-
         foreach ($sampleItems as $item) {
             $itemType = TemplateManager::inferTypeFromValue($item);
             $inferredType = ($inferredType === null) ? $itemType : self::unifyTypes($inferredType, $itemType);
@@ -697,7 +697,6 @@ final class ParamChecker
         $keys = array_keys($arrVal);
         $sampleKeys = [$keys[0], $keys[$count - 1]];
         $samplesToTake = min(3, $count - 2);
-
         for ($i = 0; $i < $samplesToTake; $i++) {
             $sampleKeys[] = $keys[mt_rand(1, $count - 2)];
         }
@@ -792,7 +791,6 @@ final class ParamChecker
         $templates = $magicContract['templates'];
         $aliases = $magicContract['aliases'];
         $parameters = $magicContract['parameters'];
-
         $argValues = array_values($args);
         $argKeys = array_keys($args);
 
@@ -910,7 +908,6 @@ final class ParamChecker
         $innerType = $typeNode->genericTypes[0];
         $templateName = $innerType->name;
         $templateNode = $templates[$templateName];
-
         $isClassLevelTemplate = isset($classTemplates[$templateName]);
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
 
@@ -1007,7 +1004,6 @@ final class ParamChecker
             if ($t0 instanceof IdentifierTypeNode && isset($templates[$t0->name]) && $t1 instanceof IdentifierTypeNode && strtolower($t1->name) === 'null') {
                 return $t0->name;
             }
-
             if ($t1 instanceof IdentifierTypeNode && isset($templates[$t1->name]) && $t0 instanceof IdentifierTypeNode && strtolower($t0->name) === 'null') {
                 return $t1->name;
             }
@@ -1038,10 +1034,8 @@ final class ParamChecker
         $templateNode = $templates[$templateName];
         $isVariadic = $typeNode instanceof ArrayTypeNode;
         $isNullable = ($typeNode instanceof NullableTypeNode) || ($typeNode instanceof UnionTypeNode && self::typeContainsNull($typeNode));
-
         $isClassLevelTemplate = isset($classTemplates[$templateName]);
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
-
         $allowsNullInBound = ($templateNode->bound !== null && self::typeContainsNull($templateNode->bound));
 
         if ($isNullable && $val === null) {
@@ -1218,11 +1212,9 @@ final class ParamChecker
                     $err,
                     $registry
                 );
-
                 if ($widenErr !== null) {
                     return $widenErr;
                 }
-
                 $currentType = TemplateManager::getBoundType($function, $targetObj, $templateName) ?? $currentType;
             }
         }
@@ -1248,6 +1240,7 @@ final class ParamChecker
         }
 
         $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
+
         $boundErr = $registry->validate($val, $resolvedBound, $context . ' (template ' . $templateName . ')');
 
         if ($boundErr === null) {
@@ -1271,7 +1264,6 @@ final class ParamChecker
         }
 
         $types = [];
-
         if ($type1 instanceof UnionTypeNode) {
             $types = $type1->types;
         } else {
@@ -1288,7 +1280,6 @@ final class ParamChecker
 
         $unique = [];
         $deduped = [];
-
         foreach ($types as $t) {
             $str = (string) $t;
             if (! isset($unique[$str])) {

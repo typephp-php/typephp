@@ -46,12 +46,12 @@ final class FunctionContractInjector
         $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
         $isConstructor = $isClassMethod && $methodName === '__construct';
         $isMagicLifecycle = $isClassMethod && \in_array($methodName, ['__construct', '__destruct', '__clone'], true);
-
         $isNativeNever = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'never';
         $isNativeVoid = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'void';
         $isPrivate = $isClassMethod && $node->isPrivate();
 
         $paramCount = \count($node->params);
+
         $hasParam = self::hasParamContracts(
             $docText,
             $isClassMethod,
@@ -184,7 +184,6 @@ final class FunctionContractInjector
                     break;
                 }
             }
-
             if (! $hasMixed) {
                 return true;
             }
@@ -281,7 +280,6 @@ final class FunctionContractInjector
         Node\Expr $thisArg
     ): array {
         $injectedStmts = [self::buildSetupScopeStmt($params, $thisArg)];
-
         $callableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isCallableCandidate'], 'wrapCallable');
         $iterableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isIterableCandidate'], 'wrapIterable');
 
@@ -304,28 +302,65 @@ final class FunctionContractInjector
             }
         }
 
-        $argsExpr = new Node\Expr\Assign(
-            new Node\Expr\Variable('__typephpArgs'),
-            new Node\Expr\Array_($arrayItems)
+        $argsAssign = new Node\Stmt\Expression(
+            new Node\Expr\Assign(
+                new Node\Expr\Variable('_typephpArgs'),
+                new Node\Expr\Array_($arrayItems)
+            )
         );
 
         $checkCall = new Node\Expr\FuncCall(
             new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::setupScope'),
             [
                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                new Node\Arg($argsExpr),
+                new Node\Arg(new Node\Expr\Variable('_typephpArgs')),
                 new Node\Arg($thisArg),
             ]
         );
 
         $throwStmt = self::buildTypeErrorThrowStmt(new Node\Expr\Variable('__typephpErr'));
 
-        $ifStmt = new Node\Stmt\If_(
-            new Node\Expr\Instanceof_(
-                new Node\Expr\Assign(new Node\Expr\Variable('__typephpErr'), $checkCall),
-                new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
+        $cacheKeyExpr = new Node\Scalar\MagicConst\Method();
+
+        $noParamCacheCheck = new Node\Expr\BooleanNot(
+            new Node\Expr\Isset_([
+                new Node\Expr\ArrayDimFetch(
+                    new Node\Expr\StaticPropertyFetch(
+                        new Node\Name\FullyQualified('TypePHP\Internal\Checker\ParamChecker'),
+                        'noParamContractCache'
+                    ),
+                    $cacheKeyExpr
+                ),
+            ])
+        );
+
+        $hasTemplatesCheck = new Node\Expr\BinaryOp\Coalesce(
+            new Node\Expr\ArrayDimFetch(
+                new Node\Expr\StaticPropertyFetch(
+                    new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker'),
+                    'hasMethodTemplatesCache'
+                ),
+                $cacheKeyExpr
             ),
-            ['stmts' => [$throwStmt]]
+            new Node\Expr\ConstFetch(new Node\Name('false'))
+        );
+
+        $combinedCondition = new Node\Expr\BinaryOp\BooleanOr($noParamCacheCheck, $hasTemplatesCheck);
+
+        $ifStmt = new Node\Stmt\If_(
+            $combinedCondition,
+            [
+                'stmts' => [
+                    $argsAssign,
+                    new Node\Stmt\If_(
+                        new Node\Expr\Instanceof_(
+                            new Node\Expr\Assign(new Node\Expr\Variable('__typephpErr'), $checkCall),
+                            new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
+                        ),
+                        ['stmts' => [$throwStmt]]
+                    ),
+                ],
+            ]
         );
 
         $ifStmt->setAttribute('typephp_injected', true);
@@ -347,6 +382,7 @@ final class FunctionContractInjector
         string $wrapperMethod
     ): array {
         $wrappers = [];
+
         foreach ($params as $param) {
             if ($predicate($param, $docText) && $param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
                 $paramName = $param->var->name;
@@ -354,7 +390,7 @@ final class FunctionContractInjector
                     new Node\Expr\Assign(
                         new Node\Expr\Variable($paramName),
                         new Node\Expr\FuncCall(
-                            new Node\Name\FullyQualified("TypePHP\\Internal\\RuntimeTypeChecker::{$wrapperMethod}"),
+                            new Node\Name\FullyQualified("TypePHP\Internal\RuntimeTypeChecker::{$wrapperMethod}"),
                             [
                                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
                                 new Node\Arg(new Node\Scalar\String_($paramName)),
@@ -408,11 +444,9 @@ final class FunctionContractInjector
         if ($type instanceof Node\Identifier) {
             return isset($targetNames[strtolower($type->name)]);
         }
-
         if ($type instanceof Node\Name) {
             return isset($targetNames[strtolower($type->getLast())]);
         }
-
         if ($type instanceof Node\UnionType || $type instanceof Node\IntersectionType) {
             foreach ($type->types as $t) {
                 if (self::typeMatchesName($t, $targetNames)) {
@@ -460,7 +494,7 @@ final class FunctionContractInjector
     public static function buildReturnCheckCall(Node\Expr $exprToWrap, Node\Expr $thisArg, bool $needsReturnVars = false): Node\Expr\FuncCall
     {
         $varsArg = $needsReturnVars
-            ? new Node\Expr\Variable('__typephpArgs')
+            ? new Node\Expr\Variable('_typephpArgs')
             : new Node\Expr\Array_();
 
         return new Node\Expr\FuncCall(
@@ -569,7 +603,6 @@ final class FunctionContractInjector
                     if ($n->getAttribute('typephp_wrapped') === true) {
                         return null;
                     }
-
                     $n->setAttribute('typephp_wrapped', true);
 
                     return FunctionContractInjector::buildWrappedYieldNode($n, $this->thisArg);
@@ -579,9 +612,7 @@ final class FunctionContractInjector
                     if ($n->getAttribute('typephp_wrapped') === true) {
                         return null;
                     }
-
                     $n->setAttribute('typephp_wrapped', true);
-
                     $n->expr = new Node\Expr\FuncCall(
                         new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::wrapIterable'),
                         [
@@ -629,15 +660,34 @@ final class FunctionContractInjector
                     if ($n->getAttribute('typephp_var_wrapped') === true) {
                         return null;
                     }
-
                     $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
-                    $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
 
                     if ($this->isNativeVoid) {
+                        $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
+
                         return FunctionContractInjector::buildVoidReturnGuard($checkCall);
                     }
 
-                    $n->expr = FunctionContractInjector::buildTernaryReturnExpr($checkCall);
+                    // Call-site cache bypass for return checks
+                    $cacheKeyExpr = new Node\Scalar\MagicConst\Method();
+                    $cacheCheck = new Node\Expr\Isset_([
+                        new Node\Expr\ArrayDimFetch(
+                            new Node\Expr\StaticPropertyFetch(
+                                new Node\Name\FullyQualified('TypePHP\Internal\Checker\ReturnChecker'),
+                                'noReturnContractCache'
+                            ),
+                            $cacheKeyExpr
+                        ),
+                    ]);
+
+                    $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
+                    $ternaryExpr = FunctionContractInjector::buildTernaryReturnExpr($checkCall);
+
+                    $n->expr = new Node\Expr\Ternary(
+                        $cacheCheck,
+                        $exprToWrap,
+                        $ternaryExpr
+                    );
                 }
 
                 return null;
@@ -654,7 +704,25 @@ final class FunctionContractInjector
             if ($isNativeVoid) {
                 $newStmts = [...$newStmts, ...self::buildVoidReturnGuard($checkCall)];
             } else {
-                $retStmt = new Node\Stmt\Return_(self::buildTernaryReturnExpr($checkCall));
+                $cacheKeyExpr = new Node\Scalar\MagicConst\Method();
+                $cacheCheck = new Node\Expr\Isset_([
+                    new Node\Expr\ArrayDimFetch(
+                        new Node\Expr\StaticPropertyFetch(
+                            new Node\Name\FullyQualified('TypePHP\Internal\Checker\ReturnChecker'),
+                            'noReturnContractCache'
+                        ),
+                        $cacheKeyExpr
+                    ),
+                ]);
+
+                $ternaryExpr = self::buildTernaryReturnExpr($checkCall);
+                $fallbackExpr = new Node\Expr\Ternary(
+                    $cacheCheck,
+                    new Node\Expr\ConstFetch(new Node\Name('null')),
+                    $ternaryExpr
+                );
+
+                $retStmt = new Node\Stmt\Return_($fallbackExpr);
                 $retStmt->setAttribute('typephp_injected', true);
                 $newStmts[] = $retStmt;
             }

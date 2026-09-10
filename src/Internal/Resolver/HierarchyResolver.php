@@ -34,6 +34,22 @@ final class HierarchyResolver
     private static array $traitAliasCache = [];
 
     /**
+     * Boolean fast-path cache: true if class has trait aliases, false if not.
+     * Avoids array allocation and comparison for the common "no traits" case.
+     *
+     * @var array<string, bool>
+     */
+    private static array $hasTraitAliasesCache = [];
+
+    /**
+     * Cache for 4-way class/interface/trait/enum existence checks.
+     * Avoids repeated existence checks for the same class name.
+     *
+     * @var array<string, bool>
+     */
+    private static array $classExistsCache = [];
+
+    /**
      * Resets the hierarchy cache. Useful for test isolation.
      */
     public static function reset(): void
@@ -41,29 +57,67 @@ final class HierarchyResolver
         self::$methodHierarchyCache = [];
         self::$classHierarchyCache = [];
         self::$traitAliasCache = [];
+        self::$hasTraitAliasesCache = [];
+        self::$classExistsCache = [];
+    }
+
+    /**
+     * Checks whether a class, interface, trait, or enum exists.
+     * Caches the result to avoid repeated 4-way existence checks.
+     */
+    private static function typeExists(string $className): bool
+    {
+        if (isset(self::$classExistsCache[$className])) {
+            return self::$classExistsCache[$className];
+        }
+
+        $exists = class_exists($className)
+            || interface_exists($className)
+            || trait_exists($className)
+            || enum_exists($className);
+
+        return self::$classExistsCache[$className] = $exists;
     }
 
     /**
      * Returns cached trait aliases for a given class.
      *
+     * Optimized with boolean fast-path cache to avoid reflection
+     * for classes known to not use traits.
+     *
      * @return array<string, string>
      */
     public static function getTraitAliases(string $className): array
     {
+        if (isset(self::$hasTraitAliasesCache[$className])) {
+            if (! self::$hasTraitAliasesCache[$className]) {
+                return [];
+            }
+
+            return self::$traitAliasCache[$className];
+        }
+
         if (isset(self::$traitAliasCache[$className])) {
             return self::$traitAliasCache[$className];
         }
 
-        if (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className) && ! enum_exists($className)) {
+        if (! self::typeExists($className)) {
+            self::$hasTraitAliasesCache[$className] = false;
+
             return self::$traitAliasCache[$className] = [];
         }
 
         try {
             /** @var class-string<object> $className */
             $ref = new ReflectionClass($className);
+            $aliases = $ref->getTraitAliases();
 
-            return self::$traitAliasCache[$className] = $ref->getTraitAliases();
+            self::$hasTraitAliasesCache[$className] = ($aliases !== []);
+
+            return self::$traitAliasCache[$className] = $aliases;
         } catch (\Throwable $e) {
+            self::$hasTraitAliasesCache[$className] = false;
+
             return self::$traitAliasCache[$className] = [];
         }
     }
