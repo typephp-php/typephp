@@ -18,6 +18,7 @@ use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
+use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
@@ -134,7 +135,7 @@ final class CallableWrapper
 
         /** @var callable $callable */
         return function (...$args) use ($callable, $typeNode, $registry, $prefix) {
-            self::validateCallbackArguments($typeNode, $args, $prefix, $registry);
+            self::validateCallbackArguments($typeNode, $args, $prefix, $registry, $callable);
 
             try {
                 $result = $callable(...$args);
@@ -148,7 +149,9 @@ final class CallableWrapper
             if (! $isVoidReturn) {
                 $err = $registry->validate($result, $typeNode->returnType, "$prefix return value");
                 if ($err !== null) {
-                    throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
+                    if (! CallerBoundaryResolver::shouldBypassCallback($callable, $prefix)) {
+                        throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
+                    }
                 }
             }
 
@@ -166,12 +169,20 @@ final class CallableWrapper
     private static function enforceClosureConstraints(string $identifierName, mixed $callable, string $prefix): void
     {
         if (str_contains($identifierName, 'closure') && ! ($callable instanceof Closure)) {
+            if (CallerBoundaryResolver::shouldBypassCallback($callable, $prefix)) {
+                return;
+            }
+
             throw ErrorFactory::prepareException(new TypePHPTypeError($prefix . ' must be of type Closure, ' . TypeFormatter::formatGivenValue($callable) . ' given'));
         }
 
         if (str_contains($identifierName, 'static') && $callable instanceof Closure) {
             $refFunc = new ReflectionFunction($callable);
             if ($refFunc->getClosureThis() !== null) {
+                if (CallerBoundaryResolver::shouldBypassCallback($callable, $prefix)) {
+                    return;
+                }
+
                 throw ErrorFactory::prepareException(new TypePHPTypeError($prefix . ' must be a static Closure (not bound to $this)'));
             }
         }
@@ -182,8 +193,13 @@ final class CallableWrapper
      *
      * @param array<int|string, mixed> $args
      */
-    private static function validateCallbackArguments(CallableTypeNode $typeNode, array $args, string $prefix, TypeValidatorRegistry $registry): void
-    {
+    private static function validateCallbackArguments(
+        CallableTypeNode $typeNode,
+        array $args,
+        string $prefix,
+        TypeValidatorRegistry $registry,
+        mixed $callable = null
+    ): void {
         $argValues = array_values($args);
         $argCount = \count($argValues);
 
@@ -194,6 +210,10 @@ final class CallableWrapper
                 for ($vIdx = $index; $vIdx < $argCount; $vIdx++) {
                     $err = $registry->validate($argValues[$vIdx], $paramNode->type, "$prefix variadic argument #" . ($vIdx + 1));
                     if ($err !== null) {
+                        if ($callable !== null && CallerBoundaryResolver::shouldBypassCallback($callable, $prefix)) {
+                            continue;
+                        }
+
                         throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
                     }
                 }
@@ -216,6 +236,10 @@ final class CallableWrapper
                 $argLabel = $rawParamName !== '' ? "\$$rawParamName" : ('argument #' . ($index + 1));
                 $err = $registry->validate($val, $paramNode->type, "$prefix $argLabel");
                 if ($err !== null) {
+                    if ($callable !== null && CallerBoundaryResolver::shouldBypassCallback($callable, $prefix)) {
+                        continue;
+                    }
+
                     throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
                 }
             }

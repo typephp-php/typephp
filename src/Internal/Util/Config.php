@@ -11,6 +11,7 @@ use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Io\CacheManager;
 use TypePHP\Internal\Io\StreamWrapper;
+use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\RuntimeTypeChecker;
@@ -52,6 +53,8 @@ final class Config
     private static bool $respectIgnoreTags = true;
 
     private static bool $respectNativeNullability = true;
+
+    private static bool $vendorBoundaryOnly = true;
 
     private static string $arrayValidation = 'full';
 
@@ -125,6 +128,15 @@ final class Config
         }
 
         return self::$respectNativeNullability;
+    }
+
+    public static function isVendorBoundaryOnlyEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$vendorBoundaryOnly;
     }
 
     public static function isArrayValidationHybrid(): bool
@@ -220,6 +232,7 @@ final class Config
             'magic_methods' => true,
             'respect_ignore_tags' => true,
             'respect_native_nullability' => true,
+            'vendor_boundary_only' => true,
             'array_validation' => 'full',
             'cache' => true,
             'cache_dir' => null,
@@ -308,6 +321,7 @@ final class Config
         StreamWrapper::reset();
         StubManager::reset();
         SpecialTypeResolver::reset();
+        CallerBoundaryResolver::reset();
         CacheManager::reset();
         IgnoreManager::reset();
         RuntimeTypeChecker::reset();
@@ -360,6 +374,7 @@ final class Config
         self::$magicMethods = true;
         self::$respectIgnoreTags = true;
         self::$respectNativeNullability = true;
+        self::$vendorBoundaryOnly = true;
         self::$arrayValidation = 'full';
 
         DocblockParser::reset();
@@ -372,6 +387,7 @@ final class Config
         StreamWrapper::reset();
         StubManager::reset();
         SpecialTypeResolver::reset();
+        CallerBoundaryResolver::reset();
         CacheManager::reset();
         IgnoreManager::reset();
         RuntimeTypeChecker::reset();
@@ -392,6 +408,7 @@ final class Config
         self::$magicMethods = (bool) ($config['magic_methods'] ?? true);
         self::$respectIgnoreTags = (bool) ($config['respect_ignore_tags'] ?? true);
         self::$respectNativeNullability = (bool) ($config['respect_native_nullability'] ?? true);
+        self::$vendorBoundaryOnly = (bool) ($config['vendor_boundary_only'] ?? true);
         self::$arrayValidation = \is_string($config['array_validation'] ?? null) ? $config['array_validation'] : 'full';
     }
 }

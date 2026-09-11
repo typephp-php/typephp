@@ -80,6 +80,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Vendor Boundary Only Enforcement
+    |--------------------------------------------------------------------------
+    | When true (default), whitelisted vendor packages (e.g. Illuminate\Collections)
+    | only enforce type contracts on calls originating from application code (included paths).
+    | Internal vendor-to-vendor or vendor-self calls bypass strict enforcement.
+    | Set to false for strict pedantic enforcement across all vendor internals.
+    */
+    'vendor_boundary_only' => true,
+
+    /*
+    |--------------------------------------------------------------------------
     | Magic Annotations (@property & @method)
     |--------------------------------------------------------------------------
     | Enforces class-level annotations for dynamic properties and magic methods
@@ -110,7 +121,7 @@ return [
     |             is caught without exception.
     |
     | - 'hybrid' : (Beartype O(1) Mode) Fast boundary + random sampling on
-    |             arrays > 64 items. Ideal for massive production datasets.
+    |             arrays > 128 items. Ideal for massive production datasets.
     */
     'array_validation' => 'full',
 

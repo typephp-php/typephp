@@ -14,6 +14,7 @@ use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
+use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
@@ -74,7 +75,7 @@ final class IterableWrapper
         }
 
         $prefix = ($paramName === 'return') ? "$function(): Return iterator" : "$function(): Iterator \$$paramName";
-        $typeCheckCallback = self::createValidationCallback($registry, $keyTypeNode, $itemTypeNode, $prefix);
+        $typeCheckCallback = self::createValidationCallback($registry, $keyTypeNode, $itemTypeNode, $prefix, $function);
 
         if (\is_array($iterable)) {
             return self::wrapGenerator((function () use ($iterable) {
@@ -129,12 +130,21 @@ final class IterableWrapper
         TypeValidatorRegistry $registry,
         ?TypeNode $keyTypeNode,
         ?TypeNode $itemTypeNode,
-        string $prefix
+        string $prefix,
+        string $function = ''
     ): \Closure {
-        return function (mixed $key, mixed $value) use ($registry, $keyTypeNode, $itemTypeNode, $prefix): void {
+        return function (mixed $key, mixed $value) use ($registry, $keyTypeNode, $itemTypeNode, $prefix, $function): void {
             if ($keyTypeNode !== null && $key !== null) {
                 $err = $registry->validate($key, $keyTypeNode, "$prefix key");
                 if ($err !== null) {
+                    if ($function !== '' && CallerBoundaryResolver::shouldBypass($function)) {
+                        return;
+                    }
+
+                    if (CallerBoundaryResolver::isCallerVendor()) {
+                        return;
+                    }
+
                     throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
                 }
             }
@@ -142,6 +152,14 @@ final class IterableWrapper
             if ($itemTypeNode !== null) {
                 $err = $registry->validate($value, $itemTypeNode, "$prefix value");
                 if ($err !== null) {
+                    if ($function !== '' && CallerBoundaryResolver::shouldBypass($function)) {
+                        return;
+                    }
+
+                    if (CallerBoundaryResolver::isCallerVendor()) {
+                        return;
+                    }
+
                     throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
                 }
             }

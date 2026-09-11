@@ -14,6 +14,7 @@ use TypePHP\Internal\Checker\ReturnChecker;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
+use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\IgnoreManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
@@ -42,6 +43,7 @@ final class RuntimeTypeChecker
     {
         self::$hasMethodTemplatesCache = [];
         IgnoreManager::reset();
+        CallerBoundaryResolver::reset();
     }
 
     /**
@@ -63,7 +65,7 @@ final class RuntimeTypeChecker
 
         $err = TemplateManager::bindInstanceFromNode($instance, $typeNode, $context, $forceBind);
 
-        if ($err !== null && IgnoreManager::isCallerIgnored()) {
+        if ($err !== null && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($context))) {
             return null;
         }
 
@@ -95,7 +97,7 @@ final class RuntimeTypeChecker
             $thisOrClass
         );
 
-        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+        if ($res instanceof ErrorMessage && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($caller ?? ''))) {
             return $value;
         }
 
@@ -118,7 +120,7 @@ final class RuntimeTypeChecker
 
         $res = InlineChecker::checkProperty($value, $objectOrClass, $propName, $file, self::getRegistry());
 
-        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+        if ($res instanceof ErrorMessage && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName))) {
             return $value;
         }
 
@@ -170,7 +172,7 @@ final class RuntimeTypeChecker
         );
 
         if ($err !== null) {
-            if (IgnoreManager::isCallerIgnored()) {
+            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
                 return null;
             }
 
@@ -203,7 +205,7 @@ final class RuntimeTypeChecker
 
         $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry());
 
-        if ($err !== null && IgnoreManager::isCallerIgnored()) {
+        if ($err !== null && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($function))) {
             return null;
         }
 
@@ -262,7 +264,7 @@ final class RuntimeTypeChecker
             $contract
         );
 
-        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+        if ($res instanceof ErrorMessage && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($effectiveFunction))) {
             return $value;
         }
 
@@ -280,7 +282,7 @@ final class RuntimeTypeChecker
 
         $res = GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass);
 
-        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+        if ($res instanceof ErrorMessage && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($function))) {
             return $sendValue;
         }
 
@@ -298,7 +300,7 @@ final class RuntimeTypeChecker
 
         $res = GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass);
 
-        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+        if ($res instanceof ErrorMessage && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($function))) {
             return $value;
         }
 
