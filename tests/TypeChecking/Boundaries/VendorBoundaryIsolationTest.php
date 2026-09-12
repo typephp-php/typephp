@@ -2,8 +2,6 @@
 
 declare(strict_types=1);
 
-namespace TypePHP\Tests\TypeChecking\Boundaries;
-
 use TypePHP\Exception\TypeError;
 use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\Resolver\CallerBoundaryResolver;
@@ -23,7 +21,10 @@ describe('Caller-Aware Vendor Boundary Isolation', function () {
     });
 
     test('enforces types when application code calls whitelisted vendor methods', function () {
-        $tempDir = sys_get_temp_dir() . '/typephp_vendor_test_' . uniqid();
+        $baseTemp = sys_get_temp_dir() . '/typephp_vendor_test_' . uniqid();
+        mkdir($baseTemp, 0777, true);
+        $tempDir = realpath($baseTemp) !== false ? realpath($baseTemp) : $baseTemp;
+
         $vendorDir = $tempDir . '/vendor/acme/sample-lib/src';
         mkdir($vendorDir, 0777, true);
 
@@ -68,7 +69,6 @@ PHP;
             $service = new \Simulated\Vendor\WhitelistedService();
 
             expect($service->processCode(100))->toBe(100);
-
             expect(fn () => $service->processCode(-5))
                 ->toThrow(TypeError::class, 'positive-int')
             ;
@@ -87,7 +87,10 @@ PHP;
     });
 
     test('bypasses type enforcement when call originates from an excluded vendor package', function () {
-        $tempDir = sys_get_temp_dir() . '/typephp_boundary_bypass_' . uniqid();
+        $baseTemp = sys_get_temp_dir() . '/typephp_boundary_bypass_' . uniqid();
+        mkdir($baseTemp, 0777, true);
+        $tempDir = realpath($baseTemp) !== false ? realpath($baseTemp) : $baseTemp;
+
         $whitelistedDir = $tempDir . '/vendor/acme/collection/src';
         $excludedDir = $tempDir . '/vendor/third-party/caller/src';
 
@@ -142,10 +145,10 @@ PHP;
                 'vendor_boundary_only' => true,
                 'include' => [
                     'tests/**',
-                    $normTempDir . '/vendor/acme/collection/**', // Whitelisted
+                    $normTempDir . '/vendor/acme/collection/**', 
                 ],
                 'exclude' => [
-                    $normTempDir . '/vendor/third-party/**', // Excluded Vendor
+                    $normTempDir . '/vendor/third-party/**', 
                 ],
             ]);
 
@@ -156,7 +159,6 @@ PHP;
 
             $collection = new \Simulated\Collections\WhitelistedCollection();
             $caller = new \Simulated\ThirdParty\ExcludedVendorCaller();
-
             $result = $caller->makeInvalidVendorCall($collection);
             expect($result)->toBe(-999);
         } finally {
@@ -174,7 +176,10 @@ PHP;
     });
 
     test('bypasses type enforcement when a whitelisted vendor class performs an internal self-call', function () {
-        $tempDir = sys_get_temp_dir() . '/typephp_self_call_' . uniqid();
+        $baseTemp = sys_get_temp_dir() . '/typephp_self_call_' . uniqid();
+        mkdir($baseTemp, 0777, true);
+        $tempDir = realpath($baseTemp) !== false ? realpath($baseTemp) : $baseTemp;
+
         $vendorDir = $tempDir . '/vendor/acme/morph/src';
         mkdir($vendorDir, 0777, true);
 
@@ -239,7 +244,10 @@ PHP;
     });
 
     test('strictly enforces types across all callers when vendor_boundary_only is false', function () {
-        $tempDir = sys_get_temp_dir() . '/typephp_strict_all_' . uniqid();
+        $baseTemp = sys_get_temp_dir() . '/typephp_strict_all_' . uniqid();
+        mkdir($baseTemp, 0777, true);
+        $tempDir = realpath($baseTemp) !== false ? realpath($baseTemp) : $baseTemp;
+
         $whitelistedDir = $tempDir . '/vendor/acme/strict/src';
         $excludedDir = $tempDir . '/vendor/third-party/strict-caller/src';
 
