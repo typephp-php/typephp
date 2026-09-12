@@ -131,7 +131,7 @@ final class PathMatcher
     }
 
     /**
-     * Determines whether a given path belongs to an immutable, static source code repositor
+     * Determines whether a given path belongs to an immutable, static source code repository.
      */
     public static function isStaticSourcePath(string $normalizedPath): bool
     {
@@ -368,8 +368,10 @@ final class PathMatcher
         if ($isVendor) {
             $hasExplicitVendorWhitelist = false;
             foreach ($includes as $compiled) {
+                $isVendorPattern = self::isVendorPath($compiled['pattern']) || str_starts_with($compiled['pattern'], 'vendor/') || str_contains($compiled['pattern'], '/vendor/');
+
                 if (
-                    str_starts_with($compiled['pattern'], 'vendor/') &&
+                    $isVendorPattern &&
                     (preg_match($compiled['regex'], $normalizedPath) === 1 || ($normalizedRaw !== '' && preg_match($compiled['regex'], $normalizedRaw) === 1))
                 ) {
                     $hasExplicitVendorWhitelist = true;
@@ -385,7 +387,7 @@ final class PathMatcher
 
         $longestIncludeMatch = 0;
         foreach ($includes as $compiled) {
-            $isExplicitVendorInclude = str_starts_with($compiled['pattern'], 'vendor/');
+            $isExplicitVendorInclude = self::isVendorPath($compiled['pattern']) || str_starts_with($compiled['pattern'], 'vendor/') || str_contains($compiled['pattern'], '/vendor/');
             $isWildcard = ($compiled['pattern'] === '*' || $compiled['pattern'] === '**');
 
             if ($isVendor && ! $isExplicitVendorInclude && ! $isWildcard) {

@@ -14,6 +14,7 @@ use TypePHP\Internal\Checker\ReturnChecker;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
+use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\IgnoreManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
@@ -42,6 +43,7 @@ final class RuntimeTypeChecker
     {
         self::$hasMethodTemplatesCache = [];
         IgnoreManager::reset();
+        CallerBoundaryResolver::reset();
     }
 
     /**
@@ -63,7 +65,7 @@ final class RuntimeTypeChecker
 
         $err = TemplateManager::bindInstanceFromNode($instance, $typeNode, $context, $forceBind);
 
-        if ($err !== null && IgnoreManager::isCallerIgnored()) {
+        if ($err !== null && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($context))) {
             return null;
         }
 
@@ -95,7 +97,7 @@ final class RuntimeTypeChecker
             $thisOrClass
         );
 
-        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+        if ($res instanceof ErrorMessage && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($caller ?? ''))) {
             return $value;
         }
 
@@ -118,7 +120,7 @@ final class RuntimeTypeChecker
 
         $res = InlineChecker::checkProperty($value, $objectOrClass, $propName, $file, self::getRegistry());
 
-        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
+        if ($res instanceof ErrorMessage && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName))) {
             return $value;
         }
 
@@ -128,15 +130,18 @@ final class RuntimeTypeChecker
     /**
      * Initialises generic call frames and returns a ScopeCleaner that pops the call frame on destruction.
      *
-     * Optimized: combines Config checks, uses pre-computed contract flags,
-     * and passes contract through to checkParams to avoid re-parsing.
-     *
      * @param array<string, mixed> $vars
      */
     public static function setupScope(string $function, array $vars, object|string|null $thisOrClass = null): ErrorMessage|ScopeCleaner|null
     {
-        // Combined config gate — single check instead of two separate calls
         if (! Config::isEnabled() || ! Config::isParamsEnabled()) {
+            return null;
+        }
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return null;
         }
 
@@ -145,21 +150,13 @@ final class RuntimeTypeChecker
             return null;
         }
 
-        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
-
-        // FIX: Magic methods (__call/__callStatic) must NOT bail out early,
-        // even if __call itself has unconstrained (mixed) parameters,
-        // because the actual validation happens inside ParamChecker::handleMagicCall().
         $isMagicCall = str_contains($effectiveFunction, '__call');
 
-        // Fast bail using pre-computed flag from contract (skip for magic calls)
         $contract = DocblockParser::parse($effectiveFunction);
         if (! $isMagicCall && ($contract['allParamsUnconstrained'] ?? false)) {
             return null;
         }
 
-        // Pass effectiveFunction AND contract to checkParams to avoid re-parsing
         $err = ParamChecker::checkParams(
             $function,
             $vars,
@@ -201,6 +198,13 @@ final class RuntimeTypeChecker
             return null;
         }
 
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+            return null;
+        }
+
         $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry());
 
         if ($err !== null && IgnoreManager::isCallerIgnored()) {
@@ -213,36 +217,29 @@ final class RuntimeTypeChecker
     /**
      * Validates a function or method's return value against its declared contract and returns value or ErrorMessage.
      *
-     * Optimized: combines Config checks, resolves effectiveFunction once,
-     * uses pre-computed contract flags, and passes both effectiveFunction and contract
-     * to ReturnChecker to avoid redundant resolution and parsing.
-     *
      * @param array<string, mixed>|null $vars
      */
     public static function checkReturn(string $function, mixed $value, object|string|null $thisOrClass = null, ?array $vars = []): mixed
     {
-        // Combined config gate — single check instead of two separate calls
         if (! Config::isEnabled() || ! Config::isReturnsEnabled()) {
-            return $value;
-        }
-
-        if (isset(ReturnChecker::$noReturnContractCache[$function])) {
             return $value;
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        if (isset(ReturnChecker::$noReturnContractCache[$effectiveFunction])) {
+        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+            return $value;
+        }
+
+        if (isset(ReturnChecker::$noReturnContractCache[$function]) || isset(ReturnChecker::$noReturnContractCache[$effectiveFunction])) {
             ReturnChecker::$noReturnContractCache[$function] = true;
 
             return $value;
         }
 
-        // FIX: Magic methods must NOT bail out early
         $isMagicCall = str_contains($effectiveFunction, '__call');
 
-        // Fast bail using pre-computed flag from contract (skip for magic calls)
         $contract = DocblockParser::parse($effectiveFunction);
         if (! $isMagicCall && ($contract['returnUnconstrained'] ?? false)) {
             return $value;
@@ -250,7 +247,6 @@ final class RuntimeTypeChecker
 
         $vars ??= [];
 
-        // Pass effectiveFunction AND contract to ReturnChecker to avoid re-parsing
         $res = ReturnChecker::checkReturn(
             $function,
             $value,
@@ -278,6 +274,13 @@ final class RuntimeTypeChecker
             return $sendValue;
         }
 
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+            return $sendValue;
+        }
+
         $res = GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass);
 
         if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
@@ -293,6 +296,13 @@ final class RuntimeTypeChecker
     public static function checkYield(string $function, mixed $key, mixed $value, object|string|null $thisOrClass = null): mixed
     {
         if (! Config::isEnabled()) {
+            return $value;
+        }
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return $value;
         }
 
@@ -314,6 +324,13 @@ final class RuntimeTypeChecker
             return $callable;
         }
 
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+            return $callable;
+        }
+
         return CallableWrapper::wrap($function, $paramName, $callable, self::getRegistry(), $thisOrClass);
     }
 
@@ -323,6 +340,13 @@ final class RuntimeTypeChecker
     public static function wrapIterable(string $function, string $paramName, mixed $iterable, object|string|null $thisOrClass = null): mixed
     {
         if (! Config::isEnabled()) {
+            return $iterable;
+        }
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return $iterable;
         }
 
