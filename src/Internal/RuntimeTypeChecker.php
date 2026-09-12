@@ -167,7 +167,7 @@ final class RuntimeTypeChecker
         );
 
         if ($err !== null) {
-            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+            if (IgnoreManager::isCallerIgnored()) {
                 return null;
             }
 
@@ -207,7 +207,7 @@ final class RuntimeTypeChecker
 
         $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry());
 
-        if ($err !== null && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($function))) {
+        if ($err !== null && IgnoreManager::isCallerIgnored()) {
             return null;
         }
 
@@ -258,7 +258,7 @@ final class RuntimeTypeChecker
             $contract
         );
 
-        if ($res instanceof ErrorMessage && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($effectiveFunction))) {
+        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
             return $value;
         }
 
@@ -283,7 +283,7 @@ final class RuntimeTypeChecker
 
         $res = GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass);
 
-        if ($res instanceof ErrorMessage && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($function))) {
+        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
             return $sendValue;
         }
 
@@ -308,7 +308,7 @@ final class RuntimeTypeChecker
 
         $res = GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass);
 
-        if ($res instanceof ErrorMessage && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($function))) {
+        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
             return $value;
         }
 

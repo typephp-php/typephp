@@ -42,12 +42,10 @@ final class CallerBoundaryResolver
             return false;
         }
 
-        // 1. If the callee itself is an application class/function, ALWAYS enforce!
         if (! self::isCalleeVendor($function)) {
             return false;
         }
 
-        // 2. If the callee is in vendor, check who initiated the call
         return self::isCallerVendor();
     }
 
@@ -60,7 +58,6 @@ final class CallerBoundaryResolver
             return false;
         }
 
-        // If the closure was defined inside a vendor file, bypass!
         if ($callable instanceof Closure) {
             try {
                 $ref = new ReflectionFunction($callable);
@@ -122,15 +119,12 @@ final class CallerBoundaryResolver
         for ($i = 1; $i < \count($trace); $i++) {
             $frame = $trace[$i];
             $class = $frame['class'] ?? '';
-            $function = $frame['function'] ?? '';
+            $function = $frame['function'];
             $file = $frame['file'] ?? '';
-
-            // Skip internal TypePHP engine frames
             if ($class !== '' && (str_starts_with($class, 'TypePHP\\Internal\\') || $class === 'TypePHP\\TypePHP')) {
                 continue;
             }
 
-            // Skip standard procedural call_user_func wrappers
             if ($class === '' && \in_array($function, ['call_user_func', 'call_user_func_array'], true)) {
                 continue;
             }
@@ -145,7 +139,6 @@ final class CallerBoundaryResolver
                 continue;
             }
 
-            // Skip test runner framework internals (PHPUnit / Pest constraint wrappers)
             if (
                 str_contains($normalizedFile, '/vendor/phpunit/')
                 || str_contains($normalizedFile, '/vendor/pestphp/')

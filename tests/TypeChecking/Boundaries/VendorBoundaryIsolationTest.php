@@ -66,7 +66,7 @@ PHP;
 
             require_once $vendorFile;
 
-            $service = new \Simulated\Vendor\WhitelistedService();
+            $service = new Simulated\Vendor\WhitelistedService();
 
             expect($service->processCode(100))->toBe(100);
             expect(fn () => $service->processCode(-5))
@@ -145,10 +145,10 @@ PHP;
                 'vendor_boundary_only' => true,
                 'include' => [
                     'tests/**',
-                    $normTempDir . '/vendor/acme/collection/**', 
+                    $normTempDir . '/vendor/acme/collection/**',
                 ],
                 'exclude' => [
-                    $normTempDir . '/vendor/third-party/**', 
+                    $normTempDir . '/vendor/third-party/**',
                 ],
             ]);
 
@@ -157,8 +157,8 @@ PHP;
             require_once $whitelistedFile;
             require_once $excludedFile;
 
-            $collection = new \Simulated\Collections\WhitelistedCollection();
-            $caller = new \Simulated\ThirdParty\ExcludedVendorCaller();
+            $collection = new Simulated\Collections\WhitelistedCollection();
+            $caller = new Simulated\ThirdParty\ExcludedVendorCaller();
             $result = $caller->makeInvalidVendorCall($collection);
             expect($result)->toBe(-999);
         } finally {
@@ -227,7 +227,7 @@ PHP;
 
             require_once $vendorFile;
 
-            $morph = new \Simulated\Morph\MorphService();
+            $morph = new Simulated\Morph\MorphService();
 
             expect($morph->internalSelfMethod())->toBe(-42);
             expect(fn () => $morph->setStrictCount(-42))
@@ -298,7 +298,7 @@ PHP;
             $normTempDir = str_replace('\\', '/', $tempDir);
 
             Config::set([
-                'vendor_boundary_only' => false, 
+                'vendor_boundary_only' => false,
                 'include' => [
                     'tests/**',
                     $normTempDir . '/vendor/acme/strict/**',
@@ -313,8 +313,8 @@ PHP;
             require_once $whitelistedFile;
             require_once $excludedFile;
 
-            $service = new \Simulated\Strict\StrictService();
-            $caller = new \Simulated\StrictCaller\StrictCaller();
+            $service = new Simulated\Strict\StrictService();
+            $caller = new Simulated\StrictCaller\StrictCaller();
 
             expect(fn () => $caller->execute($service))
                 ->toThrow(TypeError::class, 'positive-int')
