@@ -278,7 +278,8 @@ describe('Conditional Parameter Contracts (@param ($condition ? A : B))', functi
 
             expect($service->executeAction(-50))->toBe(-50);
             expect(fn () => $service->executeAction(-50, strict: true))
-                ->toThrow(TypeError::class, 'positive-int');
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
         });
     });
 });
