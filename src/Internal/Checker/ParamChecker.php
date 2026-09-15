@@ -7,6 +7,8 @@ namespace TypePHP\Internal\Checker;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode;
+use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
@@ -209,6 +211,13 @@ final class ParamChecker
     ): ?ErrorMessage {
         foreach ($types as $paramName => $typeNode) {
             if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
+                if (
+                    $typeNode instanceof ConditionalTypeForParameterNode ||
+                    $typeNode instanceof ConditionalTypeNode
+                ) {
+                    $typeNode = ConditionalChecker::resolve($typeNode, $vars, [], $registry, $effectiveFunction);
+                }
+
                 if (self::isUnconstrained($typeNode)) {
                     continue;
                 }
@@ -307,6 +316,10 @@ final class ParamChecker
                 continue;
             }
 
+            $currentBoundTemplates = (\count($allTemplates) > 0)
+                ? TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates)
+                : $boundTemplates;
+
             $err = self::validateSingleParam(
                 $paramName,
                 $baseTypes[$paramName],
@@ -315,10 +328,11 @@ final class ParamChecker
                 $thisObj,
                 $allTemplates,
                 $aliases,
-                $boundTemplates,
+                $currentBoundTemplates,
                 $declaredTemplates,
                 $registry,
-                $classTemplates
+                $classTemplates,
+                $vars
             );
 
             if ($err !== null) {
@@ -738,7 +752,9 @@ final class ParamChecker
      * @param array<string, TypeNode> $aliases
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param TypeValidatorRegistry $registry
      * @param array<string, TemplateTagValueNode> $classTemplates
+     * @param array<int|string, mixed> $vars
      */
     private static function validateSingleParam(
         string $paramName,
@@ -751,8 +767,16 @@ final class ParamChecker
         array $boundTemplates,
         array $declaredTemplates,
         TypeValidatorRegistry $registry,
-        array $classTemplates = []
+        array $classTemplates = [],
+        array $vars = []
     ): ?ErrorMessage {
+        if (
+            $typeNode instanceof ConditionalTypeForParameterNode ||
+            $typeNode instanceof ConditionalTypeNode
+        ) {
+            $typeNode = ConditionalChecker::resolve($typeNode, $vars, $boundTemplates, $registry, $effectiveFunction);
+        }
+
         if (self::isUnconstrained($typeNode)) {
             return null;
         }
@@ -764,6 +788,13 @@ final class ParamChecker
         if (! $shouldSkipTemplateSub && (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0)) {
             $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
             $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+        }
+
+        if (
+            $typeNode instanceof ConditionalTypeForParameterNode ||
+            $typeNode instanceof ConditionalTypeNode
+        ) {
+            $typeNode = ConditionalChecker::resolve($typeNode, $vars, $boundTemplates, $registry, $effectiveFunction);
         }
 
         if ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates)) {
@@ -825,7 +856,9 @@ final class ParamChecker
                 $aliases,
                 $boundTemplates,
                 $declaredTemplates,
-                $registry
+                $registry,
+                [],
+                $args
             );
 
             if ($err !== null) {
@@ -1251,7 +1284,7 @@ final class ParamChecker
             return null;
         }
 
-        return $boundErr;
+        return $originalError;
     }
 
     /**

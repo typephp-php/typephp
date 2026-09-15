@@ -302,6 +302,7 @@ describe('Static Closures (static-closure)', function () {
 
         $nonStaticClosure = fn (int $id): string => "bound_{$id}";
         expect(fn () => testStaticClosureParam($nonStaticClosure))
-            ->toThrow(TypeError::class, 'must be a static Closure');
+            ->toThrow(TypeError::class, 'must be a static Closure')
+        ;
     });
 });

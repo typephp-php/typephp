@@ -12,6 +12,8 @@ use PHPStan\PhpDocParser\Ast\Type\ArrayShapeUnsealedTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
+use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode;
+use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
@@ -187,6 +189,24 @@ final class DocblockParser
             }
 
             return false;
+        }
+
+        if ($node instanceof ConditionalTypeNode) {
+            return self::typeReferencesTemplate($node->subjectType, $templateNames)
+                || self::typeReferencesTemplate($node->targetType, $templateNames)
+                || self::typeReferencesTemplate($node->if, $templateNames)
+                || self::typeReferencesTemplate($node->else, $templateNames);
+        }
+
+        if ($node instanceof ConditionalTypeForParameterNode) {
+            return self::typeReferencesTemplate($node->targetType, $templateNames)
+                || self::typeReferencesTemplate($node->if, $templateNames)
+                || self::typeReferencesTemplate($node->else, $templateNames);
+        }
+
+        if ($node instanceof OffsetAccessTypeNode) {
+            return self::typeReferencesTemplate($node->type, $templateNames)
+                || self::typeReferencesTemplate($node->offset, $templateNames);
         }
 
         if ($node instanceof ArrayTypeNode || $node instanceof NullableTypeNode) {
