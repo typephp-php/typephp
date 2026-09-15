@@ -7,6 +7,7 @@ namespace TypePHP\Internal\Validator;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
@@ -26,6 +27,25 @@ use TypePHP\Internal\Util\Config;
  */
 final class GenericValidator implements TypeValidatorInterface
 {
+    private const BUILTIN_GENERICS = [
+        'int' => true,
+        'integer' => true,
+        'class-string' => true,
+        'list' => true,
+        'non-empty-list' => true,
+        'non-empty-array-list' => true,
+        'array' => true,
+        'non-empty-array' => true,
+        'iterable' => true,
+        'traversable' => true,
+        'generator' => true,
+        'iterator' => true,
+        'key-of' => true,
+        'value-of' => true,
+        'int-mask' => true,
+        'int-mask-of' => true,
+    ];
+
     /**
      * @var array<string, mixed>
      */
@@ -55,8 +75,8 @@ final class GenericValidator implements TypeValidatorInterface
             'class-string' => $this->validateClassString($value, $genericNode, $context),
             'list', 'non-empty-list', 'non-empty-array-list' => $this->validateList($value, $genericNode, $context, $registry),
             'array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator' => $this->validateArray($value, $genericNode, $context, $registry),
-            'key-of' => $this->validateKeyOf($value, $genericNode, $context),
-            'value-of' => $this->validateValueOf($value, $genericNode, $context),
+            'key-of' => $this->validateKeyOf($value, $genericNode, $context, $registry),
+            'value-of' => $this->validateValueOf($value, $genericNode, $context, $registry),
             'int-mask' => $this->validateIntMask($value, $genericNode, $context),
             'int-mask-of' => $this->validateIntMaskOf($value, $genericNode, $context),
             default => $this->validateObjectGeneric($value, $genericNode, $context),
@@ -97,9 +117,31 @@ final class GenericValidator implements TypeValidatorInterface
     /**
      * Validates key-of<T> generic structures with O(1) in-memory caching.
      */
-    private function validateKeyOf(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    private function validateKeyOf(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
     {
         $targetType = $node->genericTypes[0] ?? null;
+
+        if ($targetType instanceof GenericTypeNode && strtolower($targetType->type->name) === 'value-of') {
+            $innerTarget = $targetType->genericTypes[0] ?? null;
+            if ($innerTarget instanceof ArrayShapeNode) {
+                $validKeys = [];
+                foreach ($innerTarget->items as $item) {
+                    if ($item->valueType instanceof ArrayShapeNode) {
+                        foreach ($item->valueType->items as $subItem) {
+                            $subKey = self::extractKeyFromItem($subItem);
+                            if ($subKey !== null) {
+                                $validKeys[] = $subKey;
+                            }
+                        }
+                    }
+                }
+                if (! \in_array($value, $validKeys, strict: true)) {
+                    return ErrorFactory::createError($context . ' must be a key of the specified array shape, ' . TypeFormatter::formatGivenValue($value) . ' given');
+                }
+
+                return null;
+            }
+        }
 
         if ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstFetchNode) {
             $constExpr = $targetType->constExpr;
@@ -160,10 +202,30 @@ final class GenericValidator implements TypeValidatorInterface
         return null;
     }
 
+    private static function extractKeyFromItem(ArrayShapeItemNode $item): string|int|null
+    {
+        $keyName = $item->keyName;
+
+        if ($keyName instanceof ConstExprStringNode) {
+            return $keyName->value;
+        }
+        if ($keyName instanceof ConstExprIntegerNode) {
+            return (int) $keyName->value;
+        }
+        if ($keyName instanceof IdentifierTypeNode) {
+            return $keyName->name;
+        }
+        if ($keyName instanceof ConstFetchNode) {
+            return (string) $keyName;
+        }
+
+        return null;
+    }
+
     /**
      * Validates value-of<T> generic structures with O(1) in-memory caching.
      */
-    private function validateValueOf(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    private function validateValueOf(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
     {
         $targetType = $node->genericTypes[0] ?? null;
 
@@ -199,6 +261,14 @@ final class GenericValidator implements TypeValidatorInterface
 
                 return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
             }
+        } elseif ($targetType instanceof ArrayShapeNode) {
+            foreach ($targetType->items as $item) {
+                if ($registry->validate($value, $item->valueType, '') === null) {
+                    return null;
+                }
+            }
+
+            return ErrorFactory::createError($context . ' must be a value of the specified array shape, ' . TypeFormatter::formatGivenValue($value) . ' given');
         }
 
         return null;
@@ -413,7 +483,7 @@ final class GenericValidator implements TypeValidatorInterface
             return null;
         }
 
-        $isComplexObjectGeneric = ($valueTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valueTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
+        $isComplexObjectGeneric = ($valueTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower($valueTypeNode->type->name)]));
 
         if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
             $sampleIndices = [0, $count - 1];
@@ -482,7 +552,7 @@ final class GenericValidator implements TypeValidatorInterface
                 return null;
             }
 
-            $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
+            $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower($valTypeNode->type->name)]));
             if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 $keys = array_keys($value);
                 $sampleKeys = [$keys[0], $keys[$count - 1]];
@@ -525,7 +595,7 @@ final class GenericValidator implements TypeValidatorInterface
                 return null;
             }
 
-            $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! \in_array(strtolower($valTypeNode->type->name), ['class-string', 'list', 'array', 'iterable'], strict: true));
+            $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower($valTypeNode->type->name)]));
 
             if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 $keys = array_keys($value);
