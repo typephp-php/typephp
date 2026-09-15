@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use TypePHP\Internal\Io\CacheManager;
+use TypePHP\Internal\Util\Config;
 
 describe('CacheManager Unit Tests', function () {
     test('returns valid cache directory path', function () {
@@ -28,5 +29,22 @@ describe('CacheManager Unit Tests', function () {
         expect($count)->toBeGreaterThanOrEqual(1)
             ->and(file_exists($testFile))->toBeFalse()
         ;
+    });
+
+    test('bypasses filemtime when cache_check_mtime is disabled', function () {
+        try {
+            $file = __FILE__;
+
+            Config::set(['cache_check_mtime' => true]);
+            $keyWithMtime = CacheManager::getCacheKey($file);
+
+            Config::set(['cache_check_mtime' => false]);
+            $keyWithoutMtime = CacheManager::getCacheKey($file);
+
+            expect($keyWithMtime)->not()->toBe($keyWithoutMtime);
+            expect(CacheManager::getCacheKey($file))->toBe($keyWithoutMtime);
+        } finally {
+            Config::reset();
+        }
     });
 });

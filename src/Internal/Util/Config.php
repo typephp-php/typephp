@@ -56,6 +56,8 @@ final class Config
 
     private static bool $vendorBoundaryOnly = true;
 
+    private static bool $cacheCheckMtime = true;
+
     private static string $arrayValidation = 'full';
 
     public static function isEnabled(): bool
@@ -65,6 +67,15 @@ final class Config
         }
 
         return self::$enabled;
+    }
+
+    public static function isCacheCheckMtimeEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$cacheCheckMtime;
     }
 
     public static function isParamsEnabled(): bool
@@ -236,6 +247,7 @@ final class Config
             'array_validation' => 'full',
             'cache' => true,
             'cache_dir' => null,
+            'cache_check_mtime' => true,
             'inline_vars' => [
                 'properties' => true,
                 'generics' => true,
@@ -376,6 +388,7 @@ final class Config
         self::$respectNativeNullability = true;
         self::$vendorBoundaryOnly = true;
         self::$arrayValidation = 'full';
+        self::$cacheCheckMtime = true;
 
         DocblockParser::reset();
         ParamChecker::reset();
@@ -410,5 +423,6 @@ final class Config
         self::$respectNativeNullability = (bool) ($config['respect_native_nullability'] ?? true);
         self::$vendorBoundaryOnly = (bool) ($config['vendor_boundary_only'] ?? true);
         self::$arrayValidation = \is_string($config['array_validation'] ?? null) ? $config['array_validation'] : 'full';
+        self::$cacheCheckMtime = (bool) ($config['cache_check_mtime'] ?? true);
     }
 }

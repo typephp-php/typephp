@@ -72,10 +72,14 @@ final class CacheManager
      */
     public static function getCacheKey(string $resolvedPath): string
     {
-        $mtime = @filemtime($resolvedPath);
-        $mtimeStr = $mtime !== false ? (string) $mtime : '0';
+        if (Config::isCacheCheckMtimeEnabled()) {
+            $mtime = @filemtime($resolvedPath);
+            $mtimeStr = $mtime !== false ? (string) $mtime : '0';
 
-        return hash('xxh128', self::VERSION_PREFIX . $resolvedPath . $mtimeStr);
+            return hash('xxh128', self::VERSION_PREFIX . $resolvedPath . $mtimeStr);
+        }
+
+        return hash('xxh128', self::VERSION_PREFIX . $resolvedPath);
     }
 
     /**

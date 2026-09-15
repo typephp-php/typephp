@@ -155,6 +155,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Cache File Modification Monitor
+    |--------------------------------------------------------------------------
+    | When enabled (default), TypePHP checks file modification times (filemtime)
+    | to automatically rebuild the cache when a file changes.
+    | 
+    | In production, files do not change. Set this to FALSE to eliminate 
+    | hundreds of disk I/O checks per request for maximum performance.
+    | Note: If disabled, you must run `php bin/typephp cache:clear` on deployment.
+    */
+    'cache_check_mtime' => true,
+
+    /*
+    |--------------------------------------------------------------------------
     | Registered Extensions
     |--------------------------------------------------------------------------
     | Explicitly list third-party extension classes that provide path overrides.
