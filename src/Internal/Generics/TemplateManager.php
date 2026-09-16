@@ -1289,23 +1289,46 @@ final class TemplateManager
     private static function resolveTypeNodeAst(TypeNode $n, \ReflectionClass $ref): TypeNode
     {
         if ($n instanceof IdentifierTypeNode) {
+            $lower = strtolower($n->name);
+            if ($lower === 'self' || $lower === 'static' || $lower === '$this') {
+                return new IdentifierTypeNode($ref->getName());
+            }
+
+            if ($lower === 'parent') {
+                $parent = $ref->getParentClass();
+
+                return new IdentifierTypeNode($parent !== false ? $parent->getName() : 'parent');
+            }
+
             return new IdentifierTypeNode(SpecialTypeResolver::resolveFqcn($n->name, $ref));
         }
+
         if ($n instanceof GenericTypeNode) {
-            $base = new IdentifierTypeNode(SpecialTypeResolver::resolveFqcn($n->type->name, $ref));
+            $lower = strtolower($n->type->name);
+            $baseName = match ($lower) {
+                'self', 'static', '$this' => $ref->getName(),
+                'parent' => ($parent = $ref->getParentClass()) !== false ? $parent->getName() : 'parent',
+                default => SpecialTypeResolver::resolveFqcn($n->type->name, $ref),
+            };
+
+            $base = new IdentifierTypeNode($baseName);
             $generics = array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
 
             return new GenericTypeNode($base, $generics, $n->variances);
         }
+
         if ($n instanceof ArrayTypeNode) {
             return new ArrayTypeNode(self::resolveTypeNodeAst($n->type, $ref));
         }
+
         if ($n instanceof NullableTypeNode) {
             return new NullableTypeNode(self::resolveTypeNodeAst($n->type, $ref));
         }
+
         if ($n instanceof UnionTypeNode) {
             return new UnionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
+
         if ($n instanceof IntersectionTypeNode) {
             return new IntersectionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
