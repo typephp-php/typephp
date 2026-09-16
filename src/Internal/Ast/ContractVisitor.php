@@ -291,7 +291,7 @@ final class ContractVisitor extends NodeVisitorAbstract
             }
         }
 
-        return $checkStmts !== [] ? array_merge([$node], $checkStmts) : null;
+        return $checkStmts !== [] ? [$node, ...$checkStmts] : null;
     }
 
     private function handleAssign(Node\Expr\Assign $node): void
@@ -517,7 +517,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                     'expr' => $item->value,
                 ];
             } elseif ($item->value instanceof Node\Expr\List_ || $item->value instanceof Node\Expr\Array_) {
-                $vars = array_merge($vars, $this->extractDestructuringVariables($item->value));
+                $vars = [...$vars, ...$this->extractDestructuringVariables($item->value)];
             }
         }
 
