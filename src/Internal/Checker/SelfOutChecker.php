@@ -41,7 +41,7 @@ final class SelfOutChecker
         TypeValidatorRegistry $registry,
         string $effectiveFunction = ''
     ): void {
-        if (! Config::isEnabled()) {
+        if (! Config::isEnabled() || ! Config::isSelfOutEnabled()) {
             return;
         }
 

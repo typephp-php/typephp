@@ -60,6 +60,8 @@ final class Config
 
     private static bool $paramsOut = true;
 
+    private static bool $selfOut = true;
+
     private static string $arrayValidation = 'full';
 
     public static function isEnabled(): bool
@@ -87,6 +89,15 @@ final class Config
         }
 
         return self::$params && self::$paramsOut;
+    }
+
+    public static function isSelfOutEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$selfOut;
     }
 
     public static function isParamsEnabled(): bool
@@ -250,6 +261,7 @@ final class Config
             'params' => true,
             'returns' => true,
             'params_out' => true,
+            'self_out' => true,
             'strict_return_generic_invariance' => true,
             'magic_properties' => true,
             'magic_methods' => true,
@@ -393,6 +405,7 @@ final class Config
         self::$enabled = true;
         self::$params = true;
         self::$returns = true;
+        self::$selfOut = true;
         self::$strictReturnGenericInvariance = true;
         self::$magicProperties = true;
         self::$magicMethods = true;
@@ -429,6 +442,7 @@ final class Config
         self::$enabled = (bool) ($config['enabled'] ?? true);
         self::$params = (bool) ($config['params'] ?? true);
         self::$paramsOut = (bool) ($config['params_out'] ?? true);
+        self::$selfOut = (bool) ($config['self_out'] ?? true);
         self::$returns = (bool) ($config['returns'] ?? true);
         self::$strictReturnGenericInvariance = (bool) ($config['strict_return_generic_invariance'] ?? true);
         self::$magicProperties = (bool) ($config['magic_properties'] ?? true);

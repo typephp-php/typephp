@@ -7,6 +7,7 @@ use TypePHP\Internal\Util\Config;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Generics\GenericCollection;
+use TypePHP\TypePHP;
 
 /**
  * Function with ONLY a parameter contract
@@ -74,6 +75,19 @@ function testMixedParamAndParamOutFunction(int $code, mixed &$val): void
     $val = -50;
 }
 
+/**
+ * @template TState of 'unauthenticated'|'authenticated'
+ */
+class SelfOutBoundaryConfigFixture
+{
+    /**
+     * @self-out self<'authenticated'>
+     */
+    public function login(): void
+    {
+    }
+}
+
 describe('Function Boundary Config Toggles (params & returns)', function () {
     afterEach(function () {
         Config::reset();
@@ -130,6 +144,28 @@ describe('Function Boundary Config Toggles (params & returns)', function () {
         $val = 'initial';
         testParamOutConfigFunction($val);
         expect($val)->toBe(-100);
+    });
+
+    test('bypasses @self-out generic transitions when self_out is set to false', function () {
+        Config::set(['self_out' => false]);
+
+        /** @var SelfOutBoundaryConfigFixture<'unauthenticated'> $session */
+        $session = new SelfOutBoundaryConfigFixture();
+
+        $session->login();
+
+        expect(TypePHP::getGenericType($session))->toBe("'unauthenticated'");
+    });
+
+    test('enforces @self-out generic transitions when self_out is set to true', function () {
+        Config::set(['self_out' => true]);
+
+        /** @var SelfOutBoundaryConfigFixture<'unauthenticated'> $session */
+        $session = new SelfOutBoundaryConfigFixture();
+
+        $session->login();
+
+        expect(TypePHP::getGenericType($session))->toBe("'authenticated'");
     });
 });
 

@@ -55,7 +55,7 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Function Boundary Contracts (@param, @return, @param-out)
+    | Function Boundary Contracts (@param, @return, @param-out, @self-out)
     |--------------------------------------------------------------------------
     | Controls whether function and method parameter, return, and by-reference
     | out-parameter contracts are enforced at runtime.
@@ -65,6 +65,7 @@ return [
     'params' => true,
     'returns' => true,
     'params_out' => true,
+    'self_out' => true,
 
     /*
     |--------------------------------------------------------------------------
