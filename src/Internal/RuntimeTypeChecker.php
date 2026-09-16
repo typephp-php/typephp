@@ -256,9 +256,29 @@ final class RuntimeTypeChecker
             return;
         }
 
+        if (isset(SelfOutChecker::$noSelfOutContractCache[$function])) {
+            return;
+        }
+
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisObj, $thisObj);
+
+        if (isset(SelfOutChecker::$noSelfOutContractCache[$effectiveFunction])) {
+            SelfOutChecker::$noSelfOutContractCache[$function] = true;
+
+            return;
+        }
+
+        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+            return;
+        }
+
+        if (IgnoreManager::isCallerIgnored()) {
+            return;
+        }
+
         $vars ??= [];
 
-        SelfOutChecker::checkSelfOut($function, $thisObj, $vars, self::getRegistry());
+        SelfOutChecker::checkSelfOut($function, $thisObj, $vars, self::getRegistry(), $effectiveFunction);
     }
 
     /**
