@@ -683,12 +683,16 @@ final class TemplateManager
             }
         }
 
-        if ($templateTag->bound !== null) {
+        $isWildcardOrMixed = ($expectedTypeNode instanceof IdentifierTypeNode && ($expectedTypeNode->name === '*' || strtolower($expectedTypeNode->name) === 'mixed'));
+
+        if ($templateTag->bound !== null && ! $isWildcardOrMixed) {
             $satisfiesBound = self::checkVariance($expectedTypeNode, $templateTag->bound, GenericTypeNode::VARIANCE_COVARIANT);
 
             if (! $satisfiesBound) {
+                $contextPrefix = $context !== '' ? (str_ends_with($context, ':') ? $context . ' ' : $context . ': ') : ' ';
+
                 return ErrorFactory::createError(
-                    ($context !== '' ? $context . ': ' : '') . "Generic type argument {$expectedTypeNode} does not satisfy upper bound {$templateTag->bound} of template {$templateTag->name} in {$className}"
+                    $contextPrefix . "Generic type argument {$expectedTypeNode} does not satisfy upper bound {$templateTag->bound} of template {$templateTag->name} in {$className}"
                 );
             }
         }
@@ -755,15 +759,17 @@ final class TemplateManager
                     }
                 }
 
+                $contextPrefix = $context !== '' ? (str_ends_with($context, ':') ? $context . ' ' : $context . ' ') : ' ';
+
                 return ErrorFactory::createError(
-                    $context . " expects {$className}<{$variance} {$expectedTypeNode}>, but {$className}<{$existingTypeNode}> was given"
+                    $contextPrefix . "expects {$className}<{$variance} {$expectedTypeNode}>, but {$className}<{$existingTypeNode}> was given"
                 );
             }
         }
 
         if ($forceBind || ! isset($existingBindings[$templateName])) {
             $bindings = self::$instanceTemplateBindings[$instance] ?? [];
-            $bindings[$templateName] = $expectedTypeNode;
+            $bindings[$templateName] = $isWildcardOrMixed && $templateTag->bound !== null ? $templateTag->bound : $expectedTypeNode;
             self::$instanceTemplateBindings[$instance] = $bindings;
         }
 
@@ -943,7 +949,7 @@ final class TemplateManager
         $existingStr = (string) $existing;
         $expectedStr = (string) $expected;
 
-        if ($existingStr === $expectedStr || $variance === GenericTypeNode::VARIANCE_BIVARIANT || $expectedStr === 'mixed') {
+        if ($existingStr === $expectedStr || $variance === GenericTypeNode::VARIANCE_BIVARIANT || $expectedStr === 'mixed' || $expectedStr === '*') {
             return true;
         }
 
@@ -1287,7 +1293,7 @@ final class TemplateManager
         }
         if ($n instanceof GenericTypeNode) {
             $base = new IdentifierTypeNode(SpecialTypeResolver::resolveFqcn($n->type->name, $ref));
-            $generics = array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
+            $generics = array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
 
             return new GenericTypeNode($base, $generics, $n->variances);
         }
@@ -1298,10 +1304,10 @@ final class TemplateManager
             return new NullableTypeNode(self::resolveTypeNodeAst($n->type, $ref));
         }
         if ($n instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new UnionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
         if ($n instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new IntersectionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
 
         return $n;
