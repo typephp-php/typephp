@@ -42,12 +42,14 @@ final class DocblockParser
      * @var array<string, array{
      *     types: array<string, TypeNode>,
      *     paramOuts: array<string, TypeNode>,
+     *     selfOut: ?TypeNode,
      *     templates: array<string, TemplateTagValueNode>,
      *     classTemplates: array<string, TemplateTagValueNode>,
      *     return: ?TypeNode,
      *     aliases: array<string, TypeNode>,
      *     hasParamContract: bool,
      *     hasParamOutContract: bool,
+     *     hasSelfOutContract: bool,
      *     hasReturnContract: bool,
      *     paramsUseGenerics: bool,
      *     returnUsesGenerics: bool,
@@ -331,12 +333,14 @@ final class DocblockParser
      * @return array{
      *     types: array<string, TypeNode>,
      *     paramOuts: array<string, TypeNode>,
+     *     selfOut: ?TypeNode,
      *     templates: array<string, TemplateTagValueNode>,
      *     classTemplates: array<string, TemplateTagValueNode>,
      *     return: ?TypeNode,
      *     aliases: array<string, TypeNode>,
      *     hasParamContract: bool,
      *     hasParamOutContract: bool,
+     *     hasSelfOutContract: bool,
      *     hasReturnContract: bool,
      *     paramsUseGenerics: bool,
      *     returnUsesGenerics: bool,
@@ -371,12 +375,14 @@ final class DocblockParser
                         $contract = [
                             'types' => [],
                             'paramOuts' => [],
+                            'selfOut' => null,
                             'templates' => [],
                             'classTemplates' => $classTemplates,
                             'return' => null,
                             'aliases' => $aliases,
                             'hasParamContract' => false,
                             'hasParamOutContract' => false,
+                            'hasSelfOutContract' => false,
                             'hasReturnContract' => false,
                             'paramsUseGenerics' => false,
                             'returnUsesGenerics' => false,
@@ -392,12 +398,14 @@ final class DocblockParser
                     $contract = [
                         'types' => [],
                         'paramOuts' => [],
+                        'selfOut' => null,
                         'templates' => [],
                         'classTemplates' => [],
                         'return' => null,
                         'aliases' => [],
                         'hasParamContract' => false,
                         'hasParamOutContract' => false,
+                        'hasSelfOutContract' => false,
                         'hasReturnContract' => false,
                         'paramsUseGenerics' => false,
                         'returnUsesGenerics' => false,
@@ -417,12 +425,14 @@ final class DocblockParser
             $contract = [
                 'types' => [],
                 'paramOuts' => [],
+                'selfOut' => null,
                 'templates' => [],
                 'classTemplates' => [],
                 'return' => null,
                 'aliases' => [],
                 'hasParamContract' => false,
                 'hasParamOutContract' => false,
+                'hasSelfOutContract' => false,
                 'hasReturnContract' => false,
                 'paramsUseGenerics' => false,
                 'returnUsesGenerics' => false,
@@ -779,12 +789,14 @@ final class DocblockParser
      * @return array{
      *     types: array<string, TypeNode>,
      *     paramOuts: array<string, TypeNode>,
+     *     selfOut: ?TypeNode,
      *     templates: array<string, TemplateTagValueNode>,
      *     classTemplates: array<string, TemplateTagValueNode>,
      *     return: ?TypeNode,
      *     aliases: array<string, TypeNode>,
      *     hasParamContract: bool,
      *     hasParamOutContract: bool,
+     *     hasSelfOutContract: bool,
      *     hasReturnContract: bool,
      *     paramsUseGenerics: bool,
      *     returnUsesGenerics: bool,
@@ -803,10 +815,11 @@ final class DocblockParser
         $methodTemplates = [];
         $classTemplates = [];
         $returnType = null;
+        $selfOut = null;
         $aliases = [];
 
         self::parseClassLevelDocs($ref->getDeclaringClass(), $classTemplates, $aliases);
-        self::parseMethodHierarchyDocs($ref, $types, $methodTemplates, $returnType, $aliases, $paramOuts);
+        self::parseMethodHierarchyDocs($ref, $types, $methodTemplates, $returnType, $aliases, $paramOuts, $selfOut);
 
         if ($ref->getName() === '__construct') {
             self::applyConstructorPromotionFallback($ref, $types, $classTemplates, $aliases);
@@ -829,6 +842,11 @@ final class DocblockParser
 
                         break;
                     }
+                }
+            }
+            if (! $paramsUseGenerics && $selfOut !== null) {
+                if (self::typeReferencesTemplate($selfOut, $allTemplates)) {
+                    $paramsUseGenerics = true;
                 }
             }
         }
@@ -865,12 +883,14 @@ final class DocblockParser
         return [
             'types' => $types,
             'paramOuts' => $paramOuts,
+            'selfOut' => $selfOut,
             'templates' => $methodTemplates,
             'classTemplates' => $classTemplates,
             'return' => $returnType,
             'aliases' => $aliases,
             'hasParamContract' => \count($types) > 0,
             'hasParamOutContract' => \count($paramOuts) > 0,
+            'hasSelfOutContract' => $selfOut !== null,
             'hasReturnContract' => $returnType !== null,
             'paramsUseGenerics' => $paramsUseGenerics,
             'returnUsesGenerics' => $returnUsesGenerics,
@@ -1123,6 +1143,7 @@ final class DocblockParser
      * @param TypeNode|null $returnType
      * @param array<string, TypeNode> $aliases
      * @param array<string, TypeNode> $paramOuts
+     * @param TypeNode|null $selfOut
      */
     private static function parseMethodHierarchyDocs(
         \ReflectionMethod $ref,
@@ -1130,7 +1151,8 @@ final class DocblockParser
         array &$templates,
         ?TypeNode &$returnType,
         array &$aliases,
-        array &$paramOuts = []
+        array &$paramOuts = [],
+        ?TypeNode &$selfOut = null
     ): void {
         $hierarchy = HierarchyResolver::getMethodHierarchy($ref);
         $baseParams = $ref->getParameters();
@@ -1231,6 +1253,12 @@ final class DocblockParser
                     $resolvedType = SpecialTypeResolver::resolve($substitutedType, $hierRef);
                     $paramOuts[$targetParamName] = $resolvedType;
                 }
+            }
+
+            $selfOutType = DocblockExtractor::getSelfOutTag($phpDocNode);
+            if ($selfOutType !== null && $selfOut === null) {
+                $substituted = self::substituteAliases($selfOutType, $aliases);
+                $selfOut = SpecialTypeResolver::resolve($substituted, $hierRef);
             }
 
             if ($returnType === null) {

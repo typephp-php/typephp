@@ -400,7 +400,8 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
             ;
 
             expect(fn () => tddParamOutShapeComposition($data, ['id' => 10, 'name' => 'Alice', 'extra' => true]))
-                ->toThrow(TypeError::class, "Argument &\$data (param-out) contains unsealed unexpected key 'extra'");
+                ->toThrow(TypeError::class, "Argument &\$data (param-out) contains unsealed unexpected key 'extra'")
+            ;
         });
     });
 });

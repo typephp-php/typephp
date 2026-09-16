@@ -714,6 +714,14 @@ final class TemplateManager
             $valid = self::checkVariance($existingTypeNode, $expectedTypeNode, $variance);
 
             if (! $valid) {
+                if ($forceBind) {
+                    $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+                    $bindings[$templateName] = $expectedTypeNode;
+                    self::$instanceTemplateBindings[$instance] = $bindings;
+
+                    return null;
+                }
+
                 $isDefaultOrBound = ($existingTypeNode instanceof IdentifierTypeNode) && (
                     strtolower($existingTypeNode->name) === 'mixed'
                     || strtolower($existingTypeNode->name) === 'array-key'

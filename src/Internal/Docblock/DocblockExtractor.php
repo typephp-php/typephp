@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Docblock;
 
+use PHPStan\PhpDocParser\Ast\PhpDoc\GenericTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\MethodTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\ParamOutTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\ParamTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\PhpDocNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\ReturnTagValueNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\SelfOutTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\VarTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
@@ -167,6 +169,54 @@ final class DocblockExtractor
         }
 
         return $tags;
+    }
+
+    /**
+     * Extracts self-out / this-out tags with priority: @phpstan-* > @psalm-* > standard.
+     */
+    public static function getSelfOutTag(PhpDocNode $node): ?TypeNode
+    {
+        $phpstanTags = array_merge(
+            $node->getTagsByName('@phpstan-self-out'),
+            $node->getTagsByName('@phpstan-this-out')
+        );
+        foreach ($phpstanTags as $tag) {
+            if ($tag->value instanceof SelfOutTagValueNode) {
+                return $tag->value->type;
+            }
+        }
+
+        $psalmTags = array_merge(
+            $node->getTagsByName('@psalm-self-out'),
+            $node->getTagsByName('@psalm-this-out')
+        );
+        foreach ($psalmTags as $tag) {
+            if ($tag->value instanceof SelfOutTagValueNode) {
+                return $tag->value->type;
+            }
+        }
+
+        $standardTags = array_merge(
+            $node->getTagsByName('@self-out'),
+            $node->getTagsByName('@this-out')
+        );
+        foreach ($standardTags as $tag) {
+            if ($tag->value instanceof SelfOutTagValueNode) {
+                return $tag->value->type;
+            }
+            if ($tag->value instanceof GenericTagValueNode) {
+                try {
+                    [$typeParser, $lexer] = self::getTypeParserComponents();
+                    $tokens = new TokenIterator($lexer->tokenize($tag->value->value));
+
+                    return $typeParser->parse($tokens);
+                } catch (\Throwable $e) {
+                    // Silently ignore malformed tags
+                }
+            }
+        }
+
+        return null;
     }
 
     /**

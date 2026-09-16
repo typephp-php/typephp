@@ -12,6 +12,7 @@ use TypePHP\Internal\Checker\InlineChecker;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ParamOutChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
+use TypePHP\Internal\Checker\SelfOutChecker;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
@@ -46,6 +47,7 @@ final class RuntimeTypeChecker
         IgnoreManager::reset();
         CallerBoundaryResolver::reset();
         ParamOutChecker::reset();
+        SelfOutChecker::reset();
     }
 
     /**
@@ -241,6 +243,22 @@ final class RuntimeTypeChecker
         }
 
         return $res;
+    }
+
+    /**
+     * Re-types generic template state on $this upon method exit (@self-out, @phpstan-self-out, @psalm-self-out).
+     *
+     * @param array<int|string, mixed>|null $vars
+     */
+    public static function checkSelfOut(string $function, object $thisObj, ?array $vars = []): void
+    {
+        if (! Config::isEnabled()) {
+            return;
+        }
+
+        $vars ??= [];
+
+        SelfOutChecker::checkSelfOut($function, $thisObj, $vars, self::getRegistry());
     }
 
     /**
