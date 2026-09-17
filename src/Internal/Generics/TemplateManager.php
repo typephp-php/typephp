@@ -17,6 +17,7 @@ use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockExtractor;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\ClassNameValidator;
@@ -348,7 +349,21 @@ final class TemplateManager
     public static array $classNodeCache = [];
 
     /**
-     * Resets all static generic template bindings and call stack frames.
+     * In-memory cache for declared method templates per function.
+     *
+     * @var array<string, array<string, TemplateTagValueNode>>
+     */
+    private static array $methodTemplatesCache = [];
+
+    /**
+     * In-memory cache for isMethodTemplate checks per function and template name.
+     *
+     * @var array<string, array<string, bool>>
+     */
+    private static array $isMethodTemplateCache = [];
+
+    /**
+     * Resets all static generic template bindings, call stack frames, and method template caches.
      */
     public static function reset(): void
     {
@@ -358,6 +373,8 @@ final class TemplateManager
         self::$classInheritedBindingsCache = [];
         self::$subclassCache = [];
         self::$pendingCloneSource = null;
+        self::$methodTemplatesCache = [];
+        self::$isMethodTemplateCache = [];
     }
 
     /**
@@ -450,6 +467,13 @@ final class TemplateManager
             if (isset(self::$instanceTemplateBindings[$thisObj])) {
                 $bindings = self::$instanceTemplateBindings[$thisObj];
             }
+
+            $methodTemplates = self::getMethodTemplates($function);
+            if ($methodTemplates !== []) {
+                foreach ($methodTemplates as $methodTName => $_) {
+                    unset($bindings[$methodTName]);
+                }
+            }
         }
 
         $topFrame = self::getTopCallFrame($function);
@@ -510,6 +534,42 @@ final class TemplateManager
     }
 
     /**
+     * Checks if a template name is declared as a method-level template on the given function/method.
+     */
+    public static function isMethodTemplate(string $function, string $templateName): bool
+    {
+        if ($function === '' || ! str_contains($function, '::')) {
+            return false;
+        }
+
+        if (isset(self::$isMethodTemplateCache[$function][$templateName])) {
+            return self::$isMethodTemplateCache[$function][$templateName];
+        }
+
+        $methodTemplates = self::getMethodTemplates($function);
+
+        return self::$isMethodTemplateCache[$function][$templateName] = isset($methodTemplates[$templateName]);
+    }
+
+    /**
+     * Returns declared method-level templates for the given function or method.
+     *
+     * @return array<string, TemplateTagValueNode>
+     */
+    public static function getMethodTemplates(string $function): array
+    {
+        if ($function === '' || ! str_contains($function, '::')) {
+            return [];
+        }
+
+        if (isset(self::$methodTemplatesCache[$function])) {
+            return self::$methodTemplatesCache[$function];
+        }
+
+        return self::$methodTemplatesCache[$function] = DocblockParser::parse($function)['templates'];
+    }
+
+    /**
      * Checks if a template name is bound in the current instance or call stack frame.
      */
     public static function isBound(string $function, ?object $thisObj, string $templateName): bool
@@ -521,6 +581,10 @@ final class TemplateManager
 
         if ($thisObj !== null) {
             self::ensureInstanceInherited($thisObj);
+
+            if (self::isMethodTemplate($function, $templateName)) {
+                return false;
+            }
 
             return isset(self::$instanceTemplateBindings[$thisObj][$templateName]);
         }
@@ -541,6 +605,10 @@ final class TemplateManager
         if ($thisObj !== null) {
             self::ensureInstanceInherited($thisObj);
 
+            if (self::isMethodTemplate($function, $templateName)) {
+                return null;
+            }
+
             return self::$instanceTemplateBindings[$thisObj][$templateName] ?? null;
         }
 
@@ -552,7 +620,7 @@ final class TemplateManager
      */
     public static function bindTemplate(string $function, ?object $thisObj, string $templateName, TypeNode $inferredType): void
     {
-        if ($thisObj !== null) {
+        if ($thisObj !== null && ! self::isMethodTemplate($function, $templateName)) {
             self::$instanceTemplateBindings ??= new WeakMap();
             $bindings = self::$instanceTemplateBindings[$thisObj] ?? [];
             $bindings[$templateName] = $inferredType;

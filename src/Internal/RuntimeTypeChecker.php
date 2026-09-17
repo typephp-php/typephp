@@ -31,9 +31,6 @@ final class RuntimeTypeChecker
     private static ?TypeValidatorRegistry $registry = null;
 
     /**
-     * Cache for whether a method's return type uses method-level templates.
-     * MUST be public so injected AST code can read it for call-site cache bypass.
-     *
      * @var array<string, bool>
      */
     public static array $hasMethodTemplatesCache = [];
@@ -185,7 +182,7 @@ final class RuntimeTypeChecker
         $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] ?? null;
         if ($hasMethodTemplates === null) {
             $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] = (
-                $contract['returnUsesMethodTemplates'] ?? false
+                (($contract['templates'] ?? []) !== []) || ($contract['returnUsesMethodTemplates'] ?? false)
             );
             self::$hasMethodTemplatesCache[$function] = $hasMethodTemplates;
         }

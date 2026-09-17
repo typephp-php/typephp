@@ -146,7 +146,6 @@ final class ParamChecker
             return null;
         }
 
-        // Use pre-resolved contract or parse
         $contract ??= DocblockParser::parse($effectiveFunction);
 
         if (! $contract['hasParamContract']) {
@@ -369,10 +368,6 @@ final class ParamChecker
 
         [$classOrTrait, $methodName] = explode('::', $function, 2);
 
-        if (trait_exists($classOrTrait)) {
-            return self::$effectiveFunctionCache[$cacheKey] = $function;
-        }
-
         $effectiveFunction = ($actualClassName !== $classOrTrait)
             ? $actualClassName . '::' . $methodName
             : $function;
@@ -391,7 +386,7 @@ final class ParamChecker
                 }
 
                 if ($isTargetOfAlias) {
-                    $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
+                    $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 6);
                     foreach ($trace as $frame) {
                         $frameFunc = $frame['function'];
                         $frameClass = $frame['class'] ?? '';
@@ -511,7 +506,7 @@ final class ParamChecker
                 foreach ($cTypeNode->parameters as $idx => $pNode) {
                     if ($pNode->type instanceof IdentifierTypeNode && isset($templates[$pNode->type->name]) && isset($closureParams[$idx])) {
                         $tName = $pNode->type->name;
-                        $isClassLevel = isset($classTemplates[$tName]);
+                        $isClassLevel = ! TemplateManager::isMethodTemplate($effectiveFunction, $tName) && isset($classTemplates[$tName]);
                         $targetObj = $isClassLevel ? $thisObj : null;
 
                         $inferredCandidate = self::extractTypeFromClosureParameter($closureParams[$idx]);
@@ -643,7 +638,6 @@ final class ParamChecker
             }
 
             $sampleItems = self::getSampleArraySlice($arrVal);
-
             $genericCount = \count($typeNode->genericTypes);
 
             if ($genericCount === 1 && $typeNode->genericTypes[0] instanceof IdentifierTypeNode) {
@@ -741,7 +735,7 @@ final class ParamChecker
     ): void {
         $contract = DocblockParser::parse($effectiveFunction);
         $classTemplates = $contract['classTemplates'] ?? [];
-        $isClassLevelTemplate = isset($classTemplates[$templateName]);
+        $isClassLevelTemplate = ! TemplateManager::isMethodTemplate($effectiveFunction, $templateName) && isset($classTemplates[$templateName]);
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
 
         if (isset($templates[$templateName]) && ! TemplateManager::isBound($effectiveFunction, $targetObj, $templateName)) {
@@ -945,7 +939,7 @@ final class ParamChecker
         $innerType = $typeNode->genericTypes[0];
         $templateName = $innerType->name;
         $templateNode = $templates[$templateName];
-        $isClassLevelTemplate = isset($classTemplates[$templateName]);
+        $isClassLevelTemplate = ! TemplateManager::isMethodTemplate($function, $templateName) && isset($classTemplates[$templateName]);
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
 
         if (! TemplateManager::isBound($function, $targetObj, $templateName)) {
@@ -1071,7 +1065,7 @@ final class ParamChecker
         $templateNode = $templates[$templateName];
         $isVariadic = $typeNode instanceof ArrayTypeNode;
         $isNullable = ($typeNode instanceof NullableTypeNode) || ($typeNode instanceof UnionTypeNode && self::typeContainsNull($typeNode));
-        $isClassLevelTemplate = isset($classTemplates[$templateName]);
+        $isClassLevelTemplate = ! TemplateManager::isMethodTemplate($function, $templateName) && isset($classTemplates[$templateName]);
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
         $allowsNullInBound = ($templateNode->bound !== null && self::typeContainsNull($templateNode->bound));
 

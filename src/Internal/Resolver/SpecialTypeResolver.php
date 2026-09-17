@@ -198,7 +198,7 @@ final class SpecialTypeResolver
 
         if ($node instanceof GenericTypeNode) {
             $genericType = self::resolve($node->type, $context, $thisObj);
-            $innerTypes = array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->genericTypes);
+            $innerTypes = array_map(fn($t) => self::resolve($t, $context, $thisObj), $node->genericTypes);
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
@@ -252,11 +252,11 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->types));
+            return new UnionTypeNode(array_map(fn($t) => self::resolve($t, $context, $thisObj), $node->types));
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->types));
+            return new IntersectionTypeNode(array_map(fn($t) => self::resolve($t, $context, $thisObj), $node->types));
         }
 
         return $node;
@@ -290,7 +290,7 @@ final class SpecialTypeResolver
 
         if ($node instanceof GenericTypeNode) {
             $genericType = self::resolveForFile($node->type, $file);
-            $innerTypes = array_map(fn ($t) => self::resolveForFile($t, $file), $node->genericTypes);
+            $innerTypes = array_map(fn($t) => self::resolveForFile($t, $file), $node->genericTypes);
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
@@ -344,11 +344,11 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolveForFile($t, $file), $node->types));
+            return new UnionTypeNode(array_map(fn($t) => self::resolveForFile($t, $file), $node->types));
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolveForFile($t, $file), $node->types));
+            return new IntersectionTypeNode(array_map(fn($t) => self::resolveForFile($t, $file), $node->types));
         }
 
         return clone $node;
@@ -960,7 +960,7 @@ final class SpecialTypeResolver
 
         $contextKey = match (true) {
             $ref instanceof \ReflectionClass => 'C:' . $ref->getName(),
-            $ref instanceof \ReflectionMethod => 'M:' . $ref->getDeclaringClass()->getName() . '::' . $ref->getName(),
+            $ref instanceof \ReflectionMethod => 'M:' . ($ref->getFileName() !== false ? $ref->getFileName() : $ref->getDeclaringClass()->getName()) . '::' . $ref->getName(),
             $ref instanceof \ReflectionFunction => 'F:' . $ref->getName(),
         };
 
@@ -970,11 +970,16 @@ final class SpecialTypeResolver
         }
 
         $imports = self::getUseImports($ref);
-        $namespace = match (true) {
-            $ref instanceof \ReflectionClass => $ref->getNamespaceName(),
-            $ref instanceof \ReflectionMethod => $ref->getDeclaringClass()->getNamespaceName(),
-            $ref instanceof \ReflectionFunction => $ref->getNamespaceName(),
-        };
+        $fileName = $ref->getFileName();
+        $fileNamespace = ($fileName !== false && $fileName !== '') ? self::getNamespaceFromFile($fileName) : '';
+
+        $namespace = ($fileNamespace !== '')
+            ? $fileNamespace
+            : match (true) {
+                $ref instanceof \ReflectionClass => $ref->getNamespaceName(),
+                $ref instanceof \ReflectionMethod => $ref->getDeclaringClass()->getNamespaceName(),
+                $ref instanceof \ReflectionFunction => $ref->getNamespaceName(),
+            };
 
         $resolved = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
 
