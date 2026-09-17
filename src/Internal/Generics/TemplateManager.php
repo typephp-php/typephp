@@ -363,6 +363,13 @@ final class TemplateManager
     private static array $isMethodTemplateCache = [];
 
     /**
+     * Stack storing pending generic instantiations for constructors.
+     *
+     * @var list<array{typeString: string, file: string, targetClass: string}>
+     */
+    private static array $pendingInstantiations = [];
+
+    /**
      * Resets all static generic template bindings, call stack frames, and method template caches.
      */
     public static function reset(): void
@@ -375,6 +382,46 @@ final class TemplateManager
         self::$pendingCloneSource = null;
         self::$methodTemplatesCache = [];
         self::$isMethodTemplateCache = [];
+        self::$pendingInstantiations = [];
+    }
+
+    /**
+     * Pushes a pending generic instantiation for a constructor.
+     */
+    public static function pushPendingInstantiation(string $typeString, string $file): void
+    {
+        $pos = strpos($typeString, '<');
+        $rawClass = $pos !== false ? trim(substr($typeString, 0, $pos)) : $typeString;
+        $targetClass = SpecialTypeResolver::resolveFqcnForFile($rawClass, $file);
+
+        self::$pendingInstantiations[] = [
+            'typeString' => $typeString,
+            'file' => $file,
+            'targetClass' => $targetClass,
+        ];
+    }
+
+    /**
+     * Pops the last pending generic instantiation for a constructor.
+     */
+    public static function popPendingInstantiation(): void
+    {
+        array_pop(self::$pendingInstantiations);
+    }
+
+    /**
+     * Applies the last pending generic instantiation for a constructor to the given instance.
+     */
+    public static function applyPendingInstantiation(object $instance): void
+    {
+        if (self::$pendingInstantiations === []) {
+            return;
+        }
+
+        $pending = end(self::$pendingInstantiations);
+        if ($pending !== false && is_a($instance, $pending['targetClass'])) {
+            self::bindInstance($instance, $pending['typeString'], $pending['file']);
+        }
     }
 
     /**

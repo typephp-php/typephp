@@ -301,7 +301,22 @@ final class ContractVisitor extends NodeVisitorAbstract
             $typeString = $this->scopeManager->getVarTypeFromScope($varName);
 
             if ($typeString !== null) {
-                $node->expr = $this->wrapVariableCheck($node->expr, $typeString, $varName, $node->var->getStartLine());
+                $expr = $node->expr;
+                if ($expr instanceof Node\Expr\New_ && str_contains($typeString, '<')) {
+                    $expr = new Node\Expr\StaticCall(
+                        new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker'),
+                        'withPendingGeneric',
+                        [
+                            new Node\Arg(new Node\Scalar\String_($typeString)),
+                            new Node\Arg(new Node\Expr\ArrowFunction([
+                                'expr' => $expr,
+                            ])),
+                            new Node\Arg(new Node\Scalar\MagicConst\File()),
+                        ]
+                    );
+                }
+
+                $node->expr = $this->wrapVariableCheck($expr, $typeString, $varName, $node->var->getStartLine());
             }
         } elseif ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
             $node->expr = $this->wrapPropertyCheck($node->expr, $node->var->var, $node->var->name->toString(), $node->var->getStartLine());

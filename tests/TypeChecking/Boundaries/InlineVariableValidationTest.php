@@ -39,12 +39,10 @@ afterEach(function () {
 
 describe('mixed type validation with @var and param', function () {
     test('enforces stricter inline @var annotation over broader function return contract', function () {
-        // Valid call: [10, 'Alice'] satisfies both @return and @var
         /** @var array{0: positive-int, 1: non-empty-string} $userData */
         $userData = fetchBroadTuple(10, 'Alice');
         expect($userData[0])->toBe(10);
 
-        // Invalid call: [-5, 'Alice'] satisfies @return (int), BUT violates @var (positive-int)
         expect(function () {
             /** @var array{0: positive-int, 1: non-empty-string} $userData */
             $userData = fetchBroadTuple(-5, 'Alice');
@@ -202,6 +200,11 @@ describe('Inline @var Advanced Unions and Intersections', function () {
         expect($producer->item)->toBeInstanceOf(Cat::class);
 
         expect(fn () => $producer = new Producer(new Car()))
+            ->toThrow(TypeError::class, 'Argument $item (template T =')
+        ;
+
+        $carProducer = new Producer(new Car());
+        expect(fn () => $producer = $carProducer)
             ->toThrow(TypeError::class, 'Variable $producer')
         ;
     });

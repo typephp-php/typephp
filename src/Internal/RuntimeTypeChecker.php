@@ -56,6 +56,22 @@ final class RuntimeTypeChecker
     }
 
     /**
+     * Pre-binds generic template state on a class before its constructor executes.
+     *
+     * @param \Closure(): mixed $factory
+     */
+    public static function withPendingGeneric(string $typeString, \Closure $factory, string $file = ''): mixed
+    {
+        TemplateManager::pushPendingInstantiation($typeString, $file);
+
+        try {
+            return $factory();
+        } finally {
+            TemplateManager::popPendingInstantiation();
+        }
+    }
+
+    /**
      * Delegates generic template binding for class instances.
      */
     public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false): ?ErrorMessage
@@ -144,6 +160,10 @@ final class RuntimeTypeChecker
 
         if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return null;
+        }
+
+        if ($thisObj !== null && str_ends_with($effectiveFunction, '::__construct')) {
+            TemplateManager::applyPendingInstantiation($thisObj);
         }
 
         if (
