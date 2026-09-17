@@ -1182,7 +1182,6 @@ final class SpecialTypeResolver
                 $isClassLike = $token->id === T_CLASS || $token->id === T_INTERFACE || $token->id === T_TRAIT || (\defined('T_ENUM') && $token->id === T_ENUM);
 
                 if ($isClassLike) {
-                    // Ignore ::class (e.g. Foo::class)
                     $isClassConst = false;
                     for ($prev = $i - 1; $prev >= 0; $prev--) {
                         if ($tokens[$prev]->id === T_WHITESPACE || $tokens[$prev]->id === T_COMMENT) {
