@@ -960,7 +960,7 @@ final class SpecialTypeResolver
 
         $contextKey = match (true) {
             $ref instanceof \ReflectionClass => 'C:' . $ref->getName(),
-            $ref instanceof \ReflectionMethod => 'M:' . $ref->getDeclaringClass()->getName() . '::' . $ref->getName(),
+            $ref instanceof \ReflectionMethod => 'M:' . ($ref->getFileName() !== false ? $ref->getFileName() : $ref->getDeclaringClass()->getName()) . '::' . $ref->getName(),
             $ref instanceof \ReflectionFunction => 'F:' . $ref->getName(),
         };
 
@@ -970,11 +970,16 @@ final class SpecialTypeResolver
         }
 
         $imports = self::getUseImports($ref);
-        $namespace = match (true) {
-            $ref instanceof \ReflectionClass => $ref->getNamespaceName(),
-            $ref instanceof \ReflectionMethod => $ref->getDeclaringClass()->getNamespaceName(),
-            $ref instanceof \ReflectionFunction => $ref->getNamespaceName(),
-        };
+        $fileName = $ref->getFileName();
+        $fileNamespace = ($fileName !== false && $fileName !== '') ? self::getNamespaceFromFile($fileName) : '';
+
+        $namespace = ($fileNamespace !== '')
+            ? $fileNamespace
+            : match (true) {
+                $ref instanceof \ReflectionClass => $ref->getNamespaceName(),
+                $ref instanceof \ReflectionMethod => $ref->getDeclaringClass()->getNamespaceName(),
+                $ref instanceof \ReflectionFunction => $ref->getNamespaceName(),
+            };
 
         $resolved = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
 

@@ -77,6 +77,9 @@ final class FunctionContractInjector
 
         $hasParamOut = $byRefParams !== [] && ($hasParamOutDoc || $hasInheritance);
 
+        $hasSelfOutDoc = str_contains($docText, 'self-out') || str_contains($docText, 'this-out');
+        $hasSelfOut = $isClassMethod && ! $node->isStatic() && ($hasSelfOutDoc || $hasInheritance);
+
         $hasReturnDoc = str_contains($docText, '@return')
             || str_contains($docText, '@phpstan-return')
             || str_contains($docText, '@psalm-return');
@@ -86,7 +89,7 @@ final class FunctionContractInjector
             && ! ($isNativeVoid && ! $hasReturnDoc)
             && self::hasReturnContracts($docText, $isClassMethod, $isPrivate);
 
-        if (! $hasParam && ! $hasReturn && ! $hasParamOut) {
+        if (! $hasParam && ! $hasReturn && ! $hasParamOut && ! $hasSelfOut) {
             return;
         }
 
@@ -100,7 +103,7 @@ final class FunctionContractInjector
             $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg);
         }
 
-        if ($hasReturn || $hasParamOut) {
+        if ($hasReturn || $hasParamOut || $hasSelfOut) {
             $node->stmts = self::isGenerator($node)
                 ? self::wrapGeneratorReturns($node->stmts, $thisArg)
                 : self::wrapNonGeneratorReturns(
@@ -109,11 +112,33 @@ final class FunctionContractInjector
                     $isNativeVoid,
                     $needsReturnVars,
                     $hasReturn,
-                    $hasParamOut ? $byRefParams : []
+                    $hasParamOut ? $byRefParams : [],
+                    $hasSelfOut
                 );
         }
 
         $node->stmts = [...$injectedStmts, ...$node->stmts];
+    }
+
+    public static function buildSelfOutCheckStmt(Node\Expr $thisArg, bool $needsReturnVars = false): Node\Stmt\Expression
+    {
+        $varsArg = $needsReturnVars
+            ? new Node\Expr\Variable('_typephpArgs')
+            : new Node\Expr\Array_();
+
+        $checkCall = new Node\Expr\FuncCall(
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkSelfOut'),
+            [
+                new Node\Arg(new Node\Scalar\MagicConst\Method()),
+                new Node\Arg($thisArg),
+                new Node\Arg($varsArg),
+            ]
+        );
+
+        $stmt = new Node\Stmt\Expression($checkCall);
+        $stmt->setAttribute('typephp_injected', true);
+
+        return $stmt;
     }
 
     private static function resolveDocComment(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): ?Doc
@@ -699,10 +724,11 @@ final class FunctionContractInjector
         bool $isNativeVoid,
         bool $needsReturnVars = false,
         bool $hasReturn = true,
-        array $byRefParams = []
+        array $byRefParams = [],
+        bool $hasSelfOut = false
     ): array {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class ($thisArg, $isNativeVoid, $needsReturnVars, $hasReturn, $byRefParams) extends NodeVisitorAbstract {
+        $traverser->addVisitor(new class ($thisArg, $isNativeVoid, $needsReturnVars, $hasReturn, $byRefParams, $hasSelfOut) extends NodeVisitorAbstract {
             /**
              * @param array<string> $byRefParams
              */
@@ -711,7 +737,8 @@ final class FunctionContractInjector
                 private bool $isNativeVoid,
                 private bool $needsReturnVars,
                 private bool $hasReturn,
-                private array $byRefParams
+                private array $byRefParams,
+                private bool $hasSelfOut
             ) {
             }
 
@@ -726,12 +753,21 @@ final class FunctionContractInjector
                         return null;
                     }
 
+                    $exitStmts = [];
+                    if ($this->hasSelfOut) {
+                        $exitStmts[] = FunctionContractInjector::buildSelfOutCheckStmt($this->thisArg, $this->needsReturnVars);
+                    }
+
                     $paramOutStmts = $this->byRefParams !== []
                         ? FunctionContractInjector::buildParamOutCheckStmts($this->byRefParams, $this->thisArg)
                         : [];
 
+                    if ($paramOutStmts !== []) {
+                        $exitStmts = [...$exitStmts, ...$paramOutStmts];
+                    }
+
                     if (! $this->hasReturn) {
-                        return $paramOutStmts !== [] ? [...$paramOutStmts, $n] : null;
+                        return $exitStmts !== [] ? [...$exitStmts, $n] : null;
                     }
 
                     $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
@@ -740,7 +776,7 @@ final class FunctionContractInjector
                         $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
                         $voidGuardStmts = FunctionContractInjector::buildVoidReturnGuard($checkCall);
 
-                        return [...$paramOutStmts, ...$voidGuardStmts];
+                        return [...$exitStmts, ...$voidGuardStmts];
                     }
 
                     // Call-site cache bypass for return checks
@@ -764,7 +800,7 @@ final class FunctionContractInjector
                         $ternaryExpr
                     );
 
-                    return $paramOutStmts !== [] ? [...$paramOutStmts, $n] : null;
+                    return $exitStmts !== [] ? [...$exitStmts, $n] : null;
                 }
 
                 return null;
@@ -776,21 +812,28 @@ final class FunctionContractInjector
 
         $lastStmt = end($newStmts);
         if (! $lastStmt instanceof Node\Stmt\Return_ && ! ($lastStmt instanceof Node\Stmt\Expression && $lastStmt->expr instanceof Node\Expr\Throw_)) {
+            $exitStmts = [];
+            if ($hasSelfOut) {
+                $exitStmts[] = self::buildSelfOutCheckStmt($thisArg, $needsReturnVars);
+            }
+
             $paramOutStmts = $byRefParams !== []
                 ? self::buildParamOutCheckStmts($byRefParams, $thisArg)
                 : [];
 
+            if ($paramOutStmts !== []) {
+                $exitStmts = [...$exitStmts, ...$paramOutStmts];
+            }
+
             if (! $hasReturn) {
-                if ($paramOutStmts !== []) {
-                    $retStmt = new Node\Stmt\Return_(null);
-                    $retStmt->setAttribute('typephp_injected', true);
-                    $newStmts = [...$newStmts, ...$paramOutStmts, $retStmt];
+                if ($exitStmts !== []) {
+                    $newStmts = [...$newStmts, ...$exitStmts];
                 }
             } else {
                 $checkCall = self::buildReturnCheckCall(new Node\Expr\ConstFetch(new Node\Name('null')), $thisArg, $needsReturnVars);
 
                 if ($isNativeVoid) {
-                    $newStmts = [...$newStmts, ...$paramOutStmts, ...self::buildVoidReturnGuard($checkCall)];
+                    $newStmts = [...$newStmts, ...$exitStmts, ...self::buildVoidReturnGuard($checkCall)];
                 } else {
                     $cacheKeyExpr = new Node\Scalar\MagicConst\Method();
                     $cacheCheck = new Node\Expr\Isset_([
@@ -812,7 +855,7 @@ final class FunctionContractInjector
 
                     $retStmt = new Node\Stmt\Return_($fallbackExpr);
                     $retStmt->setAttribute('typephp_injected', true);
-                    $newStmts = [...$newStmts, ...$paramOutStmts, $retStmt];
+                    $newStmts = [...$newStmts, ...$exitStmts, $retStmt];
                 }
             }
         }

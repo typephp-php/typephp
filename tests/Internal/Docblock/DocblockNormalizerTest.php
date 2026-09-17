@@ -135,6 +135,50 @@ describe('DocblockNormalizer', function () {
         });
     });
 
+    describe('@self-out and @this-out Tag Normalization', function () {
+        test('normalizes @self-out to @phpstan-self-out for native parser compatibility', function () {
+            $doc = "/**\n * @self-out self<'authenticated'>\n */";
+            $expected = "/**\n * @phpstan-self-out self<'authenticated'>\n */";
+
+            expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+        });
+
+        test('normalizes @this-out to @phpstan-this-out for native parser compatibility', function () {
+            $doc = "/**\n * @this-out self<'configured'>\n */";
+            $expected = "/**\n * @phpstan-this-out self<'configured'>\n */";
+
+            expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+        });
+
+        test('normalizes conditional type syntax inside @self-out', function () {
+            $doc = '/** @self-out ($asAdmin is true ? self<\'admin\'> : self<\'guest\'>) */';
+            $expected = '/** @phpstan-self-out ($asAdmin is true ? self<\'admin\'> : self<\'guest\'>) */';
+
+            expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+        });
+
+        test('preserves priority when @phpstan-self-out is already present alongside @self-out', function () {
+            $doc = <<<'DOC'
+/**
+ * @self-out self<'standard_state'>
+ * @psalm-self-out self<'psalm_state'>
+ * @phpstan-self-out self<'phpstan_state'>
+ */
+DOC;
+            expect(DocblockNormalizer::normalize($doc))->toBe($doc);
+        });
+
+        test('preserves priority when @phpstan-this-out is already present alongside @this-out', function () {
+            $doc = <<<'DOC'
+/**
+ * @this-out self<'standard_state'>
+ * @phpstan-this-out self<'phpstan_state'>
+ */
+DOC;
+            expect(DocblockNormalizer::normalize($doc))->toBe($doc);
+        });
+    });
+
     describe('Custom Class Shapes to Intersection Shapes', function () {
         test('converts stdClass shapes into intersection shapes', function () {
             $doc = '/** @param stdClass{id: int, name: string} $data */';

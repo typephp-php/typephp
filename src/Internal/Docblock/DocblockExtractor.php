@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Docblock;
 
+use PHPStan\PhpDocParser\Ast\PhpDoc\GenericTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\MethodTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\ParamOutTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\ParamTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\PhpDocNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\ReturnTagValueNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\SelfOutTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\TypeAliasImportTagValueNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\TypeAliasTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\VarTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Lexer\Lexer;
@@ -167,6 +171,54 @@ final class DocblockExtractor
         }
 
         return $tags;
+    }
+
+    /**
+     * Extracts self-out / this-out tags with priority: @phpstan-* > @psalm-* > standard.
+     */
+    public static function getSelfOutTag(PhpDocNode $node): ?TypeNode
+    {
+        $phpstanTags = [
+            ...$node->getTagsByName('@phpstan-self-out'),
+            ...$node->getTagsByName('@phpstan-this-out'),
+        ];
+        foreach ($phpstanTags as $tag) {
+            if ($tag->value instanceof SelfOutTagValueNode) {
+                return $tag->value->type;
+            }
+        }
+
+        $psalmTags = [
+            ...$node->getTagsByName('@psalm-self-out'),
+            ...$node->getTagsByName('@psalm-this-out'),
+        ];
+        foreach ($psalmTags as $tag) {
+            if ($tag->value instanceof SelfOutTagValueNode) {
+                return $tag->value->type;
+            }
+        }
+
+        $standardTags = [
+            ...$node->getTagsByName('@self-out'),
+            ...$node->getTagsByName('@this-out'),
+        ];
+        foreach ($standardTags as $tag) {
+            if ($tag->value instanceof SelfOutTagValueNode) {
+                return $tag->value->type;
+            }
+            if ($tag->value instanceof GenericTagValueNode) {
+                try {
+                    [$typeParser, $lexer] = self::getTypeParserComponents();
+                    $tokens = new TokenIterator($lexer->tokenize($tag->value->value));
+
+                    return $typeParser->parse($tokens);
+                } catch (\Throwable $e) {
+                    // Silently ignore malformed tags
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -391,29 +443,53 @@ final class DocblockExtractor
     }
 
     /**
-     * Extracts local and imported type aliases (@phpstan-type and @phpstan-import-type) from a PHPDoc node.
-     *
-     * @param array<string, TypeNode> $aliases
-     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
-     */
+        * Extracts local and imported type aliases (@phpstan-type/@psalm-type and @phpstan-import-type/@psalm-import-type) from a PHPDoc node.
+        * Prioritizes @phpstan-* > @psalm-* within the same docblock, and child class overrides over parent classes across inheritance.
+        *
+         * @param array<string, TypeNode> $aliases
+         * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+        */
     public static function extractAliases(
         PhpDocNode $phpDocNode,
         array &$aliases,
         \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref
     ): void {
-        foreach ($phpDocNode->getTypeAliasTagValues() as $aliasTag) {
-            if (! isset($aliases[$aliasTag->alias])) {
-                $aliases[$aliasTag->alias] = $aliasTag->type;
+        $currentDocAliases = [];
+
+        foreach ($phpDocNode->getTagsByName('@psalm-type') as $tag) {
+            if ($tag->value instanceof TypeAliasTagValueNode) {
+                $currentDocAliases[$tag->value->alias] = $tag->value->type;
             }
         }
 
-        foreach ($phpDocNode->getTypeAliasImportTagValues() as $importTag) {
-            $localName = $importTag->importedAs ?? $importTag->importedAlias;
-            if (! isset($aliases[$localName])) {
-                $fqcnSource = SpecialTypeResolver::resolveFqcn($importTag->importedFrom->name, $ref);
-                $resolvedType = self::resolveImportedTypeAlias($fqcnSource, $importTag->importedAlias);
-                if ($resolvedType !== null) {
-                    $aliases[$localName] = $resolvedType;
+        foreach ($phpDocNode->getTagsByName('@phpstan-type') as $tag) {
+            if ($tag->value instanceof TypeAliasTagValueNode) {
+                $currentDocAliases[$tag->value->alias] = $tag->value->type;
+            }
+        }
+
+        foreach ($currentDocAliases as $name => $type) {
+            if (! isset($aliases[$name])) {
+                $aliases[$name] = $type;
+            }
+        }
+
+        $importTags = [
+            ...$phpDocNode->getTagsByName('@psalm-import-type'),
+            ...$phpDocNode->getTagsByName('@phpstan-import-type'),
+        ];
+
+        foreach ($importTags as $tag) {
+            if ($tag->value instanceof TypeAliasImportTagValueNode) {
+                $importTag = $tag->value;
+                $localName = $importTag->importedAs ?? $importTag->importedAlias;
+
+                if (! isset($aliases[$localName])) {
+                    $fqcnSource = SpecialTypeResolver::resolveFqcn($importTag->importedFrom->name, $ref);
+                    $resolvedType = self::resolveImportedTypeAlias($fqcnSource, $importTag->importedAlias);
+                    if ($resolvedType !== null) {
+                        $aliases[$localName] = $resolvedType;
+                    }
                 }
             }
         }
@@ -424,7 +500,7 @@ final class DocblockExtractor
     }
 
     /**
-     * Resolves an imported type alias (@phpstan-import-type) from a target class, interface, trait, or enum.
+     * Resolves an imported type alias (@phpstan-import-type / @psalm-import-type) from a target class, interface, trait, or enum.
      */
     public static function resolveImportedTypeAlias(string $fqcn, string $importedAlias): ?TypeNode
     {
@@ -447,12 +523,20 @@ final class DocblockExtractor
                     return $targetAliases[$importedAlias];
                 }
 
-                foreach ($phpDocNode->getTypeAliasImportTagValues() as $importTag) {
-                    $localName = $importTag->importedAs ?? $importTag->importedAlias;
-                    if ($localName === $importedAlias) {
-                        $nextFqcn = SpecialTypeResolver::resolveFqcn($importTag->importedFrom->name, $ref);
+                $importTags = [
+                    ...$phpDocNode->getTagsByName('@psalm-import-type'),
+                    ...$phpDocNode->getTagsByName('@phpstan-import-type'),
+                ];
 
-                        return self::resolveImportedTypeAlias($nextFqcn, $importTag->importedAlias);
+                foreach ($importTags as $tag) {
+                    if ($tag->value instanceof TypeAliasImportTagValueNode) {
+                        $importTag = $tag->value;
+                        $localName = $importTag->importedAs ?? $importTag->importedAlias;
+                        if ($localName === $importedAlias) {
+                            $nextFqcn = SpecialTypeResolver::resolveFqcn($importTag->importedFrom->name, $ref);
+
+                            return self::resolveImportedTypeAlias($nextFqcn, $importTag->importedAlias);
+                        }
                     }
                 }
             }

@@ -12,6 +12,7 @@ use TypePHP\Internal\Checker\InlineChecker;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ParamOutChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
+use TypePHP\Internal\Checker\SelfOutChecker;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
@@ -30,9 +31,6 @@ final class RuntimeTypeChecker
     private static ?TypeValidatorRegistry $registry = null;
 
     /**
-     * Cache for whether a method's return type uses method-level templates.
-     * MUST be public so injected AST code can read it for call-site cache bypass.
-     *
      * @var array<string, bool>
      */
     public static array $hasMethodTemplatesCache = [];
@@ -46,6 +44,7 @@ final class RuntimeTypeChecker
         IgnoreManager::reset();
         CallerBoundaryResolver::reset();
         ParamOutChecker::reset();
+        SelfOutChecker::reset();
     }
 
     /**
@@ -183,7 +182,7 @@ final class RuntimeTypeChecker
         $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] ?? null;
         if ($hasMethodTemplates === null) {
             $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] = (
-                $contract['returnUsesMethodTemplates'] ?? false
+                (($contract['templates'] ?? []) !== []) || ($contract['returnUsesMethodTemplates'] ?? false)
             );
             self::$hasMethodTemplatesCache[$function] = $hasMethodTemplates;
         }
@@ -241,6 +240,42 @@ final class RuntimeTypeChecker
         }
 
         return $res;
+    }
+
+    /**
+     * Re-types generic template state on $this upon method exit (@self-out, @phpstan-self-out, @psalm-self-out).
+     *
+     * @param array<int|string, mixed>|null $vars
+     */
+    public static function checkSelfOut(string $function, object $thisObj, ?array $vars = []): void
+    {
+        if (! Config::isEnabled()) {
+            return;
+        }
+
+        if (isset(SelfOutChecker::$noSelfOutContractCache[$function])) {
+            return;
+        }
+
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisObj, $thisObj);
+
+        if (isset(SelfOutChecker::$noSelfOutContractCache[$effectiveFunction])) {
+            SelfOutChecker::$noSelfOutContractCache[$function] = true;
+
+            return;
+        }
+
+        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+            return;
+        }
+
+        if (IgnoreManager::isCallerIgnored()) {
+            return;
+        }
+
+        $vars ??= [];
+
+        SelfOutChecker::checkSelfOut($function, $thisObj, $vars, self::getRegistry(), $effectiveFunction);
     }
 
     /**

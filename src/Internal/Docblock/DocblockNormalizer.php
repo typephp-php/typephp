@@ -38,6 +38,14 @@ final class DocblockNormalizer
             $doc = preg_replace('/(@(?:phpstan|psalm)-type\s+[a-zA-Z0-9_\x80-\xff]+)\s*=\s*/', '$1 ', $doc) ?? $doc;
         }
 
+        if (str_contains($doc, '@self-out') && ! str_contains($doc, '@phpstan-self-out') && ! str_contains($doc, '@psalm-self-out')) {
+            $doc = preg_replace('/@self-out\b/', '@phpstan-self-out', $doc) ?? $doc;
+        }
+
+        if (str_contains($doc, '@this-out') && ! str_contains($doc, '@phpstan-this-out') && ! str_contains($doc, '@psalm-this-out')) {
+            $doc = preg_replace('/@this-out\b/', '@phpstan-this-out', $doc) ?? $doc;
+        }
+
         if (str_contains($doc, 'callable') || str_contains($doc, 'Closure')) {
             $doc = preg_replace('/(callable|Closure)\s*\(([^)]*)\)(?!\s*:)/', '$1($2): mixed', $doc) ?? $doc;
         }

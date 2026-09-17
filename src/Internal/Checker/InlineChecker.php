@@ -168,7 +168,7 @@ final class InlineChecker
 
             $checkGenerics = (bool) ($config['generics'] ?? true);
             if ($typeNode instanceof GenericTypeNode && $checkGenerics && \is_object($value)) {
-                $err = TemplateManager::bindInstanceFromNode($value, $typeNode, $context, forceBind: true);
+                $err = TemplateManager::bindInstanceFromNode($value, $typeNode, $context);
                 if ($err !== null) {
                     return $err;
                 }
@@ -346,8 +346,15 @@ final class InlineChecker
             return $typeNode;
         }
 
+        $targetFunc = ($methodName !== '{closure}' && $methodName !== null && ! str_starts_with($methodName, '{closure'))
+            ? $className . '::' . $methodName
+            : $className . '::__construct';
+
+        $contract = DocblockParser::parse($targetFunc);
+        $hasMethodTemplates = ($contract['templates'] ?? []) !== [];
+
         $cacheKey = null;
-        if ($thisObj === null) {
+        if ($thisObj === null && ! $hasMethodTemplates) {
             $cacheKey = ((string) $typeNode) . '|' . $className . '|' . ($methodName ?? '');
             if (isset(self::$resolvedClassContextCache[$cacheKey])) {
                 return self::$resolvedClassContextCache[$cacheKey];
@@ -360,15 +367,10 @@ final class InlineChecker
             $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
 
             $classAliases = DocblockParser::parseClassAliases($className);
+            $allTemplates = $contract['allTemplates'] ?? [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+            $declaredTemplates = $allTemplates;
 
-            $targetFunc = ($methodName !== '{closure}' && $methodName !== null && ! str_starts_with($methodName, '{closure'))
-                ? $className . '::' . $methodName
-                : $className . '::__construct';
-
-            $contract = DocblockParser::parse($targetFunc);
-            $declaredTemplates = $contract['allTemplates'] ?? ($contract['classTemplates'] ?? []);
-
-            if (\count($classAliases) === 0 && \count($declaredTemplates) === 0) {
+            if ($classAliases === [] && $declaredTemplates === []) {
                 if ($cacheKey !== null) {
                     return self::$resolvedClassContextCache[$cacheKey] = $typeNode;
                 }
@@ -379,7 +381,7 @@ final class InlineChecker
             $boundTemplates = TemplateManager::getBoundTemplates($targetFunc, $thisObj, $declaredTemplates);
             $activeBindings = [...$classAliases, ...$boundTemplates];
 
-            if (\count($activeBindings) > 0 || \count($declaredTemplates) > 0) {
+            if ($activeBindings !== [] || $declaredTemplates !== []) {
                 $typeNode = TemplateSubstitutor::substitute($typeNode, $activeBindings, $declaredTemplates);
                 $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
             }
