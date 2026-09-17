@@ -11,4 +11,5 @@ uses()
     ->afterEach(function () {
         Config::reset();
     })
-    ->in('Contract', 'Internal', 'Feature');
+    ->in('Contract', 'Internal', 'Feature')
+;

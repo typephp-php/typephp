@@ -253,7 +253,7 @@ describe('PathMatcher Unit Tests', function () {
         test('permits var when var is root directory using default config', function () {
             try {
                 Config::set([
-                    'include' => ['src/**', 'app/**', 'tests/**',],
+                    'include' => ['src/**', 'app/**', 'tests/**'],
                 ]);
 
                 expect(PathMatcher::mayPathBeIncluded('/var/www/app/src/index.php'))->toBeTrue();

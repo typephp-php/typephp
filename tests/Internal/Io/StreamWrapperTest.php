@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use TypePHP\Internal\Io\StreamWrapper;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\FileFilter;
 
@@ -575,6 +576,79 @@ PHP;
                 }
                 Config::reset();
             }
+        });
+    });
+
+    describe('Anonymous Class Trait Metadata AST Extraction', function () {
+        test('extracts and seeds trait docblocks for anonymous classes located inside methods during transformSource', function () {
+            $source = <<<'PHP'
+<?php
+
+namespace App\Test;
+
+trait LoggerTraitFixture {}
+
+class ServiceFactory
+{
+    public function create()
+    {
+        return new class () {
+            /**
+             * @use LoggerTraitFixture<string>
+             */
+            use LoggerTraitFixture;
+        };
+    }
+}
+PHP;
+            StreamWrapper::transformSource($source, 'VirtualServiceFactory.php');
+
+            $obj = (new class () {
+                public function create(): object
+                {
+                    return new class () {
+                        /** @use \TypePHP\Tests\Fixtures\Generics\GenericItemLoggerTrait<int> */
+                        use TypePHP\Tests\Fixtures\Generics\GenericItemLoggerTrait;
+                    };
+                }
+            })->create();
+
+            $docs = SpecialTypeResolver::getClassTraitUseDocs($obj::class);
+            expect($docs)->not()->toBeEmpty()
+                ->and($docs[0])->toContain('GenericItemLoggerTrait<int>')
+            ;
+        });
+
+        test('handles multiple anonymous classes in the same file with different trait uses without collision', function () {
+            $source = <<<'PHP'
+<?php
+
+namespace App\Test;
+
+trait TraitA {}
+trait TraitB {}
+
+class MultiAnonFactory
+{
+    public function first()
+    {
+        return new class () {
+            /** @use TraitA<int> */
+            use TraitA;
+        };
+    }
+
+    public function second()
+    {
+        return new class () {
+            /** @use TraitB<string> */
+            use TraitB;
+        };
+    }
+}
+PHP;
+            $transformed = StreamWrapper::transformSource($source, 'VirtualMultiAnon.php');
+            expect($transformed)->toContain('class MultiAnonFactory');
         });
     });
 });

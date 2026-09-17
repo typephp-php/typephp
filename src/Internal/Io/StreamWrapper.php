@@ -825,6 +825,7 @@ final class StreamWrapper implements StreamWrapperInterface
         $namespace = '';
         $imports = [];
         $classTraitUseDocs = [];
+        $anonymousTraitUseDocs = [];
 
         $nodesToScan = $stmts;
         foreach ($stmts as $stmt) {
@@ -872,6 +873,24 @@ final class StreamWrapper implements StreamWrapperInterface
             }
         }
 
-        SpecialTypeResolver::seedFileMetadata($filePath, $namespace, $imports, $classTraitUseDocs);
+        $nodeFinder = new \PhpParser\NodeFinder();
+        /** @var list<\PhpParser\Node\Stmt\Class_> $anonClasses */
+        $anonClasses = $nodeFinder->find($stmts, function (\PhpParser\Node $node): bool {
+            return $node instanceof \PhpParser\Node\Stmt\Class_ && $node->name === null;
+        });
+
+        foreach ($anonClasses as $anonClass) {
+            $startLine = $anonClass->getStartLine();
+            foreach ($anonClass->stmts as $classStmt) {
+                if ($classStmt instanceof \PhpParser\Node\Stmt\TraitUse) {
+                    $doc = $classStmt->getDocComment();
+                    if ($doc !== null) {
+                        $anonymousTraitUseDocs[$startLine][] = $doc->getText();
+                    }
+                }
+            }
+        }
+
+        SpecialTypeResolver::seedFileMetadata($filePath, $namespace, $imports, $classTraitUseDocs, $anonymousTraitUseDocs);
     }
 }

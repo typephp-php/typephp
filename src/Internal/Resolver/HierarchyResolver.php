@@ -71,7 +71,8 @@ final class HierarchyResolver
             return self::$classExistsCache[$className];
         }
 
-        $exists = class_exists($className)
+        $exists = class_exists($className, false)
+            || class_exists($className)
             || interface_exists($className)
             || trait_exists($className)
             || enum_exists($className);
