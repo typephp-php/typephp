@@ -534,6 +534,16 @@ final class DocblockParser
                 return ['doc' => $stubDoc, 'declaringClass' => $current];
             }
 
+            foreach ($current->getTraits() as $trait) {
+                if ($trait->hasProperty($propertyName)) {
+                    $traitProp = $trait->getProperty($propertyName);
+                    $doc = $traitProp->getDocComment();
+                    if ($doc !== false) {
+                        return ['doc' => $doc, 'declaringClass' => $trait];
+                    }
+                }
+            }
+
             if ($current->hasProperty($propertyName)) {
                 $refProp = $current->getProperty($propertyName);
                 $doc = $refProp->getDocComment();

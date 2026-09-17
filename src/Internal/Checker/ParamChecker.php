@@ -369,6 +369,10 @@ final class ParamChecker
 
         [$classOrTrait, $methodName] = explode('::', $function, 2);
 
+        if (trait_exists($classOrTrait)) {
+            return self::$effectiveFunctionCache[$cacheKey] = $function;
+        }
+
         $effectiveFunction = ($actualClassName !== $classOrTrait)
             ? $actualClassName . '::' . $methodName
             : $function;
