@@ -290,7 +290,10 @@ final class PathMatcher
             }
         }
 
-        if (str_contains($canon, '/var/') || str_starts_with($canon, 'var/')) {
+        if (str_starts_with($canon, 'var/')
+            || (!str_starts_with($canon, '/var/') && str_contains($canon, '/var/'))
+            || (str_starts_with($canon, '/var/') && str_contains(substr($canon, 4), '/var/'))
+        ) {
             if (! self::hasIncludeMatchingPrefix('var/', $includes)) {
                 return false;
             }
