@@ -144,12 +144,21 @@ final class SpecialTypeResolver
     private static array $classTraitUseDocs = [];
 
     /**
+     * In-memory cache of anonymous class trait use statement docblocks keyed by file and start line.
+     *
+     * @var array<string, array<int, array<int, string>>>
+     */
+    private static array $anonymousTraitUseDocs = [];
+
+    /**
      * Resets reflection context and dynamic caches. Preserves static file imports.
      */
     public static function reset(): void
     {
         self::$reflectionContextCache = [];
         self::$fqcnCache = [];
+        self::$classTraitUseDocs = [];
+        self::$anonymousTraitUseDocs = [];
     }
 
     /**
@@ -817,15 +826,24 @@ final class SpecialTypeResolver
      *
      * @param array<string, string> $imports
      * @param array<string, array<int, string>> $classTraitUseDocs
+     * @param array<int, array<int, string>> $anonymousTraitUseDocs
      */
-    public static function seedFileMetadata(string $fileName, string $namespace, array $imports, array $classTraitUseDocs = []): void
-    {
+    public static function seedFileMetadata(
+        string $fileName,
+        string $namespace,
+        array $imports,
+        array $classTraitUseDocs = [],
+        array $anonymousTraitUseDocs = []
+    ): void {
         if ($fileName !== '') {
             $fileName = str_replace('\\', '/', $fileName);
             self::$fileNamespaces[$fileName] = $namespace;
             self::$fileUseImports[$fileName] = $imports;
             foreach ($classTraitUseDocs as $className => $docs) {
                 self::$classTraitUseDocs[$className] = $docs;
+            }
+            if ($anonymousTraitUseDocs !== []) {
+                self::$anonymousTraitUseDocs[$fileName] = $anonymousTraitUseDocs;
             }
         }
     }
@@ -841,17 +859,61 @@ final class SpecialTypeResolver
             return self::$classTraitUseDocs[$className];
         }
 
-        if (! class_exists($className) && ! trait_exists($className)) {
+        if (! class_exists($className, false) && ! class_exists($className) && ! trait_exists($className)) {
             return self::$classTraitUseDocs[$className] = [];
         }
 
         try {
             $ref = new \ReflectionClass($className);
             $fileName = $ref->getFileName();
-            if ($fileName !== false && file_exists($fileName)) {
-                $source = file_get_contents($fileName);
-                if ($source !== false) {
-                    self::parseFileMetadata($fileName, $source);
+            if ($fileName !== false) {
+                $normalizedFile = str_replace('\\', '/', $fileName);
+
+                if ($ref->isAnonymous()) {
+                    $startLine = $ref->getStartLine();
+                    $endLine = $ref->getEndLine();
+
+                    if (! isset(self::$anonymousTraitUseDocs[$normalizedFile]) && file_exists($fileName)) {
+                        $source = file_get_contents($fileName);
+                        if ($source !== false) {
+                            self::parseFileMetadata($fileName, $source);
+                        }
+                    }
+
+                    if (isset(self::$anonymousTraitUseDocs[$normalizedFile][$startLine])) {
+                        return self::$classTraitUseDocs[$className] = self::$anonymousTraitUseDocs[$normalizedFile][$startLine];
+                    }
+
+                    if (isset(self::$anonymousTraitUseDocs[$normalizedFile])) {
+                        foreach (self::$anonymousTraitUseDocs[$normalizedFile] as $line => $docs) {
+                            if ($line >= $startLine && $line <= $endLine) {
+                                return self::$classTraitUseDocs[$className] = $docs;
+                            }
+                        }
+
+                        $bestMatch = null;
+                        $minDiff = PHP_INT_MAX;
+                        foreach (self::$anonymousTraitUseDocs[$normalizedFile] as $line => $docs) {
+                            $diff = abs($line - $startLine);
+                            if ($diff <= 5 && $diff < $minDiff) {
+                                $minDiff = $diff;
+                                $bestMatch = $docs;
+                            }
+                        }
+
+                        if ($bestMatch !== null) {
+                            return self::$classTraitUseDocs[$className] = $bestMatch;
+                        }
+                    }
+
+                    return self::$classTraitUseDocs[$className] = [];
+                }
+
+                if (file_exists($fileName)) {
+                    $source = file_get_contents($fileName);
+                    if ($source !== false) {
+                        self::parseFileMetadata($fileName, $source);
+                    }
                 }
             }
         } catch (\Throwable $e) {
@@ -1079,15 +1141,22 @@ final class SpecialTypeResolver
      */
     public static function parseFileMetadata(string $fileName, string $source): void
     {
-        self::$fileNamespaces[$fileName] = '';
-        self::$fileUseImports[$fileName] = [];
+        $normalizedFile = str_replace('\\', '/', $fileName);
+        self::$fileNamespaces[$normalizedFile] = '';
+        self::$fileUseImports[$normalizedFile] = [];
+        self::$anonymousTraitUseDocs[$normalizedFile] = [];
 
         try {
             $tokens = \PhpToken::tokenize($source);
             $count = \count($tokens);
             $namespace = '';
             $imports = [];
-            $currentClass = null;
+
+            /** @var list<array{type: 'named'|'anon', name?: string, line?: int, depth: int}> $classStack */
+            $classStack = [];
+            /** @var array{type: 'named'|'anon', name?: string, line?: int}|null $pendingClass */
+            $pendingClass = null;
+            $braceDepth = 0;
 
             for ($i = 0; $i < $count; $i++) {
                 $token = $tokens[$i];
@@ -1105,35 +1174,116 @@ final class SpecialTypeResolver
                         }
                     }
                     $namespace = trim(implode('', $nsParts));
-                    self::$fileNamespaces[$fileName] = $namespace;
+                    self::$fileNamespaces[$normalizedFile] = $namespace;
 
                     continue;
                 }
 
-                if (($token->id === T_CLASS || $token->id === T_INTERFACE || $token->id === T_TRAIT || (\defined('T_ENUM') && $token->id === T_ENUM)) && isset($tokens[$i + 2]) && $tokens[$i + 2]->id === T_STRING) {
-                    $className = $tokens[$i + 2]->text;
-                    $currentClass = $namespace !== '' ? $namespace . '\\' . $className : $className;
-                    self::$classTraitUseDocs[$currentClass] = [];
+                $isClassLike = $token->id === T_CLASS || $token->id === T_INTERFACE || $token->id === T_TRAIT || (\defined('T_ENUM') && $token->id === T_ENUM);
 
-                    continue;
-                }
-
-                if ($token->id === T_USE && $currentClass !== null) {
-                    for ($k = $i - 1; $k >= 0; $k--) {
-                        if ($tokens[$k]->id === T_DOC_COMMENT) {
-                            self::$classTraitUseDocs[$currentClass][] = $tokens[$k]->text;
-
-                            break;
+                if ($isClassLike) {
+                    // Ignore ::class (e.g. Foo::class)
+                    $isClassConst = false;
+                    for ($prev = $i - 1; $prev >= 0; $prev--) {
+                        if ($tokens[$prev]->id === T_WHITESPACE || $tokens[$prev]->id === T_COMMENT) {
+                            continue;
                         }
-                        if ($tokens[$k]->id !== T_WHITESPACE) {
-                            break;
+                        if ($tokens[$prev]->id === T_DOUBLE_COLON) {
+                            $isClassConst = true;
+                        }
+
+                        break;
+                    }
+
+                    if ($isClassConst) {
+                        continue;
+                    }
+
+                    $nameToken = null;
+                    for ($j = $i + 1; $j < $count; $j++) {
+                        if ($tokens[$j]->id === T_WHITESPACE || $tokens[$j]->id === T_COMMENT || $tokens[$j]->id === T_DOC_COMMENT) {
+                            continue;
+                        }
+                        if ($tokens[$j]->id === T_STRING) {
+                            $nameToken = $tokens[$j];
+                        }
+
+                        break;
+                    }
+
+                    if ($nameToken !== null) {
+                        $className = $namespace !== '' ? $namespace . '\\' . $nameToken->text : $nameToken->text;
+                        self::$classTraitUseDocs[$className] = [];
+                        $pendingClass = ['type' => 'named', 'name' => $className];
+                    } elseif ($token->id === T_CLASS) {
+                        $pendingClass = ['type' => 'anon', 'line' => $token->line];
+                    }
+
+                    continue;
+                }
+
+                if ($token->text === '{' || $token->id === T_CURLY_OPEN || $token->id === T_DOLLAR_OPEN_CURLY_BRACES) {
+                    $braceDepth++;
+                    if ($pendingClass !== null) {
+                        $classStack[] = [
+                            'type' => $pendingClass['type'],
+                            'name' => $pendingClass['name'] ?? null,
+                            'line' => $pendingClass['line'] ?? null,
+                            'depth' => $braceDepth,
+                        ];
+                        $pendingClass = null;
+                    }
+
+                    continue;
+                }
+
+                if ($token->text === '}') {
+                    if ($classStack !== []) {
+                        $top = end($classStack);
+                        if ($braceDepth === $top['depth']) {
+                            array_pop($classStack);
+                        }
+                    }
+                    $braceDepth--;
+
+                    continue;
+                }
+
+                if ($token->id === T_USE && $classStack !== []) {
+                    $isClosureUse = false;
+                    for ($j = $i + 1; $j < $count; $j++) {
+                        if ($tokens[$j]->id === T_WHITESPACE || $tokens[$j]->id === T_COMMENT) {
+                            continue;
+                        }
+                        if ($tokens[$j]->text === '(') {
+                            $isClosureUse = true;
+                        }
+
+                        break;
+                    }
+
+                    if (! $isClosureUse) {
+                        for ($k = $i - 1; $k >= 0; $k--) {
+                            if ($tokens[$k]->id === T_DOC_COMMENT) {
+                                $top = end($classStack);
+                                if ($top['type'] === 'named' && isset($top['name'])) {
+                                    self::$classTraitUseDocs[$top['name']][] = $tokens[$k]->text;
+                                } elseif ($top['type'] === 'anon' && isset($top['line'])) {
+                                    self::$anonymousTraitUseDocs[$normalizedFile][$top['line']][] = $tokens[$k]->text;
+                                }
+
+                                break;
+                            }
+                            if ($tokens[$k]->id !== T_WHITESPACE) {
+                                break;
+                            }
                         }
                     }
 
                     continue;
                 }
 
-                if ($token->id === T_USE && $currentClass === null) {
+                if ($token->id === T_USE && $classStack === []) {
                     $useStatement = '';
                     for ($j = $i + 1; $j < $count; $j++) {
                         if ($tokens[$j]->text === ';') {
@@ -1189,9 +1339,9 @@ final class SpecialTypeResolver
                 }
             }
 
-            self::$fileUseImports[$fileName] = $imports;
+            self::$fileUseImports[$normalizedFile] = $imports;
         } catch (\Throwable $e) {
-            self::$fileUseImports[$fileName] = [];
+            self::$fileUseImports[$normalizedFile] = [];
         }
     }
 }

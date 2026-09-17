@@ -877,7 +877,7 @@ final class TemplateManager
         /** @var array<string, TypeNode> $bindings */
         $bindings = [];
 
-        if (! class_exists($actualClassName) && ! interface_exists($actualClassName) && ! trait_exists($actualClassName)) {
+        if (! class_exists($actualClassName, false) && ! class_exists($actualClassName) && ! interface_exists($actualClassName) && ! trait_exists($actualClassName)) {
             return [];
         }
 
