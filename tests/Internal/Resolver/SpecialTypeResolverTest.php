@@ -397,4 +397,109 @@ PHP;
             expect($imports)->toBeEmpty();
         });
     });
+
+    describe('Anonymous Class Trait Use DocBlock Extraction & Scope Tracking', function () {
+        test('parses and extracts trait use docblocks for anonymous classes without polluting enclosing class', function () {
+            $source = <<<'PHP'
+<?php
+
+namespace App\Test;
+
+trait SomeTraitFixture {}
+
+class OuterNamedClass
+{
+    public function make()
+    {
+        return new class () {
+            /**
+             * @use SomeTraitFixture<int, string>
+             */
+            use SomeTraitFixture;
+        };
+    }
+}
+PHP;
+            $virtualFile = 'VirtualAnonTraitTest.php';
+            SpecialTypeResolver::parseFileMetadata($virtualFile, $source);
+
+            expect(SpecialTypeResolver::getClassTraitUseDocs('App\Test\OuterNamedClass'))->toBeEmpty();
+
+            $anon = (new class () {
+                public function make(): object
+                {
+                    return new class () {
+                        /** @use \TypePHP\Tests\Fixtures\Generics\GenericItemLoggerTrait<int> */
+                        use TypePHP\Tests\Fixtures\Generics\GenericItemLoggerTrait;
+                    };
+                }
+            })->make();
+
+            $docs = SpecialTypeResolver::getClassTraitUseDocs($anon::class);
+            expect($docs)->toHaveCount(1)
+                ->and($docs[0])->toContain('GenericItemLoggerTrait<int>')
+            ;
+        });
+
+        test('ignores ::class constant fetches and does not push ghost anonymous classes to classStack', function () {
+            $source = <<<'PHP'
+<?php
+
+namespace App\Test;
+
+trait MySampleTrait {}
+
+class SampleClassWithConstFetches
+{
+    public function check(): string
+    {
+        $x = \DateTimeInterface::class;
+        $y = \stdClass::class;
+
+        if (true) {
+            return $x;
+        }
+
+        return $y;
+    }
+
+    /**
+     * @use MySampleTrait<string>
+     */
+    use MySampleTrait;
+}
+PHP;
+            $virtualFile = 'VirtualConstFetchTest.php';
+            SpecialTypeResolver::parseFileMetadata($virtualFile, $source);
+
+            $docs = SpecialTypeResolver::getClassTraitUseDocs('App\Test\SampleClassWithConstFetches');
+            expect($docs)->toHaveCount(1)
+                ->and($docs[0])->toContain('@use MySampleTrait<string>')
+            ;
+        });
+
+        test('resolves anonymous class trait use docs with proximity matching when line numbers shift', function () {
+            $anon = new class () {
+                /**
+                 * @use \TypePHP\Tests\Fixtures\Generics\GenericItemLoggerTrait<\TypePHP\Tests\Fixtures\Domain\Dog>
+                 */
+                use TypePHP\Tests\Fixtures\Generics\GenericItemLoggerTrait;
+            };
+
+            $docs = SpecialTypeResolver::getClassTraitUseDocs($anon::class);
+            expect($docs)->toHaveCount(1)
+                ->and($docs[0])->toContain('GenericItemLoggerTrait<')
+                ->and($docs[0])->toContain('Dog>')
+            ;
+        });
+
+        test('returns empty array cleanly for anonymous class without any trait docblocks', function () {
+            $anonWithoutDoc = new class () {
+                use TypePHP\Tests\Fixtures\Generics\GenericItemLoggerTrait;
+            };
+
+            $docs = SpecialTypeResolver::getClassTraitUseDocs($anonWithoutDoc::class);
+            expect($docs)->toBeEmpty();
+        });
+    });
 });
