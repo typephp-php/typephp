@@ -191,11 +191,13 @@ final class ContractVisitor extends NodeVisitorAbstract
         $typeName = $this->resolveQualifiedName($node->name);
         $hasInheritance = true;
         $hasPropertyWithDoc = false;
+        $isReadonly = false;
 
         if ($node instanceof Node\Stmt\Class_) {
             $hasExtends = $node->extends !== null;
             $hasImplements = $node->implements !== [];
             $hasTraits = false;
+            $isReadonly = ($node->flags & Node\Stmt\Class_::MODIFIER_READONLY) !== 0;
 
             foreach ($node->stmts as $stmt) {
                 if ($stmt instanceof Node\Stmt\TraitUse) {
@@ -222,6 +224,7 @@ final class ContractVisitor extends NodeVisitorAbstract
             'isAnonymous' => ($node instanceof Node\Stmt\Class_ && $node->name === null),
             'hasInheritance' => $hasInheritance,
             'hasPropertyWithDoc' => $hasPropertyWithDoc,
+            'isReadonly' => $isReadonly,
         ];
     }
 
