@@ -18,6 +18,7 @@ use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
+use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
@@ -25,6 +26,7 @@ use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\StubManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
@@ -52,12 +54,20 @@ final class ParamChecker
     private static array $baseTypeCache = [];
 
     /**
+     * Cache for declared class template names by class FQCN.
+     *
+     * @var array<string, list<string>>
+     */
+    private static array $classDeclaredTemplateNamesCache = [];
+
+    /**
      * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
     {
         self::$effectiveFunctionCache = [];
         self::$noParamContractCache = [];
+        self::$classDeclaredTemplateNamesCache = [];
         ClassNameValidator::reset();
         self::$baseTypeCache = [];
     }
@@ -803,6 +813,25 @@ final class ParamChecker
                 return;
             }
 
+            $targetClassFqcn = SpecialTypeResolver::resolveFqcn($typeNode->type->name, new \ReflectionClass($value));
+            $targetTemplateNames = self::$classDeclaredTemplateNamesCache[$targetClassFqcn] ?? null;
+
+            if ($targetTemplateNames === null) {
+                $targetTemplateNames = [];
+                if (class_exists($targetClassFqcn, false) || class_exists($targetClassFqcn) || interface_exists($targetClassFqcn) || trait_exists($targetClassFqcn)) {
+                    try {
+                        $targetRef = new \ReflectionClass($targetClassFqcn);
+                        $targetDoc = StubManager::getClassDoc($targetClassFqcn) ?? $targetRef->getDocComment();
+                        if ($targetDoc !== false && $targetDoc !== null) {
+                            $targetPhpDocNode = DocblockExtractor::parseDocString($targetDoc);
+                            $targetTemplateNames = array_keys(DocblockExtractor::extractTemplates($targetPhpDocNode));
+                        }
+                    } catch (\Throwable $e) {
+                    }
+                }
+                self::$classDeclaredTemplateNamesCache[$targetClassFqcn] = $targetTemplateNames;
+            }
+
             $instanceBoundTypes = array_values($boundOnInstance);
 
             foreach ($typeNode->genericTypes as $idx => $gtNode) {
@@ -812,7 +841,14 @@ final class ParamChecker
                     $targetObj = $isClassLevel ? $thisObj : null;
 
                     if (! TemplateManager::isBound($effectiveFunction, $targetObj, $tName)) {
-                        $inferredCandidate = $instanceBoundTypes[$idx] ?? null;
+                        $targetTemplateName = $targetTemplateNames[$idx] ?? null;
+                        $inferredCandidate = null;
+
+                        if ($targetTemplateName !== null && isset($boundOnInstance[$targetTemplateName])) {
+                            $inferredCandidate = $boundOnInstance[$targetTemplateName];
+                        } elseif (isset($instanceBoundTypes[$idx])) {
+                            $inferredCandidate = $instanceBoundTypes[$idx];
+                        }
 
                         if ($inferredCandidate !== null) {
                             $templateTag = $templates[$tName];
