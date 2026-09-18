@@ -75,7 +75,7 @@ describe('Method-Level Template Inference from Generic Parameter Objects', funct
     test('infers method template T from generic argument PBox<T> instead of falling back to upper bound PBase', function () {
         $consumer = new MethodTemplateConsumer();
         $boxA = new MethodTemplateBox(new MethodTemplateA('Alpha'));
-        
+
         $result = $consumer->unwrap($boxA);
 
         expect($result)->toBeInstanceOf(MethodTemplateA::class)

@@ -690,7 +690,6 @@ final class TemplateManager
         return false;
     }
 
-
     /**
      * Retrieves the bound TypeNode for a template name from instance, static class, or call stack context.
      */
@@ -1495,7 +1494,7 @@ final class TemplateManager
             };
 
             $base = new IdentifierTypeNode($baseName);
-            $generics = array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
+            $generics = array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
 
             return new GenericTypeNode($base, $generics, $n->variances);
         }
@@ -1509,11 +1508,11 @@ final class TemplateManager
         }
 
         if ($n instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new UnionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
 
         if ($n instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            return new IntersectionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
         }
 
         return $n;
