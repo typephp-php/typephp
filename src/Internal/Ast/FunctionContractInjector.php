@@ -42,6 +42,7 @@ final class FunctionContractInjector
 
         $hasInheritance = $classContext['hasInheritance'] ?? true;
         $hasPropertyWithDoc = $classContext['hasPropertyWithDoc'] ?? true;
+        $isReadonlyClass = $classContext['isReadonly'] ?? false;
 
         $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
         $isConstructor = $isClassMethod && $methodName === '__construct';
@@ -100,7 +101,7 @@ final class FunctionContractInjector
 
         $injectedStmts = [];
         if ($hasParam) {
-            $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg);
+            $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg, $isReadonlyClass);
         }
 
         if ($hasReturn || $hasParamOut || $hasSelfOut) {
@@ -322,11 +323,12 @@ final class FunctionContractInjector
     private static function buildParamInjections(
         array $params,
         string $docText,
-        Node\Expr $thisArg
+        Node\Expr $thisArg,
+        bool $isReadonlyClass = false
     ): array {
         $injectedStmts = [self::buildSetupScopeStmt($params, $thisArg)];
-        $callableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isCallableCandidate'], 'wrapCallable');
-        $iterableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isIterableCandidate'], 'wrapIterable');
+        $callableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isCallableCandidate'], 'wrapCallable', $isReadonlyClass);
+        $iterableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isIterableCandidate'], 'wrapIterable', $isReadonlyClass);
 
         return [...$injectedStmts, ...$callableWrappers, ...$iterableWrappers];
     }
@@ -457,7 +459,8 @@ final class FunctionContractInjector
         string $docText,
         Node\Expr $thisArg,
         callable $predicate,
-        string $wrapperMethod
+        string $wrapperMethod,
+        bool $isReadonlyClass = false
     ): array {
         $wrappers = [];
 
@@ -481,7 +484,10 @@ final class FunctionContractInjector
                 $expr->setAttribute('typephp_injected', true);
                 $wrappers[] = $expr;
 
-                if ($param->isPromoted()) {
+                $isReadonlyParam = ($param->flags & Node\Stmt\Class_::MODIFIER_READONLY) !== 0;
+                $isReadonly = $isReadonlyParam || $isReadonlyClass;
+
+                if ($param->isPromoted() && ! $isReadonly) {
                     $propAssign = new Node\Stmt\Expression(
                         new Node\Expr\Assign(
                             new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $paramName),
