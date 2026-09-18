@@ -165,7 +165,7 @@ final class ParamChecker
             return self::validateSimpleParams($contract['types'], $vars, $effectiveFunction, $registry);
         }
 
-        self::prepareGenericBindings($effectiveFunction, $methodTemplates, $thisObj, $classTemplates);
+        self::prepareGenericBindings($effectiveFunction, $methodTemplates, $thisObj, $classTemplates, $thisOrClass);
 
         /** @var array<string, TemplateTagValueNode> $allTemplates */
         $allTemplates = [...$classTemplates, ...$methodTemplates];
@@ -175,7 +175,7 @@ final class ParamChecker
         }
 
         $boundTemplates = (\count($allTemplates) > 0)
-            ? TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates)
+            ? TemplateManager::getBoundTemplates($effectiveFunction, $thisOrClass, $allTemplates)
             : [];
         $declaredTemplates = $allTemplates;
 
@@ -192,7 +192,8 @@ final class ParamChecker
             $boundTemplates,
             $declaredTemplates,
             $registry,
-            $classTemplates
+            $classTemplates,
+            $thisOrClass
         );
     }
 
@@ -240,15 +241,21 @@ final class ParamChecker
         string $effectiveFunction,
         array $methodTemplates,
         ?object $thisObj,
-        array $classTemplates
+        array $classTemplates,
+        object|string|null $thisOrClass = null
     ): void {
         if (\count($methodTemplates) > 0) {
             TemplateManager::clearCallBindings($effectiveFunction, $methodTemplates);
         }
 
-        if ($thisObj !== null && \count($classTemplates) > 0 && ! TemplateManager::hasInstanceBindings($thisObj) && str_contains($effectiveFunction, '::')) {
+        if (\count($classTemplates) > 0 && str_contains($effectiveFunction, '::')) {
             $declaringClass = explode('::', $effectiveFunction, 2)[0];
-            TemplateManager::resolveInheritedTemplates($thisObj, $declaringClass);
+            if ($thisObj !== null && ! TemplateManager::hasInstanceBindings($thisObj)) {
+                TemplateManager::resolveInheritedTemplates($thisObj, $declaringClass);
+            } elseif ($thisObj === null) {
+                $targetClass = \is_string($thisOrClass) && $thisOrClass !== '' ? $thisOrClass : $declaringClass;
+                TemplateManager::getClassInheritedBindings($targetClass);
+            }
         }
     }
 
@@ -288,13 +295,10 @@ final class ParamChecker
      * @param array<string, TypeNode> $contractTypes
      * @param array<string, TypeNode> $baseTypes
      * @param array<string, mixed> $vars
-     * @param string $effectiveFunction
-     * @param object|null $thisObj
      * @param array<string, TemplateTagValueNode> $allTemplates
      * @param array<string, TypeNode> $aliases
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
-     * @param TypeValidatorRegistry $registry
      * @param array<string, TemplateTagValueNode> $classTemplates
      */
     private static function validateAllParameters(
@@ -308,7 +312,8 @@ final class ParamChecker
         array $boundTemplates,
         array $declaredTemplates,
         TypeValidatorRegistry $registry,
-        array $classTemplates
+        array $classTemplates,
+        object|string|null $thisOrClass = null
     ): ?ErrorMessage {
         foreach ($contractTypes as $paramName => $_) {
             if (! isset($vars[$paramName]) && ! \array_key_exists($paramName, $vars)) {
@@ -316,7 +321,7 @@ final class ParamChecker
             }
 
             $currentBoundTemplates = (\count($allTemplates) > 0)
-                ? TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates)
+                ? TemplateManager::getBoundTemplates($effectiveFunction, $thisOrClass, $allTemplates)
                 : $boundTemplates;
 
             $err = self::validateSingleParam(
@@ -331,7 +336,8 @@ final class ParamChecker
                 $declaredTemplates,
                 $registry,
                 $classTemplates,
-                $vars
+                $vars,
+                $thisOrClass
             );
 
             if ($err !== null) {
@@ -440,7 +446,7 @@ final class ParamChecker
     }
 
     /**
-     * Pre-infers generic template parameters from closure typehints and array arguments.
+     * Pre-infers generic template parameters from closure typehints, array arguments, and generic object arguments.
      *
      * @param array<string, TypeNode> $types
      * @param array<string, mixed> $vars
@@ -468,8 +474,9 @@ final class ParamChecker
             self::inferTemplatesFromClosures($types, $vars, $effectiveFunction, $thisObj, $templates, $classTemplates);
         }
 
-        if (\count($types) > 1) {
+        if (\count($types) > 0) {
             self::inferTemplatesFromArrays($types, $vars, $effectiveFunction, $thisObj, $templates);
+            self::inferTemplatesFromGenericObjects($types, $vars, $effectiveFunction, $thisObj, $templates, $classTemplates);
         }
     }
 
@@ -744,6 +751,107 @@ final class ParamChecker
     }
 
     /**
+     * Pre-infers generic template parameters from generic object arguments (e.g. PBox<T> or array<K, PBox<T>>).
+     *
+     * @param array<string, TypeNode> $types
+     * @param array<string, mixed> $vars
+     * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
+     */
+    private static function inferTemplatesFromGenericObjects(
+        array $types,
+        array $vars,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates,
+        array $classTemplates = []
+    ): void {
+        foreach ($types as $paramName => $typeNode) {
+            if (! isset($vars[$paramName])) {
+                continue;
+            }
+
+            $value = $vars[$paramName];
+            self::inferGenericObjectNode($typeNode, $value, $effectiveFunction, $thisObj, $templates, $classTemplates);
+        }
+    }
+
+    /**
+     * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
+     */
+    private static function inferGenericObjectNode(
+        TypeNode $typeNode,
+        mixed $value,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates,
+        array $classTemplates = []
+    ): void {
+        if ($typeNode instanceof NullableTypeNode) {
+            $typeNode = $typeNode->type;
+        }
+
+        if ($typeNode instanceof GenericTypeNode && \is_object($value)) {
+            $baseName = strtolower($typeNode->type->name);
+            if (\in_array($baseName, ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true)) {
+                return;
+            }
+
+            $boundOnInstance = TemplateManager::getBoundTemplatesForInstance($value);
+            if ($boundOnInstance === []) {
+                return;
+            }
+
+            $instanceBoundTypes = array_values($boundOnInstance);
+
+            foreach ($typeNode->genericTypes as $idx => $gtNode) {
+                if ($gtNode instanceof IdentifierTypeNode && isset($templates[$gtNode->name])) {
+                    $tName = $gtNode->name;
+                    $isClassLevel = ! TemplateManager::isMethodTemplate($effectiveFunction, $tName) && isset($classTemplates[$tName]);
+                    $targetObj = $isClassLevel ? $thisObj : null;
+
+                    if (! TemplateManager::isBound($effectiveFunction, $targetObj, $tName)) {
+                        $inferredCandidate = $instanceBoundTypes[$idx] ?? null;
+
+                        if ($inferredCandidate !== null) {
+                            $templateTag = $templates[$tName];
+                            $satisfiesBound = true;
+
+                            if ($templateTag->bound !== null) {
+                                $resolvedBound = SpecialTypeResolver::resolve($templateTag->bound, $effectiveFunction, $thisObj);
+                                $satisfiesBound = TemplateManager::checkVariance($inferredCandidate, $resolvedBound, GenericTypeNode::VARIANCE_COVARIANT);
+                            }
+
+                            if ($satisfiesBound) {
+                                TemplateManager::bindTemplate($effectiveFunction, $targetObj, $tName, $inferredCandidate);
+                            }
+                        }
+                    }
+                }
+            }
+        } elseif (\is_array($value)) {
+            $innerType = null;
+            if ($typeNode instanceof ArrayTypeNode) {
+                $innerType = $typeNode->type;
+            } elseif ($typeNode instanceof GenericTypeNode) {
+                $baseName = strtolower($typeNode->type->name);
+                if (\in_array($baseName, ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true)) {
+                    $innerType = $typeNode->genericTypes[1] ?? $typeNode->genericTypes[0] ?? null;
+                }
+            }
+
+            if ($innerType !== null) {
+                foreach ($value as $item) {
+                    if (\is_object($item)) {
+                        self::inferGenericObjectNode($innerType, $item, $effectiveFunction, $thisObj, $templates, $classTemplates);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Unified single-parameter validation pipeline.
      *
      * @param array<string, TemplateTagValueNode> $templates
@@ -766,7 +874,8 @@ final class ParamChecker
         array $declaredTemplates,
         TypeValidatorRegistry $registry,
         array $classTemplates = [],
-        array $vars = []
+        array $vars = [],
+        object|string|null $thisOrClass = null
     ): ?ErrorMessage {
         if (
             $typeNode instanceof ConditionalTypeForParameterNode ||
@@ -800,7 +909,7 @@ final class ParamChecker
         }
 
         if (self::getTemplateName($typeNode, $templates) !== null) {
-            return self::resolveTemplateParam($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $registry, $classTemplates);
+            return self::resolveTemplateParam($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $registry, $classTemplates, $thisOrClass);
         }
 
         return $registry->validate($val, $typeNode, $effectiveFunction . '(): Argument $' . $paramName);
@@ -1055,7 +1164,8 @@ final class ParamChecker
         ?object $thisObj,
         array $templates,
         TypeValidatorRegistry $registry,
-        array $classTemplates = []
+        array $classTemplates = [],
+        object|string|null $thisOrClass = null
     ): ?ErrorMessage {
         $templateName = self::getTemplateName($typeNode, $templates);
         if ($templateName === null || ! isset($templates[$templateName])) {
@@ -1066,24 +1176,24 @@ final class ParamChecker
         $isVariadic = $typeNode instanceof ArrayTypeNode;
         $isNullable = ($typeNode instanceof NullableTypeNode) || ($typeNode instanceof UnionTypeNode && self::typeContainsNull($typeNode));
         $isClassLevelTemplate = ! TemplateManager::isMethodTemplate($function, $templateName) && isset($classTemplates[$templateName]);
-        $targetObj = $isClassLevelTemplate ? $thisObj : null;
+        $targetObjOrClass = $isClassLevelTemplate ? ($thisObj ?? $thisOrClass) : null;
         $allowsNullInBound = ($templateNode->bound !== null && self::typeContainsNull($templateNode->bound));
 
         if ($isNullable && $val === null) {
-            if ($allowsNullInBound && ! TemplateManager::isBound($function, $targetObj, $templateName)) {
-                TemplateManager::bindTemplate($function, $targetObj, $templateName, new IdentifierTypeNode('null'));
+            if ($allowsNullInBound && ! TemplateManager::isBound($function, $targetObjOrClass, $templateName)) {
+                TemplateManager::bindTemplate($function, $thisObj, $templateName, new IdentifierTypeNode('null'));
             }
 
             return null;
         }
 
-        if (! TemplateManager::isBound($function, $targetObj, $templateName)) {
+        if (! TemplateManager::isBound($function, $targetObjOrClass, $templateName)) {
             return self::bindInitialTemplate(
                 $val,
                 $paramName,
                 $function,
                 $thisObj,
-                $targetObj,
+                $thisObj,
                 $templateName,
                 $templateNode,
                 $isVariadic,
@@ -1097,7 +1207,7 @@ final class ParamChecker
             $paramName,
             $function,
             $thisObj,
-            $targetObj,
+            $targetObjOrClass,
             $templateName,
             $templateNode,
             $isVariadic,
@@ -1154,7 +1264,7 @@ final class ParamChecker
         string $paramName,
         string $function,
         ?object $thisObj,
-        ?object $targetObj,
+        object|string|null $targetObj,
         string $templateName,
         TemplateTagValueNode $templateNode,
         bool $isVariadic,
@@ -1166,9 +1276,11 @@ final class ParamChecker
             return null;
         }
 
+        $targetObjOnly = \is_object($targetObj) ? $targetObj : null;
+
         if ($expectedTypeNode instanceof IdentifierTypeNode && $expectedTypeNode->name === $templateName) {
             $inferredType = TemplateManager::inferTypeFromValue($val);
-            TemplateManager::bindTemplate($function, $targetObj, $templateName, $inferredType);
+            TemplateManager::bindTemplate($function, $targetObjOnly, $templateName, $inferredType);
 
             return null;
         }
@@ -1179,7 +1291,7 @@ final class ParamChecker
                 $paramName,
                 $function,
                 $thisObj,
-                $targetObj,
+                $targetObjOnly,
                 $templateName,
                 $templateNode,
                 $expectedTypeNode,
@@ -1199,7 +1311,7 @@ final class ParamChecker
                 $isClassLevelTemplate,
                 $function,
                 $thisObj,
-                $targetObj,
+                $targetObjOnly,
                 $templateName,
                 $context,
                 $err,

@@ -425,6 +425,24 @@ final class TemplateManager
     }
 
     /**
+     * Retrieves inherited class-level template bindings for a class name.
+     *
+     * @return array<string, TypeNode>
+     */
+    public static function getClassInheritedBindings(string $className): array
+    {
+        if (isset(self::$classInheritedBindingsCache[$className])) {
+            return self::$classInheritedBindingsCache[$className];
+        }
+
+        if (! class_exists($className, false) && ! class_exists($className) && ! interface_exists($className) && ! trait_exists($className)) {
+            return self::$classInheritedBindingsCache[$className] = [];
+        }
+
+        return self::$classInheritedBindingsCache[$className] = self::computeClassInheritedBindings($className);
+    }
+
+    /**
      * Normalizes generic type arguments when a single type argument is supplied
      * for a 2-template collection/map whose first template is a key type (TKey of array-key).
      *
@@ -498,15 +516,16 @@ final class TemplateManager
     }
 
     /**
-     * Retrieves currently bound template types for a function call or object instance.
+     * Retrieves currently bound template types for a function call or object instance / static class.
      *
      * @param array<string, TemplateTagValueNode> $templates
      *
      * @return array<string, TypeNode>
      */
-    public static function getBoundTemplates(string $function, ?object $thisObj, array $templates): array
+    public static function getBoundTemplates(string $function, object|string|null $thisOrClass, array $templates): array
     {
         $bindings = [];
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
 
         if ($thisObj !== null) {
             self::ensureInstanceInherited($thisObj);
@@ -519,6 +538,22 @@ final class TemplateManager
             if ($methodTemplates !== []) {
                 foreach ($methodTemplates as $methodTName => $_) {
                     unset($bindings[$methodTName]);
+                }
+            }
+        } else {
+            $className = \is_string($thisOrClass) && $thisOrClass !== ''
+                ? $thisOrClass
+                : (str_contains($function, '::') ? explode('::', $function, 2)[0] : '');
+
+            if ($className !== '' && (class_exists($className, false) || class_exists($className) || interface_exists($className) || trait_exists($className))) {
+                $classBindings = self::getClassInheritedBindings($className);
+                $bindings = $classBindings;
+
+                $methodTemplates = self::getMethodTemplates($function);
+                if ($methodTemplates !== []) {
+                    foreach ($methodTemplates as $methodTName => $_) {
+                        unset($bindings[$methodTName]);
+                    }
                 }
             }
         }
@@ -617,14 +652,16 @@ final class TemplateManager
     }
 
     /**
-     * Checks if a template name is bound in the current instance or call stack frame.
+     * Checks if a template name is bound in the current instance, static class, or call stack frame.
      */
-    public static function isBound(string $function, ?object $thisObj, string $templateName): bool
+    public static function isBound(string $function, object|string|null $thisOrClass, string $templateName): bool
     {
         $topFrame = self::getTopCallFrame($function);
         if ($topFrame !== null && isset($topFrame[$templateName])) {
             return true;
         }
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
 
         if ($thisObj !== null) {
             self::ensureInstanceInherited($thisObj);
@@ -636,18 +673,34 @@ final class TemplateManager
             return isset(self::$instanceTemplateBindings[$thisObj][$templateName]);
         }
 
+        $className = \is_string($thisOrClass) && $thisOrClass !== ''
+            ? $thisOrClass
+            : (str_contains($function, '::') ? explode('::', $function, 2)[0] : '');
+
+        if ($className !== '' && (class_exists($className, false) || class_exists($className) || interface_exists($className) || trait_exists($className))) {
+            if (self::isMethodTemplate($function, $templateName)) {
+                return false;
+            }
+
+            $classBindings = self::getClassInheritedBindings($className);
+
+            return isset($classBindings[$templateName]);
+        }
+
         return false;
     }
 
     /**
-     * Retrieves the bound TypeNode for a template name from instance or call stack context.
+     * Retrieves the bound TypeNode for a template name from instance, static class, or call stack context.
      */
-    public static function getBoundType(string $function, ?object $thisObj, string $templateName): ?TypeNode
+    public static function getBoundType(string $function, object|string|null $thisOrClass, string $templateName): ?TypeNode
     {
         $topFrame = self::getTopCallFrame($function);
         if ($topFrame !== null && isset($topFrame[$templateName])) {
             return $topFrame[$templateName];
         }
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
 
         if ($thisObj !== null) {
             self::ensureInstanceInherited($thisObj);
@@ -657,6 +710,20 @@ final class TemplateManager
             }
 
             return self::$instanceTemplateBindings[$thisObj][$templateName] ?? null;
+        }
+
+        $className = \is_string($thisOrClass) && $thisOrClass !== ''
+            ? $thisOrClass
+            : (str_contains($function, '::') ? explode('::', $function, 2)[0] : '');
+
+        if ($className !== '' && (class_exists($className, false) || class_exists($className) || interface_exists($className) || trait_exists($className))) {
+            if (self::isMethodTemplate($function, $templateName)) {
+                return null;
+            }
+
+            $classBindings = self::getClassInheritedBindings($className);
+
+            return $classBindings[$templateName] ?? null;
         }
 
         return null;

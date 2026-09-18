@@ -820,16 +820,29 @@ final class DocblockParser
      */
     private static function parseMethod(\ReflectionMethod $ref): array
     {
+        /** @var array<string, TypeNode> $types */
         $types = [];
+        /** @var array<string, TypeNode> $paramOuts */
         $paramOuts = [];
+        /** @var array<string, TemplateTagValueNode> $methodTemplates */
         $methodTemplates = [];
+        /** @var array<string, TemplateTagValueNode> $classTemplates */
         $classTemplates = [];
         $returnType = null;
         $selfOut = null;
+        /** @var array<string, TypeNode> $aliases */
         $aliases = [];
 
-        self::parseClassLevelDocs($ref->getDeclaringClass(), $classTemplates, $aliases);
-        self::parseMethodHierarchyDocs($ref, $types, $methodTemplates, $returnType, $aliases, $paramOuts, $selfOut);
+        $targetClass = (class_exists($ref->class, false) || class_exists($ref->class) || interface_exists($ref->class) || enum_exists($ref->class) || trait_exists($ref->class))
+            ? new \ReflectionClass($ref->class)
+            : $ref->getDeclaringClass();
+
+        self::parseClassLevelDocs($targetClass, $classTemplates, $aliases);
+        if ($targetClass->getName() !== $ref->getDeclaringClass()->getName()) {
+            self::parseClassLevelDocs($ref->getDeclaringClass(), $classTemplates, $aliases);
+        }
+
+        self::parseMethodHierarchyDocs($ref, $types, $methodTemplates, $returnType, $aliases, $paramOuts, $selfOut, $classTemplates);
 
         if ($ref->getName() === '__construct') {
             self::applyConstructorPromotionFallback($ref, $types, $classTemplates, $aliases);
@@ -1116,13 +1129,25 @@ final class DocblockParser
         $className = $declaringClass->getName();
         if (isset(self::$classLevelDocCache[$className])) {
             $cached = self::$classLevelDocCache[$className];
-            $templates = $cached['templates'];
-            $aliases = $cached['aliases'];
+            foreach ($cached['templates'] as $name => $tag) {
+                if (! isset($templates[$name])) {
+                    $templates[$name] = $tag;
+                }
+            }
+            foreach ($cached['aliases'] as $name => $alias) {
+                if (! isset($aliases[$name])) {
+                    $aliases[$name] = $alias;
+                }
+            }
 
             return;
         }
 
         $classHierarchy = HierarchyResolver::getClassHierarchy($declaringClass);
+        /** @var array<string, TemplateTagValueNode> $localTemplates */
+        $localTemplates = [];
+        /** @var array<string, TypeNode> $localAliases */
+        $localAliases = [];
 
         foreach ($classHierarchy as $hierClass) {
             $hierClassName = $hierClass->getName();
@@ -1138,18 +1163,37 @@ final class DocblockParser
                 $classPhpDocNode = DocblockExtractor::parseDocString($classDoc);
 
                 foreach (DocblockExtractor::extractTemplates($classPhpDocNode) as $name => $tag) {
-                    if (! isset($templates[$name])) {
-                        $templates[$name] = $tag;
+                    if (! isset($localTemplates[$name])) {
+                        if ($tag->bound !== null || $tag->default !== null) {
+                            $tag = new TemplateTagValueNode(
+                                $tag->name,
+                                $tag->bound !== null ? SpecialTypeResolver::resolve($tag->bound, $hierClass) : null,
+                                $tag->description,
+                                $tag->default !== null ? SpecialTypeResolver::resolve($tag->default, $hierClass) : null
+                            );
+                        }
+                        $localTemplates[$name] = $tag;
                     }
                 }
-                DocblockExtractor::extractAliases($classPhpDocNode, $aliases, $hierClass);
+                DocblockExtractor::extractAliases($classPhpDocNode, $localAliases, $hierClass);
             }
         }
 
         self::$classLevelDocCache[$className] = [
-            'templates' => $templates,
-            'aliases' => $aliases,
+            'templates' => $localTemplates,
+            'aliases' => $localAliases,
         ];
+
+        foreach ($localTemplates as $name => $tag) {
+            if (! isset($templates[$name])) {
+                $templates[$name] = $tag;
+            }
+        }
+        foreach ($localAliases as $name => $alias) {
+            if (! isset($aliases[$name])) {
+                $aliases[$name] = $alias;
+            }
+        }
     }
 
     /**
@@ -1162,6 +1206,7 @@ final class DocblockParser
      * @param array<string, TypeNode> $aliases
      * @param array<string, TypeNode> $paramOuts
      * @param TypeNode|null $selfOut
+     * @param array<string, TemplateTagValueNode> $classTemplates
      */
     private static function parseMethodHierarchyDocs(
         \ReflectionMethod $ref,
@@ -1170,7 +1215,8 @@ final class DocblockParser
         ?TypeNode &$returnType,
         array &$aliases,
         array &$paramOuts = [],
-        ?TypeNode &$selfOut = null
+        ?TypeNode &$selfOut = null,
+        array &$classTemplates = []
     ): void {
         $hierarchy = HierarchyResolver::getMethodHierarchy($ref);
         $baseParams = $ref->getParameters();
@@ -1188,8 +1234,11 @@ final class DocblockParser
         }
 
         foreach ($hierarchy as $hierRef) {
+            $hierDeclaringClass = $hierRef->getDeclaringClass();
+            self::parseClassLevelDocs($hierDeclaringClass, $classTemplates, $aliases);
+
             $isOriginal = ($hierRef === $ref);
-            $declaringClass = $hierRef->getDeclaringClass()->getName();
+            $declaringClass = $hierDeclaringClass->getName();
             $methodName = $hierRef->getName();
             $stubDoc = StubManager::getMethodDoc($declaringClass, $methodName);
 

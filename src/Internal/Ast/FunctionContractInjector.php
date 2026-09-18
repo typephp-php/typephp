@@ -464,22 +464,33 @@ final class FunctionContractInjector
         foreach ($params as $param) {
             if ($predicate($param, $docText) && $param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
                 $paramName = $param->var->name;
-                $expr = new Node\Stmt\Expression(
-                    new Node\Expr\Assign(
-                        new Node\Expr\Variable($paramName),
-                        new Node\Expr\FuncCall(
-                            new Node\Name\FullyQualified("TypePHP\Internal\RuntimeTypeChecker::{$wrapperMethod}"),
-                            [
-                                new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                                new Node\Arg(new Node\Scalar\String_($paramName)),
-                                new Node\Arg(new Node\Expr\Variable($paramName)),
-                                new Node\Arg($thisArg),
-                            ]
-                        )
+                $assignExpr = new Node\Expr\Assign(
+                    new Node\Expr\Variable($paramName),
+                    new Node\Expr\FuncCall(
+                        new Node\Name\FullyQualified("TypePHP\Internal\RuntimeTypeChecker::{$wrapperMethod}"),
+                        [
+                            new Node\Arg(new Node\Scalar\MagicConst\Method()),
+                            new Node\Arg(new Node\Scalar\String_($paramName)),
+                            new Node\Arg(new Node\Expr\Variable($paramName)),
+                            new Node\Arg($thisArg),
+                        ]
                     )
                 );
+
+                $expr = new Node\Stmt\Expression($assignExpr);
                 $expr->setAttribute('typephp_injected', true);
                 $wrappers[] = $expr;
+
+                if ($param->isPromoted()) {
+                    $propAssign = new Node\Stmt\Expression(
+                        new Node\Expr\Assign(
+                            new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $paramName),
+                            new Node\Expr\Variable($paramName)
+                        )
+                    );
+                    $propAssign->setAttribute('typephp_injected', true);
+                    $wrappers[] = $propAssign;
+                }
             }
         }
 
