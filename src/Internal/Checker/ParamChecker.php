@@ -440,7 +440,7 @@ final class ParamChecker
     }
 
     /**
-     * Pre-infers generic template parameters from closure typehints and array arguments.
+     * Pre-infers generic template parameters from closure typehints, array arguments, and generic object arguments.
      *
      * @param array<string, TypeNode> $types
      * @param array<string, mixed> $vars
@@ -468,8 +468,110 @@ final class ParamChecker
             self::inferTemplatesFromClosures($types, $vars, $effectiveFunction, $thisObj, $templates, $classTemplates);
         }
 
-        if (\count($types) > 1) {
+        if (\count($types) > 0) {
             self::inferTemplatesFromArrays($types, $vars, $effectiveFunction, $thisObj, $templates);
+            self::inferTemplatesFromGenericObjects($types, $vars, $effectiveFunction, $thisObj, $templates, $classTemplates);
+        }
+    }
+
+    /**
+     * Pre-infers generic template parameters from generic object arguments (e.g. PBox<T> or array<K, PBox<T>>).
+     *
+     * @param array<string, TypeNode> $types
+     * @param array<string, mixed> $vars
+     * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
+     */
+    private static function inferTemplatesFromGenericObjects(
+        array $types,
+        array $vars,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates,
+        array $classTemplates = []
+    ): void {
+        foreach ($types as $paramName => $typeNode) {
+            if (! isset($vars[$paramName])) {
+                continue;
+            }
+
+            $value = $vars[$paramName];
+            self::inferGenericObjectNode($typeNode, $value, $effectiveFunction, $thisObj, $templates, $classTemplates);
+        }
+    }
+
+    /**
+     * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
+     */
+    private static function inferGenericObjectNode(
+        TypeNode $typeNode,
+        mixed $value,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates,
+        array $classTemplates = []
+    ): void {
+        if ($typeNode instanceof NullableTypeNode) {
+            $typeNode = $typeNode->type;
+        }
+
+        if ($typeNode instanceof GenericTypeNode && \is_object($value)) {
+            $baseName = strtolower($typeNode->type->name);
+            if (\in_array($baseName, ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true)) {
+                return;
+            }
+
+            $boundOnInstance = TemplateManager::getBoundTemplatesForInstance($value);
+            if ($boundOnInstance === []) {
+                return;
+            }
+
+            $instanceBoundTypes = array_values($boundOnInstance);
+
+            foreach ($typeNode->genericTypes as $idx => $gtNode) {
+                if ($gtNode instanceof IdentifierTypeNode && isset($templates[$gtNode->name])) {
+                    $tName = $gtNode->name;
+                    $isClassLevel = ! TemplateManager::isMethodTemplate($effectiveFunction, $tName) && isset($classTemplates[$tName]);
+                    $targetObj = $isClassLevel ? $thisObj : null;
+
+                    if (! TemplateManager::isBound($effectiveFunction, $targetObj, $tName)) {
+                        $inferredCandidate = $instanceBoundTypes[$idx] ?? null;
+
+                        if ($inferredCandidate !== null) {
+                            $templateTag = $templates[$tName];
+                            $satisfiesBound = true;
+
+                            if ($templateTag->bound !== null) {
+                                $resolvedBound = SpecialTypeResolver::resolve($templateTag->bound, $effectiveFunction, $thisObj);
+                                $satisfiesBound = TemplateManager::checkVariance($inferredCandidate, $resolvedBound, GenericTypeNode::VARIANCE_COVARIANT);
+                            }
+
+                            if ($satisfiesBound) {
+                                TemplateManager::bindTemplate($effectiveFunction, $targetObj, $tName, $inferredCandidate);
+                            }
+                        }
+                    }
+                }
+            }
+        } elseif (\is_array($value)) {
+            $innerType = null;
+            if ($typeNode instanceof ArrayTypeNode) {
+                $innerType = $typeNode->type;
+            } elseif ($typeNode instanceof GenericTypeNode) {
+                $baseName = strtolower($typeNode->type->name);
+                if (\in_array($baseName, ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true)) {
+                    $innerType = $typeNode->genericTypes[1] ?? $typeNode->genericTypes[0] ?? null;
+                }
+            }
+
+            if ($innerType !== null) {
+                foreach ($value as $item) {
+                    if (\is_object($item)) {
+                        self::inferGenericObjectNode($innerType, $item, $effectiveFunction, $thisObj, $templates, $classTemplates);
+                    }
+                }
+            }
         }
     }
 
