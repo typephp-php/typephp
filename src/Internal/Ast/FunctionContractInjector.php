@@ -28,7 +28,7 @@ final class FunctionContractInjector
     ];
 
     /**
-     * @param array{hasInheritance?: bool, hasPropertyWithDoc?: bool}|null $classContext
+     * @param array{hasInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, hasTemplates?: bool}|null $classContext
      */
     public static function inject(Node\Stmt\Function_|Node\Stmt\ClassMethod $node, ?array $classContext = null): void
     {
@@ -43,6 +43,7 @@ final class FunctionContractInjector
         $hasInheritance = $classContext['hasInheritance'] ?? true;
         $hasPropertyWithDoc = $classContext['hasPropertyWithDoc'] ?? true;
         $isReadonlyClass = $classContext['isReadonly'] ?? false;
+        $hasClassTemplates = $classContext['hasTemplates'] ?? false;
 
         $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
         $isConstructor = $isClassMethod && $methodName === '__construct';
@@ -79,7 +80,7 @@ final class FunctionContractInjector
         $hasParamOut = $byRefParams !== [] && ($hasParamOutDoc || $hasInheritance);
 
         $hasSelfOutDoc = str_contains($docText, 'self-out') || str_contains($docText, 'this-out');
-        $hasSelfOut = $isClassMethod && ! $node->isStatic() && ($hasSelfOutDoc || $hasInheritance);
+        $hasSelfOut = $isClassMethod && ! $node->isStatic() && ($hasSelfOutDoc || ($hasClassTemplates && $hasInheritance));
 
         $hasReturnDoc = str_contains($docText, '@return')
             || str_contains($docText, '@phpstan-return')
@@ -623,14 +624,14 @@ final class FunctionContractInjector
         return [$ifStmt, $retStmt];
     }
 
-    public static function buildTernaryReturnExpr(Node\Expr\FuncCall $checkCall): Node\Expr\Ternary
+    public static function buildTernaryReturnExpr(Node\Expr\FuncCall $checkCall, ?int $line = null): Node\Expr\Ternary
     {
         return new Node\Expr\Ternary(
             new Node\Expr\Instanceof_(
                 new Node\Expr\Assign(new Node\Expr\Variable('__typephpRet'), $checkCall),
                 new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
             ),
-            self::buildTypeErrorThrowExpr(new Node\Expr\Variable('__typephpRet')),
+            self::buildTypeErrorThrowExpr(new Node\Expr\Variable('__typephpRet'), $line),
             new Node\Expr\Variable('__typephpRet')
         );
     }
@@ -796,26 +797,8 @@ final class FunctionContractInjector
                         return [...$exitStmts, ...$voidGuardStmts];
                     }
 
-                    // Call-site cache bypass for return checks
-                    $cacheKeyExpr = new Node\Scalar\MagicConst\Method();
-                    $cacheCheck = new Node\Expr\Isset_([
-                        new Node\Expr\ArrayDimFetch(
-                            new Node\Expr\StaticPropertyFetch(
-                                new Node\Name\FullyQualified('TypePHP\Internal\Checker\ReturnChecker'),
-                                'noReturnContractCache'
-                            ),
-                            $cacheKeyExpr
-                        ),
-                    ]);
-
                     $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
-                    $ternaryExpr = FunctionContractInjector::buildTernaryReturnExpr($checkCall);
-
-                    $n->expr = new Node\Expr\Ternary(
-                        $cacheCheck,
-                        $exprToWrap,
-                        $ternaryExpr
-                    );
+                    $n->expr = FunctionContractInjector::buildTernaryReturnExpr($checkCall, $n->getStartLine());
 
                     return $exitStmts !== [] ? [...$exitStmts, $n] : null;
                 }
@@ -852,25 +835,10 @@ final class FunctionContractInjector
                 if ($isNativeVoid) {
                     $newStmts = [...$newStmts, ...$exitStmts, ...self::buildVoidReturnGuard($checkCall)];
                 } else {
-                    $cacheKeyExpr = new Node\Scalar\MagicConst\Method();
-                    $cacheCheck = new Node\Expr\Isset_([
-                        new Node\Expr\ArrayDimFetch(
-                            new Node\Expr\StaticPropertyFetch(
-                                new Node\Name\FullyQualified('TypePHP\Internal\Checker\ReturnChecker'),
-                                'noReturnContractCache'
-                            ),
-                            $cacheKeyExpr
-                        ),
-                    ]);
+                    $fallbackLine = $lastStmt instanceof Node\Stmt ? $lastStmt->getStartLine() : null;
+                    $ternaryExpr = self::buildTernaryReturnExpr($checkCall, $fallbackLine);
 
-                    $ternaryExpr = self::buildTernaryReturnExpr($checkCall);
-                    $fallbackExpr = new Node\Expr\Ternary(
-                        $cacheCheck,
-                        new Node\Expr\ConstFetch(new Node\Name('null')),
-                        $ternaryExpr
-                    );
-
-                    $retStmt = new Node\Stmt\Return_($fallbackExpr);
+                    $retStmt = new Node\Stmt\Return_($ternaryExpr);
                     $retStmt->setAttribute('typephp_injected', true);
                     $newStmts = [...$newStmts, ...$exitStmts, $retStmt];
                 }

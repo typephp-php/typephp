@@ -34,7 +34,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     private string $currentNamespace = '';
 
     /**
-     * @var list<array{name: ?string, isAnonymous: bool, hasInheritance: bool, hasPropertyWithDoc: bool}>
+     * @var list<array{name: ?string, isAnonymous: bool, hasInheritance: bool, hasPropertyWithDoc: bool, isReadonly: bool, hasTemplates: bool}>
      */
     private array $classStack = [];
 
@@ -192,6 +192,7 @@ final class ContractVisitor extends NodeVisitorAbstract
         $hasInheritance = true;
         $hasPropertyWithDoc = false;
         $isReadonly = false;
+        $hasTemplates = false;
 
         if ($node instanceof Node\Stmt\Class_) {
             $hasExtends = $node->extends !== null;
@@ -208,8 +209,13 @@ final class ContractVisitor extends NodeVisitorAbstract
             }
 
             $doc = $node->getDocComment();
-            $hasClassDoc = $doc !== null && (
+            $hasTemplates = $doc !== null && (
                 str_contains($doc->getText(), '@template')
+                || str_contains($doc->getText(), '@phpstan-template')
+                || str_contains($doc->getText(), '@psalm-template')
+            );
+            $hasClassDoc = $doc !== null && (
+                $hasTemplates
                 || str_contains($doc->getText(), '@phpstan-')
                 || str_contains($doc->getText(), '@psalm-')
             );
@@ -217,6 +223,13 @@ final class ContractVisitor extends NodeVisitorAbstract
             $hasInheritance = $hasExtends || $hasImplements || $hasTraits || $hasClassDoc;
         } elseif ($node instanceof Node\Stmt\Enum_) {
             $hasInheritance = $node->implements !== [];
+        } else {
+            $doc = $node->getDocComment();
+            $hasTemplates = $doc !== null && (
+                str_contains($doc->getText(), '@template')
+                || str_contains($doc->getText(), '@phpstan-template')
+                || str_contains($doc->getText(), '@psalm-template')
+            );
         }
 
         $this->classStack[] = [
@@ -225,6 +238,7 @@ final class ContractVisitor extends NodeVisitorAbstract
             'hasInheritance' => $hasInheritance,
             'hasPropertyWithDoc' => $hasPropertyWithDoc,
             'isReadonly' => $isReadonly,
+            'hasTemplates' => $hasTemplates,
         ];
     }
 
