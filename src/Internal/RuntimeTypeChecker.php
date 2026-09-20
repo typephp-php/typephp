@@ -13,6 +13,7 @@ use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ParamOutChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
 use TypePHP\Internal\Checker\SelfOutChecker;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
@@ -36,11 +37,17 @@ final class RuntimeTypeChecker
     public static array $hasMethodTemplatesCache = [];
 
     /**
+     * @var array<string, true>
+     */
+    private static array $checkedStaticProperties = [];
+
+    /**
      * Resets runtime caches.
      */
     public static function reset(): void
     {
         self::$hasMethodTemplatesCache = [];
+        self::$checkedStaticProperties = [];
         IgnoreManager::reset();
         CallerBoundaryResolver::reset();
         ParamOutChecker::reset();
@@ -73,6 +80,39 @@ final class RuntimeTypeChecker
         } finally {
             TemplateManager::popPendingInstantiation();
         }
+    }
+
+    /**
+     * Evaluates inline property validation dynamically based on configuration.
+     */
+    public static function checkStaticProperty(
+        mixed $objectOrClass,
+        string $propName,
+        mixed $value,
+        string $file = '',
+        ?int $line = null
+    ): mixed {
+        if (! Config::isEnabled() || ! Config::isInlinePropertiesEnabled()) {
+            return $value;
+        }
+
+        $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
+        $key = $className . '::$' . $propName;
+
+        if (isset(self::$checkedStaticProperties[$key])) {
+            return $value;
+        }
+
+        self::$checkedStaticProperties[$key] = true;
+
+        $res = self::checkProperty($value, $objectOrClass, $propName, $file);
+        if ($res instanceof ErrorMessage) {
+            $typeError = new \TypePHP\Exception\TypeError($res->getMessage());
+
+            throw ErrorFactory::prepareException($typeError, $line, $file !== '' ? $file : null);
+        }
+
+        return $value;
     }
 
     /**

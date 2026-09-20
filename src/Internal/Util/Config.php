@@ -392,8 +392,8 @@ final class Config
         /** @var array<int, string> $currentStubs */
         $currentStubs = \is_array($mergedConfig['stubs'] ?? null) ? $mergedConfig['stubs'] : [];
 
-        $mergedConfig['include'] = array_values(array_unique(array_merge($currentIncludes, $extensionIncludes)));
-        $mergedConfig['stubs'] = array_values(array_unique(array_merge($currentStubs, $extensionStubs)));
+        $mergedConfig['include'] = array_values(array_unique([...$currentIncludes, ...$extensionIncludes]));
+        $mergedConfig['stubs'] = array_values(array_unique([...$currentStubs, ...$extensionStubs]));
 
         self::syncFlags($mergedConfig);
 
@@ -421,8 +421,8 @@ final class Config
             /** @var array<int, string> $currentStubs */
             $currentStubs = \is_array($mergedConfig['stubs'] ?? null) ? $mergedConfig['stubs'] : [];
 
-            $mergedConfig['include'] = array_values(array_unique(array_merge($currentIncludes, $extensionIncludes)));
-            $mergedConfig['stubs'] = array_values(array_unique(array_merge($currentStubs, $extensionStubs)));
+            $mergedConfig['include'] = array_values(array_unique([...$currentIncludes, ...$extensionIncludes]));
+            $mergedConfig['stubs'] = array_values(array_unique([...$currentStubs, ...$extensionStubs]));
         }
 
         self::$cachedConfig = $mergedConfig;
@@ -463,7 +463,7 @@ final class Config
                 $baseInlineVars = $base['inline_vars'];
                 /** @var array<string, bool> $overrideInlineVars */
                 $overrideInlineVars = $value;
-                $merged['inline_vars'] = array_merge($baseInlineVars, $overrideInlineVars);
+                $merged['inline_vars'] = [...$baseInlineVars, ...$overrideInlineVars];
             } elseif (\in_array($key, ['include', 'exclude', 'extensions', 'stubs'], true) && \is_array($value)) {
                 $merged[$key] = array_values($value);
             } else {
