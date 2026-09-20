@@ -208,4 +208,97 @@ PHP;
             ->and($transformed)->not()->toContain('/*')
         ;
     });
+
+    test('preserves exact line numbers when a multi-line array return is followed by subsequent method calls', function () {
+        $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+class MultiLineReturnFixture
+{
+    /**
+     * @return array<string, list<int>>
+     */
+    public function rules(): array
+    {
+        return [
+            'title' => ['required', 'string', 'max:255'],
+            'body' => ['required', 'string'],
+            'is_locked' => ['boolean'],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    public function insert(array $data): void
+    {
+        // logic
+    }
+}
+
+$targetCall = true;
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_multiline_return_drift.php');
+
+        $origLines = explode("\n", str_replace("\r\n", "\n", $source));
+        $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
+
+        expect(\count($transLines))->toBe(\count($origLines));
+
+        $origIndex = array_search('$targetCall = true;', array_map('trim', $origLines), true);
+        $transIndex = array_search('$targetCall = true;', array_map('trim', $transLines), true);
+
+        expect($transIndex)->toBe($origIndex)
+            ->and($origIndex)->toBe(27)
+        ;
+    });
+
+    test('points to exact return statement start line when multi-line return array contract fails', function () {
+        $tempDir = sys_get_temp_dir() . '/typephp_multiline_test_' . uniqid();
+        mkdir($tempDir, 0777, true);
+        $scriptPath = $tempDir . '/multiline_return_test.php';
+
+        $code = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+class ReturnLineCheckFixture
+{
+    /**
+     * @return array<string, list<int>>
+     */
+    public function rules(): array
+    {
+        return [
+            'title' => ['required', 'string'],
+        ];
+    }
+}
+
+(new ReturnLineCheckFixture())->rules();
+PHP;
+
+        file_put_contents($scriptPath, $code);
+
+        try {
+            require $scriptPath;
+            $caught = false;
+        } catch (TypePHP\Exception\TypeError $e) {
+            $caught = true;
+            expect($e->getLine())->toBe(12);
+        } finally {
+            if (file_exists($scriptPath)) {
+                @unlink($scriptPath);
+            }
+            if (is_dir($tempDir)) {
+                @rmdir($tempDir);
+            }
+        }
+
+        expect($caught)->toBeTrue();
+    });
 });

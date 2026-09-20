@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Tests\TypeChecking\Generics;
 
 use TypePHP\Exception\TypeError;
+use TypePHP\Internal\Util\Config;
 use TypePHP\TypePHP;
 
 class ConstructorPrebindAnimal
@@ -79,6 +80,45 @@ describe('Constructor Generic Pre-binding with Inline @var Annotation', function
         })->toThrow(
             TypeError::class,
             'Argument $content[1] (template T = TypePHP\Tests\TypeChecking\Generics\ConstructorPrebindAnimal) must be of type TypePHP\Tests\TypeChecking\Generics\ConstructorPrebindAnimal'
+        );
+    });
+});
+
+describe('Configuration Toggles (inline_vars.generics => false)', function () {
+    afterEach(function () {
+        Config::reset();
+    });
+
+    test('bypasses eager constructor prebinding and allows dynamic inference when generics toggle is false', function () {
+        Config::set([
+            'inline_vars' => [
+                'generics' => false,
+                'objects' => true,
+            ],
+        ]);
+
+        /** @var ConstructorPrebindBox<int> $box */
+        $box = new ConstructorPrebindBox(['1', '2', '3']);
+
+        expect($box)->toBeInstanceOf(ConstructorPrebindBox::class)
+            ->and($box->getContent())->toBe(['1', '2', '3'])
+        ;
+    });
+
+    test('still enforces object class check when generics is false and objects is true', function () {
+        Config::set([
+            'inline_vars' => [
+                'generics' => false,
+                'objects' => true,
+            ],
+        ]);
+
+        expect(function () {
+            /** @var ConstructorPrebindBox<int> $box */
+            $box = new ConstructorPrebindCar();
+        })->toThrow(
+            TypeError::class,
+            'must be of type TypePHP\Tests\TypeChecking\Generics\ConstructorPrebindBox'
         );
     });
 });
