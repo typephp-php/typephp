@@ -56,10 +56,6 @@ class DeepNormalCaller
 }
 
 describe('Deep Stack Trace @typephp-ignore Resolution (11+ Frames Deep)', function () {
-    beforeEach(function () {
-        Config::reset();
-    });
-
     afterEach(function () {
         Config::reset();
     });
