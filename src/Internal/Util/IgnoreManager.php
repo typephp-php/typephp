@@ -99,7 +99,20 @@ final class IgnoreManager
             $function = $frame['function'];
             $file = $frame['file'] ?? '';
 
-            if ($class !== '' && (str_starts_with($class, 'TypePHP\\Internal\\') || $class === 'TypePHP\\TypePHP')) {
+            // Skip internal library frames and test runner framework internals
+            if (
+                $class !== '' && (
+                    str_starts_with($class, 'TypePHP\\Internal\\')
+                    || $class === 'TypePHP\\TypePHP'
+                    || str_starts_with($class, 'PHPUnit\\')
+                    || str_starts_with($class, 'Pest\\')
+                    || str_starts_with($class, 'P\\')
+                )
+            ) {
+                continue;
+            }
+
+            if (str_starts_with($function, '__pest_')) {
                 continue;
             }
 
@@ -146,18 +159,37 @@ final class IgnoreManager
         return false;
     }
 
+    /**
+     * Checks if a docblock contains a standalone @typephp-ignore or @typephp-disable tag.
+     */
+    public static function hasIgnoreDocTag(string|false|null $doc): bool
+    {
+        if ($doc === null || $doc === false || $doc === '') {
+            return false;
+        }
+
+        if (! str_contains($doc, '@typephp-ignore') && ! str_contains($doc, '@typephp-disable')) {
+            return false;
+        }
+
+        return (bool) preg_match(
+            '/(?:^\s*\*\s*|\/\*\*\s*|(?:\/\/|#)\s*)@(typephp-ignore|typephp-disable)(?:\s|\*\/|$)/m',
+            $doc
+        );
+    }
+
     private static function checkMethodIgnored(string $class, string $method): bool
     {
         if (StubManager::hasMethodStub($class, $method)) {
             $stubDoc = StubManager::getMethodDoc($class, $method);
-            if ($stubDoc !== null && (str_contains($stubDoc, '@typephp-ignore') || str_contains($stubDoc, '@typephp-disable'))) {
+            if (self::hasIgnoreDocTag($stubDoc)) {
                 return true;
             }
         }
 
         if (StubManager::hasClassStub($class)) {
             $classStubDoc = StubManager::getClassDoc($class);
-            if ($classStubDoc !== null && (str_contains($classStubDoc, '@typephp-ignore') || str_contains($classStubDoc, '@typephp-disable'))) {
+            if (self::hasIgnoreDocTag($classStubDoc)) {
                 return true;
             }
         }
@@ -172,20 +204,12 @@ final class IgnoreManager
 
             if ($refClass->hasMethod($method)) {
                 $refMethod = $refClass->getMethod($method);
-                $doc = $refMethod->getDocComment();
-                if ($doc !== false && $doc !== null && (
-                    str_contains($doc, '@typephp-ignore')
-                    || str_contains($doc, '@typephp-disable')
-                )) {
+                if (self::hasIgnoreDocTag($refMethod->getDocComment())) {
                     return true;
                 }
             }
 
-            $classDoc = $refClass->getDocComment();
-            if ($classDoc !== false && $classDoc !== null && (
-                str_contains($classDoc, '@typephp-ignore')
-                || str_contains($classDoc, '@typephp-disable')
-            )) {
+            if (self::hasIgnoreDocTag($refClass->getDocComment())) {
                 return true;
             }
         } catch (Throwable $e) {
@@ -199,7 +223,7 @@ final class IgnoreManager
     {
         if (StubManager::hasFunctionStub($function)) {
             $stubDoc = StubManager::getFunctionDoc($function);
-            if ($stubDoc !== null && (str_contains($stubDoc, '@typephp-ignore') || str_contains($stubDoc, '@typephp-disable'))) {
+            if (self::hasIgnoreDocTag($stubDoc)) {
                 return true;
             }
         }
@@ -210,11 +234,7 @@ final class IgnoreManager
 
         try {
             $refFunc = new ReflectionFunction($function);
-            $doc = $refFunc->getDocComment();
-            if ($doc !== false && $doc !== null && (
-                str_contains($doc, '@typephp-ignore')
-                || str_contains($doc, '@typephp-disable')
-            )) {
+            if (self::hasIgnoreDocTag($refFunc->getDocComment())) {
                 return true;
             }
         } catch (Throwable $e) {

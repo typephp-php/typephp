@@ -28,6 +28,7 @@ use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\FileFilter;
+use TypePHP\Internal\Util\IgnoreManager;
 use TypePHP\Internal\Util\StubManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
@@ -764,7 +765,7 @@ final class DocblockParser
 
     private static function shouldIgnoreDoc(string $doc): bool
     {
-        return Config::isRespectIgnoreTagsEnabled() && (str_contains($doc, '@typephp-ignore') || str_contains($doc, '@typephp-disable'));
+        return Config::isRespectIgnoreTagsEnabled() && IgnoreManager::hasIgnoreDocTag($doc);
     }
 
     /**
@@ -1626,7 +1627,7 @@ final class DocblockParser
 
         if ($node instanceof CallableTypeNode) {
             $parameters = array_map(
-                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+                fn(CallableTypeParameterNode $param) => new CallableTypeParameterNode(
                     self::substituteAliases($param->type, $aliases),
                     $param->isReference,
                     $param->isVariadic,
@@ -1660,7 +1661,7 @@ final class DocblockParser
         if ($node instanceof GenericTypeNode) {
             $genericType = self::substituteAliases($node->type, $aliases);
             $genericTypes = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->genericTypes
             );
 
@@ -1677,7 +1678,7 @@ final class DocblockParser
 
         if ($node instanceof UnionTypeNode) {
             $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 
@@ -1692,7 +1693,7 @@ final class DocblockParser
 
         if ($node instanceof IntersectionTypeNode) {
             $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 
