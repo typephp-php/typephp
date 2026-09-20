@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use TypePHP\Internal\Io\StreamWrapper;
+use TypePHP\Internal\Util\Config;
 
 describe('Line Number Preservation', function () {
     test('transforms code without shifting original line numbers for parameter checks', function () {
@@ -257,9 +258,13 @@ PHP;
     });
 
     test('points to exact return statement start line when multi-line return array contract fails', function () {
-        $tempDir = sys_get_temp_dir() . '/typephp_multiline_test_' . uniqid();
+        $sysTemp = realpath(sys_get_temp_dir());
+        $baseTemp = str_replace('\\', '/', $sysTemp !== false ? $sysTemp : sys_get_temp_dir());
+        $tempDir = $baseTemp . '/typephp_multiline_test_' . uniqid();
         mkdir($tempDir, 0777, true);
-        $scriptPath = $tempDir . '/multiline_return_test.php';
+
+        $canonicalDir = str_replace('\\', '/', realpath($tempDir) ?: $tempDir);
+        $scriptPath = $canonicalDir . '/multiline_return_test.php';
 
         $code = <<<'PHP'
 <?php
@@ -285,12 +290,23 @@ PHP;
         file_put_contents($scriptPath, $code);
 
         try {
+            Config::set([
+                'include' => [
+                    $canonicalDir . '/**',
+                ],
+                'exclude' => [
+                    'vendor/**',
+                ],
+            ]);
+            StreamWrapper::register();
+
             require $scriptPath;
             $caught = false;
-        } catch (TypePHP\Exception\TypeError $e) {
+        } catch (\TypePHP\Exception\TypeError $e) {
             $caught = true;
             expect($e->getLine())->toBe(12);
         } finally {
+            Config::reset();
             if (file_exists($scriptPath)) {
                 @unlink($scriptPath);
             }
