@@ -44,9 +44,7 @@ final class PropertyHookInjector
             return false;
         }
 
-        $shouldRespectIgnore = (bool) (Config::get()['respect_ignore_tags'] ?? true);
-
-        return $shouldRespectIgnore && (str_contains($doc->getText(), '@typephp-ignore') || str_contains($doc->getText(), '@typephp-disable'));
+        return Config::isRespectIgnoreTagsEnabled() && (str_contains($doc->getText(), '@typephp-ignore') || str_contains($doc->getText(), '@typephp-disable'));
     }
 
     private static function processGetHook(Node\PropertyHook $hook, string $propertyName): void

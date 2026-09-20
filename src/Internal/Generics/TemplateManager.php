@@ -414,7 +414,7 @@ final class TemplateManager
      */
     public static function applyPendingInstantiation(object $instance): void
     {
-        if (self::$pendingInstantiations === []) {
+        if (! Config::isInlineGenericsEnabled() || self::$pendingInstantiations === []) {
             return;
         }
 

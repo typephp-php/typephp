@@ -64,6 +64,18 @@ final class Config
 
     private static string $arrayValidation = 'full';
 
+    private static bool $inlineProperties = true;
+
+    private static bool $inlineGenerics = true;
+
+    private static bool $inlineCallables = true;
+
+    private static bool $inlineScalars = true;
+
+    private static bool $inlineArrays = true;
+
+    private static bool $inlineObjects = true;
+
     public static function isEnabled(): bool
     {
         if (self::$cachedConfig === null) {
@@ -71,6 +83,73 @@ final class Config
         }
 
         return self::$enabled;
+    }
+
+    public static function isInlinePropertiesEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineProperties;
+    }
+
+    public static function isInlineGenericsEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineGenerics;
+    }
+
+    public static function isInlineCallablesEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineCallables;
+    }
+
+    public static function isInlineScalarsEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineScalars;
+    }
+
+    public static function isInlineArraysEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineArrays;
+    }
+
+    public static function isInlineObjectsEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineObjects;
+    }
+
+    public static function hasActiveInlineChecks(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineGenerics
+            || self::$inlineCallables
+            || self::$inlineScalars
+            || self::$inlineArrays
+            || self::$inlineObjects;
     }
 
     public static function isCacheCheckMtimeEnabled(): bool
@@ -415,6 +494,12 @@ final class Config
         self::$arrayValidation = 'full';
         self::$cacheCheckMtime = true;
         self::$paramsOut = true;
+        self::$inlineProperties = true;
+        self::$inlineGenerics = true;
+        self::$inlineCallables = true;
+        self::$inlineScalars = true;
+        self::$inlineArrays = true;
+        self::$inlineObjects = true;
 
         DocblockParser::reset();
         ParamChecker::reset();
@@ -452,5 +537,12 @@ final class Config
         self::$vendorBoundaryOnly = (bool) ($config['vendor_boundary_only'] ?? true);
         self::$arrayValidation = \is_string($config['array_validation'] ?? null) ? $config['array_validation'] : 'full';
         self::$cacheCheckMtime = (bool) ($config['cache_check_mtime'] ?? true);
+        $inline = \is_array($config['inline_vars'] ?? null) ? $config['inline_vars'] : [];
+        self::$inlineProperties = (bool) ($inline['properties'] ?? true);
+        self::$inlineGenerics = (bool) ($inline['generics'] ?? true);
+        self::$inlineCallables = (bool) ($inline['callables'] ?? true);
+        self::$inlineScalars = (bool) ($inline['scalars'] ?? true);
+        self::$inlineArrays = (bool) ($inline['arrays'] ?? true);
+        self::$inlineObjects = (bool) ($inline['objects'] ?? true);
     }
 }

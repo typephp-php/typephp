@@ -62,6 +62,10 @@ final class RuntimeTypeChecker
      */
     public static function withPendingGeneric(string $typeString, \Closure $factory, string $file = ''): mixed
     {
+        if (! Config::isEnabled() || ! Config::isInlineGenericsEnabled()) {
+            return $factory();
+        }
+
         TemplateManager::pushPendingInstantiation($typeString, $file);
 
         try {

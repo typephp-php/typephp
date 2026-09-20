@@ -130,11 +130,7 @@ final class InlineChecker
         ?string $caller = null,
         mixed $thisOrClass = null
     ): mixed {
-        $rawConfig = Config::get()['inline_vars'] ?? [];
-        /** @var array<string, bool> $config */
-        $config = \is_array($rawConfig) ? $rawConfig : [];
-
-        if (! self::hasActiveInlineChecks($config)) {
+        if (! Config::hasActiveInlineChecks()) {
             return $value;
         }
 
@@ -150,7 +146,7 @@ final class InlineChecker
                 $typeNode = self::resolveCallerContext($typeNode, $caller, $thisOrClass);
             }
 
-            if (! self::shouldValidateType($typeNode, $config)) {
+            if (! self::shouldValidateType($typeNode)) {
                 return $value;
             }
 
@@ -166,8 +162,20 @@ final class InlineChecker
                 return CallableWrapper::wrapTypeNode($typeNode, $value, $cbPrefix, $registry);
             }
 
-            $checkGenerics = (bool) ($config['generics'] ?? true);
-            if ($typeNode instanceof GenericTypeNode && $checkGenerics && \is_object($value)) {
+            if ($typeNode instanceof GenericTypeNode) {
+                $baseName = strtolower($typeNode->type->name);
+                $isCollection = isset(self::ARRAY_TYPES[$baseName]);
+
+                if (! $isCollection) {
+                    if (! Config::isInlineGenericsEnabled() && Config::isInlineObjectsEnabled()) {
+                        $typeNode = $typeNode->type;
+                    } elseif (! Config::isInlineGenericsEnabled() && ! Config::isInlineObjectsEnabled()) {
+                        return $value;
+                    }
+                }
+            }
+
+            if ($typeNode instanceof GenericTypeNode && Config::isInlineGenericsEnabled() && \is_object($value)) {
                 $err = TemplateManager::bindInstanceFromNode($value, $typeNode, $context);
                 if ($err !== null) {
                     return $err;
@@ -225,11 +233,7 @@ final class InlineChecker
             return $value;
         }
 
-        $rawConfig = Config::get()['inline_vars'] ?? [];
-        /** @var array<string, bool> $config */
-        $config = \is_array($rawConfig) ? $rawConfig : [];
-
-        if (! ($config['properties'] ?? true)) {
+        if (! Config::isInlinePropertiesEnabled()) {
             return $value;
         }
 
@@ -240,7 +244,7 @@ final class InlineChecker
             return $value;
         }
 
-        if (! self::shouldValidateType($typeNode, $config)) {
+        if (! self::shouldValidateType($typeNode)) {
             return $value;
         }
 
@@ -258,20 +262,6 @@ final class InlineChecker
         }
 
         return $value;
-    }
-
-    /**
-     * Checks if at least one inline variable category is active.
-     *
-     * @param array<string, bool> $config
-     */
-    private static function hasActiveInlineChecks(array $config): bool
-    {
-        return (bool) ($config['generics'] ?? true)
-            || (bool) ($config['callables'] ?? true)
-            || (bool) ($config['scalars'] ?? false)
-            || (bool) ($config['arrays'] ?? false)
-            || (bool) ($config['objects'] ?? false);
     }
 
     /**
@@ -550,15 +540,12 @@ final class InlineChecker
         return [$typeParser, $lexer];
     }
 
-    /**
-     * @param array<string, bool> $config
-     */
-    private static function shouldValidateType(TypeNode $node, array $config): bool
+    private static function shouldValidateType(TypeNode $node): bool
     {
-        $checkArrays = (bool) ($config['arrays'] ?? false);
+        $checkArrays = Config::isInlineArraysEnabled();
 
         if ($node instanceof CallableTypeNode) {
-            return (bool) ($config['callables'] ?? true);
+            return Config::isInlineCallablesEnabled();
         }
 
         if ($node instanceof ObjectShapeNode || $node instanceof ArrayShapeNode || $node instanceof ArrayTypeNode) {
@@ -573,7 +560,7 @@ final class InlineChecker
             }
 
             if ($lower === 'callable') {
-                return (bool) ($config['callables'] ?? true);
+                return Config::isInlineCallablesEnabled();
             }
 
             if (isset(self::ARRAY_TYPES[$lower])) {
@@ -581,10 +568,10 @@ final class InlineChecker
             }
 
             if (isset(self::SCALAR_TYPES[$lower])) {
-                return (bool) ($config['scalars'] ?? false);
+                return Config::isInlineScalarsEnabled();
             }
 
-            return (bool) ($config['objects'] ?? false);
+            return Config::isInlineObjectsEnabled();
         }
 
         if ($node instanceof GenericTypeNode) {
@@ -593,20 +580,20 @@ final class InlineChecker
                 return $checkArrays;
             }
 
-            if ((bool) ($config['generics'] ?? true)) {
+            if (Config::isInlineGenericsEnabled()) {
                 return true;
             }
 
-            return (bool) ($config['objects'] ?? false);
+            return Config::isInlineObjectsEnabled();
         }
 
         if ($node instanceof NullableTypeNode) {
-            return self::shouldValidateType($node->type, $config);
+            return self::shouldValidateType($node->type);
         }
 
         if ($node instanceof UnionTypeNode || $node instanceof IntersectionTypeNode) {
             foreach ($node->types as $t) {
-                if (self::shouldValidateType($t, $config)) {
+                if (self::shouldValidateType($t)) {
                     return true;
                 }
             }
@@ -614,6 +601,6 @@ final class InlineChecker
             return false;
         }
 
-        return (bool) ($config['scalars'] ?? false);
+        return Config::isInlineScalarsEnabled();
     }
 }
