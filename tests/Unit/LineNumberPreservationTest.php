@@ -302,7 +302,7 @@ PHP;
 
             require $scriptPath;
             $caught = false;
-        } catch (\TypePHP\Exception\TypeError $e) {
+        } catch (TypePHP\Exception\TypeError $e) {
             $caught = true;
             expect($e->getLine())->toBe(12);
         } finally {

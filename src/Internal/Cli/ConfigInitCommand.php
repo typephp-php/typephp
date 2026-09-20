@@ -115,6 +115,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Ignore Tag Stack Trace Depth
+    |--------------------------------------------------------------------------
+    | Controls how many stack frames above a failing type check TypePHP will
+    | inspect to find an enclosing @typephp-ignore or @typephp-disable tag.
+    | Default is 25 frames. Increase this if your application or test suite
+    | uses deep call stacks (e.g. pipelines, middlewares, or nested callers).
+    */
+    'ignore_trace_depth' => 25,
+
+    /*
+    |--------------------------------------------------------------------------
     | Array Validation Strategy
     |--------------------------------------------------------------------------
     | Controls how collections (list<T>, array<K, V>, Type[]) are verified:

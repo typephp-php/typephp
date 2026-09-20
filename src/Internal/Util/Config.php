@@ -76,6 +76,8 @@ final class Config
 
     private static bool $inlineObjects = true;
 
+    private static int $ignoreTraceDepth = 25;
+
     public static function isEnabled(): bool
     {
         if (self::$cachedConfig === null) {
@@ -83,6 +85,15 @@ final class Config
         }
 
         return self::$enabled;
+    }
+
+    public static function getIgnoreTraceDepth(): int
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$ignoreTraceDepth;
     }
 
     public static function isInlinePropertiesEnabled(): bool
@@ -345,6 +356,7 @@ final class Config
             'magic_properties' => true,
             'magic_methods' => true,
             'respect_ignore_tags' => true,
+            'ignore_trace_depth' => 25,
             'respect_native_nullability' => true,
             'vendor_boundary_only' => true,
             'array_validation' => 'full',
@@ -489,6 +501,7 @@ final class Config
         self::$magicProperties = true;
         self::$magicMethods = true;
         self::$respectIgnoreTags = true;
+        self::$ignoreTraceDepth = 25;
         self::$respectNativeNullability = true;
         self::$vendorBoundaryOnly = true;
         self::$arrayValidation = 'full';
@@ -533,6 +546,9 @@ final class Config
         self::$magicProperties = (bool) ($config['magic_properties'] ?? true);
         self::$magicMethods = (bool) ($config['magic_methods'] ?? true);
         self::$respectIgnoreTags = (bool) ($config['respect_ignore_tags'] ?? true);
+        self::$ignoreTraceDepth = isset($config['ignore_trace_depth']) && is_numeric($config['ignore_trace_depth']) && (int) $config['ignore_trace_depth'] > 0
+            ? (int) $config['ignore_trace_depth']
+            : 25;
         self::$respectNativeNullability = (bool) ($config['respect_native_nullability'] ?? true);
         self::$vendorBoundaryOnly = (bool) ($config['vendor_boundary_only'] ?? true);
         self::$arrayValidation = \is_string($config['array_validation'] ?? null) ? $config['array_validation'] : 'full';

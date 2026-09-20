@@ -38,7 +38,7 @@ class DeepIgnoringCaller
         $target = new DeepIgnoreTargetService();
 
         return DeepPipelineRunner::recurse(1, $framesDeep, function () use ($target) {
-            return $target->executeLeaf(-1); 
+            return $target->executeLeaf(-1);
         });
     }
 }
@@ -50,7 +50,7 @@ class DeepNormalCaller
         $target = new DeepIgnoreTargetService();
 
         return DeepPipelineRunner::recurse(1, $framesDeep, function () use ($target) {
-            return $target->executeLeaf(-1); 
+            return $target->executeLeaf(-1);
         });
     }
 }

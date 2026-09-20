@@ -90,7 +90,8 @@ final class IgnoreManager
             return self::$callerCache[$callerFunction] = self::checkFunctionIgnored($callerFunction);
         }
 
-        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 7);
+        $depth = Config::getIgnoreTraceDepth();
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, $depth);
 
         for ($i = 1; $i < \count($trace); $i++) {
             $frame = $trace[$i];
