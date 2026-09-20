@@ -28,6 +28,7 @@ use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\FileFilter;
+use TypePHP\Internal\Util\IgnoreManager;
 use TypePHP\Internal\Util\StubManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
@@ -472,7 +473,7 @@ final class DocblockParser
             $typeNode = null;
             $isMagicProperty = false;
 
-            if ($doc === false && (bool) (Config::get()['magic_properties'] ?? true)) {
+            if ($doc === false && Config::isMagicPropertiesEnabled()) {
                 $magicResolved = self::findMagicPropertyDoc($refClass, $propertyName);
                 if ($magicResolved !== null) {
                     $doc = $magicResolved['doc'];
@@ -764,9 +765,7 @@ final class DocblockParser
 
     private static function shouldIgnoreDoc(string $doc): bool
     {
-        $shouldRespectIgnore = (bool) (Config::get()['respect_ignore_tags'] ?? true);
-
-        return $shouldRespectIgnore && (str_contains($doc, '@typephp-ignore') || str_contains($doc, '@typephp-disable'));
+        return Config::isRespectIgnoreTagsEnabled() && IgnoreManager::hasIgnoreDocTag($doc);
     }
 
     /**

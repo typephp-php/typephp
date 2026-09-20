@@ -25,6 +25,7 @@ final class ErrorFactory
         'iterator $',
         'return iterator',
         'generator sent value',
+        'property ',
     ];
 
     /**
@@ -47,9 +48,9 @@ final class ErrorFactory
      * Prepares a TypeError exception before throwing by filtering internal library frames
      * and repointing the exception to the actual application caller location.
      */
-    public static function prepareException(TypeError $e, ?int $line = null): TypeError
+    public static function prepareException(TypeError $e, ?int $line = null, ?string $file = null): TypeError
     {
-        $targetFile = null;
+        $targetFile = $file;
         $targetLine = $line;
 
         $message = $e->getMessage();

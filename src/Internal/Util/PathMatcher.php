@@ -290,9 +290,15 @@ final class PathMatcher
             }
         }
 
-        if (str_starts_with($canon, 'var/')
-            || (! str_starts_with($canon, '/var/') && str_contains($canon, '/var/'))
-            || (str_starts_with($canon, '/var/') && str_contains(substr($canon, 4), '/var/'))
+        $isSystemVar = str_starts_with($canon, '/var/') || str_starts_with($canon, '/private/var/');
+        $canonAfterSystemVar = str_starts_with($canon, '/private/var/')
+            ? substr($canon, 12)
+            : (str_starts_with($canon, '/var/') ? substr($canon, 4) : $canon);
+
+        if (
+            str_starts_with($canon, 'var/')
+            || (! $isSystemVar && str_contains($canon, '/var/'))
+            || ($isSystemVar && str_contains($canonAfterSystemVar, '/var/'))
         ) {
             if (! self::hasIncludeMatchingPrefix('var/', $includes)) {
                 return false;

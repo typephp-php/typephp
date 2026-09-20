@@ -64,6 +64,20 @@ final class Config
 
     private static string $arrayValidation = 'full';
 
+    private static bool $inlineProperties = true;
+
+    private static bool $inlineGenerics = true;
+
+    private static bool $inlineCallables = true;
+
+    private static bool $inlineScalars = true;
+
+    private static bool $inlineArrays = true;
+
+    private static bool $inlineObjects = true;
+
+    private static int $ignoreTraceDepth = 25;
+
     public static function isEnabled(): bool
     {
         if (self::$cachedConfig === null) {
@@ -71,6 +85,82 @@ final class Config
         }
 
         return self::$enabled;
+    }
+
+    public static function getIgnoreTraceDepth(): int
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$ignoreTraceDepth;
+    }
+
+    public static function isInlinePropertiesEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineProperties;
+    }
+
+    public static function isInlineGenericsEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineGenerics;
+    }
+
+    public static function isInlineCallablesEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineCallables;
+    }
+
+    public static function isInlineScalarsEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineScalars;
+    }
+
+    public static function isInlineArraysEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineArrays;
+    }
+
+    public static function isInlineObjectsEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineObjects;
+    }
+
+    public static function hasActiveInlineChecks(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$inlineGenerics
+            || self::$inlineCallables
+            || self::$inlineScalars
+            || self::$inlineArrays
+            || self::$inlineObjects;
     }
 
     public static function isCacheCheckMtimeEnabled(): bool
@@ -266,6 +356,7 @@ final class Config
             'magic_properties' => true,
             'magic_methods' => true,
             'respect_ignore_tags' => true,
+            'ignore_trace_depth' => 25,
             'respect_native_nullability' => true,
             'vendor_boundary_only' => true,
             'array_validation' => 'full',
@@ -313,8 +404,8 @@ final class Config
         /** @var array<int, string> $currentStubs */
         $currentStubs = \is_array($mergedConfig['stubs'] ?? null) ? $mergedConfig['stubs'] : [];
 
-        $mergedConfig['include'] = array_values(array_unique(array_merge($currentIncludes, $extensionIncludes)));
-        $mergedConfig['stubs'] = array_values(array_unique(array_merge($currentStubs, $extensionStubs)));
+        $mergedConfig['include'] = array_values(array_unique([...$currentIncludes, ...$extensionIncludes]));
+        $mergedConfig['stubs'] = array_values(array_unique([...$currentStubs, ...$extensionStubs]));
 
         self::syncFlags($mergedConfig);
 
@@ -342,8 +433,8 @@ final class Config
             /** @var array<int, string> $currentStubs */
             $currentStubs = \is_array($mergedConfig['stubs'] ?? null) ? $mergedConfig['stubs'] : [];
 
-            $mergedConfig['include'] = array_values(array_unique(array_merge($currentIncludes, $extensionIncludes)));
-            $mergedConfig['stubs'] = array_values(array_unique(array_merge($currentStubs, $extensionStubs)));
+            $mergedConfig['include'] = array_values(array_unique([...$currentIncludes, ...$extensionIncludes]));
+            $mergedConfig['stubs'] = array_values(array_unique([...$currentStubs, ...$extensionStubs]));
         }
 
         self::$cachedConfig = $mergedConfig;
@@ -384,7 +475,7 @@ final class Config
                 $baseInlineVars = $base['inline_vars'];
                 /** @var array<string, bool> $overrideInlineVars */
                 $overrideInlineVars = $value;
-                $merged['inline_vars'] = array_merge($baseInlineVars, $overrideInlineVars);
+                $merged['inline_vars'] = [...$baseInlineVars, ...$overrideInlineVars];
             } elseif (\in_array($key, ['include', 'exclude', 'extensions', 'stubs'], true) && \is_array($value)) {
                 $merged[$key] = array_values($value);
             } else {
@@ -410,11 +501,18 @@ final class Config
         self::$magicProperties = true;
         self::$magicMethods = true;
         self::$respectIgnoreTags = true;
+        self::$ignoreTraceDepth = 25;
         self::$respectNativeNullability = true;
         self::$vendorBoundaryOnly = true;
         self::$arrayValidation = 'full';
         self::$cacheCheckMtime = true;
         self::$paramsOut = true;
+        self::$inlineProperties = true;
+        self::$inlineGenerics = true;
+        self::$inlineCallables = true;
+        self::$inlineScalars = true;
+        self::$inlineArrays = true;
+        self::$inlineObjects = true;
 
         DocblockParser::reset();
         ParamChecker::reset();
@@ -448,9 +546,19 @@ final class Config
         self::$magicProperties = (bool) ($config['magic_properties'] ?? true);
         self::$magicMethods = (bool) ($config['magic_methods'] ?? true);
         self::$respectIgnoreTags = (bool) ($config['respect_ignore_tags'] ?? true);
+        self::$ignoreTraceDepth = isset($config['ignore_trace_depth']) && is_numeric($config['ignore_trace_depth']) && (int) $config['ignore_trace_depth'] > 0
+            ? (int) $config['ignore_trace_depth']
+            : 25;
         self::$respectNativeNullability = (bool) ($config['respect_native_nullability'] ?? true);
         self::$vendorBoundaryOnly = (bool) ($config['vendor_boundary_only'] ?? true);
         self::$arrayValidation = \is_string($config['array_validation'] ?? null) ? $config['array_validation'] : 'full';
         self::$cacheCheckMtime = (bool) ($config['cache_check_mtime'] ?? true);
+        $inline = \is_array($config['inline_vars'] ?? null) ? $config['inline_vars'] : [];
+        self::$inlineProperties = (bool) ($inline['properties'] ?? true);
+        self::$inlineGenerics = (bool) ($inline['generics'] ?? true);
+        self::$inlineCallables = (bool) ($inline['callables'] ?? true);
+        self::$inlineScalars = (bool) ($inline['scalars'] ?? true);
+        self::$inlineArrays = (bool) ($inline['arrays'] ?? true);
+        self::$inlineObjects = (bool) ($inline['objects'] ?? true);
     }
 }

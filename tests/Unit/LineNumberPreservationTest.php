@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use TypePHP\Internal\Io\StreamWrapper;
+use TypePHP\Internal\Util\Config;
 
 describe('Line Number Preservation', function () {
     test('transforms code without shifting original line numbers for parameter checks', function () {
@@ -207,5 +208,113 @@ PHP;
         expect($transformed)->toContain("'#FF0000'")
             ->and($transformed)->not()->toContain('/*')
         ;
+    });
+
+    test('preserves exact line numbers when a multi-line array return is followed by subsequent method calls', function () {
+        $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+class MultiLineReturnFixture
+{
+    /**
+     * @return array<string, list<int>>
+     */
+    public function rules(): array
+    {
+        return [
+            'title' => ['required', 'string', 'max:255'],
+            'body' => ['required', 'string'],
+            'is_locked' => ['boolean'],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    public function insert(array $data): void
+    {
+        // logic
+    }
+}
+
+$targetCall = true;
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_multiline_return_drift.php');
+
+        $origLines = explode("\n", str_replace("\r\n", "\n", $source));
+        $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
+
+        expect(\count($transLines))->toBe(\count($origLines));
+
+        $origIndex = array_search('$targetCall = true;', array_map('trim', $origLines), true);
+        $transIndex = array_search('$targetCall = true;', array_map('trim', $transLines), true);
+
+        expect($transIndex)->toBe($origIndex)
+            ->and($origIndex)->toBe(27)
+        ;
+    });
+
+    test('points to exact return statement start line when multi-line return array contract fails', function () {
+        $sysTemp = realpath(sys_get_temp_dir());
+        $baseTemp = str_replace('\\', '/', $sysTemp !== false ? $sysTemp : sys_get_temp_dir());
+        $tempDir = $baseTemp . '/typephp_multiline_test_' . uniqid();
+        mkdir($tempDir, 0777, true);
+
+        $canonicalDir = str_replace('\\', '/', realpath($tempDir) ?: $tempDir);
+        $scriptPath = $canonicalDir . '/multiline_return_test.php';
+
+        $code = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+class ReturnLineCheckFixture
+{
+    /**
+     * @return array<string, list<int>>
+     */
+    public function rules(): array
+    {
+        return [
+            'title' => ['required', 'string'],
+        ];
+    }
+}
+
+(new ReturnLineCheckFixture())->rules();
+PHP;
+
+        file_put_contents($scriptPath, $code);
+
+        try {
+            Config::set([
+                'include' => [
+                    $canonicalDir . '/**',
+                ],
+                'exclude' => [
+                    'vendor/**',
+                ],
+            ]);
+            StreamWrapper::register();
+
+            require $scriptPath;
+            $caught = false;
+        } catch (TypePHP\Exception\TypeError $e) {
+            $caught = true;
+            expect($e->getLine())->toBe(12);
+        } finally {
+            Config::reset();
+            if (file_exists($scriptPath)) {
+                @unlink($scriptPath);
+            }
+            if (is_dir($tempDir)) {
+                @rmdir($tempDir);
+            }
+        }
+
+        expect($caught)->toBeTrue();
     });
 });

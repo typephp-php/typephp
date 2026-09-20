@@ -7,6 +7,7 @@ namespace TypePHP\Internal\Ast;
 use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
 use TypePHP\Internal\Docblock\DocblockExtractor;
+use TypePHP\Internal\Util\Config;
 
 /**
  * @internal AST Node Visitor that injects contract checks, scope tracking, property hook validation, and parameter/return wrappers into functions and methods.
@@ -69,6 +70,20 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         if ($this->isScopeBoundary($node)) {
             $this->scopeManager->pushScope();
+        }
+
+        if ($node instanceof Node\Expr\Assign || $node instanceof Node\Expr\AssignOp) {
+            $this->markWriteContext($node->var);
+        } elseif ($node instanceof Node\Expr\PreInc || $node instanceof Node\Expr\PostInc || $node instanceof Node\Expr\PreDec || $node instanceof Node\Expr\PostDec) {
+            $this->markWriteContext($node->var);
+        } elseif ($node instanceof Node\Stmt\Unset_) {
+            foreach ($node->vars as $v) {
+                $this->markWriteContext($v);
+            }
+        }
+
+        if ($node instanceof Node\Stmt\Class_) {
+            $this->processClassPropertyDefaults($node);
         }
 
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
@@ -135,11 +150,128 @@ final class ContractVisitor extends NodeVisitorAbstract
             }
         }
 
+        if ($node instanceof Node\Expr\StaticPropertyFetch && $node->name instanceof Node\VarLikeIdentifier) {
+            $propName = $node->name->toString();
+
+            if ($node->getAttribute('typephp_checked') !== true && $node->getAttribute('typephp_write_context') !== true) {
+                $node->setAttribute('typephp_checked', true);
+                $classArg = $node->class instanceof Node\Name
+                    ? new Node\Expr\ClassConstFetch($node->class, 'class')
+                    : $node->class;
+
+                return new Node\Expr\StaticCall(
+                    new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker'),
+                    'checkStaticProperty',
+                    [
+                        new Node\Arg($classArg),
+                        new Node\Arg(new Node\Scalar\String_($propName)),
+                        new Node\Arg($node),
+                        new Node\Arg(new Node\Scalar\MagicConst\File()),
+                        new Node\Arg(new Node\Scalar\LNumber($node->getStartLine())),
+                    ]
+                );
+            }
+        }
+
         if ($this->isScopeBoundary($node)) {
             $this->scopeManager->popScope();
         }
 
         return null;
+    }
+
+    private function markWriteContext(Node $node): void
+    {
+        $node->setAttribute('typephp_write_context', true);
+        if ($node instanceof Node\Expr\ArrayDimFetch || $node instanceof Node\Expr\PropertyFetch) {
+            $this->markWriteContext($node->var);
+        }
+    }
+
+    private function processClassPropertyDefaults(Node\Stmt\Class_ $node): void
+    {
+        if (! Config::isInlinePropertiesEnabled()) {
+            return;
+        }
+
+        $defaultProps = [];
+        $hasConstructor = false;
+
+        foreach ($node->stmts as $stmt) {
+            if ($stmt instanceof Node\Stmt\ClassMethod && strtolower($stmt->name->toString()) === '__construct') {
+                $hasConstructor = true;
+            } elseif ($stmt instanceof Node\Stmt\Property && ! $stmt->isStatic()) {
+                $doc = $stmt->getDocComment();
+                if ($doc !== null && str_contains($doc->getText(), '@var') && ! str_contains($doc->getText(), '@typephp-ignore')) {
+                    foreach ($stmt->props as $p) {
+                        $isExplicitNull = $p->default instanceof Node\Expr\ConstFetch && strtolower($p->default->name->toString()) === 'null';
+                        if ($p->default !== null && ! $isExplicitNull) {
+                            $defaultProps[] = [
+                                'name' => $p->name->toString(),
+                                'line' => $p->getStartLine(),
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($defaultProps === []) {
+            return;
+        }
+
+        if (! $hasConstructor) {
+            $ctorStmts = [];
+            if ($node->extends !== null) {
+                $ctorStmts[] = new Node\Stmt\If_(
+                    new Node\Expr\FuncCall(new Node\Name('method_exists'), [
+                        new Node\Arg(new Node\Expr\ClassConstFetch(new Node\Name('parent'), 'class')),
+                        new Node\Arg(new Node\Scalar\String_('__construct')),
+                    ]),
+                    ['stmts' => [
+                        new Node\Stmt\Expression(new Node\Expr\StaticCall(new Node\Name('parent'), '__construct', [new Node\Arg(new Node\Expr\Variable('_typephp_ctor_args'), false, true)])),
+                    ]]
+                );
+            }
+
+            foreach ($defaultProps as $dp) {
+                $checkCall = NodeBuilder::createPropertyCheckCall(
+                    new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $dp['name']),
+                    new Node\Expr\Variable('this'),
+                    $dp['name']
+                );
+                $stmt = new Node\Stmt\Expression(NodeBuilder::createTernaryThrowExpr($checkCall, $dp['line']));
+                $stmt->setAttribute('typephp_injected', true);
+                $ctorStmts[] = $stmt;
+            }
+
+            $ctor = new Node\Stmt\ClassMethod('__construct', [
+                'flags' => Node\Stmt\Class_::MODIFIER_PUBLIC,
+                'params' => [new Node\Param(new Node\Expr\Variable('_typephp_ctor_args'), null, null, false, true)],
+                'stmts' => $ctorStmts,
+            ]);
+            $ctor->setAttribute('typephp_injected', true);
+            $node->stmts[] = $ctor;
+        } else {
+            foreach ($node->stmts as $stmt) {
+                if ($stmt instanceof Node\Stmt\ClassMethod && strtolower($stmt->name->toString()) === '__construct') {
+                    $injected = [];
+                    foreach ($defaultProps as $dp) {
+                        $checkCall = NodeBuilder::createPropertyCheckCall(
+                            new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $dp['name']),
+                            new Node\Expr\Variable('this'),
+                            $dp['name']
+                        );
+                        $checkStmt = new Node\Stmt\Expression(NodeBuilder::createTernaryThrowExpr($checkCall, $dp['line']));
+                        $checkStmt->setAttribute('typephp_injected', true);
+                        $injected[] = $checkStmt;
+                    }
+                    $stmt->stmts = [...$injected, ...($stmt->stmts ?? [])];
+
+                    break;
+                }
+            }
+        }
     }
 
     private function trackDeclarationEntry(Node $node): void
