@@ -165,10 +165,6 @@ final class PathMatcher
             return true;
         }
 
-        if (preg_match('#(^|/)packages/[^/]+/src/#', $canon) === 1) {
-            return true;
-        }
-
         return false;
     }
 
