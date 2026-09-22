@@ -371,7 +371,7 @@ PHP;
         $visitor = new ContractVisitor();
         expect($visitor->leaveNode($cloneNode))->toBeNull();
 
-        $customAssignOp = new class(
+        $customAssignOp = new class (
             new \PhpParser\Node\Expr\Variable('x'),
             new \PhpParser\Node\Scalar\LNumber(1)
         ) extends \PhpParser\Node\Expr\AssignOp {

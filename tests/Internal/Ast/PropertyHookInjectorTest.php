@@ -60,6 +60,36 @@ describe('PropertyHookInjector Unit Tests', function () {
                 ->and($body[0]->expr)->toBeInstanceOf(Node\Expr\Ternary::class)
             ;
         });
+
+        test('does not traverse into nested closures inside get property hook bodies', function () {
+            $innerClosure = new Node\Expr\Closure([
+                'stmts' => [
+                    new Node\Stmt\Return_(new Node\Scalar\String_('closure_return')),
+                ],
+            ]);
+
+            $hook = new Node\PropertyHook(
+                name: 'get',
+                body: [
+                    new Node\Stmt\Expression(new Node\Expr\Assign(new Node\Expr\Variable('fn'), $innerClosure)),
+                    new Node\Stmt\Return_(new Node\Scalar\String_('hook_return')),
+                ]
+            );
+
+            $prop = new Node\Stmt\Property(
+                flags: Node\Stmt\Class_::MODIFIER_PUBLIC,
+                props: [new Node\PropertyItem('title')],
+                hooks: [$hook]
+            );
+
+            PropertyHookInjector::process($prop);
+
+            $body = $prop->hooks[0]->body;
+
+            expect($body[1]->expr)->toBeInstanceOf(Node\Expr\Ternary::class);
+
+            expect($innerClosure->stmts[0]->expr)->toBeInstanceOf(Node\Scalar\String_::class);
+        });
     });
 
     describe('Set Property Hooks', function () {
