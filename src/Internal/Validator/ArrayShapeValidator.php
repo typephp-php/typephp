@@ -18,17 +18,17 @@ use TypePHP\Internal\Diagnostic\TypeFormatter;
  */
 final class ArrayShapeValidator implements TypeValidatorInterface
 {
-    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         if (! \is_array($value)) {
-            return ErrorFactory::createError($context . ' must be of type array, ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be of type array, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         /** @var ArrayShapeNode $shapeNode */
         $shapeNode = $node;
 
         if ($shapeNode->kind === ArrayShapeNode::KIND_LIST && \count($value) > 0 && ! array_is_list($value)) {
-            return ErrorFactory::createError($context . ' must be a list, ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be a list, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         $knownKeys = [];
@@ -64,7 +64,7 @@ final class ArrayShapeValidator implements TypeValidatorInterface
 
             $matchedKeysCount++;
 
-            $err = $registry->validate($value[$key], $item->valueType, '');
+            $err = $registry->validate($value[$key], $item->valueType, '', $isSensitive);
             if ($err !== null) {
                 return ErrorFactory::createError($context . "['" . $key . "']" . $err->getMessage());
             }
@@ -102,7 +102,7 @@ final class ArrayShapeValidator implements TypeValidatorInterface
                     }
                 }
 
-                $err = $registry->validate($v, $unsealedValueType, '');
+                $err = $registry->validate($v, $unsealedValueType, '', $isSensitive);
                 if ($err !== null) {
                     return ErrorFactory::createError($context . "['{$k}']" . $err->getMessage());
                 }

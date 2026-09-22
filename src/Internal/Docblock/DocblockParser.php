@@ -28,11 +28,34 @@ use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\FileFilter;
-use TypePHP\Internal\Util\IgnoreManager;
 use TypePHP\Internal\Util\StubManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
+ * @phpstan-type FunctionContract array{
+ *     types: array<string, TypeNode>,
+ *     paramOuts: array<string, TypeNode>,
+ *     selfOut: ?TypeNode,
+ *     templates: array<string, TemplateTagValueNode>,
+ *     classTemplates: array<string, TemplateTagValueNode>,
+ *     allTemplates?: array<string, TemplateTagValueNode>,
+ *     return: ?TypeNode,
+ *     aliases: array<string, TypeNode>,
+ *     sensitiveParams: array<string, bool>,
+ *     hasParamContract: bool,
+ *     hasParamOutContract: bool,
+ *     hasSelfOutContract: bool,
+ *     hasReturnContract: bool,
+ *     paramsUseGenerics: bool,
+ *     returnUsesGenerics: bool,
+ *     returnUsesMethodTemplates: bool,
+ *     returnIsThis: bool,
+ *     returnIsDynamic: bool,
+ *     allParamsUnconstrained: bool,
+ *     returnUnconstrained: bool,
+ *     isSimple: bool
+ * }
+ *
  * @internal Main orchestrator parsing and caching PHPDoc contracts (@param, @param-out, @return, @template, @phpstan-type, @var, stubs).
  */
 final class DocblockParser
@@ -40,27 +63,7 @@ final class DocblockParser
     /**
      * Cache for resolved contract metadata.
      *
-     * @var array<string, array{
-     *     types: array<string, TypeNode>,
-     *     paramOuts: array<string, TypeNode>,
-     *     selfOut: ?TypeNode,
-     *     templates: array<string, TemplateTagValueNode>,
-     *     classTemplates: array<string, TemplateTagValueNode>,
-     *     return: ?TypeNode,
-     *     aliases: array<string, TypeNode>,
-     *     hasParamContract: bool,
-     *     hasParamOutContract: bool,
-     *     hasSelfOutContract: bool,
-     *     hasReturnContract: bool,
-     *     paramsUseGenerics: bool,
-     *     returnUsesGenerics: bool,
-     *     returnUsesMethodTemplates: bool,
-     *     returnIsThis: bool,
-     *     returnIsDynamic: bool,
-     *     allParamsUnconstrained: bool,
-     *     returnUnconstrained: bool,
-     *     isSimple: bool
-     * }>
+     * @var array<string, FunctionContract>
      */
     private static array $cache = [];
 
@@ -331,27 +334,7 @@ final class DocblockParser
     /**
      * Parses PHPDoc contracts for a function or class method.
      *
-     * @return array{
-     *     types: array<string, TypeNode>,
-     *     paramOuts: array<string, TypeNode>,
-     *     selfOut: ?TypeNode,
-     *     templates: array<string, TemplateTagValueNode>,
-     *     classTemplates: array<string, TemplateTagValueNode>,
-     *     return: ?TypeNode,
-     *     aliases: array<string, TypeNode>,
-     *     hasParamContract: bool,
-     *     hasParamOutContract: bool,
-     *     hasSelfOutContract: bool,
-     *     hasReturnContract: bool,
-     *     paramsUseGenerics: bool,
-     *     returnUsesGenerics: bool,
-     *     returnUsesMethodTemplates: bool,
-     *     returnIsThis: bool,
-     *     returnIsDynamic: bool,
-     *     allParamsUnconstrained: bool,
-     *     returnUnconstrained: bool,
-     *     isSimple: bool
-     * }
+     * @return FunctionContract
      */
     public static function parse(string $function): array
     {
@@ -381,6 +364,7 @@ final class DocblockParser
                             'classTemplates' => $classTemplates,
                             'return' => null,
                             'aliases' => $aliases,
+                            'sensitiveParams' => [],
                             'hasParamContract' => false,
                             'hasParamOutContract' => false,
                             'hasSelfOutContract' => false,
@@ -404,6 +388,7 @@ final class DocblockParser
                         'classTemplates' => [],
                         'return' => null,
                         'aliases' => [],
+                        'sensitiveParams' => [],
                         'hasParamContract' => false,
                         'hasParamOutContract' => false,
                         'hasSelfOutContract' => false,
@@ -431,6 +416,7 @@ final class DocblockParser
                 'classTemplates' => [],
                 'return' => null,
                 'aliases' => [],
+                'sensitiveParams' => [],
                 'hasParamContract' => false,
                 'hasParamOutContract' => false,
                 'hasSelfOutContract' => false,
@@ -765,7 +751,19 @@ final class DocblockParser
 
     private static function shouldIgnoreDoc(string $doc): bool
     {
-        return Config::isRespectIgnoreTagsEnabled() && IgnoreManager::hasIgnoreDocTag($doc);
+        return Config::isRespectIgnoreTagsEnabled() && \TypePHP\Internal\Util\IgnoreManager::hasIgnoreDocTag($doc);
+    }
+
+    private static function hasSensitiveAttribute(\ReflectionParameter $param): bool
+    {
+        foreach ($param->getAttributes() as $attr) {
+            $name = ltrim($attr->getName(), '\\');
+            if ($name === 'SensitiveParameter' || str_ends_with($name, '\\SensitiveParameter')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -795,27 +793,7 @@ final class DocblockParser
     /**
      * Orchestrates parsing for class methods across the inheritance hierarchy.
      *
-     * @return array{
-     *     types: array<string, TypeNode>,
-     *     paramOuts: array<string, TypeNode>,
-     *     selfOut: ?TypeNode,
-     *     templates: array<string, TemplateTagValueNode>,
-     *     classTemplates: array<string, TemplateTagValueNode>,
-     *     return: ?TypeNode,
-     *     aliases: array<string, TypeNode>,
-     *     hasParamContract: bool,
-     *     hasParamOutContract: bool,
-     *     hasSelfOutContract: bool,
-     *     hasReturnContract: bool,
-     *     paramsUseGenerics: bool,
-     *     returnUsesGenerics: bool,
-     *     returnUsesMethodTemplates: bool,
-     *     returnIsThis: bool,
-     *     returnIsDynamic: bool,
-     *     allParamsUnconstrained: bool,
-     *     returnUnconstrained: bool,
-     *     isSimple: bool
-     * }
+     * @return FunctionContract
      */
     private static function parseMethod(\ReflectionMethod $ref): array
     {
@@ -831,6 +809,8 @@ final class DocblockParser
         $selfOut = null;
         /** @var array<string, TypeNode> $aliases */
         $aliases = [];
+        /** @var array<string, bool> $sensitiveParams */
+        $sensitiveParams = [];
 
         $targetClass = (class_exists($ref->class, false) || class_exists($ref->class) || interface_exists($ref->class) || enum_exists($ref->class) || trait_exists($ref->class))
             ? new \ReflectionClass($ref->class)
@@ -841,7 +821,7 @@ final class DocblockParser
             self::parseClassLevelDocs($ref->getDeclaringClass(), $classTemplates, $aliases);
         }
 
-        self::parseMethodHierarchyDocs($ref, $types, $methodTemplates, $returnType, $aliases, $paramOuts, $selfOut, $classTemplates);
+        self::parseMethodHierarchyDocs($ref, $types, $methodTemplates, $returnType, $aliases, $paramOuts, $selfOut, $classTemplates, $sensitiveParams);
 
         if ($ref->getName() === '__construct') {
             self::applyConstructorPromotionFallback($ref, $types, $classTemplates, $aliases);
@@ -892,7 +872,6 @@ final class DocblockParser
             $returnIsDynamic = $returnIsThis || str_contains($retStr, 'static') || str_contains($retStr, '$this');
         }
 
-        // Compute pre-optimized flags
         $flags = self::computeContractFlags(
             $types,
             $returnType,
@@ -911,6 +890,7 @@ final class DocblockParser
             'allTemplates' => $allTemplates,
             'return' => $returnType,
             'aliases' => $aliases,
+            'sensitiveParams' => $sensitiveParams,
             'hasParamContract' => \count($types) > 0,
             'hasParamOutContract' => \count($paramOuts) > 0,
             'hasSelfOutContract' => $selfOut !== null,
@@ -929,27 +909,7 @@ final class DocblockParser
     /**
      * Orchestrates parsing for standalone global or namespaced functions.
      *
-     * @return array{
-     *     types: array<string, TypeNode>,
-     *     paramOuts: array<string, TypeNode>,
-     *     selfOut: ?TypeNode,
-     *     templates: array<string, TemplateTagValueNode>,
-     *     classTemplates: array<string, TemplateTagValueNode>,
-     *     return: ?TypeNode,
-     *     aliases: array<string, TypeNode>,
-     *     hasParamContract: bool,
-     *     hasParamOutContract: bool,
-     *     hasSelfOutContract: bool,
-     *     hasReturnContract: bool,
-     *     paramsUseGenerics: bool,
-     *     returnUsesGenerics: bool,
-     *     returnUsesMethodTemplates: bool,
-     *     returnIsThis: bool,
-     *     returnIsDynamic: bool,
-     *     allParamsUnconstrained: bool,
-     *     returnUnconstrained: bool,
-     *     isSimple: bool
-     * }
+     * @return FunctionContract
      */
     private static function parseFunction(\ReflectionFunction $ref): array
     {
@@ -958,10 +918,22 @@ final class DocblockParser
         $templates = [];
         $returnType = null;
         $aliases = [];
+        $sensitiveParams = [];
 
         $funcName = $ref->getName();
         $stubDoc = StubManager::getFunctionDoc($funcName);
         $doc = $stubDoc ?? $ref->getDocComment();
+
+        $baseParams = $ref->getParameters();
+        $baseParamVariadic = [];
+        $baseParamObjects = [];
+        foreach ($baseParams as $p) {
+            $baseParamVariadic[$p->getName()] = $p->isVariadic();
+            $baseParamObjects[$p->getName()] = $p;
+            if (self::hasSensitiveAttribute($p)) {
+                $sensitiveParams[$p->getName()] = true;
+            }
+        }
 
         if ($doc === false || $doc === null || self::shouldIgnoreDoc($doc)) {
             return [
@@ -973,6 +945,7 @@ final class DocblockParser
                 'allTemplates' => $templates,
                 'return' => null,
                 'aliases' => [],
+                'sensitiveParams' => $sensitiveParams,
                 'hasParamContract' => false,
                 'hasParamOutContract' => false,
                 'hasSelfOutContract' => false,
@@ -994,14 +967,6 @@ final class DocblockParser
             $templates[$name] = $tag;
         }
         DocblockExtractor::extractAliases($phpDocNode, $aliases, $ref);
-
-        $baseParams = $ref->getParameters();
-        $baseParamVariadic = [];
-        $baseParamObjects = [];
-        foreach ($baseParams as $p) {
-            $baseParamVariadic[$p->getName()] = $p->isVariadic();
-            $baseParamObjects[$p->getName()] = $p;
-        }
 
         foreach (DocblockExtractor::getParamTags($phpDocNode) as $paramName => $paramTag) {
             $type = $paramTag->type;
@@ -1083,7 +1048,6 @@ final class DocblockParser
             $returnIsDynamic = $returnIsThis || str_contains($retStr, 'static') || str_contains($retStr, '$this');
         }
 
-        // Compute pre-optimized flags
         $flags = self::computeContractFlags(
             $types,
             $returnType,
@@ -1099,8 +1063,10 @@ final class DocblockParser
             'selfOut' => null,
             'templates' => $templates,
             'classTemplates' => [],
+            'allTemplates' => $templates,
             'return' => $returnType,
             'aliases' => $aliases,
+            'sensitiveParams' => $sensitiveParams,
             'hasParamContract' => \count($types) > 0,
             'hasParamOutContract' => \count($paramOuts) > 0,
             'hasSelfOutContract' => false,
@@ -1206,6 +1172,7 @@ final class DocblockParser
      * @param array<string, TypeNode> $paramOuts
      * @param TypeNode|null $selfOut
      * @param array<string, TemplateTagValueNode> $classTemplates
+     * @param array<string, bool> $sensitiveParams
      */
     private static function parseMethodHierarchyDocs(
         \ReflectionMethod $ref,
@@ -1215,7 +1182,8 @@ final class DocblockParser
         array &$aliases,
         array &$paramOuts = [],
         ?TypeNode &$selfOut = null,
-        array &$classTemplates = []
+        array &$classTemplates = [],
+        array &$sensitiveParams = []
     ): void {
         $hierarchy = HierarchyResolver::getMethodHierarchy($ref);
         $baseParams = $ref->getParameters();
@@ -1230,6 +1198,9 @@ final class DocblockParser
             $baseParamSet[$p->getName()] = $idx;
             $baseParamVariadic[$p->getName()] = $p->isVariadic();
             $baseParamObjects[$p->getName()] = $p;
+            if (self::hasSensitiveAttribute($p)) {
+                $sensitiveParams[$p->getName()] = true;
+            }
         }
 
         foreach ($hierarchy as $hierRef) {
@@ -1246,6 +1217,22 @@ final class DocblockParser
                 continue;
             }
 
+            $hierParams = $hierRef->getParameters();
+            $hierNameToIndex = [];
+            foreach ($hierParams as $idx => $p) {
+                $hierNameToIndex[$p->getName()] = $idx;
+                if (self::hasSensitiveAttribute($p)) {
+                    $targetName = self::resolveTargetParamName(
+                        $p->getName(),
+                        $baseParamSet,
+                        $baseParamNames,
+                        $hierNameToIndex,
+                        $isConstructor
+                    );
+                    $sensitiveParams[$targetName ?? $p->getName()] = true;
+                }
+            }
+
             $doc = $stubDoc ?? $hierRef->getDocComment();
             if ($doc === false || $doc === null || self::shouldIgnoreDoc($doc)) {
                 continue;
@@ -1259,12 +1246,6 @@ final class DocblockParser
                 }
             }
             DocblockExtractor::extractAliases($phpDocNode, $aliases, $hierRef);
-
-            $hierParams = $hierRef->getParameters();
-            $hierNameToIndex = [];
-            foreach ($hierParams as $idx => $p) {
-                $hierNameToIndex[$p->getName()] = $idx;
-            }
 
             $paramTags = DocblockExtractor::getParamTags($phpDocNode);
 

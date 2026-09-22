@@ -64,28 +64,25 @@ final class GenericValidator implements TypeValidatorInterface
     /**
      * Validates a value against a GenericTypeNode AST.
      */
-    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         /** @var GenericTypeNode $genericNode */
         $genericNode = $node;
         $baseType = strtolower($genericNode->type->name);
 
         return match ($baseType) {
-            'int', 'integer' => $this->validateIntRange($value, $genericNode, $context),
-            'class-string' => $this->validateClassString($value, $genericNode, $context),
-            'list', 'non-empty-list', 'non-empty-array-list' => $this->validateList($value, $genericNode, $context, $registry),
-            'array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator' => $this->validateArray($value, $genericNode, $context, $registry),
-            'key-of' => $this->validateKeyOf($value, $genericNode, $context, $registry),
-            'value-of' => $this->validateValueOf($value, $genericNode, $context, $registry),
-            'int-mask' => $this->validateIntMask($value, $genericNode, $context),
-            'int-mask-of' => $this->validateIntMaskOf($value, $genericNode, $context),
-            default => $this->validateObjectGeneric($value, $genericNode, $context),
+            'int', 'integer' => $this->validateIntRange($value, $genericNode, $context, $isSensitive),
+            'class-string' => $this->validateClassString($value, $genericNode, $context, $isSensitive),
+            'list', 'non-empty-list', 'non-empty-array-list' => $this->validateList($value, $genericNode, $context, $registry, $isSensitive),
+            'array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator' => $this->validateArray($value, $genericNode, $context, $registry, $isSensitive),
+            'key-of' => $this->validateKeyOf($value, $genericNode, $context, $registry, $isSensitive),
+            'value-of' => $this->validateValueOf($value, $genericNode, $context, $registry, $isSensitive),
+            'int-mask' => $this->validateIntMask($value, $genericNode, $context, $isSensitive),
+            'int-mask-of' => $this->validateIntMaskOf($value, $genericNode, $context, $isSensitive),
+            default => $this->validateObjectGeneric($value, $genericNode, $context, $isSensitive),
         };
     }
 
-    /**
-     * Helper to resolve and cache class or global constant values in static memory.
-     */
     private function resolveConstantValue(string $fqcn, string $constName): mixed
     {
         $cacheKey = $fqcn !== '' ? "$fqcn::$constName" : $constName;
@@ -114,10 +111,7 @@ final class GenericValidator implements TypeValidatorInterface
         return self::$constantCache[$cacheKey];
     }
 
-    /**
-     * Validates key-of<T> generic structures with O(1) in-memory caching.
-     */
-    private function validateKeyOf(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    private function validateKeyOf(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         $targetType = $node->genericTypes[0] ?? null;
 
@@ -136,7 +130,7 @@ final class GenericValidator implements TypeValidatorInterface
                     }
                 }
                 if (! \in_array($value, $validKeys, strict: true)) {
-                    return ErrorFactory::createError($context . ' must be a key of the specified array shape, ' . TypeFormatter::formatGivenValue($value) . ' given');
+                    return ErrorFactory::createError($context . ' must be a key of the specified array shape, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
                 }
 
                 return null;
@@ -153,7 +147,7 @@ final class GenericValidator implements TypeValidatorInterface
 
             if (\is_array($constValue)) {
                 if ((! \is_int($value) && ! \is_string($value)) || ! \array_key_exists($value, $constValue)) {
-                    return ErrorFactory::createError($context . " must be a key of $cacheKey, " . TypeFormatter::formatGivenValue($value) . ' given');
+                    return ErrorFactory::createError($context . " must be a key of $cacheKey, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
                 }
 
                 return null;
@@ -166,7 +160,7 @@ final class GenericValidator implements TypeValidatorInterface
                 }
 
                 if (! \in_array($value, self::$enumKeyCache[$enumClass], strict: true)) {
-                    return ErrorFactory::createError($context . " must be a key of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
+                    return ErrorFactory::createError($context . " must be a key of enum $enumClass, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
                 }
 
                 return null;
@@ -193,7 +187,7 @@ final class GenericValidator implements TypeValidatorInterface
             }
 
             if (! \in_array($value, $validKeys, strict: true)) {
-                return ErrorFactory::createError($context . ' must be a key of the specified array shape, ' . TypeFormatter::formatGivenValue($value) . ' given');
+                return ErrorFactory::createError($context . ' must be a key of the specified array shape, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
             }
 
             return null;
@@ -222,10 +216,7 @@ final class GenericValidator implements TypeValidatorInterface
         return null;
     }
 
-    /**
-     * Validates value-of<T> generic structures with O(1) in-memory caching.
-     */
-    private function validateValueOf(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    private function validateValueOf(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         $targetType = $node->genericTypes[0] ?? null;
 
@@ -239,7 +230,7 @@ final class GenericValidator implements TypeValidatorInterface
 
             if (\is_array($constValue)) {
                 if (! \in_array($value, $constValue, strict: true)) {
-                    return ErrorFactory::createError($context . " must be a value of $cacheKey, " . TypeFormatter::formatGivenValue($value) . ' given');
+                    return ErrorFactory::createError($context . " must be a value of $cacheKey, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
                 }
 
                 return null;
@@ -253,34 +244,31 @@ final class GenericValidator implements TypeValidatorInterface
                     }
 
                     if (! \in_array($value, self::$enumValueCache[$enumClass], strict: true)) {
-                        return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
+                        return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
                     }
 
                     return null;
                 }
 
-                return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value) . ' given');
+                return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
             }
         } elseif ($targetType instanceof ArrayShapeNode) {
             foreach ($targetType->items as $item) {
-                if ($registry->validate($value, $item->valueType, '') === null) {
+                if ($registry->validate($value, $item->valueType, '', $isSensitive) === null) {
                     return null;
                 }
             }
 
-            return ErrorFactory::createError($context . ' must be a value of the specified array shape, ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be a value of the specified array shape, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         return null;
     }
 
-    /**
-     * Validates int-mask<1, 2, 4> bitmask flags combinations.
-     */
-    private function validateIntMask(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    private function validateIntMask(mixed $value, GenericTypeNode $node, string $context, bool $isSensitive = false): ?ErrorMessage
     {
         if (! \is_int($value)) {
-            return ErrorFactory::createError($context . ' must be of type int (bitmask), ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be of type int (bitmask), ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         $allowedMask = 0;
@@ -300,19 +288,16 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         if (($value & ~$allowedMask) !== 0) {
-            return ErrorFactory::createError($context . ' must be a valid bitmask combination of the allowed flags, ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be a valid bitmask combination of the allowed flags, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         return null;
     }
 
-    /**
-     * Validates int-mask-of<self::FLAG_*> bitmask flags combinations from constant patterns.
-     */
-    private function validateIntMaskOf(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    private function validateIntMaskOf(mixed $value, GenericTypeNode $node, string $context, bool $isSensitive = false): ?ErrorMessage
     {
         if (! \is_int($value)) {
-            return ErrorFactory::createError($context . ' must be of type int (bitmask), ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be of type int (bitmask), ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         $targetType = $node->genericTypes[0] ?? null;
@@ -357,19 +342,16 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         if ($foundFlags && ($value & ~$allowedMask) !== 0) {
-            return ErrorFactory::createError($context . ' must be a valid bitmask combination of the allowed flags, ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be a valid bitmask combination of the allowed flags, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         return null;
     }
 
-    /**
-     * Validates integer ranges (e.g. int<1, 100> or int<min, max>).
-     */
-    private function validateIntRange(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    private function validateIntRange(mixed $value, GenericTypeNode $node, string $context, bool $isSensitive = false): ?ErrorMessage
     {
         if (! \is_int($value)) {
-            return ErrorFactory::createError($context . ' must be of type int, ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be of type int, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         $minNode = $node->genericTypes[0] ?? null;
@@ -380,7 +362,9 @@ final class GenericValidator implements TypeValidatorInterface
             if ($minStr !== 'min' && $minStr !== '*') {
                 $minVal = (int) $minStr;
                 if ($value < $minVal) {
-                    return ErrorFactory::createError($context . " must be >= $minVal, $value given");
+                    $valDisplay = $isSensitive ? 'int given' : "$value given";
+
+                    return ErrorFactory::createError($context . " must be >= $minVal, $valDisplay");
                 }
             }
         }
@@ -390,7 +374,9 @@ final class GenericValidator implements TypeValidatorInterface
             if ($maxStr !== 'max' && $maxStr !== '*') {
                 $maxVal = (int) $maxStr;
                 if ($value > $maxVal) {
-                    return ErrorFactory::createError($context . " must be <= $maxVal, $value given");
+                    $valDisplay = $isSensitive ? 'int given' : "$value given";
+
+                    return ErrorFactory::createError($context . " must be <= $maxVal, $valDisplay");
                 }
             }
         }
@@ -398,13 +384,10 @@ final class GenericValidator implements TypeValidatorInterface
         return null;
     }
 
-    /**
-     * Validates class-string<T> parameters against declared class bounds.
-     */
-    private function validateClassString(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    private function validateClassString(mixed $value, GenericTypeNode $node, string $context, bool $isSensitive = false): ?ErrorMessage
     {
         if (! \is_string($value) || ! ClassNameValidator::isValidClassString($value)) {
-            return ErrorFactory::createError($context . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         $targetClassNode = $node->genericTypes[0] ?? null;
@@ -412,10 +395,10 @@ final class GenericValidator implements TypeValidatorInterface
             return null;
         }
 
-        return $this->validateClassStringBound($value, $targetClassNode, $context);
+        return $this->validateClassStringBound($value, $targetClassNode, $context, $isSensitive);
     }
 
-    private function validateClassStringBound(string $value, TypeNode $targetNode, string $context): ?ErrorMessage
+    private function validateClassStringBound(string $value, TypeNode $targetNode, string $context, bool $isSensitive = false): ?ErrorMessage
     {
         if ($targetNode instanceof IdentifierTypeNode) {
             $targetName = $targetNode->name;
@@ -426,7 +409,9 @@ final class GenericValidator implements TypeValidatorInterface
 
             if (class_exists($targetName) || interface_exists($targetName) || trait_exists($targetName) || enum_exists($targetName)) {
                 if (! is_a($value, $targetName, allow_string: true)) {
-                    return ErrorFactory::createError($context . ' must be a class-string of ' . $targetName . ", '$value' given");
+                    $valDisplay = $isSensitive ? 'string given' : "'$value' given";
+
+                    return ErrorFactory::createError($context . ' must be a class-string of ' . $targetName . ", $valDisplay");
                 }
             }
 
@@ -435,17 +420,19 @@ final class GenericValidator implements TypeValidatorInterface
 
         if ($targetNode instanceof UnionTypeNode) {
             foreach ($targetNode->types as $unionType) {
-                if ($this->validateClassStringBound($value, $unionType, $context) === null) {
+                if ($this->validateClassStringBound($value, $unionType, $context, $isSensitive) === null) {
                     return null;
                 }
             }
 
-            return ErrorFactory::createError($context . ' must be a class-string of ' . (string) $targetNode . ", '$value' given");
+            $valDisplay = $isSensitive ? 'string given' : "'$value' given";
+
+            return ErrorFactory::createError($context . ' must be a class-string of ' . (string) $targetNode . ", $valDisplay");
         }
 
         if ($targetNode instanceof IntersectionTypeNode) {
             foreach ($targetNode->types as $intersectionType) {
-                $err = $this->validateClassStringBound($value, $intersectionType, $context);
+                $err = $this->validateClassStringBound($value, $intersectionType, $context, $isSensitive);
                 if ($err !== null) {
                     return $err;
                 }
@@ -457,15 +444,12 @@ final class GenericValidator implements TypeValidatorInterface
         return null;
     }
 
-    /**
-     * Validates sequential list structures (e.g. list<string> or non-empty-list<int>).
-     */
-    private function validateList(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    private function validateList(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         $baseType = strtolower($node->type->name);
 
         if (! \is_array($value) || (\count($value) > 0 && ! array_is_list($value))) {
-            return ErrorFactory::createError($context . ' must be a list, ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be a list, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         $count = \count($value);
@@ -495,8 +479,8 @@ final class GenericValidator implements TypeValidatorInterface
             foreach ($sampleIndices as $k) {
                 $v = $value[$k];
                 $err = $isComplexObjectGeneric
-                    ? $this->validateObjectGeneric($v, $valueTypeNode, '')
-                    : $registry->validate($v, $valueTypeNode, '');
+                    ? $this->validateObjectGeneric($v, $valueTypeNode, '', $isSensitive)
+                    : $registry->validate($v, $valueTypeNode, '', $isSensitive);
 
                 if ($err !== null) {
                     return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
@@ -508,8 +492,8 @@ final class GenericValidator implements TypeValidatorInterface
 
         foreach ($value as $k => $v) {
             $err = $isComplexObjectGeneric
-                ? $this->validateObjectGeneric($v, $valueTypeNode, '')
-                : $registry->validate($v, $valueTypeNode, '');
+                ? $this->validateObjectGeneric($v, $valueTypeNode, '', $isSensitive)
+                : $registry->validate($v, $valueTypeNode, '', $isSensitive);
 
             if ($err !== null) {
                 return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
@@ -519,15 +503,12 @@ final class GenericValidator implements TypeValidatorInterface
         return null;
     }
 
-    /**
-     * Validates key-value array structures (e.g. array<string, int>).
-     */
-    private function validateArray(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    private function validateArray(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         $baseType = strtolower($node->type->name);
 
         if (! \is_array($value) && ! ($value instanceof \Traversable)) {
-            return ErrorFactory::createError($context . ' must be of type ' . $node->type->name . ', ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be of type ' . $node->type->name . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         if (! \is_array($value)) {
@@ -564,8 +545,8 @@ final class GenericValidator implements TypeValidatorInterface
                 foreach ($sampleKeys as $k) {
                     $v = $value[$k];
                     $err = $isComplexObjectGeneric
-                        ? $this->validateObjectGeneric($v, $valTypeNode, '')
-                        : $registry->validate($v, $valTypeNode, '');
+                        ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
+                        : $registry->validate($v, $valTypeNode, '', $isSensitive);
 
                     if ($err !== null) {
                         return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
@@ -577,8 +558,8 @@ final class GenericValidator implements TypeValidatorInterface
 
             foreach ($value as $k => $v) {
                 $err = $isComplexObjectGeneric
-                    ? $this->validateObjectGeneric($v, $valTypeNode, '')
-                    : $registry->validate($v, $valTypeNode, '');
+                    ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
+                    : $registry->validate($v, $valTypeNode, '', $isSensitive);
 
                 if ($err !== null) {
                     return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
@@ -616,8 +597,8 @@ final class GenericValidator implements TypeValidatorInterface
                     if (! $valIsMixed) {
                         $v = $value[$k];
                         $err = $isComplexObjectGeneric
-                            ? $this->validateObjectGeneric($v, $valTypeNode, '')
-                            : $registry->validate($v, $valTypeNode, '');
+                            ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
+                            : $registry->validate($v, $valTypeNode, '', $isSensitive);
 
                         if ($err !== null) {
                             return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
@@ -638,8 +619,8 @@ final class GenericValidator implements TypeValidatorInterface
 
                 if (! $valIsMixed) {
                     $err = $isComplexObjectGeneric
-                        ? $this->validateObjectGeneric($v, $valTypeNode, '')
-                        : $registry->validate($v, $valTypeNode, '');
+                        ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
+                        : $registry->validate($v, $valTypeNode, '', $isSensitive);
 
                     if ($err !== null) {
                         return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
@@ -651,18 +632,18 @@ final class GenericValidator implements TypeValidatorInterface
         return null;
     }
 
-    private function validateObjectGeneric(mixed $value, GenericTypeNode $node, string $context): ?ErrorMessage
+    private function validateObjectGeneric(mixed $value, GenericTypeNode $node, string $context, bool $isSensitive = false): ?ErrorMessage
     {
         if (! ClassNameValidator::isValid($node->type->name)) {
             return null;
         }
 
         if (! \is_object($value)) {
-            return ErrorFactory::createError($context . ' must be an object of type ' . $node->type->name . ', ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be an object of type ' . $node->type->name . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         if (! is_a($value, $node->type->name)) {
-            return ErrorFactory::createError($context . ' must be an instance of ' . $node->type->name . ', ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be an instance of ' . $node->type->name . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         return RuntimeTypeChecker::bindInstanceFromNode($value, $node, $context);

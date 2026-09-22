@@ -13,13 +13,13 @@ use TypePHP\Internal\Diagnostic\ErrorMessage;
  */
 final class NullableValidator implements TypeValidatorInterface
 {
-    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         if ($value === null) {
             return null;
         }
 
         /** @var NullableTypeNode $node */
-        return $registry->validate($value, $node->type, $context);
+        return $registry->validate($value, $node->type, $context, $isSensitive);
     }
 }

@@ -17,7 +17,7 @@ use TypePHP\Internal\Wrapper\CallableWrapper;
  */
 final class IdentifierValidator implements TypeValidatorInterface
 {
-    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         /** @var IdentifierTypeNode $identifierNode */
         $identifierNode = $node;
@@ -78,7 +78,7 @@ final class IdentifierValidator implements TypeValidatorInterface
         };
 
         if (! $ok) {
-            return ErrorFactory::createError($context . ' must be of type ' . $identifierNode->name . ', ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be of type ' . $identifierNode->name . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         return null;
