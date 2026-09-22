@@ -21,6 +21,8 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Internal\Wrapper\CallableWrapper;
 
 /**
+ * @phpstan-import-type FunctionContract from DocblockParser
+ *
  * @internal Evaluates function and method return contract validations (including dynamic @method calls via __call / __callStatic).
  */
 final class ReturnChecker
@@ -81,23 +83,7 @@ final class ReturnChecker
 
     /**
      * @param array<string, mixed> $vars
-     * @param array{
-     *     types: array<string, TypeNode>,
-     *     templates: array<string, TemplateTagValueNode>,
-     *     classTemplates: array<string, TemplateTagValueNode>,
-     *     return: ?TypeNode,
-     *     aliases: array<string, TypeNode>,
-     *     hasParamContract: bool,
-     *     hasReturnContract: bool,
-     *     paramsUseGenerics: bool,
-     *     returnUsesGenerics: bool,
-     *     returnUsesMethodTemplates: bool,
-     *     returnIsThis: bool,
-     *     returnIsDynamic: bool,
-     *     allParamsUnconstrained: bool,
-     *     returnUnconstrained: bool,
-     *     isSimple: bool
-     * }|null $contract Pre-resolved contract to avoid re-parsing
+     * @param FunctionContract|null $contract Pre-resolved contract to avoid re-parsing
      */
     public static function checkReturn(
         string $function,
@@ -145,7 +131,6 @@ final class ReturnChecker
             return $value;
         }
 
-        // Use pre-resolved contract or parse
         $contract ??= DocblockParser::parse($effectiveFunction);
 
         if (! ($contract['hasReturnContract'] ?? ($contract['return'] !== null))) {
@@ -236,18 +221,7 @@ final class ReturnChecker
      * @param array<int|string, mixed> $vars
      * @param array<string, TypeNode> $aliases
      * @param array<string, TemplateTagValueNode> $templates
-     * @param array{
-     *     return?: TypeNode|null,
-     *     hasReturnContract?: bool,
-     *     returnIsThis?: bool,
-     *     returnIsDynamic?: bool,
-     *     aliases?: array<string, TypeNode>,
-     *     templates?: array<string, TemplateTagValueNode>,
-     *     classTemplates?: array<string, TemplateTagValueNode>,
-     *     allParamsUnconstrained?: bool,
-     *     returnUnconstrained?: bool,
-     *     isSimple?: bool
-     * } $contract
+     * @param FunctionContract|array{} $contract
      */
     private static function evaluateReturn(
         TypeNode $returnTypeNode,
@@ -348,7 +322,6 @@ final class ReturnChecker
             }
         }
 
-        // Fast-path: if return type is mixed or array, skip validation.
         if ($resolvedType instanceof IdentifierTypeNode) {
             $lower = strtolower($resolvedType->name);
             if ($lower === 'mixed' || $lower === 'array') {

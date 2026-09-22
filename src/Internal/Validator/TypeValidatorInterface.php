@@ -15,5 +15,11 @@ interface TypeValidatorInterface
     /**
      * Validates a value against an AST TypeNode and returns an ErrorMessage on failure or null on success.
      */
-    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage;
+    public function validate(
+        mixed $value,
+        TypeNode $node,
+        string $context,
+        TypeValidatorRegistry $registry,
+        bool $isSensitive = false
+    ): ?ErrorMessage;
 }

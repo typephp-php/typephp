@@ -30,6 +30,8 @@ use TypePHP\Internal\Util\StubManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
+ * @phpstan-import-type FunctionContract from DocblockParser
+ *
  * @internal Evaluates function and method parameter contract validations (including dynamic @method calls via __call / __callStatic).
  */
 final class ParamChecker
@@ -102,23 +104,7 @@ final class ParamChecker
 
     /**
      * @param array<string, mixed> $vars
-     * @param array{
-     *     types: array<string, TypeNode>,
-     *     templates: array<string, TemplateTagValueNode>,
-     *     classTemplates: array<string, TemplateTagValueNode>,
-     *     return: ?TypeNode,
-     *     aliases: array<string, TypeNode>,
-     *     hasParamContract: bool,
-     *     hasReturnContract: bool,
-     *     paramsUseGenerics: bool,
-     *     returnUsesGenerics: bool,
-     *     returnUsesMethodTemplates: bool,
-     *     returnIsThis: bool,
-     *     returnIsDynamic: bool,
-     *     allParamsUnconstrained: bool,
-     *     returnUnconstrained: bool,
-     *     isSimple: bool
-     * }|null $contract Pre-resolved contract to avoid re-parsing
+     * @param FunctionContract|null $contract Pre-resolved contract to avoid re-parsing
      */
     public static function checkParams(
         string $function,
@@ -170,9 +156,10 @@ final class ParamChecker
         $classTemplates = $contract['classTemplates'] ?? [];
         $aliases = $contract['aliases'];
         $hasMethodTemplates = (\count($methodTemplates) > 0);
+        $sensitiveParams = $contract['sensitiveParams'] ?? [];
 
         if (! $paramsUseGenerics && ! $hasMethodTemplates && \count($aliases) === 0) {
-            return self::validateSimpleParams($contract['types'], $vars, $effectiveFunction, $registry);
+            return self::validateSimpleParams($contract['types'], $vars, $effectiveFunction, $registry, $sensitiveParams);
         }
 
         self::prepareGenericBindings($effectiveFunction, $methodTemplates, $thisObj, $classTemplates, $thisOrClass);
@@ -203,7 +190,8 @@ final class ParamChecker
             $declaredTemplates,
             $registry,
             $classTemplates,
-            $thisOrClass
+            $thisOrClass,
+            $sensitiveParams
         );
     }
 
@@ -212,12 +200,14 @@ final class ParamChecker
      *
      * @param array<string, TypeNode> $types
      * @param array<string, mixed> $vars
+     * @param array<string, bool> $sensitiveParams
      */
     private static function validateSimpleParams(
         array $types,
         array $vars,
         string $effectiveFunction,
-        TypeValidatorRegistry $registry
+        TypeValidatorRegistry $registry,
+        array $sensitiveParams = []
     ): ?ErrorMessage {
         foreach ($types as $paramName => $typeNode) {
             if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
@@ -231,7 +221,9 @@ final class ParamChecker
                 if (self::isUnconstrained($typeNode)) {
                     continue;
                 }
-                $err = $registry->validate($vars[$paramName], $typeNode, '');
+
+                $isSensitive = $sensitiveParams[$paramName] ?? false;
+                $err = $registry->validate($vars[$paramName], $typeNode, '', $isSensitive);
                 if ($err !== null) {
                     return ErrorFactory::createError($effectiveFunction . '(): Argument $' . $paramName . $err->getMessage());
                 }
@@ -310,6 +302,7 @@ final class ParamChecker
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
      * @param array<string, TemplateTagValueNode> $classTemplates
+     * @param array<string, bool> $sensitiveParams
      */
     private static function validateAllParameters(
         array $contractTypes,
@@ -323,7 +316,8 @@ final class ParamChecker
         array $declaredTemplates,
         TypeValidatorRegistry $registry,
         array $classTemplates,
-        object|string|null $thisOrClass = null
+        object|string|null $thisOrClass = null,
+        array $sensitiveParams = []
     ): ?ErrorMessage {
         foreach ($contractTypes as $paramName => $_) {
             if (! isset($vars[$paramName]) && ! \array_key_exists($paramName, $vars)) {
@@ -333,6 +327,8 @@ final class ParamChecker
             $currentBoundTemplates = (\count($allTemplates) > 0)
                 ? TemplateManager::getBoundTemplates($effectiveFunction, $thisOrClass, $allTemplates)
                 : $boundTemplates;
+
+            $isSensitive = $sensitiveParams[$paramName] ?? false;
 
             $err = self::validateSingleParam(
                 $paramName,
@@ -347,7 +343,8 @@ final class ParamChecker
                 $registry,
                 $classTemplates,
                 $vars,
-                $thisOrClass
+                $thisOrClass,
+                $isSensitive
             );
 
             if ($err !== null) {
@@ -911,7 +908,8 @@ final class ParamChecker
         TypeValidatorRegistry $registry,
         array $classTemplates = [],
         array $vars = [],
-        object|string|null $thisOrClass = null
+        object|string|null $thisOrClass = null,
+        bool $isSensitive = false
     ): ?ErrorMessage {
         if (
             $typeNode instanceof ConditionalTypeForParameterNode ||
@@ -941,14 +939,14 @@ final class ParamChecker
         }
 
         if ($typeNode instanceof GenericTypeNode && self::isClassStringTemplate($typeNode, $templates)) {
-            return self::resolveClassStringTemplate($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $classTemplates);
+            return self::resolveClassStringTemplate($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $classTemplates, $isSensitive);
         }
 
         if (self::getTemplateName($typeNode, $templates) !== null) {
             return self::resolveTemplateParam($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $registry, $classTemplates, $thisOrClass);
         }
 
-        return $registry->validate($val, $typeNode, $effectiveFunction . '(): Argument $' . $paramName);
+        return $registry->validate($val, $typeNode, $effectiveFunction . '(): Argument $' . $paramName, $isSensitive);
     }
 
     /**
@@ -1078,7 +1076,8 @@ final class ParamChecker
         string $function,
         ?object $thisObj,
         array $templates,
-        array $classTemplates = []
+        array $classTemplates = [],
+        bool $isSensitive = false
     ): ?ErrorMessage {
         /** @var IdentifierTypeNode $innerType */
         $innerType = $typeNode->genericTypes[0];
@@ -1089,7 +1088,7 @@ final class ParamChecker
 
         if (! TemplateManager::isBound($function, $targetObj, $templateName)) {
             if (! \is_string($val) || ! ClassNameValidator::isValidClassString($val)) {
-                return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($val) . ' given');
+                return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($val, $isSensitive) . ' given');
             }
 
             if ($templateNode->bound !== null) {
@@ -1098,8 +1097,9 @@ final class ParamChecker
                     $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
                     if (! self::checkClassStringSatisfiesBound($val, $resolvedBound)) {
                         $boundDisplay = (string) $resolvedBound;
+                        $displayVal = $isSensitive ? 'string given' : "'" . $val . "' given";
 
-                        return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a class-string of ' . $boundDisplay . ", '" . $val . "' given");
+                        return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a class-string of ' . $boundDisplay . ', ' . $displayVal);
                     }
                 }
             }
@@ -1110,7 +1110,7 @@ final class ParamChecker
             $expectedTypeNode = TemplateManager::getBoundType($function, $targetObj, $templateName);
             if ($expectedTypeNode !== null) {
                 if (! \is_string($val) || ! self::checkClassStringSatisfiesBound($val, $expectedTypeNode)) {
-                    $valStr = TypeFormatter::formatGivenValue($val);
+                    $valStr = TypeFormatter::formatGivenValue($val, $isSensitive);
                     $targetDisplay = (string) $expectedTypeNode;
 
                     return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' must be a class-string of ' . $targetDisplay . ', ' . $valStr . ' given');

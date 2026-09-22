@@ -23,7 +23,7 @@ use TypePHP\Internal\Util\ClassNameValidator;
  */
 final class UnionValidator implements TypeValidatorInterface
 {
-    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         /** @var UnionTypeNode $unionNode */
         $unionNode = $node;
@@ -57,7 +57,7 @@ final class UnionValidator implements TypeValidatorInterface
         $hasAnyDiscriminator = false;
 
         foreach ($unionNode->types as $type) {
-            $err = $registry->validate($value, $type, $context);
+            $err = $registry->validate($value, $type, $context, $isSensitive);
             if ($err === null) {
                 return null;
             }
@@ -93,14 +93,14 @@ final class UnionValidator implements TypeValidatorInterface
         }
 
         if ($hasAnyDiscriminator) {
-            return ErrorFactory::createError($context . ' must be of type ' . $unionNode . ', ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be of type ' . $unionNode . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         if (\count($deepErrors) > 0) {
             return $deepErrors[0];
         }
 
-        return ErrorFactory::createError($context . ' must be of type ' . $unionNode . ', ' . TypeFormatter::formatGivenValue($value) . ' given');
+        return ErrorFactory::createError($context . ' must be of type ' . $unionNode . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
     }
 
     /**

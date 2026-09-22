@@ -27,7 +27,7 @@ final class ConstValidator implements TypeValidatorInterface
      */
     private static array $wildcardConstantCache = [];
 
-    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         /** @var ConstTypeNode $constTypeNode */
         $constTypeNode = $node;
@@ -55,7 +55,7 @@ final class ConstValidator implements TypeValidatorInterface
                 if (! \in_array($value, $allowedValues, strict: true)) {
                     $fqcnPattern = $className !== '' ? "$className::$pattern" : $pattern;
 
-                    return ErrorFactory::createError($context . " must be a valid constant matching $fqcnPattern, " . TypeFormatter::formatGivenValue($value) . ' given');
+                    return ErrorFactory::createError($context . " must be a valid constant matching $fqcnPattern, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
                 }
 
                 return null;
@@ -77,14 +77,14 @@ final class ConstValidator implements TypeValidatorInterface
         // Float Epsilon Comparison: Handles IEEE 754 precision artifacts and int-to-float coercion
         if (\is_float($expected)) {
             if ((! \is_float($value) && ! \is_int($value)) || abs((float) $value - $expected) > 1e-9) {
-                return ErrorFactory::createError($context . ' must be literal ' . (string) $constExpr . ', ' . TypeFormatter::formatGivenValue($value) . ' given');
+                return ErrorFactory::createError($context . ' must be literal ' . (string) $constExpr . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
             }
 
             return null;
         }
 
         if ($value !== $expected) {
-            return ErrorFactory::createError($context . ' must be literal ' . (string) $constExpr . ', ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be literal ' . (string) $constExpr . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         return null;

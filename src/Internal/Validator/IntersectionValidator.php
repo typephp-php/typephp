@@ -20,7 +20,7 @@ use TypePHP\Internal\Diagnostic\TypeFormatter;
 
 final class IntersectionValidator implements TypeValidatorInterface
 {
-    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         /** @var IntersectionTypeNode $intersectionNode */
         $intersectionNode = $node;
@@ -36,7 +36,7 @@ final class IntersectionValidator implements TypeValidatorInterface
         }
 
         foreach ($types as $type) {
-            $err = $registry->validate($value, $type, $context);
+            $err = $registry->validate($value, $type, $context, $isSensitive);
             if ($err !== null) {
                 $msg = $err->getMessage();
 
@@ -52,7 +52,7 @@ final class IntersectionValidator implements TypeValidatorInterface
                 }
 
                 return ErrorFactory::createError(
-                    $context . ' must be of type ' . $intersectionNode . ', ' . TypeFormatter::formatGivenValue($value) . ' given'
+                    $context . ' must be of type ' . $intersectionNode . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given'
                 );
             }
         }

@@ -9,8 +9,12 @@ namespace TypePHP\Internal\Diagnostic;
  */
 final class TypeFormatter
 {
-    public static function formatGivenValue(mixed $value): string
+    public static function formatGivenValue(mixed $value, bool $isSensitive = false): string
     {
+        if ($isSensitive) {
+            return get_debug_type($value);
+        }
+
         if (\is_int($value)) {
             if ($value < 0) {
                 return "negative int ($value)";

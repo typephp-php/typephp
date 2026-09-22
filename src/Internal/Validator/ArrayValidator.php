@@ -21,10 +21,10 @@ use TypePHP\Internal\Util\Config;
  */
 final class ArrayValidator implements TypeValidatorInterface
 {
-    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         if (! \is_array($value) && ! ($value instanceof Traversable)) {
-            return ErrorFactory::createError($context . ' must be of type array, ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be of type array, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         /** @var ArrayTypeNode $arrayNode */
@@ -45,7 +45,7 @@ final class ArrayValidator implements TypeValidatorInterface
             }
 
             foreach ($value as $k => $v) {
-                $err = $registry->validate($v, $arrayNode->type, '');
+                $err = $registry->validate($v, $arrayNode->type, '', $isSensitive);
                 if ($err !== null) {
                     $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
 
@@ -57,7 +57,7 @@ final class ArrayValidator implements TypeValidatorInterface
         }
 
         foreach ($value as $k => $v) {
-            $err = $registry->validate($v, $arrayNode->type, '');
+            $err = $registry->validate($v, $arrayNode->type, '', $isSensitive);
             if ($err !== null) {
                 $keyStr = \is_string($k)
                     ? "'" . $k . "'"

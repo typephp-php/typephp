@@ -78,13 +78,13 @@ final class TypeValidatorRegistry
     /**
      * Validates a value against an AST TypeNode and returns an ErrorMessage on failure or null on success.
      */
-    public function validate(mixed $value, TypeNode $node, string $context = ''): ?ErrorMessage
+    public function validate(mixed $value, TypeNode $node, string $context = '', bool $isSensitive = false): ?ErrorMessage
     {
         $validator = $this->validatorMap[$node::class] ?? null;
         if ($validator === null) {
             return null;
         }
 
-        return $validator->validate($value, $node, $context, $this);
+        return $validator->validate($value, $node, $context, $this, $isSensitive);
     }
 }

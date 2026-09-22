@@ -15,10 +15,10 @@ use TypePHP\Internal\Diagnostic\TypeFormatter;
  */
 final class ObjectShapeValidator implements TypeValidatorInterface
 {
-    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry): ?ErrorMessage
+    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         if (! \is_object($value)) {
-            return ErrorFactory::createError($context . ' must be of type object, ' . TypeFormatter::formatGivenValue($value) . ' given');
+            return ErrorFactory::createError($context . ' must be of type object, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         /** @var ObjectShapeNode $shapeNode */
@@ -38,7 +38,7 @@ final class ObjectShapeValidator implements TypeValidatorInterface
 
                 $propValue = $value->$propName;
 
-                $err = $registry->validate($propValue, $item->valueType, '');
+                $err = $registry->validate($propValue, $item->valueType, '', $isSensitive);
                 if ($err !== null) {
                     return ErrorFactory::createError($context . "->{$propName}" . $err->getMessage());
                 }
@@ -77,7 +77,7 @@ final class ObjectShapeValidator implements TypeValidatorInterface
                 $propValue = $value->$propName;
             }
 
-            $err = $registry->validate($propValue, $item->valueType, '');
+            $err = $registry->validate($propValue, $item->valueType, '', $isSensitive);
             if ($err !== null) {
                 return ErrorFactory::createError($context . "->{$propName}" . $err->getMessage());
             }
