@@ -150,22 +150,11 @@ final class FunctionContractInjector
             return $doc;
         }
 
-        foreach ($node->getComments() as $comment) {
-            if ($comment instanceof Doc) {
-                return $comment;
-            }
-        }
-
         if ($node->attrGroups !== []) {
             foreach ($node->attrGroups as $group) {
                 $groupDoc = $group->getDocComment();
                 if ($groupDoc !== null) {
                     return $groupDoc;
-                }
-                foreach ($group->getComments() as $comment) {
-                    if ($comment instanceof Doc) {
-                        return $comment;
-                    }
                 }
             }
         }
@@ -286,11 +275,7 @@ final class FunctionContractInjector
 
     private static function isGenerator(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): bool
     {
-        if ($node->stmts === null) {
-            return false;
-        }
-
-        $visitor = new class () extends NodeVisitorAbstract {
+        $visitor = new class() extends NodeVisitorAbstract {
             public bool $isGen = false;
 
             public function enterNode(Node $n): ?int
@@ -311,7 +296,9 @@ final class FunctionContractInjector
 
         $traverser = new NodeTraverser();
         $traverser->addVisitor($visitor);
-        $traverser->traverse($node->stmts);
+        /** @var array<Node\Stmt> $stmts */
+        $stmts = $node->stmts;
+        $traverser->traverse($stmts);
 
         return $visitor->isGen;
     }
@@ -684,10 +671,8 @@ final class FunctionContractInjector
     private static function wrapGeneratorReturns(array $stmts, Node\Expr $thisArg): array
     {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class ($thisArg) extends NodeVisitorAbstract {
-            public function __construct(private Node\Expr $thisArg)
-            {
-            }
+        $traverser->addVisitor(new class($thisArg) extends NodeVisitorAbstract {
+            public function __construct(private Node\Expr $thisArg) {}
 
             public function enterNode(Node $n): int|Node|null
             {
@@ -746,7 +731,7 @@ final class FunctionContractInjector
         bool $hasSelfOut = false
     ): array {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class ($thisArg, $isNativeVoid, $needsReturnVars, $hasReturn, $byRefParams, $hasSelfOut) extends NodeVisitorAbstract {
+        $traverser->addVisitor(new class($thisArg, $isNativeVoid, $needsReturnVars, $hasReturn, $byRefParams, $hasSelfOut) extends NodeVisitorAbstract {
             /**
              * @param array<string> $byRefParams
              */
@@ -757,8 +742,7 @@ final class FunctionContractInjector
                 private bool $hasReturn,
                 private array $byRefParams,
                 private bool $hasSelfOut
-            ) {
-            }
+            ) {}
 
             public function enterNode(Node $n): int|array|null
             {

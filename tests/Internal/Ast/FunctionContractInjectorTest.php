@@ -327,4 +327,129 @@ PHP;
             ;
         });
     });
+
+    describe('DocComment & Native Union Type Extraction Coverage', function () {
+        test('resolves doc comments from node comments and attribute groups', function () {
+            $doc = new Doc('/** @param positive-int $id */');
+            $fnWithDoc = new Node\Stmt\Function_('fnDoc', [
+                'params' => [new Node\Param(new Node\Expr\Variable('id'))],
+                'stmts' => [],
+            ], [
+                'comments' => [$doc],
+            ]);
+
+            FunctionContractInjector::inject($fnWithDoc);
+            expect($fnWithDoc->stmts[0]->getAttribute('typephp_injected'))->toBeTrue();
+
+            $attr = new Node\Attribute(new Node\Name('Route'));
+            $attrGroupWithDoc = new Node\AttributeGroup([$attr], [
+                'comments' => [$doc],
+            ]);
+            $fnWithAttrDoc = new Node\Stmt\Function_('fnAttrDoc', [
+                'attrGroups' => [$attrGroupWithDoc],
+                'params' => [new Node\Param(new Node\Expr\Variable('id'))],
+                'stmts' => [],
+            ]);
+
+            FunctionContractInjector::inject($fnWithAttrDoc);
+            expect($fnWithAttrDoc->stmts[0]->getAttribute('typephp_injected'))->toBeTrue();
+        });
+
+        test('detects callable and iterable candidates in native union parameter types without docblocks', function () {
+            $unionCallableParam = new Node\Param(
+                new Node\Expr\Variable('cb'),
+                null,
+                new Node\UnionType([
+                    new Node\Identifier('callable'),
+                    new Node\Identifier('string'),
+                ])
+            );
+
+            $methodCallableUnion = new Node\Stmt\ClassMethod('testUnionCb', [
+                'params' => [$unionCallableParam],
+                'stmts' => [],
+            ]);
+
+            FunctionContractInjector::inject($methodCallableUnion);
+            expect($methodCallableUnion->stmts)->not()->toBeEmpty();
+
+            $hasWrapCallable = false;
+            foreach ($methodCallableUnion->stmts as $stmt) {
+                if ($stmt instanceof Node\Stmt\Expression && $stmt->expr instanceof Node\Expr\Assign) {
+                    if ($stmt->expr->expr instanceof Node\Expr\FuncCall && str_contains($stmt->expr->expr->name->toString(), 'wrapCallable')) {
+                        $hasWrapCallable = true;
+                    }
+                }
+            }
+            expect($hasWrapCallable)->toBeTrue();
+
+            $unionIterableParam = new Node\Param(
+                new Node\Expr\Variable('items'),
+                null,
+                new Node\UnionType([
+                    new Node\Name('Traversable'),
+                    new Node\Name('Countable'),
+                ])
+            );
+
+            $methodIterableUnion = new Node\Stmt\ClassMethod('testUnionIterable', [
+                'params' => [$unionIterableParam],
+                'stmts' => [],
+            ]);
+
+            FunctionContractInjector::inject($methodIterableUnion);
+            expect($methodIterableUnion->stmts)->not()->toBeEmpty();
+
+            $hasWrapIterable = false;
+            foreach ($methodIterableUnion->stmts as $stmt) {
+                if ($stmt instanceof Node\Stmt\Expression && $stmt->expr instanceof Node\Expr\Assign) {
+                    if ($stmt->expr->expr instanceof Node\Expr\FuncCall && str_contains($stmt->expr->expr->name->toString(), 'wrapIterable')) {
+                        $hasWrapIterable = true;
+                    }
+                }
+            }
+            expect($hasWrapIterable)->toBeTrue();
+        });
+    });
+
+    test('skips return contract injection when @return specifies mixed', function () {
+        $doc = new Doc('/** @return mixed */');
+        $fnMixed = new Node\Stmt\Function_('fnMixed', [
+            'stmts' => [new Node\Stmt\Return_(new Node\Scalar\String_('ok'))],
+        ], [
+            'comments' => [$doc],
+        ]);
+
+        FunctionContractInjector::inject($fnMixed);
+
+        expect($fnMixed->stmts[0]->expr)->toBeInstanceOf(Node\Scalar\String_::class);
+    });
+
+    test('bypasses already wrapped yield from and var wrapped return nodes', function () {
+        $yieldFrom = new Node\Expr\YieldFrom(new Node\Expr\Array_());
+        $yieldFrom->setAttribute('typephp_wrapped', true);
+
+        $docGen = new Doc('/** @return Generator<string, int> */');
+        $fnGen = new Node\Stmt\Function_('fnGenPreWrapped', [
+            'stmts' => [new Node\Stmt\Expression($yieldFrom)],
+        ], [
+            'comments' => [$docGen],
+        ]);
+
+        FunctionContractInjector::inject($fnGen);
+        expect($fnGen->stmts)->not()->toBeEmpty();
+
+        $ret = new Node\Stmt\Return_(new Node\Scalar\String_('already_wrapped'));
+        $ret->setAttribute('typephp_var_wrapped', true);
+
+        $docRet = new Doc('/** @return string */');
+        $fnRet = new Node\Stmt\Function_('fnRetVarWrapped', [
+            'stmts' => [$ret],
+        ], [
+            'comments' => [$docRet],
+        ]);
+
+        FunctionContractInjector::inject($fnRet);
+        expect($fnRet->stmts[0]->expr)->toBeInstanceOf(Node\Scalar\String_::class);
+    });
 });
