@@ -6,7 +6,6 @@ namespace TypePHP\Internal\Util;
 
 use ReflectionClass;
 use ReflectionFunction;
-use Throwable;
 
 /**
  * @internal High-performance manager for resolving file-level and caller-level @typephp-ignore tags.
@@ -112,7 +111,7 @@ final class IgnoreManager
                 continue;
             }
 
-            if (str_starts_with($function, '__pest_')) {
+            if (str_contains($function, '__pest_')) {
                 continue;
             }
 
@@ -198,25 +197,17 @@ final class IgnoreManager
             return false;
         }
 
-        try {
-            /** @var class-string<object> $class */
-            $refClass = new ReflectionClass($class);
+        /** @var class-string<object> $class */
+        $refClass = new ReflectionClass($class);
 
-            if ($refClass->hasMethod($method)) {
-                $refMethod = $refClass->getMethod($method);
-                if (self::hasIgnoreDocTag($refMethod->getDocComment())) {
-                    return true;
-                }
-            }
-
-            if (self::hasIgnoreDocTag($refClass->getDocComment())) {
+        if ($refClass->hasMethod($method)) {
+            $refMethod = $refClass->getMethod($method);
+            if (self::hasIgnoreDocTag($refMethod->getDocComment())) {
                 return true;
             }
-        } catch (Throwable $e) {
-            return false;
         }
 
-        return false;
+        return self::hasIgnoreDocTag($refClass->getDocComment());
     }
 
     private static function checkFunctionIgnored(string $function): bool
@@ -232,15 +223,8 @@ final class IgnoreManager
             return false;
         }
 
-        try {
-            $refFunc = new ReflectionFunction($function);
-            if (self::hasIgnoreDocTag($refFunc->getDocComment())) {
-                return true;
-            }
-        } catch (Throwable $e) {
-            return false;
-        }
+        $refFunc = new ReflectionFunction($function);
 
-        return false;
+        return self::hasIgnoreDocTag($refFunc->getDocComment());
     }
 }
