@@ -41,11 +41,8 @@ final class IteratorProxy implements OuterIterator, Countable
             $iterable = $iterable->getIterator();
         }
 
-        if ($iterable instanceof Iterator) {
-            return $iterable;
-        }
-
-        return new \ArrayIterator(iterator_to_array($iterable));
+        /** @var Iterator $iterable */
+        return $iterable;
     }
 
     public function rewind(): void
