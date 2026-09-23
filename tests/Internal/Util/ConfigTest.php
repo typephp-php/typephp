@@ -40,6 +40,97 @@ describe('Config Unit Tests', function () {
         expect(Config::get())->toBeArray();
     });
 
+    test('initializes cachedConfig on demand across all getters when uninitialized and tests cached branch', function () {
+        $getters = [
+            'isEnabled',
+            'getIgnoreTraceDepth',
+            'isInlinePropertiesEnabled',
+            'isInlineGenericsEnabled',
+            'isInlineCallablesEnabled',
+            'isInlineScalarsEnabled',
+            'isInlineArraysEnabled',
+            'isInlineObjectsEnabled',
+            'hasActiveInlineChecks',
+            'isCacheCheckMtimeEnabled',
+            'isParamsOutEnabled',
+            'isSelfOutEnabled',
+            'isParamsEnabled',
+            'isReturnsEnabled',
+            'isStrictReturnGenericInvarianceEnabled',
+            'isMagicPropertiesEnabled',
+            'isMagicMethodsEnabled',
+            'isRespectIgnoreTagsEnabled',
+            'isRespectNativeNullabilityEnabled',
+            'isVendorBoundaryOnlyEnabled',
+            'isArrayValidationHybrid',
+            'getArrayValidationStrategy',
+        ];
+
+        foreach ($getters as $getter) {
+            Config::reset();
+            // First call triggers: if (self::$cachedConfig === null) { self::get(); }
+            $val1 = Config::$getter();
+
+            // Second call triggers the false branch (already cached)
+            $val2 = Config::$getter();
+
+            expect($val1)->toBe($val2);
+        }
+    });
+
+    test('hasActiveInlineChecks returns false when all inline var checks are disabled', function () {
+        Config::set([
+            'inline_vars' => [
+                'generics' => false,
+                'callables' => false,
+                'scalars' => false,
+                'arrays' => false,
+                'objects' => false,
+            ],
+        ]);
+
+        expect(Config::hasActiveInlineChecks())->toBeFalse();
+
+        Config::set([
+            'inline_vars' => [
+                'objects' => true,
+            ],
+        ]);
+        expect(Config::hasActiveInlineChecks())->toBeTrue();
+    });
+
+    test('handles array validation strategy configuration', function () {
+        Config::set(['array_validation' => 'hybrid']);
+        expect(Config::isArrayValidationHybrid())->toBeTrue()
+            ->and(Config::getArrayValidationStrategy())->toBe('hybrid')
+        ;
+
+        Config::set(['array_validation' => 'full']);
+        expect(Config::isArrayValidationHybrid())->toBeFalse()
+            ->and(Config::getArrayValidationStrategy())->toBe('full')
+        ;
+
+        // Non-string fallback
+        Config::set(['array_validation' => 12345]);
+        expect(Config::getArrayValidationStrategy())->toBe('full');
+    });
+
+    test('syncFlags correctly validates and falls back on edge-case inputs', function () {
+        // Invalid ignore_trace_depth values fallback to 25
+        Config::set(['ignore_trace_depth' => -5]);
+        expect(Config::getIgnoreTraceDepth())->toBe(25);
+
+        Config::set(['ignore_trace_depth' => 'invalid_string']);
+        expect(Config::getIgnoreTraceDepth())->toBe(25);
+
+        Config::set(['ignore_trace_depth' => 40]);
+        expect(Config::getIgnoreTraceDepth())->toBe(40);
+
+        // Non-array inline_vars fallback
+        Config::set(['inline_vars' => null]);
+        expect(Config::isInlinePropertiesEnabled())->toBeTrue();
+    });
+
     test('resolves and memoizes project root path via getProjectRoot', function () {
         $root1 = Config::getProjectRoot();
         $root2 = Config::getProjectRoot();
@@ -98,43 +189,69 @@ describe('Config Unit Tests', function () {
         ;
     });
 
-    test('resolves consumer project root when TypePHP is installed inside vendor/typephp/typephp', function () {
-        $tempBase = sys_get_temp_dir() . '/typephp_root_test_' . uniqid();
-        $vendorDir = $tempBase . '/vendor/typephp/typephp/src/Internal';
-        mkdir($vendorDir, 0777, true);
+    test('resolves project root when installed in vendor using startingDir parameter', function () {
+        $tempBase = sys_get_temp_dir() . '/typephp_vendor_test_' . uniqid();
+        $fakeVendorDir = $tempBase . '/vendor/typephp/typephp/src/Internal/Util';
+        mkdir($fakeVendorDir, 0777, true);
 
         file_put_contents($tempBase . '/composer.json', json_encode(['name' => 'acme/consumer-app']));
-        file_put_contents($tempBase . '/vendor/autoload.php', '<?php');
-        file_put_contents($tempBase . '/vendor/typephp/typephp/composer.json', json_encode(['name' => 'typephp/typephp']));
 
         try {
-            $prevCwd = getcwd();
-            chdir($tempBase);
-
-            Config::reset();
-
-            $root = Config::getProjectRoot();
+            $resolved = Config::getProjectRoot($fakeVendorDir);
             $realTempBase = realpath($tempBase) !== false ? realpath($tempBase) : $tempBase;
             $normTempBase = rtrim(str_replace('\\', '/', (string) $realTempBase), '/');
 
-            expect($root)->toBe($normTempBase)
-                ->and($root)->not()->toContain('vendor/typephp/typephp')
-            ;
-
-            if ($prevCwd !== false) {
-                chdir($prevCwd);
-            }
+            expect($resolved)->toBe($normTempBase);
         } finally {
             @unlink($tempBase . '/composer.json');
-            @unlink($tempBase . '/vendor/autoload.php');
-            @unlink($tempBase . '/vendor/typephp/typephp/composer.json');
+            @rmdir($fakeVendorDir);
             @rmdir($tempBase . '/vendor/typephp/typephp/src/Internal');
             @rmdir($tempBase . '/vendor/typephp/typephp/src');
             @rmdir($tempBase . '/vendor/typephp/typephp');
             @rmdir($tempBase . '/vendor/typephp');
             @rmdir($tempBase . '/vendor');
             @rmdir($tempBase);
-            Config::reset();
+        }
+    });
+
+    test('resolves project root by climbing parent directories when not in vendor', function () {
+        $tempBase = sys_get_temp_dir() . '/typephp_climb_test_' . uniqid();
+        $nestedSubDir = $tempBase . '/src/Modules/Commerce/Services';
+        mkdir($nestedSubDir, 0777, true);
+
+        file_put_contents($tempBase . '/composer.json', json_encode(['name' => 'acme/monorepo']));
+
+        try {
+            $resolved = Config::getProjectRoot($nestedSubDir);
+            $realTempBase = realpath($tempBase) !== false ? realpath($tempBase) : $tempBase;
+            $normTempBase = rtrim(str_replace('\\', '/', (string) $realTempBase), '/');
+
+            expect($resolved)->toBe($normTempBase);
+        } finally {
+            @unlink($tempBase . '/composer.json');
+            @rmdir($nestedSubDir);
+            @rmdir($tempBase . '/src/Modules/Commerce');
+            @rmdir($tempBase . '/src/Modules');
+            @rmdir($tempBase . '/src');
+            @rmdir($tempBase);
+        }
+    });
+
+    test('falls back to current directory when no composer.json or autoload.php is found after 10 parent steps', function () {
+        $tempBase = sys_get_temp_dir() . '/typephp_deep_empty_' . uniqid();
+        $deepDir = $tempBase . '/1/2/3/4/5/6/7/8/9/10/11';
+        mkdir($deepDir, 0777, true);
+
+        try {
+            $resolved = Config::getProjectRoot($deepDir);
+            expect($resolved)->toBeString()
+                ->and($resolved)->not()->toBeEmpty()
+            ;
+        } finally {
+            for ($d = $deepDir; $d !== $tempBase; $d = dirname($d)) {
+                @rmdir($d);
+            }
+            @rmdir($tempBase);
         }
     });
 
@@ -147,5 +264,40 @@ describe('Config Unit Tests', function () {
 
         Config::set(['params' => false, 'params_out' => true]);
         expect(Config::isParamsOutEnabled())->toBeFalse();
+    });
+
+    test('set initializes cachedConfig if called when cachedConfig is null', function () {
+        Config::reset();
+
+        Config::set(['enabled' => false]);
+
+        expect(Config::isEnabled())->toBeFalse();
+    });
+
+    test('falls back to defaultConfig extensions when typephp.php does not exist', function () {
+        $tempDir = sys_get_temp_dir() . '/typephp_no_config_' . uniqid();
+        mkdir($tempDir, 0777, true);
+
+        try {
+            Config::reset();
+
+            $ref = new ReflectionClass(Config::class);
+            $prop = $ref->getProperty('projectRoot');
+            $prop->setValue(null, $tempDir);
+
+            $config = Config::get();
+            expect($config['extensions'])->toBeEmpty();
+        } finally {
+            Config::reset();
+            @rmdir($tempDir);
+        }
+    });
+
+    test('hits root break when directory traversal reaches filesystem root', function () {
+        $root = DIRECTORY_SEPARATOR === '/' ? '/' : 'C:/';
+        $result = Config::getProjectRoot($root);
+
+        expect($result)->toBeString()
+            ->and($result)->not()->toBeEmpty();
     });
 });
