@@ -68,11 +68,7 @@ final class TypeFormatter
                 return "associative array (key '$firstStringKey')";
             }
 
-            if ($firstNonSequentialIndex !== null) {
-                return "non-sequential array (index $firstNonSequentialIndex)";
-            }
-
-            return 'array (' . \count($value) . ' items)';
+            return "non-sequential array (index $firstNonSequentialIndex)";
         }
 
         if (\is_bool($value)) {
