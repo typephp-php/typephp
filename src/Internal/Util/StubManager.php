@@ -143,17 +143,15 @@ final class StubManager
 
             foreach ($files as $file) {
                 $source = file_get_contents($file);
-                if ($source === false) {
-                    continue;
-                }
-
-                try {
-                    $stmts = $parser->parse($source);
-                    if ($stmts !== null) {
-                        self::extractStubsFromAst($stmts);
+                if ($source !== false) {
+                    try {
+                        $stmts = $parser->parse($source);
+                        if ($stmts !== null) {
+                            self::extractStubsFromAst($stmts);
+                        }
+                    } catch (Throwable $e) {
+                        // Silently ignore malformed stub files
                     }
-                } catch (Throwable $e) {
-                    // Silently ignore malformed stub files
                 }
             }
         }
@@ -186,21 +184,17 @@ final class StubManager
             $regex = PathMatcher::compileGlobToRegex($pattern, $projectRoot);
             $matchedFiles = [];
 
-            try {
-                $iterator = new RecursiveIteratorIterator(
-                    new RecursiveDirectoryIterator($baseDir, FilesystemIterator::SKIP_DOTS)
-                );
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($baseDir, FilesystemIterator::SKIP_DOTS)
+            );
 
-                foreach ($iterator as $fileInfo) {
-                    if ($fileInfo instanceof SplFileInfo && $fileInfo->isFile()) {
-                        $real = str_replace('\\', '/', (string) $fileInfo->getRealPath());
-                        if (preg_match($regex, $real) === 1 || preg_match($regex, str_replace('\\', '/', $fileInfo->getPathname())) === 1) {
-                            $matchedFiles[] = $real;
-                        }
+            foreach ($iterator as $fileInfo) {
+                if ($fileInfo instanceof SplFileInfo && $fileInfo->isFile()) {
+                    $real = str_replace('\\', '/', (string) $fileInfo->getRealPath());
+                    if (preg_match($regex, $real) === 1 || preg_match($regex, str_replace('\\', '/', $fileInfo->getPathname())) === 1) {
+                        $matchedFiles[] = $real;
                     }
                 }
-            } catch (Throwable $e) {
-                // Ignore filesystem access errors
             }
 
             return $matchedFiles;
@@ -209,20 +203,16 @@ final class StubManager
         if (is_dir($fullPath)) {
             $matchedFiles = [];
 
-            try {
-                $iterator = new RecursiveIteratorIterator(
-                    new RecursiveDirectoryIterator($fullPath, FilesystemIterator::SKIP_DOTS)
-                );
-                foreach ($iterator as $fileInfo) {
-                    if ($fileInfo instanceof SplFileInfo && $fileInfo->isFile()) {
-                        $real = $fileInfo->getRealPath();
-                        if ($real !== false) {
-                            $matchedFiles[] = str_replace('\\', '/', $real);
-                        }
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($fullPath, FilesystemIterator::SKIP_DOTS)
+            );
+            foreach ($iterator as $fileInfo) {
+                if ($fileInfo instanceof SplFileInfo && $fileInfo->isFile()) {
+                    $real = $fileInfo->getRealPath();
+                    if ($real !== false) {
+                        $matchedFiles[] = str_replace('\\', '/', $real);
                     }
                 }
-            } catch (Throwable $e) {
-                // Ignore filesystem access errors
             }
 
             return $matchedFiles;

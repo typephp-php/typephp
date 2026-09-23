@@ -4,9 +4,6 @@ declare(strict_types=1);
 
 namespace TypePHP\Tests\Internal\Util;
 
-use ArrayAccess;
-use Countable;
-use DateTime;
 use stdClass;
 use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Tests\Fixtures\Domain\User;

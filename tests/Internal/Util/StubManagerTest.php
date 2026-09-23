@@ -2,15 +2,14 @@
 
 declare(strict_types=1);
 
+use PhpParser\Node\Stmt\Class_;
+use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\StubManager;
 
 describe('StubManager Unit Tests', function () {
-    beforeEach(function () {
-        Config::reset();
-    });
-
     afterEach(function () {
+        StubManager::reset();
         Config::reset();
     });
 
@@ -102,6 +101,128 @@ PHP;
             if (is_dir($tempDir)) {
                 @rmdir($tempDir);
             }
+
+            StubManager::reset();
+            Config::reset();
         }
+    });
+
+    test('resolveStubFiles covers direct file, directory path, wildcard baseDir fallback, and non-existent path', function () {
+        $ref = new ReflectionClass(StubManager::class);
+        $method = $ref->getMethod('resolveStubFiles');
+
+        $tempDir = sys_get_temp_dir() . '/typephp_resolve_stubs_' . uniqid();
+        mkdir($tempDir, 0777, true);
+        $dummyFile = $tempDir . '/dummy.stub';
+        file_put_contents($dummyFile, '<?php');
+
+        try {
+            // 1. Exact file match: is_file($fullPath)
+            $resFile = $method->invoke(null, $dummyFile, $tempDir);
+            expect($resFile)->toBe([str_replace('\\', '/', $dummyFile)]);
+
+            // 2. Directory path without wildcard: is_dir($fullPath)
+            $resDir = $method->invoke(null, $tempDir, $tempDir);
+            expect($resDir)->toContain(str_replace('\\', '/', $dummyFile));
+
+            // 3. Wildcard with missing baseDir: !is_dir($baseDir) => return []
+            $resMissingBase = $method->invoke(null, $tempDir . '/missing_dir_123/sub/*.stub', $tempDir);
+            expect($resMissingBase)->toBe([]);
+
+            // 4. Non-existent path without wildcard => falls through to return []
+            $resMissingFile = $method->invoke(null, $tempDir . '/non_existent_file.stub', $tempDir);
+            expect($resMissingFile)->toBe([]);
+        } finally {
+            @unlink($dummyFile);
+            @rmdir($tempDir);
+        }
+    });
+
+    test('loadStubFiles catches parse errors on malformed stub files', function () {
+        $ref = new ReflectionClass(StubManager::class);
+        $method = $ref->getMethod('loadStubFiles');
+
+        $tempDir = sys_get_temp_dir() . '/typephp_load_stubs_' . uniqid();
+        mkdir($tempDir, 0777, true);
+
+        // Invalid PHP syntax triggers catch (Throwable $e)
+        $badSyntaxFile = $tempDir . '/syntax_error.stub';
+        file_put_contents($badSyntaxFile, '<?php syntax error {{{ unclosed');
+
+        try {
+            $method->invoke(null, [$badSyntaxFile]);
+
+            expect(StubManager::hasClassStub('SyntaxError'))->toBeFalse();
+        } finally {
+            @unlink($badSyntaxFile);
+            @rmdir($tempDir);
+        }
+    });
+
+    test('extractStubsFromAst extracts interfaces, traits, enums and skips anonymous classes', function () {
+        $ref = new ReflectionClass(StubManager::class);
+        $method = $ref->getMethod('extractStubsFromAst');
+
+        $code = <<<'PHP'
+<?php
+
+namespace Vendor\AstTest;
+
+/**
+ * @template T
+ */
+interface AstStubInterface
+{
+    /**
+     * @return positive-int
+     */
+    public function getId(): int;
+}
+
+/**
+ * @template T
+ */
+trait AstStubTrait
+{
+    /**
+     * @var positive-int
+     */
+    public int $counter;
+
+    /**
+     * @return non-empty-string
+     */
+    public function getName(): string
+    {
+    }
+}
+
+/**
+ * Enum doc
+ */
+enum AstStubEnum: string
+{
+    case A = 'a';
+}
+PHP;
+
+        $parser = StreamWrapper::getParser();
+        $stmts = $parser->parse($code);
+        expect($stmts)->not()->toBeNull();
+
+        // 1. Process interface, trait, and enum statements
+        $method->invoke(null, $stmts);
+
+        expect(StubManager::hasClassStub('Vendor\AstTest\AstStubInterface'))->toBeTrue()
+            ->and(StubManager::hasMethodStub('Vendor\AstTest\AstStubInterface', 'getId'))->toBeTrue()
+            ->and(StubManager::hasClassStub('Vendor\AstTest\AstStubTrait'))->toBeTrue()
+            ->and(StubManager::getPropertyDoc('Vendor\AstTest\AstStubTrait', 'counter'))->toContain('@var positive-int')
+            ->and(StubManager::getMethodDoc('Vendor\AstTest\AstStubTrait', 'getName'))->toContain('@return non-empty-string')
+            ->and(StubManager::hasClassStub('Vendor\AstTest\AstStubEnum'))->toBeTrue()
+            ->and(StubManager::getClassDoc('Vendor\AstTest\AstStubEnum'))->toContain('Enum doc')
+        ;
+
+        // 2. Anonymous class node triggers `if ($stmt->name === null) continue;`
+        $method->invoke(null, [new Class_(null)]);
     });
 });

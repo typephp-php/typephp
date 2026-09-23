@@ -248,7 +248,7 @@ describe('Config Unit Tests', function () {
                 ->and($resolved)->not()->toBeEmpty()
             ;
         } finally {
-            for ($d = $deepDir; $d !== $tempBase; $d = dirname($d)) {
+            for ($d = $deepDir; $d !== $tempBase; $d = \dirname($d)) {
                 @rmdir($d);
             }
             @rmdir($tempBase);
@@ -298,6 +298,7 @@ describe('Config Unit Tests', function () {
         $result = Config::getProjectRoot($root);
 
         expect($result)->toBeString()
-            ->and($result)->not()->toBeEmpty();
+            ->and($result)->not()->toBeEmpty()
+        ;
     });
 });
