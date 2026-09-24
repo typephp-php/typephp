@@ -1,6 +1,3 @@
-Here is the updated `README.md` reflecting that the CLI binary automatically type-checks any specified script without needing to register it in `typephp.php`:
-
-```markdown
 <h1 align="center">TypePHP</h1>
 
 <p align="center">
