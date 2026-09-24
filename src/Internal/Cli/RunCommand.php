@@ -59,10 +59,20 @@ final class RunCommand implements CommandInterface
             if ($realTarget !== false) {
                 $normalizedTarget = str_replace('\\', '/', $realTarget);
                 $currentConfig = Config::get();
-                $includes = (array) ($currentConfig['include'] ?? []);
+                $includes = [];
+
+                if (\is_array($currentConfig['include'] ?? null)) {
+                    foreach ($currentConfig['include'] as $inc) {
+                        if (\is_string($inc)) {
+                            $includes[] = $inc;
+                        }
+                    }
+                }
+
+                $includes[] = $normalizedTarget;
 
                 Config::set([
-                    'include' => array_values(array_unique([...$includes, $normalizedTarget])),
+                    'include' => array_values(array_unique($includes)),
                 ]);
             }
 
