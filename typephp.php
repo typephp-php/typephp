@@ -144,7 +144,6 @@ return [
     | You can use "*" glob to match any file.
     */
     'include' => [
-        '*',
         'app/**',
         'internals/**',
         'tests/**',

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Cli;
 
+use TypePHP\Internal\Util\Config;
 use TypePHP\TypePHP;
 
 /**
@@ -54,8 +55,19 @@ final class RunCommand implements CommandInterface
         }
 
         try {
-            TypePHP::boot();
             $realTarget = realpath($target);
+            if ($realTarget !== false) {
+                $normalizedTarget = str_replace('\\', '/', $realTarget);
+                $currentConfig = Config::get();
+                $includes = (array) ($currentConfig['include'] ?? []);
+
+                Config::set([
+                    'include' => array_values(array_unique([...$includes, $normalizedTarget])),
+                ]);
+            }
+
+            TypePHP::boot();
+
             if ($realTarget !== false) {
                 require $realTarget;
             }
