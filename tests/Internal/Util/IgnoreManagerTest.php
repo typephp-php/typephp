@@ -35,6 +35,44 @@ class IgnoredMethodCallerFixture
 }
 
 /**
+ * Fixture: Helper for testing in-loop cached method ignore hits
+ */
+class TraceLoopCacheCallerFixture
+{
+    /**
+     * @typephp-ignore
+     */
+    public static function outerIgnored(): bool
+    {
+        return self::innerWorker();
+    }
+
+    public static function innerWorker(): bool
+    {
+        return IgnoreManager::isCallerIgnored();
+    }
+}
+
+/**
+ * Fixture: Helper for testing in-loop cached false continue progression
+ */
+class TraceLoopCacheChainFixture
+{
+    /**
+     * @typephp-ignore
+     */
+    public static function ignoredGrandParent(): bool
+    {
+        return self::normalParent();
+    }
+
+    public static function normalParent(): bool
+    {
+        return IgnoreManager::isCallerIgnored();
+    }
+}
+
+/**
  * Fixture: Class-level ignore caller
  *
  * @typephp-ignore
@@ -59,17 +97,6 @@ class NormalCallerFixture
 }
 
 /**
- * Fixture: Dedicated caller for stub-based ignore testing
- */
-class StubIgnoredCallerFixture
-{
-    public static function execute(): bool
-    {
-        return IgnoreManager::isCallerIgnored();
-    }
-}
-
-/**
  * Standalone function with ignore tag
  *
  * @typephp-ignore
@@ -85,6 +112,25 @@ function testIgnoredStandaloneCaller(): bool
 function testNormalStandaloneCaller(): bool
 {
     return IgnoreManager::isCallerIgnored();
+}
+
+/**
+ * Helper to simulate pest internal frames
+ */
+function __pest_test_runner_sim(): bool
+{
+    return IgnoreManager::isCallerIgnored();
+}
+
+/**
+ * Fixture: Helper class for testing file-level ignore in call stack
+ */
+class IgnoredFileCallerFixture
+{
+    public static function call(): bool
+    {
+        return IgnoreManager::isCallerIgnored();
+    }
 }
 
 describe('IgnoreManager Unit Tests', function () {
@@ -122,6 +168,15 @@ describe('IgnoreManager Unit Tests', function () {
             expect(IgnoreManager::isFileIgnored(''))->toBeFalse();
         });
 
+        test('suppresses checks when caller file is registered as ignored in stack trace', function () {
+            $ref = new \ReflectionClass(IgnoredFileCallerFixture::class);
+            $file = (string) $ref->getFileName();
+
+            IgnoreManager::registerIgnoredFile($file);
+
+            expect(IgnoredFileCallerFixture::call())->toBeTrue();
+        });
+
         test('clears file registry on reset', function () {
             $path = '/var/www/app/Test.php';
             IgnoreManager::registerIgnoredFile($path);
@@ -151,42 +206,58 @@ describe('IgnoreManager Unit Tests', function () {
             ;
         });
 
-        test('identifies standalone functions marked with @typephp-ignore', function () {
-            expect(testIgnoredStandaloneCaller())->toBeTrue()
-                ->and(testNormalStandaloneCaller())->toBeFalse()
-            ;
+        test('identifies standalone functions marked with @typephp-ignore and hits function cache on second run', function () {
+            expect(testIgnoredStandaloneCaller())->toBeTrue();
+            expect(testIgnoredStandaloneCaller())->toBeTrue();
+            expect(testNormalStandaloneCaller())->toBeFalse();
         });
 
-        test('supports direct explicit caller overrides', function () {
-            expect(IgnoreManager::isCallerIgnored(IgnoredMethodCallerFixture::class, 'executeIgnored'))->toBeTrue()
-                ->and(IgnoreManager::isCallerIgnored(NormalCallerFixture::class, 'execute'))->toBeFalse()
-                ->and(IgnoreManager::isCallerIgnored(null, 'TypePHP\Tests\Internal\Util\testIgnoredStandaloneCaller'))->toBeTrue()
-            ;
+        test('skips simulated pest runner frames in stack trace', function () {
+            expect(__pest_test_runner_sim())->toBeFalse();
+        });
+
+        test('supports direct explicit caller overrides and hits cache on subsequent checks', function () {
+            expect(IgnoreManager::isCallerIgnored(IgnoredMethodCallerFixture::class, 'executeIgnored'))->toBeTrue();
+            expect(IgnoreManager::isCallerIgnored(IgnoredMethodCallerFixture::class, 'executeIgnored'))->toBeTrue();
+
+            expect(IgnoreManager::isCallerIgnored(NormalCallerFixture::class, 'execute'))->toBeFalse();
+            expect(IgnoreManager::isCallerIgnored(NormalCallerFixture::class, 'execute'))->toBeFalse();
+
+            expect(IgnoreManager::isCallerIgnored(null, 'TypePHP\Tests\Internal\Util\testIgnoredStandaloneCaller'))->toBeTrue();
+            expect(IgnoreManager::isCallerIgnored(null, 'TypePHP\Tests\Internal\Util\testIgnoredStandaloneCaller'))->toBeTrue();
+
+            expect(IgnoreManager::isCallerIgnored(null, 'TypePHP\Tests\Internal\Util\testNormalStandaloneCaller'))->toBeFalse();
+            expect(IgnoreManager::isCallerIgnored(null, 'TypePHP\Tests\Internal\Util\testNormalStandaloneCaller'))->toBeFalse();
+        });
+
+        test('returns false cleanly when checking non-existent classes and functions', function () {
+            expect(IgnoreManager::isCallerIgnored('NonExistentClass12345', 'anyMethod'))->toBeFalse();
+            expect(IgnoreManager::isCallerIgnored(null, 'non_existent_function_12345'))->toBeFalse();
+        });
+
+        test('hits in-loop cache for previously verified ignored caller method in stack trace', function () {
+            expect(TraceLoopCacheCallerFixture::outerIgnored())->toBeTrue();
+            expect(TraceLoopCacheCallerFixture::outerIgnored())->toBeTrue();
+        });
+
+        test('hits in-loop cache for un-ignored intermediate method and continues up stack to ancestor', function () {
+            expect(TraceLoopCacheChainFixture::normalParent())->toBeFalse();
+            expect(TraceLoopCacheChainFixture::ignoredGrandParent())->toBeTrue();
         });
     });
 
-    describe('Stub-Based Caller Ignore Detection', function () {
-        beforeEach(function () {
-            Config::reset();
-            IgnoreManager::reset();
-        });
-
-        afterEach(function () {
-            Config::reset();
-            IgnoreManager::reset();
-        });
-
-        test('identifies caller methods ignored via external stub files', function () {
+    describe('Stub-Based Caller Ignore Detection (Method, Class, and Function Stubs)', function () {
+        test('identifies caller methods, classes, and functions ignored via external stub files', function () {
             $tempDir = sys_get_temp_dir() . '/typephp_ignore_stub_' . uniqid();
             mkdir($tempDir, 0777, true);
 
-            $stubPath = $tempDir . '/StubIgnoredCallerFixture.stub';
+            $stubPath = $tempDir . '/Stubs.stub';
             $stubContent = <<<'PHP'
 <?php
 
 namespace TypePHP\Tests\Internal\Util;
 
-class StubIgnoredCallerFixture
+class StubIgnoredMethodCaller
 {
     /**
      * @typephp-ignore
@@ -194,6 +265,23 @@ class StubIgnoredCallerFixture
     public static function execute(): bool
     {
     }
+}
+
+/**
+ * @typephp-ignore
+ */
+class StubIgnoredClassCaller
+{
+    public static function execute(): bool
+    {
+    }
+}
+
+/**
+ * @typephp-ignore
+ */
+function stubIgnoredFunction(): bool
+{
 }
 PHP;
             file_put_contents($stubPath, $stubContent);
@@ -205,7 +293,9 @@ PHP;
                     ],
                 ]);
 
-                expect(StubIgnoredCallerFixture::execute())->toBeTrue();
+                expect(IgnoreManager::isCallerIgnored('TypePHP\Tests\Internal\Util\StubIgnoredMethodCaller', 'execute'))->toBeTrue();
+                expect(IgnoreManager::isCallerIgnored('TypePHP\Tests\Internal\Util\StubIgnoredClassCaller', 'execute'))->toBeTrue();
+                expect(IgnoreManager::isCallerIgnored(null, 'TypePHP\Tests\Internal\Util\stubIgnoredFunction'))->toBeTrue();
             } finally {
                 if (file_exists($stubPath)) {
                     @unlink($stubPath);
@@ -229,16 +319,6 @@ PHP;
             } finally {
                 Config::reset();
             }
-        });
-    });
-
-    describe('In-Memory Decision Caching ($O(1) Memoization)', function () {
-        test('retrieves subsequent caller decisions directly from cache', function () {
-            expect(IgnoredMethodCallerFixture::executeIgnored())->toBeTrue();
-            expect(NormalCallerFixture::execute())->toBeFalse();
-
-            expect(IgnoredMethodCallerFixture::executeIgnored())->toBeTrue();
-            expect(NormalCallerFixture::execute())->toBeFalse();
         });
     });
 });

@@ -24,7 +24,7 @@ describe('ScopeManager Unit Tests', function () {
         $manager->pushScope();
         $manager->extractVarDocblock('/** @var positive-int $globalId */');
 
-        $manager->pushScope(); // Inner scope
+        $manager->pushScope();
         expect($manager->getVarTypeFromScope('globalId'))->toBe('positive-int');
 
         $manager->popScope();
@@ -73,5 +73,25 @@ DOC;
         $manager->extractVarDocblock($doc);
 
         expect($manager->getVarTypeFromScope('tag'))->toBe('non-empty-string');
+    });
+
+    test('infers variable name from standalone variable expression when unnamed in docblock', function () {
+        $manager = new ScopeManager();
+        $manager->pushScope();
+
+        $varExpr = new Node\Expr\Variable('activeUser');
+
+        $manager->extractVarDocblock('/** @var non-empty-string */', $varExpr);
+
+        expect($manager->getVarTypeFromScope('activeUser'))->toBe('non-empty-string');
+    });
+
+    test('gracefully catches and ignores malformed docblocks that throw parser exceptions', function () {
+        $manager = new ScopeManager();
+        $manager->pushScope();
+
+        $manager->extractVarDocblock('invalid docblock text without phpdoc comment markers @var int $test');
+
+        expect($manager->getVarTypeFromScope('test'))->toBeNull();
     });
 });

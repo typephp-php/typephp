@@ -1,3 +1,6 @@
+Here is the updated `README.md` reflecting that the CLI binary automatically type-checks any specified script without needing to register it in `typephp.php`:
+
+```markdown
 <h1 align="center">TypePHP</h1>
 
 <p align="center">
@@ -76,23 +79,27 @@ Simply run your tests or use your local development server (**Laravel**, **Symfo
 
 ## Executing Standalone Scripts (CLI Runner)
 
-For standalone, single-execution PHP scripts that do not have an explicit autoloader entry point, run them directly with the TypePHP CLI binary:
+You can run any standalone PHP script directly with the TypePHP CLI binary:
 
 ```bash
 vendor/bin/typephp script.php
 ```
 
+Targeting a file directly with the CLI binary automatically type-checks that file—**even if it is not registered in `typephp.php` or falls outside your configured `include` paths**. 
+
+Any secondary files required or included by your script will continue to respect your project's configured `include` and `exclude` paths.
+
 ---
 
 ## Type-Checking Files Anywhere (`"*"` Wildcard Glob)
 
-By default, TypePHP checks standard application folders (`src/**`, `app/**`, `tests/**`). To type-check PHP files anywhere in your project root while still respecting your excluded folders, set the `"*"` wildcard glob in `typephp.php`:
+By default, TypePHP checks standard application folders (`src/**`, `app/**`, `tests/**`). To type-check PHP files anywhere in your project root during regular application runs while still respecting your excluded folders, set the `"*"` wildcard glob in `typephp.php`:
 
 ```php
 // typephp.php
 return [
     'include' => [
-        '*', // Intercepts and type-checks PHP files anywhere in the project
+        '*',
     ],
     'exclude' => [
         'vendor/**',
@@ -167,14 +174,14 @@ Define generic templates and TypePHP tracks their state per object instance in m
 class Collection 
 {
     /** @param T $item */
-    public function add(mixed $item): void { /* ... */ }
+    public function add(mixed $item): void { }
 }
 
 // Prebind T = User to this specific instance in WeakMap memory
 /** @var Collection<User> $users */
 $users = new Collection();
 
-$users->add(new User('Alice')); // Valid
+$users->add(new User('Alice'));
 
 $users->add(new Product('SKU-100')); 
 // Throws TypeError: Argument $item (template T = User) must be of type User, Product given
@@ -207,7 +214,7 @@ class DatabaseService
 
 $service = new DatabaseService();
 
-$service->connect(['driver' => 'pdo_mysql']); // Valid
+$service->connect(['driver' => 'pdo_mysql']);
 
 $service->connect(['driver' => 'pdo_invalid']);
 // Throws TypeError: Argument $params['driver'] must be a key of DriverManager::DRIVER_MAP

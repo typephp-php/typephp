@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+namespace TypePHP\Tests\Internal\Wrapper;
+
+use ArrayIterator;
 use TypePHP\Internal\Wrapper\IteratorProxy;
 
 describe('IteratorProxy Unit Tests', function () {
@@ -47,6 +50,25 @@ describe('IteratorProxy Unit Tests', function () {
         $proxy = new IteratorProxy($inner, fn () => null);
 
         expect($proxy->count())->toBe(5);
+    });
+
+    test('counts non-countable inner iterator using iterator_count fallback', function () {
+        $gen = (function () {
+            yield 1;
+            yield 2;
+            yield 3;
+        })();
+
+        $proxy = new IteratorProxy($gen, fn () => null);
+
+        expect($proxy->count())->toBe(3);
+    });
+
+    test('returns inner iterator via getInnerIterator', function () {
+        $inner = new ArrayIterator(['item' => 100]);
+        $proxy = new IteratorProxy($inner, fn () => null);
+
+        expect($proxy->getInnerIterator())->toBe($inner);
     });
 
     test('forwards custom method calls to inner iterator via __call', function () {

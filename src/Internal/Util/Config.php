@@ -284,14 +284,14 @@ final class Config
      * Locates the project root directory by searching upwards for vendor/autoload.php or composer.json.
      * Caches the result in memory so the search happens exactly once.
      */
-    public static function getProjectRoot(): string
+    public static function getProjectRoot(?string $startingDir = null): string
     {
-        if (self::$projectRoot !== null) {
+        if ($startingDir === null && self::$projectRoot !== null) {
             return self::$projectRoot;
         }
 
         $cwd = getcwd();
-        if ($cwd !== false) {
+        if ($startingDir === null && $cwd !== false) {
             $realCwd = realpath($cwd) !== false ? realpath($cwd) : $cwd;
             $normCwd = rtrim(str_replace('\\', '/', (string) $realCwd), '/');
             if (
@@ -302,7 +302,7 @@ final class Config
             }
         }
 
-        $dir = str_replace('\\', '/', __DIR__);
+        $dir = str_replace('\\', '/', $startingDir ?? __DIR__);
 
         if (str_contains($dir, '/vendor/')) {
             $vendorPos = strrpos($dir, '/vendor/');

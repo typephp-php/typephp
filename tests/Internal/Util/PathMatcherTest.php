@@ -44,6 +44,13 @@ describe('PathMatcher Unit Tests', function () {
             expect(PathMatcher::canonicalizePath('C:/project/../../App.php'))->toBe('C:/App.php');
         });
 
+        test('resolves relative traversals collapsing to root slash', function () {
+            expect(PathMatcher::canonicalizePath('/app/..'))->toBe('/')
+                ->and(PathMatcher::canonicalizePath('/./'))->toBe('/')
+                ->and(PathMatcher::canonicalizePath('/var/www/../..'))->toBe('/')
+            ;
+        });
+
         test('returns unchanged path when no dots or traversals exist', function () {
             expect(PathMatcher::canonicalizePath('src/Services/UserService.php'))
                 ->toBe('src/Services/UserService.php')
@@ -222,6 +229,31 @@ describe('PathMatcher Unit Tests', function () {
         });
     });
 
+    describe('isStaticSourcePath()', function () {
+        test('identifies static source paths accurately across vendor, src, app, lib, and packages', function () {
+            expect(PathMatcher::isStaticSourcePath('vendor/monolog/monolog/src/Logger.php'))->toBeTrue()
+                ->and(PathMatcher::isStaticSourcePath('/var/www/src/Service.php'))->toBeTrue()
+                ->and(PathMatcher::isStaticSourcePath('app/Services/UserService.php'))->toBeTrue()
+                ->and(PathMatcher::isStaticSourcePath('/project/app/Models/User.php'))->toBeTrue()
+                ->and(PathMatcher::isStaticSourcePath('lib/Services/PaymentProcessor.php'))->toBeTrue()
+                ->and(PathMatcher::isStaticSourcePath('/var/www/lib/Helper.php'))->toBeTrue()
+                ->and(PathMatcher::isStaticSourcePath('packages/auth/src/AuthService.php'))->toBeTrue()
+                ->and(PathMatcher::isStaticSourcePath('/project/packages/core/src/Application.php'))->toBeTrue()
+            ;
+        });
+
+        test('rejects dynamic writable, tests, and temporary paths in isStaticSourcePath', function () {
+            expect(PathMatcher::isStaticSourcePath('/var/www/var/cache/prod/Container.php'))->toBeFalse()
+                ->and(PathMatcher::isStaticSourcePath('storage/logs/laravel.log'))->toBeFalse()
+                ->and(PathMatcher::isStaticSourcePath('tests/Unit/SampleTest.php'))->toBeFalse()
+                ->and(PathMatcher::isStaticSourcePath('/var/www/tests/Fixtures/file.txt'))->toBeFalse()
+                ->and(PathMatcher::isStaticSourcePath('/tmp/cache.php'))->toBeFalse()
+                ->and(PathMatcher::isStaticSourcePath('/project/install/setup.php'))->toBeFalse()
+                ->and(PathMatcher::isStaticSourcePath('/unknown/unmatched/file.php'))->toBeFalse()
+            ;
+        });
+    });
+
     describe('mayPathBeIncluded() Fast-Path String Pre-Filter', function () {
         test('rejects node_modules and TypePHP cache unconditionally', function () {
             $cacheDir = PathMatcher::normalizePath(CacheManager::getCacheDir());
@@ -229,6 +261,35 @@ describe('PathMatcher Unit Tests', function () {
             expect(PathMatcher::mayPathBeIncluded('/var/www/node_modules/vue/index.js'))->toBeFalse()
                 ->and(PathMatcher::mayPathBeIncluded('node_modules/package/file.php'))->toBeFalse()
                 ->and(PathMatcher::mayPathBeIncluded($cacheDir . '/v0.1_test.php'))->toBeFalse()
+            ;
+        });
+
+        test('handles macOS /private/var/ system paths accurately in mayPathBeIncluded', function () {
+            expect(PathMatcher::mayPathBeIncluded('/private/var/www/src/index.php'))->toBeTrue();
+
+            Config::set(['include' => ['src/**'], 'exclude' => ['vendor/**']]);
+            expect(PathMatcher::mayPathBeIncluded('/private/var/tmp/var/cache/test.php'))->toBeFalse();
+        });
+
+        test('rejects tests directory when tests prefix is not in include patterns', function () {
+            Config::set([
+                'include' => ['src/**', 'app/**'],
+                'exclude' => ['vendor/**'],
+            ]);
+
+            expect(PathMatcher::mayPathBeIncluded('tests/Unit/SampleTest.php'))->toBeFalse()
+                ->and(PathMatcher::mayPathBeIncluded('/project/tests/Feature/UserTest.php'))->toBeFalse()
+            ;
+        });
+
+        test('rejects migration files when Migration prefix is in exclude patterns', function () {
+            Config::set([
+                'include' => ['src/**'],
+                'exclude' => ['src/Migration/**', 'vendor/**'],
+            ]);
+
+            expect(PathMatcher::mayPathBeIncluded('src/Migration/Migration123.php'))->toBeFalse()
+                ->and(PathMatcher::mayPathBeIncluded('/var/www/src/migration/v1.php'))->toBeFalse()
             ;
         });
 

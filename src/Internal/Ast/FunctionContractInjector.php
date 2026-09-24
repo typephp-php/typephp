@@ -150,22 +150,11 @@ final class FunctionContractInjector
             return $doc;
         }
 
-        foreach ($node->getComments() as $comment) {
-            if ($comment instanceof Doc) {
-                return $comment;
-            }
-        }
-
         if ($node->attrGroups !== []) {
             foreach ($node->attrGroups as $group) {
                 $groupDoc = $group->getDocComment();
                 if ($groupDoc !== null) {
                     return $groupDoc;
-                }
-                foreach ($group->getComments() as $comment) {
-                    if ($comment instanceof Doc) {
-                        return $comment;
-                    }
                 }
             }
         }
@@ -286,10 +275,6 @@ final class FunctionContractInjector
 
     private static function isGenerator(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): bool
     {
-        if ($node->stmts === null) {
-            return false;
-        }
-
         $visitor = new class () extends NodeVisitorAbstract {
             public bool $isGen = false;
 
@@ -311,7 +296,9 @@ final class FunctionContractInjector
 
         $traverser = new NodeTraverser();
         $traverser->addVisitor($visitor);
-        $traverser->traverse($node->stmts);
+        /** @var array<Node\Stmt> $stmts */
+        $stmts = $node->stmts;
+        $traverser->traverse($stmts);
 
         return $visitor->isGen;
     }

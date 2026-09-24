@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace TypePHP\Internal\Diagnostic;
 
 use ReflectionClass;
-use Throwable;
 use TypeError;
 
 /**
@@ -168,28 +167,24 @@ final class ErrorFactory
         ?int $targetLine,
         array $filteredTrace
     ): void {
-        try {
-            $ref = new ReflectionClass(\Error::class);
+        $ref = new ReflectionClass(\Error::class);
 
-            $propMessage = $ref->getProperty('message');
-            $propMessage->setValue($e, $message);
+        $propMessage = $ref->getProperty('message');
+        $propMessage->setValue($e, $message);
 
-            if ($targetFile !== null) {
-                $propFile = $ref->getProperty('file');
-                $propFile->setValue($e, $targetFile);
-            }
+        if ($targetFile !== null) {
+            $propFile = $ref->getProperty('file');
+            $propFile->setValue($e, $targetFile);
+        }
 
-            if ($targetLine !== null) {
-                $propLine = $ref->getProperty('line');
-                $propLine->setValue($e, $targetLine);
-            }
+        if ($targetLine !== null) {
+            $propLine = $ref->getProperty('line');
+            $propLine->setValue($e, $targetLine);
+        }
 
-            if (\count($filteredTrace) > 0) {
-                $propTrace = $ref->getProperty('trace');
-                $propTrace->setValue($e, $filteredTrace);
-            }
-        } catch (Throwable $err) {
-            // Silently fallback if reflection mutation fails
+        if (\count($filteredTrace) > 0) {
+            $propTrace = $ref->getProperty('trace');
+            $propTrace->setValue($e, $filteredTrace);
         }
     }
 }

@@ -99,7 +99,7 @@ final class ContractVisitor extends NodeVisitorAbstract
             return null;
         }
 
-        if ($node instanceof Node\Stmt\Return_ && $node->expr !== null) {
+        if ($node instanceof Node\Stmt\Return_) {
             $this->handleReturn($node);
 
             return null;

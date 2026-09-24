@@ -82,8 +82,6 @@ final class ArrayShapeValidator implements TypeValidatorInterface
                     return ErrorFactory::createError($context . " contains unsealed unexpected key '{$k}'");
                 }
             }
-
-            return null;
         }
 
         if ($shapeNode->unsealedType !== null) {
