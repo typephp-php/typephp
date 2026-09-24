@@ -91,13 +91,9 @@ final class GenericValidator implements TypeValidatorInterface
             $constValue = false;
             if ($fqcn !== '') {
                 if (class_exists($fqcn) || interface_exists($fqcn)) {
-                    try {
-                        $refClass = new \ReflectionClass($fqcn);
-                        if ($refClass->hasConstant($constName)) {
-                            $constValue = $refClass->getConstant($constName);
-                        }
-                    } catch (\ReflectionException $e) {
-                        // Silently ignore reflection errors
+                    $refClass = new \ReflectionClass($fqcn);
+                    if ($refClass->hasConstant($constName)) {
+                        $constValue = $refClass->getConstant($constName);
                     }
                 }
             } else {
@@ -156,7 +152,7 @@ final class GenericValidator implements TypeValidatorInterface
             $enumClass = $targetType->name;
             if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass)) {
                 if (! isset(self::$enumKeyCache[$enumClass])) {
-                    self::$enumKeyCache[$enumClass] = array_map(fn ($case) => $case->name, $enumClass::cases());
+                    self::$enumKeyCache[$enumClass] = array_map(fn($case) => $case->name, $enumClass::cases());
                 }
 
                 if (! \in_array($value, self::$enumKeyCache[$enumClass], strict: true)) {
@@ -240,7 +236,7 @@ final class GenericValidator implements TypeValidatorInterface
             if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass)) {
                 if (is_subclass_of($enumClass, \BackedEnum::class)) {
                     if (! isset(self::$enumValueCache[$enumClass])) {
-                        self::$enumValueCache[$enumClass] = array_map(fn ($case) => $case->value, $enumClass::cases());
+                        self::$enumValueCache[$enumClass] = array_map(fn($case) => $case->value, $enumClass::cases());
                     }
 
                     if (! \in_array($value, self::$enumValueCache[$enumClass], strict: true)) {
@@ -310,33 +306,29 @@ final class GenericValidator implements TypeValidatorInterface
             $pattern = $constExpr->name;
 
             if ($fqcn !== '' && (class_exists($fqcn) || interface_exists($fqcn))) {
-                try {
-                    $refClass = new \ReflectionClass($fqcn);
+                $refClass = new \ReflectionClass($fqcn);
 
-                    if (str_contains($pattern, '*')) {
-                        $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
-                        foreach ($refClass->getConstants() as $cName => $cValue) {
-                            if (\is_int($cValue) && preg_match($regex, $cName) === 1) {
-                                $allowedMask |= $cValue;
+                if (str_contains($pattern, '*')) {
+                    $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
+                    foreach ($refClass->getConstants() as $cName => $cValue) {
+                        if (\is_int($cValue) && preg_match($regex, $cName) === 1) {
+                            $allowedMask |= $cValue;
+                            $foundFlags = true;
+                        }
+                    }
+                } else {
+                    $cValue = $this->resolveConstantValue($fqcn, $pattern);
+                    if (\is_int($cValue)) {
+                        $allowedMask |= $cValue;
+                        $foundFlags = true;
+                    } elseif (\is_array($cValue)) {
+                        foreach ($cValue as $item) {
+                            if (\is_int($item)) {
+                                $allowedMask |= $item;
                                 $foundFlags = true;
                             }
                         }
-                    } else {
-                        $cValue = $this->resolveConstantValue($fqcn, $pattern);
-                        if (\is_int($cValue)) {
-                            $allowedMask |= $cValue;
-                            $foundFlags = true;
-                        } elseif (\is_array($cValue)) {
-                            foreach ($cValue as $item) {
-                                if (\is_int($item)) {
-                                    $allowedMask |= $item;
-                                    $foundFlags = true;
-                                }
-                            }
-                        }
                     }
-                } catch (\ReflectionException $e) {
-                    // Silently ignore reflection errors
                 }
             }
         }

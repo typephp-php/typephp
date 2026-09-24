@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace TypePHP\Tests\Unit;
 
+use stdClass;
+use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Tests\Fixtures\Domain\Cat;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Generics\DogRepository;
@@ -34,9 +36,46 @@ class MultiTemplateDictionary
     public array $map = [];
 }
 
+/**
+ * @template T
+ * @template U
+ */
+class MultiTemplatePair
+{
+}
+
+/**
+ * @template A
+ * @template B
+ */
+class MultiTemplateNoDefaults
+{
+}
+
+/**
+ * @template-covariant T
+ * @template-contravariant U
+ */
+class MultiVariancePair
+{
+}
+
+/**
+ * @template-covariant A
+ * @template-contravariant B
+ */
+class MultiVarianceNoDefaults
+{
+}
+
 describe('TypePHP Public Facade Unit Tests', function () {
     afterEach(function () {
         TypePHP::resetConfig();
+    });
+
+    test('boots stream wrapper cleanly', function () {
+        TypePHP::boot();
+        expect(TypePHP::getConfig())->toBeArray();
     });
 
     test('gets resolved configuration using getConfig', function () {
@@ -69,7 +108,6 @@ describe('TypePHP Public Facade Unit Tests', function () {
     });
 
     test('inspects runtime reified generic types across single, custom, multi, and inherited template instances', function () {
-        // Standard Single Template (GenericCollection<Dog> vs GenericCollection<Cat>)
         /** @var GenericCollection<Dog> $dogCollection */
         $dogCollection = new GenericCollection();
 
@@ -81,7 +119,6 @@ describe('TypePHP Public Facade Unit Tests', function () {
             ->and(TypePHP::getGenericTypes($dogCollection))->toBe(['T' => Dog::class])
         ;
 
-        // Custom Named Single Template (@template ItemType)
         /** @var CustomTemplateNameBox<Dog> $box */
         $box = new CustomTemplateNameBox();
 
@@ -90,7 +127,6 @@ describe('TypePHP Public Facade Unit Tests', function () {
             ->and(TypePHP::getGenericTypes($box))->toBe(['ItemType' => Dog::class])
         ;
 
-        // Multiple Templates (@template K, @template V)
         /** @var MultiTemplateDictionary<string, Dog> $dict */
         $dict = new MultiTemplateDictionary();
 
@@ -99,33 +135,49 @@ describe('TypePHP Public Facade Unit Tests', function () {
             ->and(TypePHP::getGenericTypes($dict))->toBe(['K' => 'string', 'V' => Dog::class])
         ;
 
-        // Inherited Generic Class (@extends Repository<Dog>)
         $dogRepo = new DogRepository();
 
         expect(TypePHP::getGenericType($dogRepo))->toBe(Dog::class)
             ->and(TypePHP::getGenericTypes($dogRepo))->toBe(['T' => Dog::class])
         ;
 
-        // Unannotated Instance before and after first-use type inference
         $mystery = new GenericCollection();
 
         expect(TypePHP::getGenericType($mystery))->toBeNull()
             ->and(TypePHP::getGenericTypes($mystery))->toBeEmpty()
         ;
 
-        $mystery->add(new Dog()); // First method call infers T = Dog!
+        $mystery->add(new Dog());
 
         expect(TypePHP::getGenericType($mystery))->toBe(Dog::class)
             ->and(TypePHP::getGenericTypes($mystery))->toBe(['T' => Dog::class])
         ;
+
+        $pair = new MultiTemplatePair();
+        TemplateManager::bindInstance($pair, MultiTemplatePair::class . '<' . Dog::class . ', ' . Cat::class . '>');
+        expect(TypePHP::getGenericType($pair))->toBe(Dog::class);
+
+        $noDefault = new MultiTemplateNoDefaults();
+        TemplateManager::bindInstance($noDefault, MultiTemplateNoDefaults::class . '<' . Dog::class . ', ' . Cat::class . '>');
+        expect(TypePHP::getGenericType($noDefault))->toBeNull();
     });
 
     test('inspects declared template variances on object instances', function () {
+        expect(TypePHP::getGenericVariance(new stdClass()))->toBe('invariant');
+
         /** @var Producer<Dog> $producer */
         $producer = new Producer(new Dog());
 
         expect(TypePHP::getGenericVariance($producer))->toBe('covariant')
+            ->and(TypePHP::getGenericVariance($producer, 'T'))->toBe('covariant')
             ->and(TypePHP::getGenericVariances($producer))->toBe(['T' => 'covariant'])
         ;
+
+        $varPair = new MultiVariancePair();
+        expect(TypePHP::getGenericVariance($varPair, 'U'))->toBe('contravariant');
+        expect(TypePHP::getGenericVariance($varPair))->toBe('covariant');
+
+        $noDefVar = new MultiVarianceNoDefaults();
+        expect(TypePHP::getGenericVariance($noDefVar))->toBe('invariant');
     });
 });
