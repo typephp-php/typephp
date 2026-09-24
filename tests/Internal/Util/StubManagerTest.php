@@ -111,30 +111,31 @@ PHP;
         $ref = new ReflectionClass(StubManager::class);
         $method = $ref->getMethod('resolveStubFiles');
 
-        $tempDir = sys_get_temp_dir() . '/typephp_resolve_stubs_' . uniqid();
-        mkdir($tempDir, 0777, true);
-        $dummyFile = $tempDir . '/dummy.stub';
-        file_put_contents($dummyFile, '<?php');
+        $baseTemp = sys_get_temp_dir() . '/typephp_resolve_stubs_' . uniqid();
+        mkdir($baseTemp, 0777, true);
+        $realTemp = realpath($baseTemp);
+        $tempDir = str_replace('\\', '/', $realTemp !== false ? $realTemp : $baseTemp);
+
+        $targetFile = $tempDir . '/dummy.stub';
+        file_put_contents($targetFile, '<?php');
+        $realFile = realpath($targetFile);
+        $dummyFile = str_replace('\\', '/', $realFile !== false ? $realFile : $targetFile);
 
         try {
-            // 1. Exact file match: is_file($fullPath)
             $resFile = $method->invoke(null, $dummyFile, $tempDir);
-            expect($resFile)->toBe([str_replace('\\', '/', $dummyFile)]);
+            expect($resFile)->toBe([$dummyFile]);
 
-            // 2. Directory path without wildcard: is_dir($fullPath)
             $resDir = $method->invoke(null, $tempDir, $tempDir);
-            expect($resDir)->toContain(str_replace('\\', '/', $dummyFile));
+            expect($resDir)->toContain($dummyFile);
 
-            // 3. Wildcard with missing baseDir: !is_dir($baseDir) => return []
             $resMissingBase = $method->invoke(null, $tempDir . '/missing_dir_123/sub/*.stub', $tempDir);
             expect($resMissingBase)->toBe([]);
 
-            // 4. Non-existent path without wildcard => falls through to return []
             $resMissingFile = $method->invoke(null, $tempDir . '/non_existent_file.stub', $tempDir);
             expect($resMissingFile)->toBe([]);
         } finally {
-            @unlink($dummyFile);
-            @rmdir($tempDir);
+            @unlink($targetFile);
+            @rmdir($baseTemp);
         }
     });
 
@@ -145,7 +146,6 @@ PHP;
         $tempDir = sys_get_temp_dir() . '/typephp_load_stubs_' . uniqid();
         mkdir($tempDir, 0777, true);
 
-        // Invalid PHP syntax triggers catch (Throwable $e)
         $badSyntaxFile = $tempDir . '/syntax_error.stub';
         file_put_contents($badSyntaxFile, '<?php syntax error {{{ unclosed');
 
@@ -210,7 +210,6 @@ PHP;
         $stmts = $parser->parse($code);
         expect($stmts)->not()->toBeNull();
 
-        // 1. Process interface, trait, and enum statements
         $method->invoke(null, $stmts);
 
         expect(StubManager::hasClassStub('Vendor\AstTest\AstStubInterface'))->toBeTrue()
@@ -221,8 +220,6 @@ PHP;
             ->and(StubManager::hasClassStub('Vendor\AstTest\AstStubEnum'))->toBeTrue()
             ->and(StubManager::getClassDoc('Vendor\AstTest\AstStubEnum'))->toContain('Enum doc')
         ;
-
-        // 2. Anonymous class node triggers `if ($stmt->name === null) continue;`
         $method->invoke(null, [new Class_(null)]);
     });
 });

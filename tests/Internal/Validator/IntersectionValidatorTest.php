@@ -22,6 +22,7 @@ use TypePHP\Tests\Fixtures\Types\CountableOnly;
 class IntersectionDummyUser
 {
     public int $id = 10;
+
     public string $name = 'Alice';
 }
 

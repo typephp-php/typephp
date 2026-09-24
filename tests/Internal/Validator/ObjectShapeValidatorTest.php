@@ -12,12 +12,14 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
 class ObjectShapeTestUser
 {
     public int $id = 10;
+
     public string $name = 'Alice';
 }
 
 class ObjectShapeUninitClass
 {
     public int $id;
+
     public string $uninitOptional;
 }
 

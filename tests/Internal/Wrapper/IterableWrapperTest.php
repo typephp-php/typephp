@@ -20,12 +20,16 @@ use TypePHP\Internal\Wrapper\IterableWrapper;
 /**
  * @param iterable<string, positive-int> $items
  */
-function fixtureValidIterableFunction(iterable $items): void {}
+function fixtureValidIterableFunction(iterable $items): void
+{
+}
 
 /**
  * @param iterable $unparameterized
  */
-function fixtureBareIterableFunction(iterable $unparameterized): void {}
+function fixtureBareIterableFunction(iterable $unparameterized): void
+{
+}
 
 /**
  * @return iterable<string, positive-int>

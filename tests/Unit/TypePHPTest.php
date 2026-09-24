@@ -54,6 +54,7 @@ class MultiTemplateNoDefaults
 
 /**
  * @template-covariant T
+ *
  * @template-contravariant U
  */
 class MultiVariancePair
@@ -62,6 +63,7 @@ class MultiVariancePair
 
 /**
  * @template-covariant A
+ *
  * @template-contravariant B
  */
 class MultiVarianceNoDefaults

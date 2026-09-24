@@ -112,7 +112,7 @@ describe('ArrayShapeValidator Unit Tests', function () {
     test('supports ConstFetchNode keys in array shape items', function () {
         $shape = ArrayShapeNode::createSealed([
             new ArrayShapeItemNode(
-                new \PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode('self', 'KEY_NAME'),
+                new PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode('self', 'KEY_NAME'),
                 false,
                 new IdentifierTypeNode('string')
             ),

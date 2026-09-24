@@ -5,7 +5,6 @@ declare(strict_types=1);
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFalseNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFloatNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
-use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprNullNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprTrueNode;
@@ -92,7 +91,7 @@ describe('ConstValidator Unit Tests', function () {
     });
 
     test('handles custom or unsupported constant expression fallbacks', function () {
-        $arrayConstExpr = new \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprArrayNode([]);
+        $arrayConstExpr = new PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprArrayNode([]);
 
         $node = new ConstTypeNode($arrayConstExpr);
 

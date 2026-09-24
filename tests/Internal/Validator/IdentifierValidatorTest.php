@@ -8,9 +8,8 @@ use TypePHP\Internal\Validator\IdentifierValidator;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Dog;
-use TypePHP\Tests\Fixtures\Enums\StatusEnum;
-use TypePHP\Tests\Fixtures\Oop\ExecutorTrait;
 use TypePHP\Tests\Fixtures\Enums\Suit;
+use TypePHP\Tests\Fixtures\Oop\ExecutorTrait;
 
 describe('IdentifierValidator Unit Tests', function () {
     beforeEach(function () {
@@ -250,7 +249,7 @@ describe('IdentifierValidator Unit Tests', function () {
         $pureCallable = new IdentifierTypeNode('pure-callable');
         $callableNode = new IdentifierTypeNode('callable');
         expect($this->registry->validate('strlen', $pureCallable, 'arg'))->toBeNull()
-            ->and($this->registry->validate(fn() => 1, $callableNode, 'arg'))->toBeNull()
+            ->and($this->registry->validate(fn () => 1, $callableNode, 'arg'))->toBeNull()
             ->and($this->registry->validate(12345, $pureCallable, 'arg'))->toBeInstanceOf(ErrorMessage::class)
         ;
     });
