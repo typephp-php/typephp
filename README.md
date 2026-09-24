@@ -82,7 +82,7 @@ You can run any standalone PHP script directly with the TypePHP CLI binary:
 vendor/bin/typephp script.php
 ```
 
-Targeting a file directly with the CLI binary automatically type-checks that file—**even if it is not registered in `typephp.php` or falls outside your configured `include` paths**. 
+Targeting a file directly with the CLI binary automatically type-checks that file **even if it is not registered in `typephp.php` or falls outside your configured `include` paths**. 
 
 Any secondary files required or included by your script will continue to respect your project's configured `include` and `exclude` paths.
 
