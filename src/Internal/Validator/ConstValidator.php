@@ -13,6 +13,7 @@ use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprTrueNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
 use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use ReflectionClass;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
@@ -23,7 +24,9 @@ use TypePHP\Internal\Diagnostic\TypeFormatter;
 final class ConstValidator implements TypeValidatorInterface
 {
     /**
-     * @var array<string, array<int, mixed>>
+     * 2D Cache for wildcard constant values: [$className][$pattern] => array{list: list<mixed>, map: array<string|int, true>}.
+     *
+     * @var array<string, array<string, array{list: list<mixed>, map: array<string|int, true>}>>
      */
     private static array $wildcardConstantCache = [];
 
@@ -50,9 +53,13 @@ final class ConstValidator implements TypeValidatorInterface
             $pattern = $constExpr->name;
 
             if (str_contains($pattern, '*')) {
-                $allowedValues = self::resolveWildcardConstantValues($className, $pattern);
+                $allowed = self::resolveWildcardConstantValues($className, $pattern);
 
-                if (! \in_array($value, $allowedValues, strict: true)) {
+                $isValid = (\is_int($value) || \is_string($value))
+                    ? isset($allowed['map'][$value])
+                    : \in_array($value, $allowed['list'], strict: true);
+
+                if (! $isValid) {
                     $fqcnPattern = $className !== '' ? "$className::$pattern" : $pattern;
 
                     return ErrorFactory::createError($context . " must be a valid constant matching $fqcnPattern, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
@@ -92,28 +99,35 @@ final class ConstValidator implements TypeValidatorInterface
     /**
      * Resolves and caches all values of class constants matching a wildcard pattern (e.g. PREFIX_*).
      *
-     * @return array<int, mixed>
+     * @return array{list: list<mixed>, map: array<string|int, true>}
      */
     private static function resolveWildcardConstantValues(string $className, string $pattern): array
     {
-        $cacheKey = $className . '::' . $pattern;
-        if (isset(self::$wildcardConstantCache[$cacheKey])) {
-            return self::$wildcardConstantCache[$cacheKey];
+        if (isset(self::$wildcardConstantCache[$className][$pattern])) {
+            return self::$wildcardConstantCache[$className][$pattern];
         }
 
-        $values = [];
+        $list = [];
+        $map = [];
 
-        if ($className !== '' && (class_exists($className) || interface_exists($className))) {
-            $refClass = new \ReflectionClass($className);
+        if ($className !== '' && (class_exists($className, false) || class_exists($className) || interface_exists($className, false) || interface_exists($className))) {
+            /** @var class-string<object> $className */
+            $refClass = new ReflectionClass($className);
             $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
 
             foreach ($refClass->getConstants() as $cName => $cValue) {
                 if (preg_match($regex, $cName) === 1) {
-                    $values[] = $cValue;
+                    $list[] = $cValue;
+                    if (\is_int($cValue) || \is_string($cValue)) {
+                        $map[$cValue] = true;
+                    }
                 }
             }
         }
 
-        return self::$wildcardConstantCache[$cacheKey] = $values;
+        return self::$wildcardConstantCache[$className][$pattern] = [
+            'list' => $list,
+            'map' => $map,
+        ];
     }
 }
