@@ -37,7 +37,31 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
 final class ParamChecker
 {
     /**
-     * @var array<string, string>
+     * O(1) lookup table for iterable collection container types.
+     */
+    private const ITERABLE_TYPES = [
+        'array' => true,
+        'list' => true,
+        'iterable' => true,
+        'traversable' => true,
+    ];
+
+    /**
+     * O(1) lookup table for all collection and slice container types.
+     */
+    private const COLLECTION_TYPES = [
+        'array' => true,
+        'list' => true,
+        'iterable' => true,
+        'traversable' => true,
+        'non-empty-array' => true,
+        'non-empty-list' => true,
+    ];
+
+    /**
+     * 2D Cache for effective functions: [$function][$actualClassName] => effectiveFunction.
+     *
+     * @var array<string, array<string, string>>
      */
     private static array $effectiveFunctionCache = [];
 
@@ -49,9 +73,9 @@ final class ParamChecker
     public static array $noParamContractCache = [];
 
     /**
-     * Cache for resolved parameter base types (after alias and special type resolution).
+     * 2D Cache for resolved parameter base types: [$effectiveFunction][$paramName] => TypeNode.
      *
-     * @var array<string, TypeNode>
+     * @var array<string, array<string, TypeNode>>
      */
     private static array $baseTypeCache = [];
 
@@ -262,7 +286,7 @@ final class ParamChecker
     }
 
     /**
-     * Pre‑resolves and caches base types for each parameter.
+     * Pre‑resolves and caches base types for each parameter using zero-allocation 2D lookup.
      *
      * @param array<string, TypeNode> $types
      * @param array<string, TypeNode> $aliases
@@ -277,15 +301,14 @@ final class ParamChecker
     ): array {
         $baseTypes = [];
         foreach ($types as $paramName => $typeNode) {
-            $cacheKey = $effectiveFunction . '|' . $paramName;
-            if (! isset(self::$baseTypeCache[$cacheKey])) {
+            if (! isset(self::$baseTypeCache[$effectiveFunction][$paramName])) {
                 if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
                     $typeNode = $aliases[$typeNode->name];
                 }
                 $resolved = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
-                self::$baseTypeCache[$cacheKey] = $resolved;
+                self::$baseTypeCache[$effectiveFunction][$paramName] = $resolved;
             }
-            $baseTypes[$paramName] = self::$baseTypeCache[$cacheKey];
+            $baseTypes[$paramName] = self::$baseTypeCache[$effectiveFunction][$paramName];
         }
 
         return $baseTypes;
@@ -356,7 +379,7 @@ final class ParamChecker
     }
 
     /**
-     * Resolves the actual runtime class name vs trait name with O(1) memoization.
+     * Resolves the actual runtime class name vs trait name with O(1) 2D memoization.
      */
     public static function resolveEffectiveFunction(string $function, object|string|null $thisOrClass, ?object $thisObj = null): string
     {
@@ -374,9 +397,8 @@ final class ParamChecker
             return $function;
         }
 
-        $cacheKey = $function . '|' . $actualClassName;
-        if (isset(self::$effectiveFunctionCache[$cacheKey])) {
-            return self::$effectiveFunctionCache[$cacheKey];
+        if (isset(self::$effectiveFunctionCache[$function][$actualClassName])) {
+            return self::$effectiveFunctionCache[$function][$actualClassName];
         }
 
         [$classOrTrait, $methodName] = explode('::', $function, 2);
@@ -404,14 +426,14 @@ final class ParamChecker
                         $frameFunc = $frame['function'];
                         $frameClass = $frame['class'] ?? '';
                         if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
-                            return self::$effectiveFunctionCache[$cacheKey] = $actualClassName . '::' . $frameFunc;
+                            return self::$effectiveFunctionCache[$function][$actualClassName] = $actualClassName . '::' . $frameFunc;
                         }
                     }
                 }
             }
         }
 
-        return self::$effectiveFunctionCache[$cacheKey] = $effectiveFunction;
+        return self::$effectiveFunctionCache[$function][$actualClassName] = $effectiveFunction;
     }
 
     /**
@@ -647,7 +669,7 @@ final class ParamChecker
 
         if ($typeNode instanceof GenericTypeNode) {
             $baseType = strtolower($typeNode->type->name);
-            if (! \in_array($baseType, ['array', 'list', 'iterable', 'traversable'], true)) {
+            if (! isset(self::ITERABLE_TYPES[$baseType])) {
                 return;
             }
 
@@ -801,7 +823,7 @@ final class ParamChecker
 
         if ($typeNode instanceof GenericTypeNode && \is_object($value)) {
             $baseName = strtolower($typeNode->type->name);
-            if (\in_array($baseName, ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true)) {
+            if (isset(self::COLLECTION_TYPES[$baseName])) {
                 return;
             }
 
@@ -869,7 +891,7 @@ final class ParamChecker
                 $innerType = $typeNode->type;
             } elseif ($typeNode instanceof GenericTypeNode) {
                 $baseName = strtolower($typeNode->type->name);
-                if (\in_array($baseName, ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true)) {
+                if (isset(self::COLLECTION_TYPES[$baseName])) {
                     $innerType = $typeNode->genericTypes[1] ?? $typeNode->genericTypes[0] ?? null;
                 }
             }
