@@ -276,7 +276,7 @@ final class FunctionContractInjector
 
     private static function isGenerator(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): bool
     {
-        $visitor = new class() extends NodeVisitorAbstract {
+        $visitor = new class () extends NodeVisitorAbstract {
             public bool $isGen = false;
 
             public function enterNode(Node $n): ?int
@@ -678,8 +678,10 @@ final class FunctionContractInjector
     private static function wrapGeneratorReturns(array $stmts, Node\Expr $thisArg): array
     {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class($thisArg) extends NodeVisitorAbstract {
-            public function __construct(private Node\Expr $thisArg) {}
+        $traverser->addVisitor(new class ($thisArg) extends NodeVisitorAbstract {
+            public function __construct(private Node\Expr $thisArg)
+            {
+            }
 
             public function enterNode(Node $n): int|Node|null
             {
@@ -738,7 +740,7 @@ final class FunctionContractInjector
         bool $hasSelfOut = false
     ): array {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class($thisArg, $isNativeVoid, $needsReturnVars, $hasReturn, $byRefParams, $hasSelfOut) extends NodeVisitorAbstract {
+        $traverser->addVisitor(new class ($thisArg, $isNativeVoid, $needsReturnVars, $hasReturn, $byRefParams, $hasSelfOut) extends NodeVisitorAbstract {
             /**
              * @param array<string> $byRefParams
              */
@@ -749,7 +751,8 @@ final class FunctionContractInjector
                 private bool $hasReturn,
                 private array $byRefParams,
                 private bool $hasSelfOut
-            ) {}
+            ) {
+            }
 
             public function enterNode(Node $n): int|array|null
             {

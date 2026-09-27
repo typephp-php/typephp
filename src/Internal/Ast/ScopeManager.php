@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Internal\Ast;
 
 use PhpParser\Node;
-use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Docblock\DocblockExtractor;
-use TypePHP\Internal\Docblock\DocblockNormalizer;
 
 /**
  * @internal Manages lexical scope stack frames and extracts local @var variable annotations.
@@ -15,26 +13,32 @@ use TypePHP\Internal\Docblock\DocblockNormalizer;
 final class ScopeManager
 {
     /**
-     * @var array<int, array<string, string>>
+     * @var list<array<string, string>>
      */
     private array $scopeStack = [[]];
 
     /**
-     * Pushes a new scope frame, inheriting variables from the parent scope.
+     * Tracks the current scope frame depth.
+     */
+    private int $depth = 0;
+
+    /**
+     * Pushes a new empty lexical scope frame (O(1)).
      */
     public function pushScope(): void
     {
-        $currentScope = end($this->scopeStack);
-        $this->scopeStack[] = $currentScope !== false ? $currentScope : [];
+        $this->depth++;
+        $this->scopeStack[] = [];
     }
 
     /**
-     * Pops the top scope frame, restoring variables back to the parent scope.
+     * Pops the top scope frame, restoring the previous lexical scope (O(1)).
      */
     public function popScope(): void
     {
-        if (\count($this->scopeStack) > 1) {
+        if ($this->depth > 0) {
             array_pop($this->scopeStack);
+            $this->depth--;
         }
     }
 
@@ -44,12 +48,12 @@ final class ScopeManager
      */
     public function extractVarDocblock(string $docText, ?Node\Expr $expr = null): void
     {
-        try {
-            $docText = DocblockNormalizer::normalize($docText);
-            [$phpDocParser, $lexer] = DocblockExtractor::getParserComponents();
+        if (! str_contains($docText, 'var')) {
+            return;
+        }
 
-            $tokens = new TokenIterator($lexer->tokenize($docText));
-            $phpDocNode = $phpDocParser->parse($tokens);
+        try {
+            $phpDocNode = DocblockExtractor::parseDocString($docText);
             $varTags = DocblockExtractor::getVarTags($phpDocNode);
 
             foreach ($varTags as $varTag) {
@@ -63,8 +67,7 @@ final class ScopeManager
                 }
 
                 if ($varName !== '') {
-                    $currentScopeIndex = \count($this->scopeStack) - 1;
-                    $this->scopeStack[$currentScopeIndex][$varName] = $typeString;
+                    $this->scopeStack[$this->depth][$varName] = $typeString;
                 }
             }
         } catch (\Throwable $e) {
@@ -72,9 +75,12 @@ final class ScopeManager
         }
     }
 
+    /**
+     * Resolves a variable type by walking upward through the lexical scope chain.
+     */
     public function getVarTypeFromScope(string $varName): ?string
     {
-        for ($i = \count($this->scopeStack) - 1; $i >= 0; $i--) {
+        for ($i = $this->depth; $i >= 0; $i--) {
             if (isset($this->scopeStack[$i][$varName])) {
                 return $this->scopeStack[$i][$varName];
             }
