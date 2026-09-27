@@ -37,7 +37,9 @@ final class RuntimeTypeChecker
     public static array $hasMethodTemplatesCache = [];
 
     /**
-     * @var array<string, true>
+     * 2D Cache for checked static properties: [$className][$propName] => true.
+     *
+     * @var array<string, array<string, true>>
      */
     private static array $checkedStaticProperties = [];
 
@@ -83,7 +85,7 @@ final class RuntimeTypeChecker
     }
 
     /**
-     * Evaluates inline property validation dynamically based on configuration.
+     * Evaluates inline property validation dynamically based on configuration with zero-allocation 2D caching.
      */
     public static function checkStaticProperty(
         mixed $objectOrClass,
@@ -97,13 +99,14 @@ final class RuntimeTypeChecker
         }
 
         $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
-        $key = $className . '::$' . $propName;
 
-        if (isset(self::$checkedStaticProperties[$key])) {
+        if ($className !== '' && isset(self::$checkedStaticProperties[$className][$propName])) {
             return $value;
         }
 
-        self::$checkedStaticProperties[$key] = true;
+        if ($className !== '') {
+            self::$checkedStaticProperties[$className][$propName] = true;
+        }
 
         $res = self::checkProperty($value, $objectOrClass, $propName, $file);
         if ($res instanceof ErrorMessage) {
@@ -171,7 +174,7 @@ final class RuntimeTypeChecker
     public static function checkProperty(mixed $value, mixed $objectOrClass, string $propName, string $file): mixed
     {
         $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
-        if ($className !== '' && isset(InlineChecker::$nullPropertyCache[$className . '::$' . $propName])) {
+        if ($className !== '' && isset(InlineChecker::$nullPropertyCache[$className][$propName])) {
             return $value;
         }
 
@@ -313,7 +316,7 @@ final class RuntimeTypeChecker
      */
     public static function checkSelfOut(string $function, object $thisObj, ?array $vars = []): void
     {
-        if (! Config::isEnabled()) {
+        if (! Config::isEnabled() || ! Config::isSelfOutEnabled()) {
             return;
         }
 
