@@ -19,7 +19,13 @@
 
 TypePHP is a transparent, pure-PHP runtime type checker. You don't have to refactor a single line of your codebase, set up complex build toolchains, or compile C-extensions. Simply run your existing code, and TypePHP will enforce your extended PHPDoc contracts (generics, array shapes, `key-of`/`value-of` extractions, and scalar refinements) dynamically at runtime.
 
-**[Read the full TypePHP documentation »](https://typephp-php.github.io/docs/)**
+**[Read the full TypePHP documentation »](https://typephp-php.github.io/docs/)** | **[Try it online in the Playground »](https://typephp-php.github.io/docs/playground)**
+
+---
+
+## Try It Online
+
+You can test TypePHP directly in your browser without installing anything locally via the **[Interactive WebAssembly Playground](https://typephp-php.github.io/docs/playground)**:
 
 ---
 
@@ -88,7 +94,7 @@ Any secondary files required or included by your script will continue to respect
 
 ---
 
-## Type-Checking Files Anywhere (`"*"` Wildcard Glob)
+## Type-Checking Files Anywhere ("*" Wildcard Glob)
 
 By default, TypePHP checks standard application folders (`src/**`, `app/**`, `tests/**`). To type-check PHP files anywhere in your project root during regular application runs while still respecting your excluded folders, set the `"*"` wildcard glob in `typephp.php`:
 
@@ -223,6 +229,7 @@ $service->connect(['driver' => 'pdo_invalid']);
 
 All the documentation lives on the **[typephp-php.github.io/docs website](https://typephp-php.github.io/docs/)**:
 
+* [Interactive Playground](https://typephp-php.github.io/docs/playground)
 * [Getting Started & Installation Guide](https://typephp-php.github.io/docs/getting-started/installation)
 * [Quick Start Guide](https://typephp-php.github.io/docs/getting-started/quick-start)
 * [Configuration Guide](https://typephp-php.github.io/docs/getting-started/configuration)
