@@ -322,6 +322,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     {
         $typeName = $this->resolveQualifiedName($node->name);
         $hasInheritance = true;
+        $hasRealInheritance = false;
         $hasPropertyWithDoc = false;
         $isReadonly = false;
         $hasTemplates = false;
@@ -350,11 +351,15 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $hasTemplates
                 || str_contains($doc->getText(), '@phpstan-')
                 || str_contains($doc->getText(), '@psalm-')
+                || str_contains($doc->getText(), '@method')
+                || str_contains($doc->getText(), '@property')
             );
 
-            $hasInheritance = $hasExtends || $hasImplements || $hasTraits || $hasClassDoc;
+            $hasRealInheritance = $hasExtends || $hasImplements || $hasTraits;
+            $hasInheritance = $hasRealInheritance || $hasClassDoc;
         } elseif ($node instanceof Node\Stmt\Enum_) {
-            $hasInheritance = $node->implements !== [];
+            $hasRealInheritance = $node->implements !== [];
+            $hasInheritance = $hasRealInheritance;
         } else {
             $doc = $node->getDocComment();
             $hasTemplates = $doc !== null && (
@@ -368,6 +373,7 @@ final class ContractVisitor extends NodeVisitorAbstract
             'name' => $typeName,
             'isAnonymous' => ($node instanceof Node\Stmt\Class_ && $node->name === null),
             'hasInheritance' => $hasInheritance,
+            'hasRealInheritance' => $hasRealInheritance,
             'hasPropertyWithDoc' => $hasPropertyWithDoc,
             'isReadonly' => $isReadonly,
             'hasTemplates' => $hasTemplates,

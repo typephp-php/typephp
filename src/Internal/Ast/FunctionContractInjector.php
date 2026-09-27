@@ -28,7 +28,7 @@ final class FunctionContractInjector
     ];
 
     /**
-     * @param array{hasInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, hasTemplates?: bool}|null $classContext
+     * @param array{hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, hasTemplates?: bool}|null $classContext
      */
     public static function inject(Node\Stmt\Function_|Node\Stmt\ClassMethod $node, ?array $classContext = null): void
     {
@@ -41,6 +41,7 @@ final class FunctionContractInjector
         $docText = $doc !== null ? $doc->getText() : '';
 
         $hasInheritance = $classContext['hasInheritance'] ?? true;
+        $hasRealInheritance = $classContext['hasRealInheritance'] ?? $hasInheritance;
         $hasPropertyWithDoc = $classContext['hasPropertyWithDoc'] ?? true;
         $isReadonlyClass = $classContext['isReadonly'] ?? false;
         $hasClassTemplates = $classContext['hasTemplates'] ?? false;
@@ -80,7 +81,7 @@ final class FunctionContractInjector
         $hasParamOut = $byRefParams !== [] && ($hasParamOutDoc || $hasInheritance);
 
         $hasSelfOutDoc = str_contains($docText, 'self-out') || str_contains($docText, 'this-out');
-        $hasSelfOut = $isClassMethod && ! $node->isStatic() && ($hasSelfOutDoc || ($hasClassTemplates && $hasInheritance));
+        $hasSelfOut = $isClassMethod && ! $node->isStatic() && ($hasSelfOutDoc || ($hasClassTemplates && $hasRealInheritance));
 
         $hasReturnDoc = str_contains($docText, '@return')
             || str_contains($docText, '@phpstan-return')
@@ -275,7 +276,7 @@ final class FunctionContractInjector
 
     private static function isGenerator(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): bool
     {
-        $visitor = new class () extends NodeVisitorAbstract {
+        $visitor = new class() extends NodeVisitorAbstract {
             public bool $isGen = false;
 
             public function enterNode(Node $n): ?int
@@ -357,24 +358,30 @@ final class FunctionContractInjector
 
         $cacheKeyExpr = new Node\Scalar\MagicConst\Method();
 
+        $noParamFetch = new Node\Expr\StaticPropertyFetch(
+            new Node\Name\FullyQualified('TypePHP\Internal\Checker\ParamChecker'),
+            'noParamContractCache'
+        );
+        $noParamFetch->setAttribute('typephp_checked', true);
+
         $noParamCacheCheck = new Node\Expr\BooleanNot(
             new Node\Expr\Isset_([
                 new Node\Expr\ArrayDimFetch(
-                    new Node\Expr\StaticPropertyFetch(
-                        new Node\Name\FullyQualified('TypePHP\Internal\Checker\ParamChecker'),
-                        'noParamContractCache'
-                    ),
+                    $noParamFetch,
                     $cacheKeyExpr
                 ),
             ])
         );
 
+        $hasTemplatesFetch = new Node\Expr\StaticPropertyFetch(
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker'),
+            'hasMethodTemplatesCache'
+        );
+        $hasTemplatesFetch->setAttribute('typephp_checked', true);
+
         $hasTemplatesCheck = new Node\Expr\BinaryOp\Coalesce(
             new Node\Expr\ArrayDimFetch(
-                new Node\Expr\StaticPropertyFetch(
-                    new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker'),
-                    'hasMethodTemplatesCache'
-                ),
+                $hasTemplatesFetch,
                 $cacheKeyExpr
             ),
             new Node\Expr\ConstFetch(new Node\Name('false'))
@@ -671,10 +678,8 @@ final class FunctionContractInjector
     private static function wrapGeneratorReturns(array $stmts, Node\Expr $thisArg): array
     {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class ($thisArg) extends NodeVisitorAbstract {
-            public function __construct(private Node\Expr $thisArg)
-            {
-            }
+        $traverser->addVisitor(new class($thisArg) extends NodeVisitorAbstract {
+            public function __construct(private Node\Expr $thisArg) {}
 
             public function enterNode(Node $n): int|Node|null
             {
@@ -733,7 +738,7 @@ final class FunctionContractInjector
         bool $hasSelfOut = false
     ): array {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class ($thisArg, $isNativeVoid, $needsReturnVars, $hasReturn, $byRefParams, $hasSelfOut) extends NodeVisitorAbstract {
+        $traverser->addVisitor(new class($thisArg, $isNativeVoid, $needsReturnVars, $hasReturn, $byRefParams, $hasSelfOut) extends NodeVisitorAbstract {
             /**
              * @param array<string> $byRefParams
              */
@@ -744,8 +749,7 @@ final class FunctionContractInjector
                 private bool $hasReturn,
                 private array $byRefParams,
                 private bool $hasSelfOut
-            ) {
-            }
+            ) {}
 
             public function enterNode(Node $n): int|array|null
             {

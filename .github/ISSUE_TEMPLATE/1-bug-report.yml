@@ -1,0 +1,32 @@
+name: Bug report
+description: If something isn't working as expected.
+title: ""
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug report
+      description: Please describe your problem here
+      placeholder: Leave a comment
+    validations:
+      required: true
+
+  - type: input
+    id: reproduction
+    attributes:
+      label: Code snippet that reproduces the problem
+      description: |
+        Please reproduce the issue with the [on-line TypePHP playground](https://typephp-php.github.io/docs/playground), get a unique URL with the Share button and post it here.
+      placeholder: https://typephp-php.github.io/docs/playground#code=<unique_id>
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected output
+      description: Was the issue reported incorrectly? Or should TypePHP detect an issue with the code but doesn't?
+      placeholder: Leave a comment
+    validations:
+      required: true

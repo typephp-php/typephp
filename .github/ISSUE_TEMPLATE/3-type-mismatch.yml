@@ -1,0 +1,31 @@
+name: Function signature or stub mismatch
+description: Some built-in PHP function or vendor stub expects or returns a different type than reported.
+title: "[Type Mismatch]: "
+labels: ["types", "stubs"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template if TypePHP reports an invalid type on a built-in PHP function, or if a DocBlock contract contradicts real PHP behavior.
+  - type: input
+    id: target
+    attributes:
+      label: Affected Function, Method, or Class
+      placeholder: E.g., array_map(), DateTime::format(), or Vendor\Package\Service
+    validations:
+      required: true
+  - type: textarea
+    id: current-vs-expected
+    attributes:
+      label: Current vs Expected Type Contract
+      description: What does TypePHP currently enforce versus what does PHP actually allow/return?
+    validations:
+      required: true
+  - type: input
+    id: playground
+    attributes:
+      label: Playground Link (Optional)
+      description: If possible, provide a playground reproduction.
+      placeholder: https://typephp-php.github.io/docs/playground#code=...
+    validations:
+      required: false
