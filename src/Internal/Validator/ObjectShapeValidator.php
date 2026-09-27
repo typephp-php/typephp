@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Validator;
 
+use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use ReflectionClass;
+use ReflectionProperty;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
@@ -15,8 +18,28 @@ use TypePHP\Internal\Diagnostic\TypeFormatter;
  */
 final class ObjectShapeValidator implements TypeValidatorInterface
 {
-    public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
-    {
+    /**
+     * Cache for ReflectionClass instances per class name.
+     *
+     * @var array<class-string<object>, ReflectionClass<object>>
+     */
+    private static array $refClassCache = [];
+
+    /**
+     * Cache for ReflectionProperty instances per class name and property name.
+     * Stored as false if the property is not declared on the class (dynamic or magic).
+     *
+     * @var array<class-string<object>, array<string, ReflectionProperty|false>>
+     */
+    private static array $propertyCache = [];
+
+    public function validate(
+        mixed $value,
+        TypeNode $node,
+        string $context,
+        TypeValidatorRegistry $registry,
+        bool $isSensitive = false
+    ): ?ErrorMessage {
         if (! \is_object($value)) {
             return ErrorFactory::createError($context . ' must be of type object, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
@@ -26,9 +49,11 @@ final class ObjectShapeValidator implements TypeValidatorInterface
 
         if ($value instanceof \stdClass) {
             foreach ($shapeNode->items as $item) {
-                $propName = (string) $item->keyName;
+                $propName = $item->keyName instanceof IdentifierTypeNode
+                    ? $item->keyName->name
+                    : (string) $item->keyName;
 
-                if (! property_exists($value, $propName) && ! isset($value->$propName)) {
+                if (! isset($value->$propName) && ! property_exists($value, $propName)) {
                     if (! $item->optional) {
                         return ErrorFactory::createError($context . " is missing required property '$propName'");
                     }
@@ -47,22 +72,23 @@ final class ObjectShapeValidator implements TypeValidatorInterface
             return null;
         }
 
-        $refObject = new \ReflectionObject($value);
+        $className = $value::class;
 
         foreach ($shapeNode->items as $item) {
-            $propName = (string) $item->keyName;
+            $propName = $item->keyName instanceof IdentifierTypeNode
+                ? $item->keyName->name
+                : (string) $item->keyName;
 
-            // @phpstan-ignore property.dynamicName
-            if (! $refObject->hasProperty($propName) && ! isset($value->$propName)) {
-                if (! $item->optional) {
-                    return ErrorFactory::createError($context . " is missing required property '$propName'");
-                }
-
-                continue;
+            if (! isset(self::$propertyCache[$className][$propName]) && ! \array_key_exists($propName, self::$propertyCache[$className] ?? [])) {
+                $refClass = self::$refClassCache[$className] ??= new ReflectionClass($className);
+                self::$propertyCache[$className][$propName] = $refClass->hasProperty($propName)
+                    ? $refClass->getProperty($propName)
+                    : false;
             }
 
-            if ($refObject->hasProperty($propName)) {
-                $refProp = $refObject->getProperty($propName);
+            $refProp = self::$propertyCache[$className][$propName];
+
+            if ($refProp instanceof ReflectionProperty) {
                 if (! $refProp->isInitialized($value)) {
                     if (! $item->optional) {
                         return ErrorFactory::createError($context . " property '$propName' is uninitialized");
@@ -73,6 +99,15 @@ final class ObjectShapeValidator implements TypeValidatorInterface
 
                 $propValue = $refProp->getValue($value);
             } else {
+                // @phpstan-ignore property.dynamicName
+                if (! isset($value->$propName) && ! property_exists($value, $propName)) {
+                    if (! $item->optional) {
+                        return ErrorFactory::createError($context . " is missing required property '$propName'");
+                    }
+
+                    continue;
+                }
+
                 // @phpstan-ignore property.dynamicName
                 $propValue = $value->$propName;
             }

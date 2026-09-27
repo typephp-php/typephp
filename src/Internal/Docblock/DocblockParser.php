@@ -68,16 +68,16 @@ final class DocblockParser
     private static array $cache = [];
 
     /**
-     * Cache for resolved class property types.
+     * 2D Cache for resolved class property types: [$className][$propertyName] => ?TypeNode.
      *
-     * @var array<string, ?TypeNode>
+     * @var array<string, array<string, ?TypeNode>>
      */
     private static array $propertyCache = [];
 
     /**
-     * Cache for resolved magic method contracts.
+     * 2D Cache for resolved magic method contracts: [$className][$methodName] => ?array{...}.
      *
-     * @var array<string, ?array{return: ?TypeNode, parameters: array<int, array{name: string, type: ?TypeNode, isVariadic: bool, isOptional: bool}>, aliases: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>}>
+     * @var array<string, array<string, ?array{return: ?TypeNode, parameters: array<int, array{name: string, type: ?TypeNode, isVariadic: bool, isOptional: bool}>, aliases: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>}>>
      */
     private static array $magicMethodCache = [];
 
@@ -346,7 +346,7 @@ final class DocblockParser
             if (str_contains($function, '::')) {
                 [$className, $methodName] = explode('::', $function, 2);
 
-                if (class_exists($className) || interface_exists($className) || trait_exists($className) || enum_exists($className)) {
+                if (class_exists($className, false) || class_exists($className) || interface_exists($className) || trait_exists($className) || enum_exists($className)) {
                     /** @var class-string<object> $className */
                     $refClass = new \ReflectionClass($className);
                     if ($refClass->hasMethod($methodName)) {
@@ -436,17 +436,16 @@ final class DocblockParser
     }
 
     /**
-     * Parses and resolves the @var or @property docblock for a given class property.
+     * Parses and resolves the @var or @property docblock for a given class property with zero-allocation 2D caching.
      */
     public static function parseProperty(string $className, string $propertyName): ?TypeNode
     {
-        $cacheKey = $className . '::$' . $propertyName;
-        if (\array_key_exists($cacheKey, self::$propertyCache)) {
-            return self::$propertyCache[$cacheKey];
+        if (isset(self::$propertyCache[$className][$propertyName]) || \array_key_exists($propertyName, self::$propertyCache[$className] ?? [])) {
+            return self::$propertyCache[$className][$propertyName];
         }
 
-        if (! class_exists($className) && ! trait_exists($className) && ! interface_exists($className) && ! enum_exists($className)) {
-            return self::$propertyCache[$cacheKey] = null;
+        if (! class_exists($className, false) && ! class_exists($className) && ! trait_exists($className, false) && ! trait_exists($className) && ! interface_exists($className, false) && ! interface_exists($className) && ! enum_exists($className, false) && ! enum_exists($className)) {
+            return self::$propertyCache[$className][$propertyName] = null;
         }
 
         try {
@@ -470,7 +469,7 @@ final class DocblockParser
             }
 
             if ($doc === false || $declaringClass === null || self::shouldIgnoreDoc($doc)) {
-                return self::$propertyCache[$cacheKey] = null;
+                return self::$propertyCache[$className][$propertyName] = null;
             }
 
             if (! $isMagicProperty) {
@@ -478,14 +477,14 @@ final class DocblockParser
                 $varTags = DocblockExtractor::getVarTags($phpDocNode);
 
                 if (\count($varTags) === 0) {
-                    return self::$propertyCache[$cacheKey] = null;
+                    return self::$propertyCache[$className][$propertyName] = null;
                 }
 
                 $typeNode = $varTags[0]->type;
             }
 
             if ($typeNode === null) {
-                return self::$propertyCache[$cacheKey] = null;
+                return self::$propertyCache[$className][$propertyName] = null;
             }
 
             $aliases = [];
@@ -500,9 +499,9 @@ final class DocblockParser
             $typeNode = self::substituteAliases($typeNode, $aliases);
             $resolvedNode = SpecialTypeResolver::resolve($typeNode, $declaringClass);
 
-            return self::$propertyCache[$cacheKey] = $resolvedNode;
+            return self::$propertyCache[$className][$propertyName] = $resolvedNode;
         } catch (\Throwable $e) {
-            return self::$propertyCache[$cacheKey] = null;
+            return self::$propertyCache[$className][$propertyName] = null;
         }
     }
 
@@ -596,19 +595,18 @@ final class DocblockParser
     }
 
     /**
-     * Parses and resolves a class-level @method docblock for __call / __callStatic.
+     * Parses and resolves a class-level @method docblock for __call / __callStatic with zero-allocation 2D caching.
      *
      * @return array{return: ?TypeNode, parameters: array<int, array{name: string, type: ?TypeNode, isVariadic: bool, isOptional: bool}>, aliases: array<string, TypeNode>, templates: array<string, TemplateTagValueNode>}|null
      */
     public static function parseMagicMethod(string $className, string $methodName): ?array
     {
-        $cacheKey = $className . '::' . $methodName;
-        if (\array_key_exists($cacheKey, self::$magicMethodCache)) {
-            return self::$magicMethodCache[$cacheKey];
+        if (isset(self::$magicMethodCache[$className][$methodName]) || \array_key_exists($methodName, self::$magicMethodCache[$className] ?? [])) {
+            return self::$magicMethodCache[$className][$methodName];
         }
 
-        if (! class_exists($className) && ! trait_exists($className) && ! interface_exists($className) && ! enum_exists($className)) {
-            return self::$magicMethodCache[$cacheKey] = null;
+        if (! class_exists($className, false) && ! class_exists($className) && ! trait_exists($className, false) && ! trait_exists($className) && ! interface_exists($className, false) && ! interface_exists($className) && ! enum_exists($className, false) && ! enum_exists($className)) {
+            return self::$magicMethodCache[$className][$methodName] = null;
         }
 
         try {
@@ -617,7 +615,7 @@ final class DocblockParser
 
             $resolved = self::findMagicMethodDoc($refClass, $methodName);
             if ($resolved === null) {
-                return self::$magicMethodCache[$cacheKey] = null;
+                return self::$magicMethodCache[$className][$methodName] = null;
             }
 
             $doc = $resolved['doc'];
@@ -625,7 +623,7 @@ final class DocblockParser
             $methodTag = $resolved['methodTag'];
 
             if (self::shouldIgnoreDoc($doc)) {
-                return self::$magicMethodCache[$cacheKey] = null;
+                return self::$magicMethodCache[$className][$methodName] = null;
             }
 
             $aliases = [];
@@ -643,14 +641,14 @@ final class DocblockParser
 
             $resolvedParams = self::resolveMagicParameters($methodTag, $declaringClass, $aliases);
 
-            return self::$magicMethodCache[$cacheKey] = [
+            return self::$magicMethodCache[$className][$methodName] = [
                 'return' => $resolvedReturn,
                 'parameters' => $resolvedParams,
                 'aliases' => $aliases,
                 'templates' => $classTemplates,
             ];
         } catch (\Throwable $e) {
-            return self::$magicMethodCache[$cacheKey] = null;
+            return self::$magicMethodCache[$className][$methodName] = null;
         }
     }
 
@@ -773,7 +771,11 @@ final class DocblockParser
      */
     public static function parseClassAliases(string $className): array
     {
-        if (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className) && ! enum_exists($className)) {
+        if (isset(self::$classLevelDocCache[$className])) {
+            return self::$classLevelDocCache[$className]['aliases'];
+        }
+
+        if (! class_exists($className, false) && ! class_exists($className) && ! interface_exists($className, false) && ! interface_exists($className) && ! trait_exists($className, false) && ! trait_exists($className) && ! enum_exists($className, false) && ! enum_exists($className)) {
             return [];
         }
 
@@ -1598,6 +1600,10 @@ final class DocblockParser
      */
     public static function substituteAliases(TypeNode $node, array $aliases): TypeNode
     {
+        if ($aliases === []) {
+            return $node;
+        }
+
         if ($node instanceof IdentifierTypeNode) {
             if (isset($aliases[$node->name])) {
                 return self::substituteAliases($aliases[$node->name], $aliases);

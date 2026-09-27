@@ -28,6 +28,16 @@ use TypePHP\Internal\Wrapper\CallableWrapper;
 final class ReturnChecker
 {
     /**
+     * Fast O(1) lookup set for generic iterable return types.
+     */
+    private const GENERIC_ITERABLES = [
+        'iterable' => true,
+        'traversable' => true,
+        'iterator' => true,
+        'generator' => true,
+    ];
+
+    /**
      * O(1) Fast-path cache for methods determined to have no return contracts.
      *
      * @var array<string, true>
@@ -49,9 +59,9 @@ final class ReturnChecker
     private static array $resolvedStaticReturnCache = [];
 
     /**
-     * In-memory cache for concrete substituted generic return types.
+     * In-memory 2D cache for concrete substituted generic return types: [$function][$templateSignature] => TypeNode.
      *
-     * @var array<string, TypeNode>
+     * @var array<string, array<string, TypeNode>>
      */
     public static array $substitutedReturnCache = [];
 
@@ -275,8 +285,7 @@ final class ReturnChecker
                     $baseName = strtolower(ltrim($resolvedType->type->name, '\\'));
                 }
 
-                $genericIterables = ['iterable', 'traversable', 'iterator', 'generator'];
-                if (\in_array($baseName, $genericIterables, true)) {
+                if (isset(self::GENERIC_ITERABLES[$baseName])) {
                     return $wrapIterableCallback($function, 'return', $value);
                 }
             }
@@ -286,14 +295,21 @@ final class ReturnChecker
 
         $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
 
-        $cacheKey = null;
-        if (\count($boundTemplates) <= 2 && ! $isParamConditional && \count($aliases) === 0 && $thisObj === null) {
-            $cacheKey = $function;
-            foreach ($boundTemplates as $k => $v) {
-                $cacheKey .= '|' . $k . ':' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v);
+        $sig = null;
+        $boundCount = \count($boundTemplates);
+        if ($boundCount > 0 && $boundCount <= 2 && ! $isParamConditional && \count($aliases) === 0 && $thisObj === null) {
+            if ($boundCount === 1) {
+                $first = reset($boundTemplates);
+                $sig = $first instanceof IdentifierTypeNode ? $first->name : (string) $first;
+            } else {
+                $sig = '';
+                foreach ($boundTemplates as $v) {
+                    $sig .= ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
+                }
             }
-            if (isset(self::$substitutedReturnCache[$cacheKey])) {
-                $resolvedType = self::$substitutedReturnCache[$cacheKey];
+
+            if (isset(self::$substitutedReturnCache[$function][$sig])) {
+                $resolvedType = self::$substitutedReturnCache[$function][$sig];
             }
         }
 
@@ -317,8 +333,8 @@ final class ReturnChecker
 
             $resolvedType = ConditionalChecker::resolve($resolvedType, $vars, $boundTemplates, $registry, $function);
 
-            if ($cacheKey !== null) {
-                self::$substitutedReturnCache[$cacheKey] = $resolvedType;
+            if ($sig !== null) {
+                self::$substitutedReturnCache[$function][$sig] = $resolvedType;
             }
         }
 
@@ -346,8 +362,7 @@ final class ReturnChecker
                 $baseName = strtolower(ltrim($resolvedType->type->name, '\\'));
             }
 
-            $genericIterables = ['iterable', 'traversable', 'iterator', 'generator'];
-            if (\in_array($baseName, $genericIterables, true)) {
+            if (isset(self::GENERIC_ITERABLES[$baseName])) {
                 return $wrapIterableCallback($function, 'return', $value);
             }
         }

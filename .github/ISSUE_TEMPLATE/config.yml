@@ -1,8 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Report a security vulnerability
-    url: https://github.com/typephp-php/typephp/security/policy
-    about: Please review our security policy for more details.
   - name: Support question
     url: https://github.com/typephp-php/typephp/discussions/new?category=q-a
     about: Please open a new discussion instead. Thank you.

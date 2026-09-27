@@ -62,11 +62,18 @@ final class TemplateManager
     private static array $classInheritedBindingsCache = [];
 
     /**
-     * In-memory cache for subclass hierarchy (is_a) lookups.
+     * In-memory 2D cache for subclass hierarchy (is_a) lookups: [$sub][$super] => bool.
+     *
+     * @var array<string, array<string, bool>>
+     */
+    private static array $subclassCache = [];
+
+    /**
+     * In-memory cache for real type symbol verification (class/interface/trait/enum existence).
      *
      * @var array<string, bool>
      */
-    private static array $subclassCache = [];
+    private static array $realTypeSymbolCache = [];
 
     /**
      * Temporary storage for an original object instance being cloned.
@@ -356,7 +363,7 @@ final class TemplateManager
     private static array $methodTemplatesCache = [];
 
     /**
-     * In-memory cache for isMethodTemplate checks per function and template name.
+     * In-memory cache for isMethodTemplate checks per function and template name: [$function][$templateName] => bool.
      *
      * @var array<string, array<string, bool>>
      */
@@ -379,6 +386,7 @@ final class TemplateManager
         self::$classHierarchyTemplatesCache = [];
         self::$classInheritedBindingsCache = [];
         self::$subclassCache = [];
+        self::$realTypeSymbolCache = [];
         self::$pendingCloneSource = null;
         self::$methodTemplatesCache = [];
         self::$isMethodTemplateCache = [];
@@ -1138,7 +1146,7 @@ final class TemplateManager
         $lowerExpected = strtolower($expectedStr);
         $lowerExisting = strtolower($existingStr);
 
-        if ($lowerExpected === 'object' && ClassNameValidator::isValid($existingStr) && (class_exists($existingStr) || interface_exists($existingStr))) {
+        if ($lowerExpected === 'object' && ClassNameValidator::isValid($existingStr) && self::isRealTypeSymbol($existingStr)) {
             return true;
         }
 
@@ -1337,9 +1345,8 @@ final class TemplateManager
 
     private static function isSubclass(string $sub, string $super): bool
     {
-        $cacheKey = $sub . '|' . $super;
-        if (isset(self::$subclassCache[$cacheKey])) {
-            return self::$subclassCache[$cacheKey];
+        if (isset(self::$subclassCache[$sub][$super])) {
+            return self::$subclassCache[$sub][$super];
         }
 
         $baseSub = ($pos = strpos($sub, '<')) !== false ? substr($sub, 0, $pos) : $sub;
@@ -1359,7 +1366,7 @@ final class TemplateManager
             $result = is_a($baseSub, $baseSuper, true);
         }
 
-        return self::$subclassCache[$cacheKey] = $result;
+        return self::$subclassCache[$sub][$super] = $result;
     }
 
     /**
@@ -1458,9 +1465,23 @@ final class TemplateManager
         }
     }
 
+    /**
+     * Checks if a symbol represents an existing class, interface, enum, or trait with fast non-autoloading cache.
+     */
     private static function isRealTypeSymbol(string $name): bool
     {
-        return class_exists($name) || interface_exists($name) || enum_exists($name) || trait_exists($name);
+        if (isset(self::$realTypeSymbolCache[$name])) {
+            return self::$realTypeSymbolCache[$name];
+        }
+
+        return self::$realTypeSymbolCache[$name] = class_exists($name, false)
+            || class_exists($name)
+            || interface_exists($name, false)
+            || interface_exists($name)
+            || enum_exists($name, false)
+            || enum_exists($name)
+            || trait_exists($name, false)
+            || trait_exists($name);
     }
 
     /**

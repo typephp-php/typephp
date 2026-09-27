@@ -48,16 +48,16 @@ final class InlineChecker
     private static array $parsedTypeNodeCache = [];
 
     /**
-     * In-memory cache for resolved class contexts with static bounds.
+     * In-memory 3D cache for resolved class contexts with static bounds: [$className][$methodName][$typeString] => TypeNode.
      *
-     * @var array<string, TypeNode>
+     * @var array<string, array<string, array<string, TypeNode>>>
      */
     private static array $resolvedClassContextCache = [];
 
     /**
-     * In-memory cache for properties known to have no DocBlock annotations.
+     * In-memory 2D cache for properties known to have no DocBlock annotations: [$className][$propName] => true.
      *
-     * @var array<string, true>
+     * @var array<string, array<string, true>>
      */
     public static array $nullPropertyCache = [];
 
@@ -218,7 +218,7 @@ final class InlineChecker
     }
 
     /**
-     * Evaluates class property validation dynamically based on configuration.
+     * Evaluates class property validation dynamically based on configuration with zero-allocation 2D caching.
      */
     public static function checkProperty(mixed $value, mixed $objectOrClass, string $propName, string $file, TypeValidatorRegistry $registry): mixed
     {
@@ -226,10 +226,9 @@ final class InlineChecker
             return $value;
         }
 
-        $className = \is_string($objectOrClass) ? $objectOrClass : \get_class($objectOrClass);
-        $cacheKey = $className . '::$' . $propName;
+        $className = \is_string($objectOrClass) ? $objectOrClass : $objectOrClass::class;
 
-        if (isset(self::$nullPropertyCache[$cacheKey])) {
+        if (isset(self::$nullPropertyCache[$className][$propName])) {
             return $value;
         }
 
@@ -239,7 +238,7 @@ final class InlineChecker
 
         $typeNode = DocblockParser::parseProperty($className, $propName);
         if ($typeNode === null) {
-            self::$nullPropertyCache[$cacheKey] = true;
+            self::$nullPropertyCache[$className][$propName] = true;
 
             return $value;
         }
@@ -324,7 +323,7 @@ final class InlineChecker
     }
 
     /**
-     * Resolves templates, aliases, and class context within class methods.
+     * Resolves templates, aliases, and class context within class methods using zero-allocation nested caching.
      */
     private static function resolveClassContext(
         TypeNode $typeNode,
@@ -343,11 +342,14 @@ final class InlineChecker
         $contract = DocblockParser::parse($targetFunc);
         $hasMethodTemplates = ($contract['templates'] ?? []) !== [];
 
-        $cacheKey = null;
-        if ($thisObj === null && ! $hasMethodTemplates) {
-            $cacheKey = ((string) $typeNode) . '|' . $className . '|' . ($methodName ?? '');
-            if (isset(self::$resolvedClassContextCache[$cacheKey])) {
-                return self::$resolvedClassContextCache[$cacheKey];
+        $methodKey = $methodName ?? '';
+        $typeString = null;
+        $canCache = ($thisObj === null && ! $hasMethodTemplates);
+
+        if ($canCache) {
+            $typeString = (string) $typeNode;
+            if (isset(self::$resolvedClassContextCache[$className][$methodKey][$typeString])) {
+                return self::$resolvedClassContextCache[$className][$methodKey][$typeString];
             }
         }
 
@@ -361,8 +363,8 @@ final class InlineChecker
             $declaredTemplates = $allTemplates;
 
             if ($classAliases === [] && $declaredTemplates === []) {
-                if ($cacheKey !== null) {
-                    return self::$resolvedClassContextCache[$cacheKey] = $typeNode;
+                if ($canCache && $typeString !== null) {
+                    return self::$resolvedClassContextCache[$className][$methodKey][$typeString] = $typeNode;
                 }
 
                 return $typeNode;
@@ -379,8 +381,8 @@ final class InlineChecker
             // Silently continue if reflection fails
         }
 
-        if ($cacheKey !== null) {
-            return self::$resolvedClassContextCache[$cacheKey] = $typeNode;
+        if ($canCache && $typeString !== null) {
+            return self::$resolvedClassContextCache[$className][$methodKey][$typeString] = $typeNode;
         }
 
         return $typeNode;

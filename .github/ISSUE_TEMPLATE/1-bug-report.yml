@@ -1,6 +1,6 @@
 name: Bug report
 description: If something isn't working as expected.
-title: ""
+title: "[Bug]: "
 labels: ["bug"]
 body:
   - type: textarea
@@ -18,7 +18,7 @@ body:
       label: Code snippet that reproduces the problem
       description: |
         Please reproduce the issue with the [on-line TypePHP playground](https://typephp-php.github.io/docs/playground), get a unique URL with the Share button and post it here.
-      placeholder: https://typephp-php.github.io/docs/playground#code=<unique_id>
+      placeholder: "https://typephp-php.github.io/docs/playground#code=<unique_id>"
     validations:
       required: false
 
