@@ -1,0 +1,32 @@
+name: Feature request
+description: I have a suggestion (and may want to implement it)!
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea to improve TypePHP? We would love to hear it!
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Feature / Syntax
+      description: Describe the feature or type annotation you would like TypePHP to support.
+      placeholder: E.g., Support for a new scalar refinement, shape feature, or CLI option...
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation / Use Case
+      description: Why should this be added to TypePHP? What problem does it solve?
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Code Example
+      description: Show a code snippet demonstrating how this feature would look and behave.
+      render: php
+    validations:
+      required: false
