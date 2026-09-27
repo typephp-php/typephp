@@ -20,12 +20,16 @@ final class StubManager
     private static bool $initialized = false;
 
     /**
-     * @var array<string, string> ClassName::methodName => DocCommentText
+     * In-memory 2D cache for method stubs: [$className][$methodName] => DocCommentText.
+     *
+     * @var array<string, array<string, string>>
      */
     private static array $methodStubs = [];
 
     /**
-     * @var array<string, string> ClassName::$propertyName => DocCommentText
+     * In-memory 2D cache for property stubs: [$className][$propertyName] => DocCommentText.
+     *
+     * @var array<string, array<string, string>>
      */
     private static array $propertyStubs = [];
 
@@ -78,14 +82,14 @@ final class StubManager
     {
         self::init();
 
-        return self::$methodStubs[$className . '::' . $methodName] ?? null;
+        return self::$methodStubs[$className][$methodName] ?? null;
     }
 
     public static function getPropertyDoc(string $className, string $propertyName): ?string
     {
         self::init();
 
-        return self::$propertyStubs[$className . '::$' . $propertyName] ?? null;
+        return self::$propertyStubs[$className][$propertyName] ?? null;
     }
 
     public static function getClassDoc(string $className): ?string
@@ -106,14 +110,14 @@ final class StubManager
     {
         self::init();
 
-        return isset(self::$methodStubs[$className . '::' . $methodName]);
+        return isset(self::$methodStubs[$className][$methodName]);
     }
 
     public static function hasPropertyStub(string $className, string $propertyName): bool
     {
         self::init();
 
-        return isset(self::$propertyStubs[$className . '::$' . $propertyName]);
+        return isset(self::$propertyStubs[$className][$propertyName]);
     }
 
     public static function hasClassStub(string $className): bool
@@ -257,13 +261,13 @@ final class StubManager
                     if ($member instanceof Node\Stmt\ClassMethod) {
                         $mDoc = $member->getDocComment();
                         if ($mDoc !== null) {
-                            self::$methodStubs[$className . '::' . $member->name->toString()] = $mDoc->getText();
+                            self::$methodStubs[$className][$member->name->toString()] = $mDoc->getText();
                         }
                     } elseif ($member instanceof Node\Stmt\Property) {
                         $pDoc = $member->getDocComment();
                         if ($pDoc !== null) {
                             foreach ($member->props as $prop) {
-                                self::$propertyStubs[$className . '::$' . $prop->name->toString()] = $pDoc->getText();
+                                self::$propertyStubs[$className][$prop->name->toString()] = $pDoc->getText();
                             }
                         }
                     }

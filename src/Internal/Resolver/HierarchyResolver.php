@@ -13,9 +13,10 @@ use ReflectionMethod;
 final class HierarchyResolver
 {
     /**
-     * In-memory cache for resolved ReflectionMethod hierarchy arrays.
+     * In-memory 2D cache for resolved ReflectionMethod hierarchy arrays:
+     * [$className][$methodName] => list<ReflectionMethod>.
      *
-     * @var array<string, array<int, ReflectionMethod>>
+     * @var array<string, array<string, list<ReflectionMethod>>>
      */
     private static array $methodHierarchyCache = [];
 
@@ -126,19 +127,18 @@ final class HierarchyResolver
     /**
      * Builds an array of ReflectionMethods representing the inheritance hierarchy from child to root.
      *
-     * @return array<int, ReflectionMethod>
+     * @return list<ReflectionMethod>
      */
     public static function getMethodHierarchy(ReflectionMethod $ref): array
     {
-        $cacheKey = $ref->class . '::' . $ref->getName();
-        if (isset(self::$methodHierarchyCache[$cacheKey])) {
-            return self::$methodHierarchyCache[$cacheKey];
+        $targetClassName = $ref->class;
+        $methodName = $ref->getName();
+
+        if (isset(self::$methodHierarchyCache[$targetClassName][$methodName])) {
+            return self::$methodHierarchyCache[$targetClassName][$methodName];
         }
 
         $hierarchy = [$ref];
-        $methodName = $ref->getName();
-        $targetClassName = $ref->class;
-
         $targetClass = new ReflectionClass($targetClassName);
 
         $traitAliases = self::getTraitAliases($targetClassName);
@@ -172,7 +172,7 @@ final class HierarchyResolver
             }
         }
 
-        return self::$methodHierarchyCache[$cacheKey] = $hierarchy;
+        return self::$methodHierarchyCache[$targetClassName][$methodName] = $hierarchy;
     }
 
     /**
