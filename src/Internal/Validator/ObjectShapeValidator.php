@@ -72,7 +72,6 @@ final class ObjectShapeValidator implements TypeValidatorInterface
             return null;
         }
 
-        /** @var class-string<object> $className */
         $className = $value::class;
 
         foreach ($shapeNode->items as $item) {
@@ -100,6 +99,7 @@ final class ObjectShapeValidator implements TypeValidatorInterface
 
                 $propValue = $refProp->getValue($value);
             } else {
+                // @phpstan-ignore property.dynamicName
                 if (! isset($value->$propName) && ! property_exists($value, $propName)) {
                     if (! $item->optional) {
                         return ErrorFactory::createError($context . " is missing required property '$propName'");

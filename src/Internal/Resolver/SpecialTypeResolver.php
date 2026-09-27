@@ -116,11 +116,25 @@ final class SpecialTypeResolver
     private static array $reflectionContextCache = [];
 
     /**
-     * In-memory cache for resolved FQCNs per context and type name.
+     * In-memory 2D cache for resolved FQCNs: [$contextKey][$name] => FQCN.
      *
-     * @var array<string, string>
+     * @var array<string, array<string, string>>
      */
     private static array $fqcnCache = [];
+
+    /**
+     * In-memory 2D cache for file FQCN resolutions: [$file][$name] => FQCN.
+     *
+     * @var array<string, array<string, string>>
+     */
+    private static array $fileFqcnCache = [];
+
+    /**
+     * In-memory 2D cache for class constant values: [$fqcn][$constName] => mixed.
+     *
+     * @var array<string, array<string, mixed>>
+     */
+    private static array $classConstantCache = [];
 
     /**
      * In-memory cache of file import maps keyed by filename.
@@ -157,6 +171,8 @@ final class SpecialTypeResolver
     {
         self::$reflectionContextCache = [];
         self::$fqcnCache = [];
+        self::$fileFqcnCache = [];
+        self::$classConstantCache = [];
         self::$classTraitUseDocs = [];
         self::$anonymousTraitUseDocs = [];
     }
@@ -776,24 +792,39 @@ final class SpecialTypeResolver
         return null;
     }
 
+    /**
+     * Resolves and caches class constant values in memory.
+     */
+    private static function getClassConstant(string $fqcn, string $constName): mixed
+    {
+        if (! isset(self::$classConstantCache[$fqcn][$constName]) && ! \array_key_exists($constName, self::$classConstantCache[$fqcn] ?? [])) {
+            $val = null;
+            if ($fqcn !== '' && self::symbolExists($fqcn)) {
+                try {
+                    /** @var class-string<object> $fqcn */
+                    $refClass = new \ReflectionClass($fqcn);
+                    if ($refClass->hasConstant($constName)) {
+                        $val = $refClass->getConstant($constName);
+                    }
+                } catch (\ReflectionException $e) {
+                }
+            }
+            self::$classConstantCache[$fqcn][$constName] = $val;
+        }
+
+        return self::$classConstantCache[$fqcn][$constName];
+    }
+
     private static function resolveConstantOffsetValue(string $fqcn, string $constName, string|int $offsetKey): ?TypeNode
     {
-        if ($fqcn !== '' && (class_exists($fqcn) || interface_exists($fqcn) || enum_exists($fqcn) || trait_exists($fqcn))) {
-            try {
-                $refClass = new \ReflectionClass($fqcn);
-                if ($refClass->hasConstant($constName)) {
-                    $constValue = $refClass->getConstant($constName);
-                    if (\is_array($constValue) && \array_key_exists($offsetKey, $constValue)) {
-                        $val = $constValue[$offsetKey];
-                        if (\is_string($val)) {
-                            return new ConstTypeNode(new ConstExprStringNode($val, ConstExprStringNode::SINGLE_QUOTED));
-                        }
-                        if (\is_int($val)) {
-                            return new ConstTypeNode(new ConstExprIntegerNode((string) $val));
-                        }
-                    }
-                }
-            } catch (\ReflectionException $e) {
+        $constValue = self::getClassConstant($fqcn, $constName);
+        if (\is_array($constValue) && \array_key_exists($offsetKey, $constValue)) {
+            $val = $constValue[$offsetKey];
+            if (\is_string($val)) {
+                return new ConstTypeNode(new ConstExprStringNode($val, ConstExprStringNode::SINGLE_QUOTED));
+            }
+            if (\is_int($val)) {
+                return new ConstTypeNode(new ConstExprIntegerNode((string) $val));
             }
         }
 
@@ -802,20 +833,12 @@ final class SpecialTypeResolver
 
     private static function resolveConstantKeyValue(string $fqcn, string $constName): ConstExprStringNode|ConstExprIntegerNode|null
     {
-        if (class_exists($fqcn) || interface_exists($fqcn) || enum_exists($fqcn) || trait_exists($fqcn)) {
-            try {
-                $refClass = new \ReflectionClass($fqcn);
-                if ($refClass->hasConstant($constName)) {
-                    $val = $refClass->getConstant($constName);
-                    if (\is_string($val)) {
-                        return new ConstExprStringNode($val, ConstExprStringNode::SINGLE_QUOTED);
-                    }
-                    if (\is_int($val)) {
-                        return new ConstExprIntegerNode((string) $val);
-                    }
-                }
-            } catch (\ReflectionException $e) {
-            }
+        $val = self::getClassConstant($fqcn, $constName);
+        if (\is_string($val)) {
+            return new ConstExprStringNode($val, ConstExprStringNode::SINGLE_QUOTED);
+        }
+        if (\is_int($val)) {
+            return new ConstExprIntegerNode((string) $val);
         }
 
         return null;
@@ -864,6 +887,7 @@ final class SpecialTypeResolver
         }
 
         try {
+            /** @var class-string<object> $className */
             $ref = new \ReflectionClass($className);
             $fileName = $ref->getFileName();
             if ($fileName !== false) {
@@ -1006,7 +1030,7 @@ final class SpecialTypeResolver
 
     /**
      * Resolves a short class name to its fully qualified class name (FQCN) using Reflection context.
-     * Memoizes resolved FQCNs in memory to avoid autoloader search storms.
+     * Memoizes resolved FQCNs in memory via zero-allocation 2D table to avoid autoloader search storms.
      *
      * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
      */
@@ -1030,9 +1054,8 @@ final class SpecialTypeResolver
             $ref instanceof \ReflectionFunction => 'F:' . $ref->getName(),
         };
 
-        $cacheKey = $contextKey . '|' . $name;
-        if (isset(self::$fqcnCache[$cacheKey])) {
-            return self::$fqcnCache[$cacheKey];
+        if (isset(self::$fqcnCache[$contextKey][$name])) {
+            return self::$fqcnCache[$contextKey][$name];
         }
 
         $imports = self::getUseImports($ref);
@@ -1049,11 +1072,11 @@ final class SpecialTypeResolver
 
         $resolved = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
 
-        return self::$fqcnCache[$cacheKey] = $resolved;
+        return self::$fqcnCache[$contextKey][$name] = $resolved;
     }
 
     /**
-     * Resolves a short class name to its FQCN purely based on file context (namespace and use imports).
+     * Resolves a short class name to its FQCN purely based on file context with 2D caching.
      */
     public static function resolveFqcnForFile(string $name, string $file): string
     {
@@ -1071,10 +1094,14 @@ final class SpecialTypeResolver
             return $name;
         }
 
+        if (isset(self::$fileFqcnCache[$file][$name])) {
+            return self::$fileFqcnCache[$file][$name];
+        }
+
         $imports = self::getUseImportsFromFile($file);
         $namespace = self::getNamespaceFromFile($file);
 
-        return self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
+        return self::$fileFqcnCache[$file][$name] = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
     }
 
     /**
@@ -1091,38 +1118,53 @@ final class SpecialTypeResolver
         if (! str_contains($name, '\\')) {
             if ($namespace !== '') {
                 $namespacedClass = $namespace . '\\' . $name;
-                if (class_exists($namespacedClass) || interface_exists($namespacedClass) || trait_exists($namespacedClass) || enum_exists($namespacedClass)) {
+                if (self::symbolExists($namespacedClass)) {
                     return $namespacedClass;
                 }
             }
 
-            if (class_exists($name) || interface_exists($name) || trait_exists($name) || enum_exists($name)) {
+            if (self::symbolExists($name)) {
                 return $name;
             }
 
             return $name;
         }
 
-        if (class_exists($name) || interface_exists($name) || trait_exists($name) || enum_exists($name)) {
+        if (self::symbolExists($name)) {
             return $name;
         }
 
         [$firstPart, $subPart] = explode('\\', $name, 2);
         if (isset($imports[$firstPart])) {
             $candidate = $imports[$firstPart] . '\\' . $subPart;
-            if (class_exists($candidate) || interface_exists($candidate) || trait_exists($candidate) || enum_exists($candidate)) {
+            if (self::symbolExists($candidate)) {
                 return $candidate;
             }
         }
 
         if ($namespace !== '') {
             $namespacedClass = $namespace . '\\' . $name;
-            if (class_exists($namespacedClass) || interface_exists($namespacedClass) || trait_exists($namespacedClass) || enum_exists($namespacedClass)) {
+            if (self::symbolExists($namespacedClass)) {
                 return $namespacedClass;
             }
         }
 
         return $name;
+    }
+
+    /**
+     * Fast-checks in-memory symbol tables before invoking autoloader.
+     */
+    private static function symbolExists(string $symbol): bool
+    {
+        return class_exists($symbol, false)
+            || interface_exists($symbol, false)
+            || enum_exists($symbol, false)
+            || trait_exists($symbol, false)
+            || class_exists($symbol)
+            || interface_exists($symbol)
+            || enum_exists($symbol)
+            || trait_exists($symbol);
     }
 
     /**
@@ -1136,12 +1178,6 @@ final class SpecialTypeResolver
     /**
      * Fast C-level token scanner using PhpToken (PHP 8.0+) to extract namespace,
      * use imports, and trait docblocks in microseconds without PhpParser AST overhead.
-     *
-     * Execution Flow:
-     * 1. Namespace: Identifies T_NAMESPACE to track file-level namespace prefix.
-     * 2. Class Scope: Tracks class, interface, trait, and enum boundaries.
-     * 3. Trait DocBlocks: Scans doc comments preceding T_USE statements inside class declarations.
-     * 4. Top-Level Imports: Parses single, multi, and group use statements outside classes into alias maps.
      */
     public static function parseFileMetadata(string $fileName, string $source): void
     {
