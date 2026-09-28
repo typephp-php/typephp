@@ -23,7 +23,7 @@ use TypePHP\Internal\Wrapper\CallableWrapper;
 /**
  * @phpstan-import-type FunctionContract from DocblockParser
  *
- * @internal Evaluates function and method return contract validations (including dynamic @method calls via __call / __callStatic).
+ * @internal Evaluates function and method return contract validations (including dynamic @method calls via __call / __callStatic and dynamic @property reads via __get).
  */
 final class ReturnChecker
 {
@@ -82,7 +82,7 @@ final class ReturnChecker
      */
     public static function isReturnUnconstrained(string $effectiveFunction): bool
     {
-        if (str_contains($effectiveFunction, '__call')) {
+        if (str_contains($effectiveFunction, '__call') || str_ends_with($effectiveFunction, '::__get')) {
             return false;
         }
 
@@ -109,23 +109,23 @@ final class ReturnChecker
             return $value;
         }
 
-        if (isset(self::$noReturnContractCache[$function])) {
-            return $value;
-        }
-
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
 
         if ($effectiveFunction === '') {
             $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
         }
 
-        if (isset(self::$noReturnContractCache[$effectiveFunction])) {
-            self::$noReturnContractCache[$function] = true;
+        $isMagicCall = str_contains($effectiveFunction, '__call');
+        $isMagicGet = str_ends_with($effectiveFunction, '::__get');
 
-            return $value;
+        if (! $isMagicCall && ! $isMagicGet) {
+            if (isset(self::$noReturnContractCache[$function]) || isset(self::$noReturnContractCache[$effectiveFunction])) {
+                self::$noReturnContractCache[$function] = true;
+
+                return $value;
+            }
         }
 
-        $isMagicCall = str_contains($effectiveFunction, '__call');
         $magicResult = self::handleMagicReturn(
             $effectiveFunction,
             $value,
@@ -139,6 +139,17 @@ final class ReturnChecker
         }
         if ($isMagicCall) {
             return $value;
+        }
+
+        if ($isMagicGet) {
+            return self::handleMagicPropertyRead(
+                $effectiveFunction,
+                $value,
+                $thisObj,
+                $vars,
+                $registry,
+                $wrapIterableCallback
+            );
         }
 
         $contract ??= DocblockParser::parse($effectiveFunction);
@@ -172,6 +183,75 @@ final class ReturnChecker
             $wrapIterableCallback,
             $contract
         );
+    }
+
+    /**
+     * Intercepts and evaluates return contracts for dynamic @property and @property-read accesses routed via __get.
+     *
+     * @param array<string, mixed> $vars
+     */
+    private static function handleMagicPropertyRead(
+        string $effectiveFunction,
+        mixed $value,
+        ?object $thisObj,
+        array $vars,
+        TypeValidatorRegistry $registry,
+        callable $wrapIterableCallback
+    ): mixed {
+        if (! Config::isMagicPropertyReadsEnabled()) {
+            return $value;
+        }
+
+        $propName = array_values($vars)[0] ?? null;
+        if (! \is_string($propName)) {
+            return $value;
+        }
+
+        $className = explode('::', $effectiveFunction, 2)[0];
+        $typeNode = DocblockParser::parseProperty($className, $propName);
+
+        if ($typeNode === null) {
+            return $value;
+        }
+
+        if ($thisObj !== null) {
+            $constructorTarget = $className . '::__construct';
+            $contract = DocblockParser::parse($constructorTarget);
+            $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+            $boundTemplates = TemplateManager::getBoundTemplates('none', $thisObj, $allTemplates);
+
+            if (\count($boundTemplates) > 0 || \count($allTemplates) > 0) {
+                $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $allTemplates);
+                $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+            }
+        }
+
+        $context = 'Property ' . $className . '::$' . $propName;
+        $err = $registry->validate($value, $typeNode, $context);
+
+        if ($err !== null) {
+            $msg = $err->getMessage();
+            if (str_ends_with($msg, ' given')) {
+                $msg = substr($msg, 0, -\strlen(' given')) . ' returned';
+            }
+
+            return ErrorFactory::createError($msg);
+        }
+
+        if ($value instanceof Traversable) {
+            $baseName = '';
+            if ($typeNode instanceof IdentifierTypeNode) {
+                $baseName = strtolower(ltrim($typeNode->name, '\\'));
+            } elseif ($typeNode instanceof GenericTypeNode) {
+                $baseName = strtolower(ltrim($typeNode->type->name, '\\'));
+            }
+
+            if (isset(self::GENERIC_ITERABLES[$baseName])) {
+                return $wrapIterableCallback($effectiveFunction, 'return', $value);
+            }
+        }
+
+        return $value;
     }
 
     /**

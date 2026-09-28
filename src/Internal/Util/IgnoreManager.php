@@ -13,11 +13,18 @@ use ReflectionFunction;
 final class IgnoreManager
 {
     /**
-     * In-memory cache for caller method ignore decisions (ClassName::method => bool).
+     * In-memory 2D cache for caller method ignore decisions: [$className][$methodName] => bool.
+     *
+     * @var array<string, array<string, bool>>
+     */
+    private static array $callerMethodCache = [];
+
+    /**
+     * In-memory cache for caller standalone function ignore decisions: [$functionName] => bool.
      *
      * @var array<string, bool>
      */
-    private static array $callerCache = [];
+    private static array $callerFunctionCache = [];
 
     /**
      * In-memory registry of files marked with @typephp-ignore-file.
@@ -31,7 +38,8 @@ final class IgnoreManager
      */
     public static function reset(): void
     {
-        self::$callerCache = [];
+        self::$callerMethodCache = [];
+        self::$callerFunctionCache = [];
         self::$fileCache = [];
     }
 
@@ -73,20 +81,19 @@ final class IgnoreManager
         }
 
         if ($callerClass !== null && $callerFunction !== null) {
-            $key = $callerClass . '::' . $callerFunction;
-            if (isset(self::$callerCache[$key])) {
-                return self::$callerCache[$key];
+            if (isset(self::$callerMethodCache[$callerClass][$callerFunction])) {
+                return self::$callerMethodCache[$callerClass][$callerFunction];
             }
 
-            return self::$callerCache[$key] = self::checkMethodIgnored($callerClass, $callerFunction);
+            return self::$callerMethodCache[$callerClass][$callerFunction] = self::checkMethodIgnored($callerClass, $callerFunction);
         }
 
         if ($callerFunction !== null) {
-            if (isset(self::$callerCache[$callerFunction])) {
-                return self::$callerCache[$callerFunction];
+            if (isset(self::$callerFunctionCache[$callerFunction])) {
+                return self::$callerFunctionCache[$callerFunction];
             }
 
-            return self::$callerCache[$callerFunction] = self::checkFunctionIgnored($callerFunction);
+            return self::$callerFunctionCache[$callerFunction] = self::checkFunctionIgnored($callerFunction);
         }
 
         $depth = Config::getIgnoreTraceDepth();
@@ -124,9 +131,8 @@ final class IgnoreManager
             }
 
             if ($class !== '') {
-                $key = $class . '::' . $function;
-                if (isset(self::$callerCache[$key])) {
-                    if (self::$callerCache[$key]) {
+                if (isset(self::$callerMethodCache[$class][$function])) {
+                    if (self::$callerMethodCache[$class][$function]) {
                         return true;
                     }
 
@@ -134,13 +140,13 @@ final class IgnoreManager
                 }
 
                 if (self::checkMethodIgnored($class, $function)) {
-                    return self::$callerCache[$key] = true;
+                    return self::$callerMethodCache[$class][$function] = true;
                 }
 
-                self::$callerCache[$key] = false;
+                self::$callerMethodCache[$class][$function] = false;
             } elseif (! str_contains($function, '{closure}')) {
-                if (isset(self::$callerCache[$function])) {
-                    if (self::$callerCache[$function]) {
+                if (isset(self::$callerFunctionCache[$function])) {
+                    if (self::$callerFunctionCache[$function]) {
                         return true;
                     }
 
@@ -148,10 +154,10 @@ final class IgnoreManager
                 }
 
                 if (self::checkFunctionIgnored($function)) {
-                    return self::$callerCache[$function] = true;
+                    return self::$callerFunctionCache[$function] = true;
                 }
 
-                self::$callerCache[$function] = false;
+                self::$callerFunctionCache[$function] = false;
             }
         }
 

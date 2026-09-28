@@ -306,6 +306,100 @@ PHP;
         });
     });
 
+    describe('Magic Accessor Handling (__get and __call)', function () {
+        test('injects parameter scope and return check with $_typephpArgs into __get method', function () {
+            $getMethod = new Node\Stmt\ClassMethod('__get', [
+                'params' => [
+                    new Node\Param(new Node\Expr\Variable('name'), null, new Node\Identifier('string')),
+                ],
+                'stmts' => [
+                    new Node\Stmt\Return_(new Node\Expr\ArrayDimFetch(
+                        new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), 'data'),
+                        new Node\Expr\Variable('name')
+                    )),
+                ],
+            ]);
+
+            FunctionContractInjector::inject($getMethod);
+
+            expect($getMethod->stmts)->not()->toBeEmpty();
+
+            $firstStmt = $getMethod->stmts[0];
+            expect($firstStmt)->toBeInstanceOf(Node\Stmt\If_::class)
+                ->and($firstStmt->getAttribute('typephp_injected'))->toBeTrue()
+            ;
+
+            expect($firstStmt->cond)->toBeInstanceOf(Node\Expr\ConstFetch::class)
+                ->and($firstStmt->cond->name->toString())->toBe('true')
+            ;
+
+            $innerStmts = $firstStmt->stmts;
+            expect($innerStmts[0])->toBeInstanceOf(Node\Stmt\Expression::class)
+                ->and($innerStmts[0]->expr)->toBeInstanceOf(Node\Expr\Assign::class)
+                ->and($innerStmts[0]->expr->var->name)->toBe('_typephpArgs')
+            ;
+
+            $returnStmt = $getMethod->stmts[1];
+            expect($returnStmt)->toBeInstanceOf(Node\Stmt\Return_::class)
+                ->and($returnStmt->expr)->toBeInstanceOf(Node\Expr\Ternary::class)
+            ;
+
+            /** @var Node\Expr\Ternary $ternary */
+            $ternary = $returnStmt->expr;
+            /** @var Node\Expr\Instanceof_ $instanceOf */
+            $instanceOf = $ternary->cond;
+            /** @var Node\Expr\Assign $assign */
+            $assign = $instanceOf->expr;
+            /** @var Node\Expr\FuncCall $checkCall */
+            $checkCall = $assign->expr;
+
+            expect($checkCall->name->toString())->toBe('TypePHP\Internal\RuntimeTypeChecker::checkReturn')
+                ->and($checkCall->args[3]->value)->toBeInstanceOf(Node\Expr\Variable::class)
+                ->and($checkCall->args[3]->value->name)->toBe('_typephpArgs')
+            ;
+        });
+
+        test('injects parameter scope and return check with $_typephpArgs into __call method', function () {
+            $callMethod = new Node\Stmt\ClassMethod('__call', [
+                'params' => [
+                    new Node\Param(new Node\Expr\Variable('name'), null, new Node\Identifier('string')),
+                    new Node\Param(new Node\Expr\Variable('args'), null, new Node\Identifier('array')),
+                ],
+                'stmts' => [
+                    new Node\Stmt\Return_(new Node\Expr\ConstFetch(new Node\Name('null'))),
+                ],
+            ]);
+
+            FunctionContractInjector::inject($callMethod);
+
+            expect($callMethod->stmts)->not()->toBeEmpty();
+
+            $firstStmt = $callMethod->stmts[0];
+            expect($firstStmt)->toBeInstanceOf(Node\Stmt\If_::class)
+                ->and($firstStmt->cond)->toBeInstanceOf(Node\Expr\ConstFetch::class)
+                ->and($firstStmt->cond->name->toString())->toBe('true')
+            ;
+
+            $returnStmt = $callMethod->stmts[1];
+            expect($returnStmt)->toBeInstanceOf(Node\Stmt\Return_::class)
+                ->and($returnStmt->expr)->toBeInstanceOf(Node\Expr\Ternary::class)
+            ;
+
+            /** @var Node\Expr\Ternary $ternary */
+            $ternary = $returnStmt->expr;
+            /** @var Node\Expr\Instanceof_ $instanceOf */
+            $instanceOf = $ternary->cond;
+            /** @var Node\Expr\Assign $assign */
+            $assign = $instanceOf->expr;
+            /** @var Node\Expr\FuncCall $checkCall */
+            $checkCall = $assign->expr;
+
+            expect($checkCall->args[3]->value)->toBeInstanceOf(Node\Expr\Variable::class)
+                ->and($checkCall->args[3]->value->name)->toBe('_typephpArgs')
+            ;
+        });
+    });
+
     describe('Ignore Tag Suppression (@typephp-ignore)', function () {
         test('injects setupScope hook so @typephp-ignore can be resolved dynamically at runtime by DocblockParser', function () {
             $doc = new Doc("/**\n * @typephp-ignore\n * @param positive-int \$id\n */");

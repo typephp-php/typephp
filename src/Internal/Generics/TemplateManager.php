@@ -394,6 +394,22 @@ final class TemplateManager
     }
 
     /**
+     * Restores or clears instance template bindings in WeakMap.
+     *
+     * @param array<string, TypeNode> $bindings
+     */
+    public static function restoreInstanceBindings(object $instance, array $bindings): void
+    {
+        self::$instanceTemplateBindings ??= new WeakMap();
+
+        if ($bindings === []) {
+            unset(self::$instanceTemplateBindings[$instance]);
+        } else {
+            self::$instanceTemplateBindings[$instance] = $bindings;
+        }
+    }
+
+    /**
      * Pushes a pending generic instantiation for a constructor.
      */
     public static function pushPendingInstantiation(string $typeString, string $file): void

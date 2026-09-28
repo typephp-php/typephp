@@ -17,6 +17,7 @@ describe('Config Unit Tests', function () {
             ->and($config)->toHaveKey('cache')
             ->and($config)->toHaveKey('cache_dir')
             ->and($config['cache_dir'])->toBeNull()
+            ->and($config['magic_properties'])->toBe(['write' => true, 'read' => false])
         ;
     });
 
@@ -58,6 +59,8 @@ describe('Config Unit Tests', function () {
             'isReturnsEnabled',
             'isStrictReturnGenericInvarianceEnabled',
             'isMagicPropertiesEnabled',
+            'isMagicPropertyWritesEnabled',
+            'isMagicPropertyReadsEnabled',
             'isMagicMethodsEnabled',
             'isRespectIgnoreTagsEnabled',
             'isRespectNativeNullabilityEnabled',
@@ -68,14 +71,44 @@ describe('Config Unit Tests', function () {
 
         foreach ($getters as $getter) {
             Config::reset();
-            // First call triggers: if (self::$cachedConfig === null) { self::get(); }
             $val1 = Config::$getter();
-
-            // Second call triggers the false branch (already cached)
             $val2 = Config::$getter();
 
             expect($val1)->toBe($val2);
         }
+    });
+
+    test('supports granular and boolean magic_properties configuration', function () {
+        // 1. Default: write is true, read is false
+        expect(Config::isMagicPropertyWritesEnabled())->toBeTrue()
+            ->and(Config::isMagicPropertyReadsEnabled())->toBeFalse()
+            ->and(Config::isMagicPropertiesEnabled())->toBeTrue()
+        ;
+
+        // 2. Partial array override (enable reads)
+        Config::set([
+            'magic_properties' => [
+                'read' => true,
+            ],
+        ]);
+        expect(Config::isMagicPropertyWritesEnabled())->toBeTrue()
+            ->and(Config::isMagicPropertyReadsEnabled())->toBeTrue()
+            ->and(Config::isMagicPropertiesEnabled())->toBeTrue()
+        ;
+
+        // 3. Boolean false override (disables both writes and reads)
+        Config::set(['magic_properties' => false]);
+        expect(Config::isMagicPropertyWritesEnabled())->toBeFalse()
+            ->and(Config::isMagicPropertyReadsEnabled())->toBeFalse()
+            ->and(Config::isMagicPropertiesEnabled())->toBeFalse()
+        ;
+
+        // 4. Boolean true override (enables writes, keeps reads false)
+        Config::set(['magic_properties' => true]);
+        expect(Config::isMagicPropertyWritesEnabled())->toBeTrue()
+            ->and(Config::isMagicPropertyReadsEnabled())->toBeFalse()
+            ->and(Config::isMagicPropertiesEnabled())->toBeTrue()
+        ;
     });
 
     test('hasActiveInlineChecks returns false when all inline var checks are disabled', function () {

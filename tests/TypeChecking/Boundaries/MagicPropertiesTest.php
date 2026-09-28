@@ -2,13 +2,9 @@
 
 declare(strict_types=1);
 
+use TypePHP\Exception\TypeError;
 use TypePHP\Internal\Util\Config;
-use TypePHP\Tests\Fixtures\Domain\Car;
-use TypePHP\Tests\Fixtures\Domain\Dog;
-use TypePHP\Tests\Fixtures\Generics\Producer;
-use TypePHP\Tests\Fixtures\Types\CountableArrayAccess;
-use TypePHP\Tests\Fixtures\Types\CountableOnly;
-use TypePHP\Tests\Fixtures\Types\MagicMethodFixture;
+use TypePHP\Tests\Fixtures\Types\MagicPropertyFixture;
 
 beforeEach(function () {
     Config::reset();
@@ -18,96 +14,159 @@ afterEach(function () {
     Config::reset();
 });
 
-describe('Class-Level Magic Methods (@method) with Complex Types', function () {
-    describe('Basic Parameters & Variadics', function () {
-        test('validates arguments passed into dynamic instance method', function () {
-            $fixture = new MagicMethodFixture();
+/**
+ * Fixture testing dynamic property reads and writes
+ *
+ * @property-read string $status
+ * @property-write string $name
+ * @property positive-int $score
+ */
+class DynamicModelFixture
+{
+    public array $data = [];
 
-            expect($fixture->processId(42, 'Alice'))->toBe(42);
+    public function __get(string $name): mixed
+    {
+        return $this->data[$name] ?? null;
+    }
 
-            expect(fn () => $fixture->processId(-5, 'Alice'))
-                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::processId(): Argument $id must be of type positive-int, negative int (-5) given')
+    public function __set(string $name, mixed $value): void
+    {
+        $this->data[$name] = $value;
+    }
+}
+
+/**
+ * Class with ignore tag on __get
+ *
+ * @property-read positive-int $code
+ */
+class IgnoredGetModelFixture
+{
+    /**
+     * @typephp-ignore
+     */
+    public function __get(string $name): mixed
+    {
+        return -999;
+    }
+}
+
+describe('Class-Level Magic Properties (@property, @property-read, @property-write)', function () {
+    describe('Property Writes (__set) [Default: Enabled]', function () {
+        test('validates incoming values on property assignment via __set', function () {
+            $fixture = new MagicPropertyFixture();
+
+            $fixture->magicScore = 100;
+            expect($fixture->data['magicScore'])->toBe(100);
+
+            expect(fn () => $fixture->magicScore = -5)
+                ->toThrow(TypeError::class, 'Property TypePHP\Tests\Fixtures\Types\MagicPropertyFixture::$magicScore must be of type positive-int')
             ;
+        });
 
-            expect(fn () => $fixture->processId(42, ''))
-                ->toThrow(TypeError::class, "TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::processId(): Argument \$name must be of type non-empty-string, empty string ('') given")
+        test('validates @property-write on property assignment', function () {
+            $fixture = new MagicPropertyFixture();
+
+            $fixture->magicName = 'Alice';
+            expect($fixture->data['magicName'])->toBe('Alice');
+
+            expect(fn () => $fixture->magicName = '')
+                ->toThrow(TypeError::class, 'Property TypePHP\Tests\Fixtures\Types\MagicPropertyFixture::$magicName must be of type non-empty-string')
             ;
         });
 
-        test('validates variadic arguments passed into dynamic static method', function () {
-            expect(MagicMethodFixture::fetchList(1, 2, 3))->toBe([1, 2, 3]);
+        test('bypasses property write validation when write is disabled in config', function () {
+            Config::set([
+                'magic_properties' => [
+                    'write' => false,
+                ],
+            ]);
 
-            expect(fn () => MagicMethodFixture::fetchList(1, 2, 'hello'))
-                ->toThrow(TypeError::class, "TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::fetchList(): Argument \$items[2] must be of type int, string 'hello' given")
-            ;
-        });
-    });
+            $fixture = new MagicPropertyFixture();
+            $fixture->magicScore = -999;
 
-    describe('Array Shapes & Lists in @method', function () {
-        test('validates list arguments and array shape returns on dynamic method', function () {
-            $fixture = new MagicMethodFixture();
-
-            $result = $fixture->buildPayload([10, 20], 'active');
-            expect($result)->toBe(['id' => 10, 'tags' => ['php', 'typephp']]);
-
-            expect(fn () => $fixture->buildPayload([10, -5], 'active'))
-                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::buildPayload(): Argument $ids[1] must be of type positive-int')
-            ;
-
-            expect(fn () => $fixture->buildPayload([10, 20], 'archived'))
-                ->toThrow(TypeError::class, "TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::buildPayload(): Argument \$status must be of type ('active' | 'pending')")
-            ;
-        });
-    });
-
-    describe('Generics in @method', function () {
-        test('validates generic object instances passed to dynamic method', function () {
-            $fixture = new MagicMethodFixture();
-            $dogProducer = new Producer(new Dog());
-
-            expect($fixture->getProducer($dogProducer))->toBe($dogProducer);
-
-            $carProducer = new Producer(new Car());
-            expect(fn () => $fixture->getProducer($carProducer))
-                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::getProducer(): Argument $producer expects TypePHP\\Tests\\Fixtures\\Generics\\Producer<covariant TypePHP\\Tests\\Fixtures\\Domain\\Dog>')
-            ;
-        });
-    });
-
-    describe('Intersections & Nullable Types in @method', function () {
-        test('validates intersection types and nullable null on dynamic method', function () {
-            $fixture = new MagicMethodFixture();
-
-            expect($fixture->checkCollection(null))->toBeTrue();
-            expect($fixture->checkCollection(new CountableArrayAccess()))->toBeTrue();
-            expect(fn () => $fixture->checkCollection(new CountableOnly()))
-                ->toThrow(TypeError::class, 'TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::checkCollection(): Argument $collection must be of type ((Countable & ArrayAccess) | null)')
-            ;
-        });
-    });
-
-    describe('Type Aliases (@phpstan-type) in @method', function () {
-        test('resolves local class-level type aliases inside @method definitions', function () {
-            $fixture = new MagicMethodFixture();
-
-            $validUser = ['id' => 10, 'role' => 'admin'];
-            expect($fixture->saveUser($validUser))->toBe($validUser);
-
-            $badUser = ['id' => 10, 'role' => 'superadmin'];
-            expect(fn () => $fixture->saveUser($badUser))
-                ->toThrow(TypeError::class, "TypePHP\\Tests\\Fixtures\\Types\\MagicMethodFixture::saveUser(): Argument \$user['role'] must be of type ('admin' | 'user')")
-            ;
+            expect($fixture->data['magicScore'])->toBe(-999);
         });
     });
 
-    describe('Configuration Control', function () {
-        test('ignores magic method validation when magic_methods config is false', function () {
-            Config::set(['magic_methods' => false]);
+    describe('Property Reads (__get) [Default: Disabled to prevent false positives]', function () {
+        test('by default, reading an unpopulated property returning null passes without error', function () {
+            $model = new DynamicModelFixture();
 
-            $fixture = new MagicMethodFixture();
+            $status = $model->status;
+            expect($status)->toBeNull();
+        });
 
-            $result = $fixture->processId(-5, '');
-            expect($result)->toBe(-5);
+        test('by default, reading a mismatched type via __get passes without error', function () {
+            $model = new DynamicModelFixture();
+            $model->data['status'] = 12345;
+
+            expect($model->status)->toBe(12345);
+        });
+    });
+
+    describe('Property Reads (__get) [Opt-in via magic_properties.read => true]', function () {
+        beforeEach(function () {
+            Config::set([
+                'magic_properties' => [
+                    'write' => true,
+                    'read' => true,
+                ],
+            ]);
+        });
+
+        afterEach(function () {
+            Config::reset();
+        });
+
+        test('accepts valid property read matching @property-read string type', function () {
+            $model = new DynamicModelFixture();
+            $model->data['status'] = 'active';
+
+            expect($model->status)->toBe('active');
+        });
+
+        test('throws TypeError when dynamic property read returns null for non-nullable @property-read', function () {
+            $model = new DynamicModelFixture();
+
+            expect(fn () => $model->status)
+                ->toThrow(TypeError::class, 'Property DynamicModelFixture::$status must be of type string, null returned')
+            ;
+        });
+
+        test('throws TypeError when dynamic property read returns invalid integer', function () {
+            $model = new DynamicModelFixture();
+            $model->data['status'] = 12345;
+
+            expect(fn () => $model->status)
+                ->toThrow(TypeError::class, 'Property DynamicModelFixture::$status must be of type string, int (12345) returned')
+            ;
+        });
+
+        test('passes cleanly when reading dynamic property with no docblock annotation', function () {
+            $model = new DynamicModelFixture();
+            $model->data['unannotatedCustomProp'] = [1, 2, 3];
+
+            expect($model->unannotatedCustomProp)->toBe([1, 2, 3]);
+        });
+
+        test('validates read on standard @property annotation as well', function () {
+            $model = new DynamicModelFixture();
+            $model->data['score'] = 50;
+
+            expect($model->score)->toBe(50);
+
+            $model->data['score'] = -10;
+            expect(fn () => $model->score)
+                ->toThrow(TypeError::class, 'Property DynamicModelFixture::$score must be of type positive-int, negative int (-10) returned')
+            ;
+        });
+
+        test('suppresses read validation when __get is annotated with @typephp-ignore', function () {
+            $ignored = new IgnoredGetModelFixture();
+
+            expect($ignored->code)->toBe(-999);
         });
     });
 });

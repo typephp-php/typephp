@@ -213,14 +213,19 @@ final class RuntimeTypeChecker
             TemplateManager::applyPendingInstantiation($thisObj);
         }
 
+        $isMagicCall = str_contains($effectiveFunction, '__call');
+        $isMagicGet = str_ends_with($effectiveFunction, '::__get');
+
+        if ($isMagicGet) {
+            return null;
+        }
+
         if (
             isset(ParamChecker::$noParamContractCache[$function])
             && ! (self::$hasMethodTemplatesCache[$function] ?? false)
         ) {
             return null;
         }
-
-        $isMagicCall = str_contains($effectiveFunction, '__call');
 
         $contract = DocblockParser::parse($effectiveFunction);
         if (! $isMagicCall && ($contract['allParamsUnconstrained'] ?? false)) {
@@ -363,16 +368,17 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        if (isset(ReturnChecker::$noReturnContractCache[$function]) || isset(ReturnChecker::$noReturnContractCache[$effectiveFunction])) {
+        $isMagicCall = str_contains($effectiveFunction, '__call');
+        $isMagicGet = str_ends_with($effectiveFunction, '::__get');
+
+        if (! $isMagicCall && ! $isMagicGet && (isset(ReturnChecker::$noReturnContractCache[$function]) || isset(ReturnChecker::$noReturnContractCache[$effectiveFunction]))) {
             ReturnChecker::$noReturnContractCache[$function] = true;
 
             return $value;
         }
 
-        $isMagicCall = str_contains($effectiveFunction, '__call');
-
         $contract = DocblockParser::parse($effectiveFunction);
-        if (! $isMagicCall && ($contract['returnUnconstrained'] ?? false)) {
+        if (! $isMagicCall && ! $isMagicGet && ($contract['returnUnconstrained'] ?? false)) {
             return $value;
         }
 

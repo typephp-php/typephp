@@ -48,6 +48,10 @@ final class Config
 
     private static bool $magicProperties = true;
 
+    private static bool $magicPropertyWrites = true;
+
+    private static bool $magicPropertyReads = false;
+
     private static bool $magicMethods = true;
 
     private static bool $respectIgnoreTags = true;
@@ -226,6 +230,24 @@ final class Config
         return self::$magicProperties;
     }
 
+    public static function isMagicPropertyWritesEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$magicPropertyWrites;
+    }
+
+    public static function isMagicPropertyReadsEnabled(): bool
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$magicPropertyReads;
+    }
+
     public static function isMagicMethodsEnabled(): bool
     {
         if (self::$cachedConfig === null) {
@@ -353,7 +375,10 @@ final class Config
             'params_out' => true,
             'self_out' => true,
             'strict_return_generic_invariance' => true,
-            'magic_properties' => true,
+            'magic_properties' => [
+                'write' => true,
+                'read' => false,
+            ],
             'magic_methods' => true,
             'respect_ignore_tags' => true,
             'ignore_trace_depth' => 25,
@@ -456,7 +481,7 @@ final class Config
 
     /**
      * Merges user configuration over base defaults:
-     * - Associative dictionaries (inline_vars) are merged recursively.
+     * - Associative dictionaries (inline_vars, magic_properties) are merged recursively.
      * - Sequential lists (include, exclude, extensions, stubs) are REPLACED wholesale when defined.
      * - Scalars / booleans / strings are overwritten.
      *
@@ -476,6 +501,12 @@ final class Config
                 /** @var array<string, bool> $overrideInlineVars */
                 $overrideInlineVars = $value;
                 $merged['inline_vars'] = [...$baseInlineVars, ...$overrideInlineVars];
+            } elseif ($key === 'magic_properties' && \is_array($value) && isset($base['magic_properties']) && \is_array($base['magic_properties'])) {
+                /** @var array<string, bool> $baseMagicProps */
+                $baseMagicProps = $base['magic_properties'];
+                /** @var array<string, bool> $overrideMagicProps */
+                $overrideMagicProps = $value;
+                $merged['magic_properties'] = [...$baseMagicProps, ...$overrideMagicProps];
             } elseif (\in_array($key, ['include', 'exclude', 'extensions', 'stubs'], true) && \is_array($value)) {
                 $merged[$key] = array_values($value);
             } else {
@@ -499,6 +530,8 @@ final class Config
         self::$selfOut = true;
         self::$strictReturnGenericInvariance = true;
         self::$magicProperties = true;
+        self::$magicPropertyWrites = true;
+        self::$magicPropertyReads = false;
         self::$magicMethods = true;
         self::$respectIgnoreTags = true;
         self::$ignoreTraceDepth = 25;
@@ -543,7 +576,17 @@ final class Config
         self::$selfOut = (bool) ($config['self_out'] ?? true);
         self::$returns = (bool) ($config['returns'] ?? true);
         self::$strictReturnGenericInvariance = (bool) ($config['strict_return_generic_invariance'] ?? true);
-        self::$magicProperties = (bool) ($config['magic_properties'] ?? true);
+
+        if (\is_array($config['magic_properties'] ?? null)) {
+            self::$magicPropertyWrites = (bool) ($config['magic_properties']['write'] ?? true);
+            self::$magicPropertyReads = (bool) ($config['magic_properties']['read'] ?? false);
+        } else {
+            $bool = (bool) ($config['magic_properties'] ?? true);
+            self::$magicPropertyWrites = $bool;
+            self::$magicPropertyReads = false;
+        }
+        self::$magicProperties = self::$magicPropertyWrites || self::$magicPropertyReads;
+
         self::$magicMethods = (bool) ($config['magic_methods'] ?? true);
         self::$respectIgnoreTags = (bool) ($config['respect_ignore_tags'] ?? true);
         self::$ignoreTraceDepth = isset($config['ignore_trace_depth']) && is_numeric($config['ignore_trace_depth']) && (int) $config['ignore_trace_depth'] > 0

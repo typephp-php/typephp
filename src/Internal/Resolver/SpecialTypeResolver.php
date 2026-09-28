@@ -116,7 +116,7 @@ final class SpecialTypeResolver
     private static array $reflectionContextCache = [];
 
     /**
-     * In-memory 2D cache for resolved FQCNs: [$contextKey][$name] => FQCN.
+     * In-memory 2D cache for resolved FQCNs of non-file entities: [$contextKey][$name] => FQCN.
      *
      * @var array<string, array<string, string>>
      */
@@ -1030,7 +1030,7 @@ final class SpecialTypeResolver
 
     /**
      * Resolves a short class name to its fully qualified class name (FQCN) using Reflection context.
-     * Memoizes resolved FQCNs in memory via zero-allocation 2D table to avoid autoloader search storms.
+     * Routes directly to 2D file cache when file metadata exists, avoiding string key concatenations.
      *
      * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
      */
@@ -1048,29 +1048,26 @@ final class SpecialTypeResolver
             return $name;
         }
 
-        $contextKey = match (true) {
-            $ref instanceof \ReflectionClass => 'C:' . $ref->getName(),
-            $ref instanceof \ReflectionMethod => 'M:' . ($ref->getFileName() !== false ? $ref->getFileName() : $ref->getDeclaringClass()->getName()) . '::' . $ref->getName(),
-            $ref instanceof \ReflectionFunction => 'F:' . $ref->getName(),
-        };
+        $fileName = $ref->getFileName();
+        if ($fileName !== false && $fileName !== '') {
+            return self::resolveFqcnForFile($name, $fileName);
+        }
+
+        $contextKey = $ref instanceof \ReflectionMethod
+            ? $ref->getDeclaringClass()->getName()
+            : $ref->getName();
 
         if (isset(self::$fqcnCache[$contextKey][$name])) {
             return self::$fqcnCache[$contextKey][$name];
         }
 
-        $imports = self::getUseImports($ref);
-        $fileName = $ref->getFileName();
-        $fileNamespace = ($fileName !== false && $fileName !== '') ? self::getNamespaceFromFile($fileName) : '';
+        $namespace = match (true) {
+            $ref instanceof \ReflectionClass => $ref->getNamespaceName(),
+            $ref instanceof \ReflectionMethod => $ref->getDeclaringClass()->getNamespaceName(),
+            $ref instanceof \ReflectionFunction => $ref->getNamespaceName(),
+        };
 
-        $namespace = ($fileNamespace !== '')
-            ? $fileNamespace
-            : match (true) {
-                $ref instanceof \ReflectionClass => $ref->getNamespaceName(),
-                $ref instanceof \ReflectionMethod => $ref->getDeclaringClass()->getNamespaceName(),
-                $ref instanceof \ReflectionFunction => $ref->getNamespaceName(),
-            };
-
-        $resolved = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
+        $resolved = self::resolveNameFromImportsAndNamespace($name, [], $namespace);
 
         return self::$fqcnCache[$contextKey][$name] = $resolved;
     }
