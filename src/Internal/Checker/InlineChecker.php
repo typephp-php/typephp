@@ -360,7 +360,7 @@ final class InlineChecker
         $contract = null;
 
         foreach ($trace as $frame) {
-            if (isset($frame['object']) && $frame['object'] === $object && isset($frame['class'], $frame['function'])) {
+            if (isset($frame['object'], $frame['class']) && $frame['object'] === $object) {
                 if ($frame['class'] === 'TypePHP\Internal\RuntimeTypeChecker' || str_starts_with($frame['class'], 'TypePHP\\Internal\\')) {
                     continue;
                 }
