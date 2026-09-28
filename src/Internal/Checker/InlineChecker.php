@@ -62,6 +62,22 @@ final class InlineChecker
     public static array $nullPropertyCache = [];
 
     /**
+     * Cache for whether a class property's type references generic templates:
+     * [$className][$propName] => bool.
+     *
+     * @var array<string, array<string, bool>>
+     */
+    private static array $propertyUsesTemplatesCache = [];
+
+    /**
+     * Cache for whether a class has any methods declaring @self-out or @this-out:
+     * [$className] => bool.
+     *
+     * @var array<string, bool>
+     */
+    private static array $classHasSelfOutCache = [];
+
+    /**
      * Resets internal type node and function caches. Useful for test isolation.
      */
     public static function reset(): void
@@ -69,6 +85,8 @@ final class InlineChecker
         self::$parsedTypeNodeCache = [];
         self::$resolvedClassContextCache = [];
         self::$nullPropertyCache = [];
+        self::$propertyUsesTemplatesCache = [];
+        self::$classHasSelfOutCache = [];
     }
 
     /**
@@ -236,24 +254,39 @@ final class InlineChecker
             return $value;
         }
 
-        $typeNode = DocblockParser::parseProperty($className, $propName);
-        if ($typeNode === null) {
+        $rawTypeNode = DocblockParser::parseProperty($className, $propName);
+        if ($rawTypeNode === null) {
             self::$nullPropertyCache[$className][$propName] = true;
 
             return $value;
         }
 
-        if (! self::shouldValidateType($typeNode)) {
+        if (! self::shouldValidateType($rawTypeNode)) {
             return $value;
         }
 
+        $propertyUsesTemplates = false;
+        $typeNode = $rawTypeNode;
+
         if (\is_object($objectOrClass)) {
-            $typeNode = self::substitutePropertyGenerics($typeNode, $objectOrClass, $className);
+            $propertyUsesTemplates = self::propertyUsesTemplates($rawTypeNode, $className, $propName);
+            if ($propertyUsesTemplates) {
+                $typeNode = self::substitutePropertyGenerics($rawTypeNode, $objectOrClass, $className);
+            }
         }
 
         try {
             $err = $registry->validate($value, $typeNode, 'Property ' . $className . '::$' . $propName);
             if ($err !== null) {
+                if (
+                    $propertyUsesTemplates &&
+                    \is_object($objectOrClass) &&
+                    self::classHasSelfOut($className) &&
+                    self::trySelfOutTransition($value, $objectOrClass, $propName, $registry)
+                ) {
+                    return $value;
+                }
+
                 return $err;
             }
         } catch (\Throwable $e) {
@@ -261,6 +294,138 @@ final class InlineChecker
         }
 
         return $value;
+    }
+
+    /**
+     * Checks if a property's declared type references class generic templates with memoization.
+     */
+    private static function propertyUsesTemplates(TypeNode $rawTypeNode, string $className, string $propName): bool
+    {
+        if (isset(self::$propertyUsesTemplatesCache[$className][$propName])) {
+            return self::$propertyUsesTemplatesCache[$className][$propName];
+        }
+
+        $constructorTarget = $className . '::__construct';
+        $contract = DocblockParser::parse($constructorTarget);
+        $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+
+        if ($allTemplates === []) {
+            return self::$propertyUsesTemplatesCache[$className][$propName] = false;
+        }
+
+        return self::$propertyUsesTemplatesCache[$className][$propName] = DocblockParser::typeReferencesTemplate($rawTypeNode, $allTemplates);
+    }
+
+    /**
+     * Checks if a class declares any methods containing @self-out or @this-out annotations with memoization.
+     */
+    private static function classHasSelfOut(string $className): bool
+    {
+        if (isset(self::$classHasSelfOutCache[$className])) {
+            return self::$classHasSelfOutCache[$className];
+        }
+
+        if (! class_exists($className) && ! trait_exists($className) && ! interface_exists($className)) {
+            return self::$classHasSelfOutCache[$className] = false;
+        }
+
+        try {
+            /** @var class-string<object> $className */
+            $ref = new \ReflectionClass($className);
+            foreach ($ref->getMethods() as $method) {
+                $doc = $method->getDocComment();
+                if ($doc !== false && (str_contains($doc, 'self-out') || str_contains($doc, 'this-out'))) {
+                    return self::$classHasSelfOutCache[$className] = true;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore reflection errors
+        }
+
+        return self::$classHasSelfOutCache[$className] = false;
+    }
+
+    /**
+     * Attempts a typestate transition when a property assignment to $this fails against current bindings.
+     */
+    private static function trySelfOutTransition(mixed $value, object $object, string $propName, TypeValidatorRegistry $registry): bool
+    {
+        if (! Config::isSelfOutEnabled()) {
+            return false;
+        }
+
+        $trace = debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT, 7);
+        $callerFrame = null;
+        $callerFunction = null;
+        $contract = null;
+
+        foreach ($trace as $frame) {
+            if (isset($frame['object']) && $frame['object'] === $object && isset($frame['class'], $frame['function'])) {
+                if ($frame['class'] === 'TypePHP\Internal\RuntimeTypeChecker' || str_starts_with($frame['class'], 'TypePHP\\Internal\\')) {
+                    continue;
+                }
+
+                $candidateFunction = $frame['class'] . '::' . $frame['function'];
+                $candidateContract = DocblockParser::parse($candidateFunction);
+
+                if (($candidateContract['hasSelfOutContract'] ?? false) && $candidateContract['selfOut'] !== null) {
+                    $callerFrame = $frame;
+                    $callerFunction = $candidateFunction;
+                    $contract = $candidateContract;
+
+                    break;
+                }
+            }
+        }
+
+        if ($callerFrame === null || $callerFunction === null || $contract === null) {
+            return false;
+        }
+
+        $selfOutNode = $contract['selfOut'];
+        $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        $boundTemplates = (\count($allTemplates) > 0)
+            ? TemplateManager::getBoundTemplates($callerFunction, $object, $allTemplates)
+            : [];
+
+        if (\count($boundTemplates) > 0 || \count($allTemplates) > 0) {
+            $selfOutNode = TemplateSubstitutor::substitute($selfOutNode, $boundTemplates, $allTemplates);
+            $selfOutNode = SpecialTypeResolver::resolve($selfOutNode, $callerFunction, $object);
+        }
+
+        $vars = $callerFrame['args'] ?? [];
+        if (
+            $selfOutNode instanceof ConditionalTypeForParameterNode ||
+            $selfOutNode instanceof ConditionalTypeNode
+        ) {
+            $selfOutNode = ConditionalChecker::resolve($selfOutNode, $vars, $boundTemplates, $registry, $callerFunction);
+        }
+
+        if (! ($selfOutNode instanceof GenericTypeNode)) {
+            return false;
+        }
+
+        $previousBindings = TemplateManager::getBoundTemplatesForInstance($object);
+
+        TemplateManager::bindInstanceFromNode($object, $selfOutNode, forceBind: true);
+
+        $className = $object::class;
+        $propTypeNode = DocblockParser::parseProperty($className, $propName);
+        if ($propTypeNode !== null) {
+            $propTypeNode = self::substitutePropertyGenerics($propTypeNode, $object, $className);
+        }
+
+        $testErr = $propTypeNode !== null
+            ? $registry->validate($value, $propTypeNode, 'Property ' . $className . '::$' . $propName)
+            : null;
+
+        if ($testErr === null) {
+            return true;
+        }
+
+        TemplateManager::restoreInstanceBindings($object, $previousBindings);
+
+        return false;
     }
 
     /**
