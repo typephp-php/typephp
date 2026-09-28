@@ -104,7 +104,7 @@ final class ParamChecker
      */
     public static function areAllParamsUnconstrained(string $effectiveFunction): bool
     {
-        if (str_contains($effectiveFunction, '__call')) {
+        if (str_contains($effectiveFunction, '__call') || str_ends_with($effectiveFunction, '::__get')) {
             return false;
         }
 
@@ -149,12 +149,13 @@ final class ParamChecker
         }
 
         $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
+        $isMagicGet = str_ends_with($effectiveFunction, '::__get');
 
-        if (! $isMagicCall && isset(self::$noParamContractCache[$effectiveFunction])) {
+        if (! $isMagicCall && ! $isMagicGet && isset(self::$noParamContractCache[$effectiveFunction])) {
             return null;
         }
 
-        if ($vars === [] && ! $isMagicCall) {
+        if ($vars === [] && ! $isMagicCall && ! $isMagicGet) {
             return null;
         }
 
@@ -162,7 +163,7 @@ final class ParamChecker
         if ($magicError !== null) {
             return $magicError;
         }
-        if ($isMagicCall) {
+        if ($isMagicCall || $isMagicGet) {
             return null;
         }
 

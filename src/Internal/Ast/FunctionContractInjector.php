@@ -49,13 +49,15 @@ final class FunctionContractInjector
         $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
         $isConstructor = $isClassMethod && $methodName === '__construct';
         $isMagicLifecycle = $isClassMethod && \in_array($methodName, ['__construct', '__destruct', '__clone'], true);
+        $isMagicGet = $isClassMethod && $methodName === '__get';
+        $isMagicCall = $isClassMethod && ($methodName === '__call' || $methodName === '__callstatic');
         $isNativeNever = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'never';
         $isNativeVoid = $node->returnType instanceof Node\Identifier && strtolower($node->returnType->name) === 'void';
         $isPrivate = $isClassMethod && $node->isPrivate();
 
         $paramCount = \count($node->params);
 
-        $hasParam = self::hasParamContracts(
+        $hasParam = ($isMagicGet || $isMagicCall) || self::hasParamContracts(
             $docText,
             $isClassMethod,
             $hasInheritance,
@@ -90,20 +92,20 @@ final class FunctionContractInjector
         $hasReturn = ! $isMagicLifecycle
             && ! $isNativeNever
             && ! ($isNativeVoid && ! $hasReturnDoc)
-            && self::hasReturnContracts($docText, $isClassMethod, $isPrivate);
+            && ($isMagicGet || $isMagicCall || self::hasReturnContracts($docText, $isClassMethod, $isPrivate));
 
         if (! $hasParam && ! $hasReturn && ! $hasParamOut && ! $hasSelfOut) {
             return;
         }
 
         $thisArg = self::resolveThisArg($isClassMethod, $node);
-        $needsReturnVars = $hasParam && ($paramCount > 0) && (
+        $needsReturnVars = ($hasParam && ($paramCount > 0) && (
             $hasInheritance || str_contains($docText, ' is ') || ($hasReturnDoc && str_contains($docText, '$'))
-        );
+        )) || ($isClassMethod && $paramCount > 0 && ($isMagicGet || $isMagicCall));
 
         $injectedStmts = [];
         if ($hasParam) {
-            $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg, $isReadonlyClass);
+            $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg, $isReadonlyClass, $needsReturnVars);
         }
 
         if ($hasReturn || $hasParamOut || $hasSelfOut) {
@@ -313,9 +315,10 @@ final class FunctionContractInjector
         array $params,
         string $docText,
         Node\Expr $thisArg,
-        bool $isReadonlyClass = false
+        bool $isReadonlyClass = false,
+        bool $needsReturnVars = false
     ): array {
-        $injectedStmts = [self::buildSetupScopeStmt($params, $thisArg)];
+        $injectedStmts = [self::buildSetupScopeStmt($params, $thisArg, $needsReturnVars)];
         $callableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isCallableCandidate'], 'wrapCallable', $isReadonlyClass);
         $iterableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isIterableCandidate'], 'wrapIterable', $isReadonlyClass);
 
@@ -325,7 +328,7 @@ final class FunctionContractInjector
     /**
      * @param array<Node\Param> $params
      */
-    private static function buildSetupScopeStmt(array $params, Node\Expr $thisArg): Node\Stmt\If_
+    private static function buildSetupScopeStmt(array $params, Node\Expr $thisArg, bool $needsReturnVars = false): Node\Stmt\If_
     {
         $arrayItems = [];
         foreach ($params as $param) {
@@ -388,6 +391,35 @@ final class FunctionContractInjector
         );
 
         $combinedCondition = new Node\Expr\BinaryOp\BooleanOr($noParamCacheCheck, $hasTemplatesCheck);
+
+        if ($needsReturnVars) {
+            $ifStmt = new Node\Stmt\If_(
+                new Node\Expr\ConstFetch(new Node\Name('true')),
+                [
+                    'stmts' => [
+                        $argsAssign,
+                        new Node\Stmt\If_(
+                            $combinedCondition,
+                            [
+                                'stmts' => [
+                                    new Node\Stmt\If_(
+                                        new Node\Expr\Instanceof_(
+                                            new Node\Expr\Assign(new Node\Expr\Variable('__typephpErr'), $checkCall),
+                                            new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
+                                        ),
+                                        ['stmts' => [$throwStmt]]
+                                    ),
+                                ],
+                            ]
+                        ),
+                    ],
+                ]
+            );
+
+            $ifStmt->setAttribute('typephp_injected', true);
+
+            return $ifStmt;
+        }
 
         $ifStmt = new Node\Stmt\If_(
             $combinedCondition,

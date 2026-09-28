@@ -62,10 +62,10 @@ return [
     | When enabled, all parameter and return types (generics, shapes, scalars)
     | are enforced uniformly to maintain type state consistency.
     */
-    'params' => true,
-    'returns' => true,
+    'params'     => true,
+    'returns'    => true,
     'params_out' => true,
-    'self_out' => true,
+    'self_out'   => true,
 
     /*
     |--------------------------------------------------------------------------
@@ -98,8 +98,21 @@ return [
     |--------------------------------------------------------------------------
     | Enforces class-level annotations for dynamic properties and magic methods
     | routed through __get, __set, __call, and __callStatic.
+    |
+    | 'magic_properties' supports granular options:
+    | - 'write': (Default: true) Validates dynamic property assignments via __set()
+    |            against @property and @property-write annotations.
+    | - 'read' : (Default: false) Validates dynamic property access via __get()
+    |            against @property and @property-read annotations. Keep false
+    |            when working with frameworks (e.g. Eloquent/Doctrine) where
+    |            newly instantiated models return unpopulated null attributes.
+    |
+    | Alternatively, set 'magic_properties' => false to disable all checks.
     */
-    'magic_properties' => true,
+    'magic_properties' => [
+        'write' => true,
+        'read'  => false,
+    ],
     'magic_methods' => true,
 
     /*
