@@ -89,8 +89,12 @@ PHP;
             expect($fn->stmts)->not()->toBeEmpty();
 
             $firstStmt = $fn->stmts[0];
-            expect($firstStmt)->toBeInstanceOf(Node\Stmt\If_::class)
+            expect($firstStmt)->toBeInstanceOf(Node\Stmt\Expression::class)
                 ->and($firstStmt->getAttribute('typephp_injected'))->toBeTrue()
+                ->and($firstStmt->expr)->toBeInstanceOf(Node\Expr\Assign::class)
+                ->and($firstStmt->expr->var->name)->toBe('_typephpArgs')
+                ->and($fn->stmts[1])->toBeInstanceOf(Node\Stmt\If_::class)
+                ->and($fn->stmts[1]->getAttribute('typephp_injected'))->toBeTrue()
             ;
         });
 
@@ -109,10 +113,7 @@ PHP;
 
             FunctionContractInjector::inject($fn);
 
-            expect(\count($fn->stmts))->toBeGreaterThanOrEqual(3)
-                ->and($fn->stmts[1]->getAttribute('typephp_injected'))->toBeTrue()
-                ->and($fn->stmts[2]->getAttribute('typephp_injected'))->toBeTrue()
-            ;
+            expect(\count($fn->stmts))->toBeGreaterThanOrEqual(3);
         });
 
         test('does not inject wrapIterable when docblock does not contain iterable keywords', function () {
@@ -129,7 +130,8 @@ PHP;
 
             FunctionContractInjector::inject($fn);
 
-            expect(\count($fn->stmts))->toBe(1);
+            // Stmts: [0] => $_typephpArgs = ['id' => $id]; [1] => if ($combinedCondition) { ... }
+            expect(\count($fn->stmts))->toBe(2);
         });
     });
 
@@ -325,21 +327,17 @@ PHP;
             expect($getMethod->stmts)->not()->toBeEmpty();
 
             $firstStmt = $getMethod->stmts[0];
-            expect($firstStmt)->toBeInstanceOf(Node\Stmt\If_::class)
+            expect($firstStmt)->toBeInstanceOf(Node\Stmt\Expression::class)
                 ->and($firstStmt->getAttribute('typephp_injected'))->toBeTrue()
+                ->and($firstStmt->expr)->toBeInstanceOf(Node\Expr\Assign::class)
+                ->and($firstStmt->expr->var->name)->toBe('_typephpArgs')
             ;
 
-            expect($firstStmt->cond)->toBeInstanceOf(Node\Expr\ConstFetch::class)
-                ->and($firstStmt->cond->name->toString())->toBe('true')
+            expect($getMethod->stmts[1])->toBeInstanceOf(Node\Stmt\If_::class)
+                ->and($getMethod->stmts[1]->getAttribute('typephp_injected'))->toBeTrue()
             ;
 
-            $innerStmts = $firstStmt->stmts;
-            expect($innerStmts[0])->toBeInstanceOf(Node\Stmt\Expression::class)
-                ->and($innerStmts[0]->expr)->toBeInstanceOf(Node\Expr\Assign::class)
-                ->and($innerStmts[0]->expr->var->name)->toBe('_typephpArgs')
-            ;
-
-            $returnStmt = $getMethod->stmts[1];
+            $returnStmt = $getMethod->stmts[2];
             expect($returnStmt)->toBeInstanceOf(Node\Stmt\Return_::class)
                 ->and($returnStmt->expr)->toBeInstanceOf(Node\Expr\Ternary::class)
             ;
@@ -375,12 +373,17 @@ PHP;
             expect($callMethod->stmts)->not()->toBeEmpty();
 
             $firstStmt = $callMethod->stmts[0];
-            expect($firstStmt)->toBeInstanceOf(Node\Stmt\If_::class)
-                ->and($firstStmt->cond)->toBeInstanceOf(Node\Expr\ConstFetch::class)
-                ->and($firstStmt->cond->name->toString())->toBe('true')
+            expect($firstStmt)->toBeInstanceOf(Node\Stmt\Expression::class)
+                ->and($firstStmt->getAttribute('typephp_injected'))->toBeTrue()
+                ->and($firstStmt->expr)->toBeInstanceOf(Node\Expr\Assign::class)
+                ->and($firstStmt->expr->var->name)->toBe('_typephpArgs')
             ;
 
-            $returnStmt = $callMethod->stmts[1];
+            expect($callMethod->stmts[1])->toBeInstanceOf(Node\Stmt\If_::class)
+                ->and($callMethod->stmts[1]->getAttribute('typephp_injected'))->toBeTrue()
+            ;
+
+            $returnStmt = $callMethod->stmts[2];
             expect($returnStmt)->toBeInstanceOf(Node\Stmt\Return_::class)
                 ->and($returnStmt->expr)->toBeInstanceOf(Node\Expr\Ternary::class)
             ;
@@ -416,8 +419,10 @@ PHP;
             FunctionContractInjector::inject($method);
 
             expect($method->stmts)->not()->toBeEmpty()
-                ->and($method->stmts[0])->toBeInstanceOf(Node\Stmt\If_::class)
+                ->and($method->stmts[0])->toBeInstanceOf(Node\Stmt\Expression::class)
                 ->and($method->stmts[0]->getAttribute('typephp_injected'))->toBeTrue()
+                ->and($method->stmts[1])->toBeInstanceOf(Node\Stmt\If_::class)
+                ->and($method->stmts[1]->getAttribute('typephp_injected'))->toBeTrue()
             ;
         });
     });

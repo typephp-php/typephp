@@ -318,17 +318,19 @@ final class FunctionContractInjector
         bool $isReadonlyClass = false,
         bool $needsReturnVars = false
     ): array {
-        $injectedStmts = [self::buildSetupScopeStmt($params, $thisArg, $needsReturnVars)];
+        $setupScopeStmts = self::buildSetupScopeStmt($params, $thisArg, $needsReturnVars);
         $callableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isCallableCandidate'], 'wrapCallable', $isReadonlyClass);
         $iterableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isIterableCandidate'], 'wrapIterable', $isReadonlyClass);
 
-        return [...$injectedStmts, ...$callableWrappers, ...$iterableWrappers];
+        return [...$setupScopeStmts, ...$callableWrappers, ...$iterableWrappers];
     }
 
     /**
      * @param array<Node\Param> $params
+     *
+     * @return array<Node\Stmt>
      */
-    private static function buildSetupScopeStmt(array $params, Node\Expr $thisArg, bool $needsReturnVars = false): Node\Stmt\If_
+    private static function buildSetupScopeStmt(array $params, Node\Expr $thisArg, bool $needsReturnVars = false): array
     {
         $arrayItems = [];
         foreach ($params as $param) {
@@ -347,6 +349,7 @@ final class FunctionContractInjector
                 new Node\Expr\Array_($arrayItems)
             )
         );
+        $argsAssign->setAttribute('typephp_injected', true);
 
         $checkCall = new Node\Expr\FuncCall(
             new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::setupScope'),
@@ -358,7 +361,6 @@ final class FunctionContractInjector
         );
 
         $throwStmt = self::buildTypeErrorThrowStmt(new Node\Expr\Variable('__typephpErr'));
-
         $cacheKeyExpr = new Node\Scalar\MagicConst\Method();
 
         $noParamFetch = new Node\Expr\StaticPropertyFetch(
@@ -392,40 +394,10 @@ final class FunctionContractInjector
 
         $combinedCondition = new Node\Expr\BinaryOp\BooleanOr($noParamCacheCheck, $hasTemplatesCheck);
 
-        if ($needsReturnVars) {
-            $ifStmt = new Node\Stmt\If_(
-                new Node\Expr\ConstFetch(new Node\Name('true')),
-                [
-                    'stmts' => [
-                        $argsAssign,
-                        new Node\Stmt\If_(
-                            $combinedCondition,
-                            [
-                                'stmts' => [
-                                    new Node\Stmt\If_(
-                                        new Node\Expr\Instanceof_(
-                                            new Node\Expr\Assign(new Node\Expr\Variable('__typephpErr'), $checkCall),
-                                            new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
-                                        ),
-                                        ['stmts' => [$throwStmt]]
-                                    ),
-                                ],
-                            ]
-                        ),
-                    ],
-                ]
-            );
-
-            $ifStmt->setAttribute('typephp_injected', true);
-
-            return $ifStmt;
-        }
-
-        $ifStmt = new Node\Stmt\If_(
+        $checkIfStmt = new Node\Stmt\If_(
             $combinedCondition,
             [
                 'stmts' => [
-                    $argsAssign,
                     new Node\Stmt\If_(
                         new Node\Expr\Instanceof_(
                             new Node\Expr\Assign(new Node\Expr\Variable('__typephpErr'), $checkCall),
@@ -436,10 +408,15 @@ final class FunctionContractInjector
                 ],
             ]
         );
+        $checkIfStmt->setAttribute('typephp_injected', true);
 
-        $ifStmt->setAttribute('typephp_injected', true);
+        if ($needsReturnVars) {
+            return [$argsAssign, $checkIfStmt];
+        }
 
-        return $ifStmt;
+        $checkIfStmt->stmts = [$argsAssign, ...$checkIfStmt->stmts];
+
+        return [$checkIfStmt];
     }
 
     /**
