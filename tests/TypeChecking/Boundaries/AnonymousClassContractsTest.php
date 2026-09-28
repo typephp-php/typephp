@@ -139,4 +139,102 @@ describe('Anonymous Classes with Type Contracts (new class { ... })', function (
             ;
         });
     });
+
+    describe('Anonymous Class Variable Scope Isolation', function () {
+        test('does not leak outer variable type contracts into anonymous class method local variables', function () {
+            /** @var positive-int $leaked */
+            $leaked = 100;
+
+            $anon = new class () {
+                public function process(): string
+                {
+                    $leaked = 'string_inside_anonymous_class_method';
+
+                    return $leaked;
+                }
+            };
+
+            expect($anon->process())->toBe('string_inside_anonymous_class_method')
+                ->and($leaked)->toBe(100)
+            ;
+        });
+
+        test('does not leak outer variable type contracts into anonymous class method parameter reassignment', function () {
+            /** @var positive-int $label */
+            $label = 42;
+
+            $anon = new class () {
+                public function format(string $label): string
+                {
+                    $label = 'FORMATTED: ' . trim($label);
+
+                    return $label;
+                }
+            };
+
+            expect($anon->format('  hello  '))->toBe('FORMATTED: hello')
+                ->and($label)->toBe(42)
+            ;
+        });
+
+        test('still enforces local @var annotations declared inside anonymous class methods', function () {
+            $anon = new class () {
+                public function compute(int $multiplier): int
+                {
+                    /** @var positive-int $result */
+                    $result = 10 * $multiplier;
+
+                    return $result;
+                }
+            };
+
+            expect($anon->compute(2))->toBe(20);
+
+            expect(fn () => $anon->compute(-1))
+                ->toThrow(TypeError::class, 'Variable $result must be of type positive-int')
+            ;
+        });
+
+        test('arrow functions inside anonymous class methods capture method scope but do not leak to outer file', function () {
+            /** @var positive-int $fileScoped */
+            $fileScoped = 50;
+
+            $anon = new class () {
+                public function execute(): void
+                {
+                    /** @var non-empty-string $methodScoped */
+                    $methodScoped = 'initial';
+
+                    $badArrow = fn () => $methodScoped = '';
+                    expect($badArrow)->toThrow(TypeError::class, 'Variable $methodScoped must be of type non-empty-string');
+
+                    $fileArrow = fn () => $fileScoped = 'not_an_int_string';
+                    expect($fileArrow())->toBe('not_an_int_string');
+                }
+            };
+
+            $anon->execute();
+            expect($fileScoped)->toBe(50);
+        });
+
+        test('closures inside anonymous class methods without use clause do not inherit method variables', function () {
+            $anon = new class () {
+                public function run(): string
+                {
+                    /** @var positive-int $counter */
+                    $counter = 10;
+
+                    $closure = function (): string {
+                        $counter = 'counter_as_string';
+
+                        return $counter;
+                    };
+
+                    return $closure();
+                }
+            };
+
+            expect($anon->run())->toBe('counter_as_string');
+        });
+    });
 });

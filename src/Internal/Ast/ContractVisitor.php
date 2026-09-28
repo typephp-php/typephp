@@ -68,8 +68,22 @@ final class ContractVisitor extends NodeVisitorAbstract
     {
         $this->trackDeclarationEntry($node);
 
-        if ($this->isScopeBoundary($node)) {
-            $this->scopeManager->pushScope();
+        if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
+            $this->scopeManager->pushScope(isIsolated: true);
+        } elseif ($node instanceof Node\Expr\Closure) {
+            $capturedVars = [];
+            foreach ($node->uses as $u) {
+                if ($u->var instanceof Node\Expr\Variable && \is_string($u->var->name)) {
+                    $varName = $u->var->name;
+                    $outerType = $this->scopeManager->getVarTypeFromScope($varName);
+                    if ($outerType !== null) {
+                        $capturedVars[$varName] = $outerType;
+                    }
+                }
+            }
+            $this->scopeManager->pushScope(isIsolated: true, initialBindings: $capturedVars);
+        } elseif ($this->isSoftScopeBoundary($node)) {
+            $this->scopeManager->pushScope(isIsolated: false);
         }
 
         if ($node instanceof Node\Expr\Assign || $node instanceof Node\Expr\AssignOp) {
@@ -601,12 +615,9 @@ final class ContractVisitor extends NodeVisitorAbstract
         );
     }
 
-    private function isScopeBoundary(Node $node): bool
+    private function isSoftScopeBoundary(Node $node): bool
     {
-        return $node instanceof Node\Stmt\Function_
-            || $node instanceof Node\Stmt\ClassMethod
-            || $node instanceof Node\Expr\Closure
-            || $node instanceof Node\Expr\ArrowFunction
+        return $node instanceof Node\Expr\ArrowFunction
             || $node instanceof Node\Stmt\If_
             || $node instanceof Node\Stmt\Else_
             || $node instanceof Node\Stmt\ElseIf_
@@ -615,6 +626,14 @@ final class ContractVisitor extends NodeVisitorAbstract
             || $node instanceof Node\Stmt\For_
             || $node instanceof Node\Stmt\Do_
             || $node instanceof Node\Stmt\TryCatch;
+    }
+
+    private function isScopeBoundary(Node $node): bool
+    {
+        return $node instanceof Node\Stmt\Function_
+            || $node instanceof Node\Stmt\ClassMethod
+            || $node instanceof Node\Expr\Closure
+            || $this->isSoftScopeBoundary($node);
     }
 
     private function isDestructuring(Node\Expr $expr): bool

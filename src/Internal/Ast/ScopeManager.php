@@ -18,17 +18,28 @@ final class ScopeManager
     private array $scopeStack = [[]];
 
     /**
+     * Tracks which scope frames are isolated boundaries (functions, methods, closures).
+     *
+     * @var list<bool>
+     */
+    private array $isolatedStack = [false];
+
+    /**
      * Tracks the current scope frame depth.
      */
     private int $depth = 0;
 
     /**
-     * Pushes a new empty lexical scope frame (O(1)).
+     * Pushes a new lexical scope frame (O(1)).
+     *
+     * @param bool $isIsolated Whether this scope is a hard boundary (function, method, closure)
+     * @param array<string, string> $initialBindings Initial variable contracts (e.g. captured via 'use')
      */
-    public function pushScope(): void
+    public function pushScope(bool $isIsolated = false, array $initialBindings = []): void
     {
         $this->depth++;
-        $this->scopeStack[] = [];
+        $this->scopeStack[] = $initialBindings;
+        $this->isolatedStack[] = $isIsolated;
     }
 
     /**
@@ -38,6 +49,7 @@ final class ScopeManager
     {
         if ($this->depth > 0) {
             array_pop($this->scopeStack);
+            array_pop($this->isolatedStack);
             $this->depth--;
         }
     }
@@ -76,13 +88,18 @@ final class ScopeManager
     }
 
     /**
-     * Resolves a variable type by walking upward through the lexical scope chain.
+     * Resolves a variable type by walking upward through the lexical scope chain,
+     * stopping at isolated scope boundaries (functions, methods, closures).
      */
     public function getVarTypeFromScope(string $varName): ?string
     {
         for ($i = $this->depth; $i >= 0; $i--) {
             if (isset($this->scopeStack[$i][$varName])) {
                 return $this->scopeStack[$i][$varName];
+            }
+
+            if ($this->isolatedStack[$i]) {
+                break;
             }
         }
 

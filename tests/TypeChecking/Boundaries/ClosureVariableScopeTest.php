@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use TypePHP\Exception\TypeError;
+
 describe('Closure Variable Type Preservation (Arrow Functions & Long Closures)', function () {
     test('preserves outer variable type contract inside short closures (arrow functions)', function () {
         /** @var positive-int $id */
@@ -38,5 +40,50 @@ describe('Closure Variable Type Preservation (Arrow Functions & Long Closures)',
         };
 
         expect($refClosure)->toThrow(TypeError::class, 'Variable $num');
+    });
+
+    test('does not leak outer variable type contract into closures without use clause', function () {
+        /** @var positive-int $leaked */
+        $leaked = 100;
+
+        $closure = function (): string {
+            $leaked = 'valid_string_in_isolated_closure_scope';
+
+            return $leaked;
+        };
+
+        expect($closure())->toBe('valid_string_in_isolated_closure_scope')
+            ->and($leaked)->toBe(100)
+        ;
+    });
+
+    test('allows assigning negative integers to uncaptured variable in closure', function () {
+        /** @var positive-int $isolatedCount */
+        $isolatedCount = 50;
+
+        $closure = function (): int {
+            $isolatedCount = -99;
+
+            return $isolatedCount;
+        };
+
+        expect($closure())->toBe(-99)
+            ->and($isolatedCount)->toBe(50)
+        ;
+    });
+
+    test('does not leak outer script variable type contracts into functions', function () {
+        /** @var positive-int $scriptScopedVar */
+        $scriptScopedVar = 42;
+
+        $fn = function (): string {
+            $scriptScopedVar = 'completely_different_string';
+
+            return $scriptScopedVar;
+        };
+
+        expect($fn())->toBe('completely_different_string')
+            ->and($scriptScopedVar)->toBe(42)
+        ;
     });
 });
