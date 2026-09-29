@@ -38,6 +38,10 @@ final class DocblockNormalizer
             $doc = preg_replace('/(@(?:phpstan|psalm)-type\s+[a-zA-Z0-9_\x80-\xff]+)\s*=\s*/', '$1 ', $doc) ?? $doc;
         }
 
+        if (stripos($doc, 'static') !== false && stripos($doc, 'closure') !== false) {
+            $doc = preg_replace('/(?:\(\s*static\s+Closure\s*\)|static\s+Closure\b)/i', 'static-closure', $doc) ?? $doc;
+        }
+
         if (str_contains($doc, '@self-out') && ! str_contains($doc, '@phpstan-self-out') && ! str_contains($doc, '@psalm-self-out')) {
             $doc = preg_replace('/@self-out\b/', '@phpstan-self-out', $doc) ?? $doc;
         }
@@ -46,8 +50,8 @@ final class DocblockNormalizer
             $doc = preg_replace('/@this-out\b/', '@phpstan-this-out', $doc) ?? $doc;
         }
 
-        if (str_contains($doc, 'callable') || str_contains($doc, 'Closure')) {
-            $doc = preg_replace('/(callable|Closure)\s*\(([^)]*)\)(?!\s*:)/', '$1($2): mixed', $doc) ?? $doc;
+        if (stripos($doc, 'callable') !== false || stripos($doc, 'closure') !== false) {
+            $doc = preg_replace('/(callable|Closure|static-closure)\s*\(([^)]*)\)(?!\s*:)/i', '$1($2): mixed', $doc) ?? $doc;
         }
 
         if (str_contains($doc, '::') && str_contains($doc, ':')) {

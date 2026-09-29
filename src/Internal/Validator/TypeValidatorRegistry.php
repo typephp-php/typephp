@@ -6,6 +6,7 @@ namespace TypePHP\Internal\Validator;
 
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
@@ -39,6 +40,8 @@ final class TypeValidatorRegistry
 
     private ConstValidator $constValidator;
 
+    private CallableValidator $callableValidator;
+
     /**
      * Static map for fast validator resolution.
      *
@@ -61,6 +64,7 @@ final class TypeValidatorRegistry
         $this->arrayShapeValidator = new ArrayShapeValidator();
         $this->objectShapeValidator = new ObjectShapeValidator();
         $this->constValidator = new ConstValidator();
+        $this->callableValidator = new CallableValidator();
 
         $this->validatorMap = [
             IdentifierTypeNode::class => $this->identifierValidator,
@@ -72,6 +76,7 @@ final class TypeValidatorRegistry
             ObjectShapeNode::class => $this->objectShapeValidator,
             IntersectionTypeNode::class => $this->intersectionValidator,
             ConstTypeNode::class => $this->constValidator,
+            CallableTypeNode::class => $this->callableValidator,
         ];
     }
 

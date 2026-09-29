@@ -33,6 +33,61 @@ describe('DocblockNormalizer', function () {
         });
     });
 
+    describe('Static Closure Normalization', function () {
+        test('normalizes parenthesized (static Closure)(args) to static-closure(args)', function () {
+            $doc = '/** @param (static Closure)(int): int $fn */';
+            $expected = '/** @param static-closure(int): int $fn */';
+            expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+        });
+
+        test('normalizes parenthesized (static Closure) with arbitrary whitespace', function () {
+            $doc = '/** @param (  static   Closure  )(int, string): bool $fn */';
+            $expected = '/** @param static-closure(int, string): bool $fn */';
+            expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+        });
+
+        test('normalizes bare static Closure(args) without parentheses', function () {
+            $doc = '/** @param static Closure(int): int $fn */';
+            $expected = '/** @param static-closure(int): int $fn */';
+            expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+        });
+
+        test('normalizes bare static Closure parameter without argument list', function () {
+            $docParen = '/** @param (static Closure) $fn */';
+            $expectedParen = '/** @param static-closure $fn */';
+            expect(DocblockNormalizer::normalize($docParen))->toBe($expectedParen);
+
+            $docBare = '/** @param static Closure $fn */';
+            $expectedBare = '/** @param static-closure $fn */';
+            expect(DocblockNormalizer::normalize($docBare))->toBe($expectedBare);
+        });
+
+        test('normalizes case-insensitive static Closure variants', function () {
+            $doc = '/** @param (STATIC closure)(int): int $fn */';
+            $expected = '/** @param static-closure(int): int $fn */';
+            expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+        });
+
+        test('normalizes static Closure with omitted return type to mixed', function () {
+            $doc = '/** @param (static Closure)(int $x) $fn */';
+            $expected = '/** @param static-closure(int $x): mixed $fn */';
+            expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+        });
+
+        test('preserves already canonical static-closure syntax untouched', function () {
+            $doc = '/** @param static-closure(int): string $fn */';
+            expect(DocblockNormalizer::normalize($doc))->toBe($doc);
+        });
+
+        test('does not affect standard non-static Closure or standalone static keywords', function () {
+            $closureDoc = '/** @param Closure(int): string $fn */';
+            expect(DocblockNormalizer::normalize($closureDoc))->toBe($closureDoc);
+
+            $staticDoc = '/** @return static */';
+            expect(DocblockNormalizer::normalize($staticDoc))->toBe($staticDoc);
+        });
+    });
+
     describe('Callable and Closure Return Type Normalization', function () {
         test('auto-completes omitted return types for callable and Closure signatures', function () {
             $doc1 = '/** @var callable(int[] $items) $callback */';
