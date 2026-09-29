@@ -11,6 +11,7 @@ use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ThisTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
@@ -1520,6 +1521,10 @@ final class TemplateManager
             }
 
             return new IdentifierTypeNode(SpecialTypeResolver::resolveFqcn($n->name, $ref));
+        }
+
+        if ($n instanceof ThisTypeNode) {
+            return new IdentifierTypeNode($ref->getName());
         }
 
         if ($n instanceof GenericTypeNode) {

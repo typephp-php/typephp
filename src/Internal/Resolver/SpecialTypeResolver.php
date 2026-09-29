@@ -210,6 +210,17 @@ final class SpecialTypeResolver
         $declaringClass = $ref instanceof \ReflectionMethod ? $ref->getDeclaringClass()->getName() : ($ref instanceof \ReflectionClass ? $ref->getName() : null);
 
         if ($node instanceof ThisTypeNode) {
+            if ($thisObj !== null) {
+                return new IdentifierTypeNode($thisObj::class);
+            }
+
+            if (\is_string($context)) {
+                $callingClass = strstr($context, '::', true);
+                if ($callingClass !== false && self::symbolExists($callingClass)) {
+                    return new IdentifierTypeNode($callingClass);
+                }
+            }
+
             return $node;
         }
 
@@ -442,7 +453,14 @@ final class SpecialTypeResolver
 
         if ($lower === '$this') {
             if ($thisObj !== null) {
-                return new IdentifierTypeNode(\get_class($thisObj));
+                return new IdentifierTypeNode($thisObj::class);
+            }
+
+            if (\is_string($context)) {
+                $callingClass = strstr($context, '::', true);
+                if ($callingClass !== false && self::symbolExists($callingClass)) {
+                    return new IdentifierTypeNode($callingClass);
+                }
             }
 
             return $node;
@@ -450,12 +468,12 @@ final class SpecialTypeResolver
 
         if ($lower === 'static') {
             if ($thisObj !== null) {
-                return new IdentifierTypeNode(\get_class($thisObj));
+                return new IdentifierTypeNode($thisObj::class);
             }
 
-            if (\is_string($context) && str_contains($context, '::')) {
-                $callingClass = explode('::', $context, 2)[0];
-                if (class_exists($callingClass) || interface_exists($callingClass) || trait_exists($callingClass) || enum_exists($callingClass)) {
+            if (\is_string($context)) {
+                $callingClass = strstr($context, '::', true);
+                if ($callingClass !== false && self::symbolExists($callingClass)) {
                     return new IdentifierTypeNode($callingClass);
                 }
             }
