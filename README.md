@@ -19,13 +19,13 @@
 
 TypePHP is a transparent, pure-PHP runtime type checker. You don't have to refactor a single line of your codebase, set up complex build toolchains, or compile C-extensions. Simply run your existing code, and TypePHP will enforce your extended PHPDoc contracts (generics, array shapes, `key-of`/`value-of` extractions, and scalar refinements) dynamically at runtime.
 
-**[Read the full TypePHP documentation »](https://typephp-php.github.io/docs/)** | **[Try it online in the Playground »](https://typephp-php.github.io/docs/playground)**
+**[Read the full TypePHP documentation »](https://typephp-php.github.io/docs/)** | **[Try it online in the Playground »](https://typephp-php.github.io/docs/playground.html)**
 
 ---
 
 ## Try It Online
 
-You can test TypePHP directly in your browser without installing anything locally via the **[Interactive WebAssembly Playground](https://typephp-php.github.io/docs/playground)**:
+You can test TypePHP directly in your browser without installing anything locally via the **[Interactive WebAssembly Playground](https://typephp-php.github.io/docs/playground.html)**:
 
 ---
 
