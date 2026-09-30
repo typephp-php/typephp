@@ -1344,13 +1344,29 @@ final class TemplateManager
 
     private static function checkNestedGenericVariance(GenericTypeNode $existing, GenericTypeNode $expected): bool
     {
-        if (! is_a($existing->type->name, $expected->type->name, true)) {
+        $expectedClassName = $expected->type->name;
+        if (! is_a($existing->type->name, $expectedClassName, true)) {
             return false;
+        }
+
+        $declaredVariances = [];
+        if (class_exists($expectedClassName, false) || class_exists($expectedClassName) || interface_exists($expectedClassName)) {
+            try {
+                $ref = new \ReflectionClass($expectedClassName);
+                [, $classVariances] = self::collectHierarchyTemplatesAndVariances($ref);
+                $declaredVariances = array_values($classVariances);
+            } catch (\Throwable $e) {
+            }
         }
 
         foreach ($expected->genericTypes as $idx => $expectedInner) {
             $existingInner = $existing->genericTypes[$idx] ?? new IdentifierTypeNode('mixed');
-            $innerVariance = $expected->variances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
+            $useSiteVariance = $expected->variances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
+            $declaredVariance = $declaredVariances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
+
+            $innerVariance = ($useSiteVariance !== GenericTypeNode::VARIANCE_INVARIANT)
+                ? $useSiteVariance
+                : $declaredVariance;
 
             if (! self::checkVariance($existingInner, $expectedInner, $innerVariance)) {
                 return false;
