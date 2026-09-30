@@ -174,12 +174,6 @@ final class InlineChecker
 
             $context = ($varName === 'return') ? 'Return value' : "Variable \$$varName";
 
-            if ($typeNode instanceof CallableTypeNode || ($typeNode instanceof IdentifierTypeNode && strtolower($typeNode->name) === 'callable')) {
-                $cbPrefix = ($varName === 'return') ? 'Return value: Callback' : "Variable \$$varName: Callback";
-
-                return CallableWrapper::wrapTypeNode($typeNode, $value, $cbPrefix, $registry);
-            }
-
             if ($typeNode instanceof GenericTypeNode) {
                 $baseName = strtolower($typeNode->type->name);
                 $isCollection = isset(self::ARRAY_TYPES[$baseName]);
@@ -204,8 +198,82 @@ final class InlineChecker
             if ($err !== null) {
                 return $err;
             }
+
+            if ($typeNode instanceof CallableTypeNode || ($typeNode instanceof IdentifierTypeNode && strtolower($typeNode->name) === 'callable')) {
+                $cbPrefix = ($varName === 'return') ? 'Return value: Callback' : "Variable \$$varName: Callback";
+
+                return CallableWrapper::wrapTypeNode($typeNode, $value, $cbPrefix, $registry);
+            }
+
+            if ($typeNode instanceof ArrayShapeNode && \is_array($value)) {
+                $value = self::wrapShapeCallables($typeNode, $value, $context, $registry);
+            } elseif (\is_array($value)) {
+                $value = self::wrapCollectionCallables($typeNode, $value, $context, $registry);
+            }
         } catch (\Throwable $e) {
             // Silently ignore unexpected execution exceptions
+        }
+
+        return $value;
+    }
+
+    /**
+     * Recursively wraps callable items nested inside array shapes.
+     *
+     * @param array<int|string, mixed> $value
+     *
+     * @return array<int|string, mixed>
+     */
+    private static function wrapShapeCallables(ArrayShapeNode $shapeNode, array $value, string $context, TypeValidatorRegistry $registry): array
+    {
+        foreach ($shapeNode->items as $item) {
+            $key = null;
+            if ($item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode) {
+                $key = $item->keyName->value;
+            } elseif ($item->keyName instanceof IdentifierTypeNode) {
+                $key = $item->keyName->name;
+            } elseif ($item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode) {
+                $key = (int) $item->keyName->value;
+            } elseif ($item->keyName !== null) {
+                $key = (string) $item->keyName;
+            }
+
+            if ($key !== null && \array_key_exists($key, $value)) {
+                if ($item->valueType instanceof CallableTypeNode) {
+                    $cbPrefix = $context . "['" . $key . "']: Callback";
+                    $value[$key] = CallableWrapper::wrapTypeNode($item->valueType, $value[$key], $cbPrefix, $registry);
+                } elseif ($item->valueType instanceof ArrayShapeNode && \is_array($value[$key])) {
+                    $value[$key] = self::wrapShapeCallables($item->valueType, $value[$key], $context . "['" . $key . "']", $registry);
+                }
+            }
+        }
+
+        return $value;
+    }
+
+    /**
+     * Wraps callable elements in generic lists or typed arrays (e.g. list<callable(int): string>).
+     *
+     * @param array<int|string, mixed> $value
+     *
+     * @return array<int|string, mixed>
+     */
+    private static function wrapCollectionCallables(TypeNode $typeNode, array $value, string $context, TypeValidatorRegistry $registry): array
+    {
+        $innerCallable = null;
+        if ($typeNode instanceof GenericTypeNode && \in_array(strtolower($typeNode->type->name), ['list', 'array', 'iterable'], true)) {
+            $innerCallable = $typeNode->genericTypes[1] ?? $typeNode->genericTypes[0] ?? null;
+        } elseif ($typeNode instanceof ArrayTypeNode) {
+            $innerCallable = $typeNode->type;
+        }
+
+        if ($innerCallable instanceof CallableTypeNode) {
+            foreach ($value as $k => $item) {
+                if (CallableWrapper::isCallable($item)) {
+                    $cbPrefix = $context . "[$k]: Callback";
+                    $value[$k] = CallableWrapper::wrapTypeNode($innerCallable, $item, $cbPrefix, $registry);
+                }
+            }
         }
 
         return $value;

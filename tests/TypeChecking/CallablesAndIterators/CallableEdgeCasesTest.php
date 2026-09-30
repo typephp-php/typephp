@@ -44,7 +44,89 @@ class StaticClosureHost
     }
 }
 
+/**
+ * @phpstan-type LocalHandlerFn callable(int): string
+ */
+class TypeAliasHolderFixture
+{
+}
+
+/**
+ * Valid: Explicitly imports type alias per PHPStan specification
+ *
+ * @phpstan-import-type LocalHandlerFn from TypeAliasHolderFixture
+ */
+function testFunctionWithImportedAlias(int $x): string
+{
+    /** @var LocalHandlerFn $fn */
+    $fn = fn (int $n): string => "aliased: {$n}";
+
+    return $fn($x);
+}
+
+function testFunctionWithoutImportedAlias(): void
+{
+    /** @var LocalHandlerFn $fn */
+    $fn = fn (int $n): string => "aliased: {$n}";
+}
+
+function testFunctionWithNonExistentClass(): void
+{
+    /** @var HandlerFnClassNotExist $fn */
+    $fn = fn (int $n): string => "aliased: {$n}";
+}
+
 describe('Callable & Closure Edge Cases', function () {
+    describe('Inline Variable Callable Validations', function () {
+        test('rejects non-callable string assigned to @var callable variable', function () {
+            expect(function () {
+                /** @var callable(int): string $fn */
+                $fn = 'not a callable at all';
+            })->toThrow(TypeError::class, 'must be of type callable');
+        });
+
+        test('rejects integer assigned to @var callable variable', function () {
+            expect(function () {
+                /** @var callable(int): string $fn */
+                $fn = 42;
+            })->toThrow(TypeError::class, 'must be of type callable');
+        });
+
+        test('rejects non-closure string assigned to @var Closure variable', function () {
+            expect(function () {
+                /** @var Closure(int): string $fn */
+                $fn = 'strlen';
+            })->toThrow(TypeError::class, 'must be of type Closure');
+        });
+
+        test('wraps callable nested inside array shape and enforces return type on invocation', function () {
+            /** @var array{handler: callable(int): string} $config */
+            $config = ['handler' => fn (int $x) => 42];
+
+            expect(fn () => $config['handler'](42))
+                ->toThrow(TypeError::class, 'Callback return value must be of type string, int (42) given')
+            ;
+        });
+
+        test('resolves and wraps callable type alias when explicitly imported via @phpstan-import-type', function () {
+            $result = testFunctionWithImportedAlias(42);
+
+            expect($result)->toBe('aliased: 42');
+        });
+
+        test('strictly rejects closure when type alias was NOT imported with @phpstan-import-type', function () {
+            expect(fn () => testFunctionWithoutImportedAlias())
+                ->toThrow(TypeError::class, 'must be of type LocalHandlerFn, Closure given')
+            ;
+        });
+
+        test('strictly rejects closure when variable is typed with a non-existent class', function () {
+            expect(fn () => testFunctionWithNonExistentClass())
+                ->toThrow(TypeError::class, 'must be of type HandlerFnClassNotExist, Closure given')
+            ;
+        });
+    });
+
     describe('Bug 1: Non-Callable Values and Arrays against Closure/Callable constraints', function () {
         test('rejects non-callable array on parameter expecting Closure', function () {
             expect(fn () => testRequiresClosureParam([new stdClass(), 'nonexistentMethod']))
