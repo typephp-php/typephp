@@ -14,6 +14,7 @@ use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
@@ -477,7 +478,7 @@ final class ParamChecker
     }
 
     /**
-     * Pre-infers generic template parameters from closure typehints, array arguments, and generic object arguments.
+     * Pre-infers generic template parameters from closure typehints, array arguments, shapes, and generic object arguments.
      *
      * @param array<string, TypeNode> $types
      * @param array<string, mixed> $vars
@@ -653,6 +654,151 @@ final class ParamChecker
     }
 
     /**
+     * Infers generic template parameters from array and object shapes.
+     *
+     * @param array<string, TypeNode> $types
+     * @param array<string, mixed> $vars
+     * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
+     */
+    private static function inferTemplatesFromShapes(
+        array $types,
+        array $vars,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates,
+        array $classTemplates = []
+    ): void {
+        foreach ($types as $paramName => $typeNode) {
+            if (isset($vars[$paramName])) {
+                self::inferShapeNodeTemplates($typeNode, $vars[$paramName], $effectiveFunction, $thisObj, $templates, $classTemplates);
+            }
+        }
+    }
+
+    /**
+     * Traverses shape nodes (including within intersections/unions) and inspects properties or keys.
+     *
+     * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
+     */
+    private static function inferShapeNodeTemplates(
+        TypeNode $typeNode,
+        mixed $value,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates,
+        array $classTemplates = []
+    ): void {
+        if ($typeNode instanceof NullableTypeNode) {
+            $typeNode = $typeNode->type;
+        }
+
+        if ($typeNode instanceof IntersectionTypeNode || $typeNode instanceof UnionTypeNode) {
+            foreach ($typeNode->types as $subType) {
+                self::inferShapeNodeTemplates($subType, $value, $effectiveFunction, $thisObj, $templates, $classTemplates);
+            }
+
+            return;
+        }
+
+        if ($typeNode instanceof ObjectShapeNode && \is_object($value)) {
+            foreach ($typeNode->items as $item) {
+                $prop = $item->keyName instanceof IdentifierTypeNode ? $item->keyName->name : (string) $item->keyName;
+
+                // @phpstan-ignore property.dynamicName
+                if (isset($value->$prop) || property_exists($value, $prop)) {
+                    // @phpstan-ignore property.dynamicName
+                    $propVal = $value->$prop;
+                    self::inferTemplateFromTypeAndValue($item->valueType, $propVal, $effectiveFunction, $thisObj, $templates, $classTemplates);
+                }
+            }
+
+            return;
+        }
+
+        if ($typeNode instanceof ArrayShapeNode && \is_array($value)) {
+            $nextIdx = 0;
+            foreach ($typeNode->items as $item) {
+                $key = match (true) {
+                    $item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode => $item->keyName->value,
+                    $item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode => (int) $item->keyName->value,
+                    $item->keyName instanceof IdentifierTypeNode => $item->keyName->name,
+                    $item->keyName !== null => (string) $item->keyName,
+                    default => $nextIdx,
+                };
+
+                if (\is_int($key)) {
+                    $nextIdx = max($nextIdx, $key + 1);
+                }
+
+                if (\array_key_exists($key, $value)) {
+                    self::inferTemplateFromTypeAndValue($item->valueType, $value[$key], $effectiveFunction, $thisObj, $templates, $classTemplates);
+                }
+            }
+
+            if ($typeNode->unsealedType !== null) {
+                $unsealed = $typeNode->unsealedType;
+                foreach ($value as $k => $v) {
+                    self::inferTemplateFromTypeAndValue($unsealed->valueType, $v, $effectiveFunction, $thisObj, $templates, $classTemplates);
+                    if ($unsealed->keyType !== null) {
+                        self::inferTemplateFromTypeAndValue($unsealed->keyType, $k, $effectiveFunction, $thisObj, $templates, $classTemplates);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Unified type-value dispatcher: resolves any field type (bare template, generic collection, object, nested shape).
+     *
+     * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
+     */
+    private static function inferTemplateFromTypeAndValue(
+        TypeNode $typeNode,
+        mixed $value,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates,
+        array $classTemplates = []
+    ): void {
+        if ($typeNode instanceof NullableTypeNode) {
+            $typeNode = $typeNode->type;
+        }
+
+        if ($typeNode instanceof IdentifierTypeNode) {
+            if (isset($templates[$typeNode->name])) {
+                $inferred = TemplateManager::inferTypeFromValue($value);
+                self::bindTemplateIfUnbound($typeNode->name, $inferred, $effectiveFunction, $thisObj, $templates);
+            }
+
+            return;
+        }
+
+        if ($typeNode instanceof ArrayShapeNode || $typeNode instanceof ObjectShapeNode || $typeNode instanceof IntersectionTypeNode) {
+            self::inferShapeNodeTemplates($typeNode, $value, $effectiveFunction, $thisObj, $templates, $classTemplates);
+
+            return;
+        }
+
+        if ($typeNode instanceof GenericTypeNode) {
+            $baseType = strtolower($typeNode->type->name);
+            if (isset(self::ITERABLE_TYPES[$baseType]) && \is_array($value)) {
+                self::inferArrayTemplatesFromAllElements($typeNode, $value, $effectiveFunction, $thisObj, $templates);
+            } elseif (\is_object($value)) {
+                self::inferGenericObjectNode($typeNode, $value, $effectiveFunction, $thisObj, $templates, $classTemplates);
+            }
+
+            return;
+        }
+
+        if ($typeNode instanceof ArrayTypeNode && \is_array($value)) {
+            self::inferArrayTemplatesFromAllElements($typeNode, $value, $effectiveFunction, $thisObj, $templates);
+        }
+    }
+
+    /**
      * Extracts and unifies template parameters across all elements of an array argument.
      * Uses Beartype O(1) hybrid random sampling on arrays > 128 items when hybrid mode is active.
      *
@@ -761,7 +907,8 @@ final class ParamChecker
     }
 
     /**
-     * Binds a template parameter if it is not already bound in the current scope.
+     * Binds a template parameter if it is not already bound in the current scope,
+     * ensuring it satisfies declared upper bounds.
      *
      * @param array<string, TemplateTagValueNode> $templates
      */
@@ -788,123 +935,6 @@ final class ParamChecker
 
             if ($satisfiesBound) {
                 TemplateManager::bindTemplate($effectiveFunction, $targetObj, $templateName, $inferredType);
-            }
-        }
-    }
-
-    /**
-     * Infers generic template parameters from array shapes (e.g. array{input: T, output: T}).
-     *
-     * @param array<string, TypeNode> $types
-     * @param array<string, mixed> $vars
-     * @param array<string, TemplateTagValueNode> $templates
-     * @param array<string, TemplateTagValueNode> $classTemplates
-     */
-    private static function inferTemplatesFromShapes(
-        array $types,
-        array $vars,
-        string $effectiveFunction,
-        ?object $thisObj,
-        array $templates,
-        array $classTemplates = []
-    ): void {
-        foreach ($types as $paramName => $typeNode) {
-            if (! isset($vars[$paramName])) {
-                continue;
-            }
-
-            self::inferShapeNodeTemplates($typeNode, $vars[$paramName], $effectiveFunction, $thisObj, $templates, $classTemplates);
-        }
-    }
-
-    /**
-     * Recursively traverses an ArrayShapeNode and binds matching templates from actual values.
-     *
-     * @param array<string, TemplateTagValueNode> $templates
-     * @param array<string, TemplateTagValueNode> $classTemplates
-     */
-    private static function inferShapeNodeTemplates(
-        TypeNode $typeNode,
-        mixed $value,
-        string $effectiveFunction,
-        ?object $thisObj,
-        array $templates,
-        array $classTemplates = []
-    ): void {
-        if ($typeNode instanceof NullableTypeNode) {
-            $typeNode = $typeNode->type;
-        }
-
-        if (! ($typeNode instanceof ArrayShapeNode) || ! \is_array($value)) {
-            return;
-        }
-
-        $nextAutoIndex = 0;
-        foreach ($typeNode->items as $item) {
-            $key = null;
-            if ($item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode) {
-                $key = $item->keyName->value;
-            } elseif ($item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode) {
-                $key = (int) $item->keyName->value;
-                $nextAutoIndex = max($nextAutoIndex, $key + 1);
-            } elseif ($item->keyName instanceof IdentifierTypeNode) {
-                $key = $item->keyName->name;
-            } elseif ($item->keyName !== null) {
-                $key = (string) $item->keyName;
-            } else {
-                $key = $nextAutoIndex;
-                $nextAutoIndex++;
-            }
-
-            if (! \array_key_exists($key, $value)) {
-                continue;
-            }
-
-            $itemVal = $value[$key];
-            $itemType = $item->valueType;
-
-            if ($itemType instanceof NullableTypeNode) {
-                $itemType = $itemType->type;
-            }
-
-            if ($itemType instanceof IdentifierTypeNode && isset($templates[$itemType->name])) {
-                $tName = $itemType->name;
-                $inferred = TemplateManager::inferTypeFromValue($itemVal);
-                self::bindTemplateIfUnbound($tName, $inferred, $effectiveFunction, $thisObj, $templates);
-            } elseif ($itemType instanceof ArrayShapeNode && \is_array($itemVal)) {
-                self::inferShapeNodeTemplates($itemType, $itemVal, $effectiveFunction, $thisObj, $templates, $classTemplates);
-            } elseif ($itemType instanceof GenericTypeNode) {
-                $baseType = strtolower($itemType->type->name);
-                if (isset(self::ITERABLE_TYPES[$baseType]) && \is_array($itemVal)) {
-                    self::inferArrayTemplatesFromAllElements($itemType, $itemVal, $effectiveFunction, $thisObj, $templates);
-                } elseif (\is_object($itemVal)) {
-                    self::inferGenericObjectNode($itemType, $itemVal, $effectiveFunction, $thisObj, $templates, $classTemplates);
-                }
-            } elseif ($itemType instanceof ArrayTypeNode && \is_array($itemVal)) {
-                self::inferArrayTemplatesFromAllElements($itemType, $itemVal, $effectiveFunction, $thisObj, $templates);
-            }
-        }
-
-        if ($typeNode->unsealedType !== null) {
-            $unsealedValType = $typeNode->unsealedType->valueType;
-            if ($unsealedValType instanceof NullableTypeNode) {
-                $unsealedValType = $unsealedValType->type;
-            }
-
-            $unsealedKeyType = $typeNode->unsealedType->keyType;
-            if ($unsealedKeyType instanceof NullableTypeNode) {
-                $unsealedKeyType = $unsealedKeyType->type;
-            }
-
-            foreach ($value as $k => $v) {
-                if ($unsealedValType instanceof IdentifierTypeNode && isset($templates[$unsealedValType->name])) {
-                    $inferred = TemplateManager::inferTypeFromValue($v);
-                    self::bindTemplateIfUnbound($unsealedValType->name, $inferred, $effectiveFunction, $thisObj, $templates);
-                }
-                if ($unsealedKeyType instanceof IdentifierTypeNode && isset($templates[$unsealedKeyType->name])) {
-                    $inferred = TemplateManager::inferTypeFromValue($k);
-                    self::bindTemplateIfUnbound($unsealedKeyType->name, $inferred, $effectiveFunction, $thisObj, $templates);
-                }
             }
         }
     }
