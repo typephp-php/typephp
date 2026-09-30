@@ -67,18 +67,18 @@ final class RuntimeTypeChecker
     /**
      * Pre-binds generic template state on a class before its constructor executes.
      *
-     * @param \Closure(): mixed $factory
+     * @param \Closure(mixed ...$args): mixed $factory
      */
-    public static function withPendingGeneric(string $typeString, \Closure $factory, string $file = ''): mixed
+    public static function withPendingGeneric(string $typeString, \Closure $factory, string $file = '', mixed ...$args): mixed
     {
         if (! Config::isEnabled() || ! Config::isInlineGenericsEnabled()) {
-            return $factory();
+            return $factory(...$args);
         }
 
         TemplateManager::pushPendingInstantiation($typeString, $file);
 
         try {
-            return $factory();
+            return $factory(...$args);
         } finally {
             TemplateManager::popPendingInstantiation();
         }

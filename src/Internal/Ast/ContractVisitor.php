@@ -472,15 +472,23 @@ final class ContractVisitor extends NodeVisitorAbstract
             if ($typeString !== null) {
                 $expr = $node->expr;
                 if ($expr instanceof Node\Expr\New_ && str_contains($typeString, '<')) {
+                    $constructorArgs = $expr->args;
+                    $factoryArrow = new Node\Expr\ArrowFunction([
+                        'params' => [new Node\Param(new Node\Expr\Variable('_typephpCtorArgs'), null, null, false, true)],
+                        'expr' => new Node\Expr\New_(
+                            $expr->class,
+                            [new Node\Arg(new Node\Expr\Variable('_typephpCtorArgs'), false, true)]
+                        ),
+                    ]);
+
                     $expr = new Node\Expr\StaticCall(
                         new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker'),
                         'withPendingGeneric',
                         [
                             new Node\Arg(new Node\Scalar\String_($typeString)),
-                            new Node\Arg(new Node\Expr\ArrowFunction([
-                                'expr' => $expr,
-                            ])),
+                            new Node\Arg($factoryArrow),
                             new Node\Arg(new Node\Scalar\MagicConst\File()),
+                            ...$constructorArgs,
                         ]
                     );
                 }

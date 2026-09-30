@@ -678,6 +678,7 @@ describe('Generics Inside Array Shapes and Object Shapes', function () {
             $t = new MethodLevelObjectTransformerFixture();
             $user = new class () {
                 public int $input = 10;
+
                 public int $output = 20;
             };
 
@@ -691,6 +692,7 @@ describe('Generics Inside Array Shapes and Object Shapes', function () {
             $t = new MethodLevelObjectTransformerFixture();
             $badUser = new class () {
                 public int $input = 10;
+
                 public string $output = 'mismatch';
             };
 
@@ -764,6 +766,7 @@ describe('Generics Inside Array Shapes and Object Shapes', function () {
         test('infers T on pure object{input: T, output: T} shapes for arbitrary objects', function () {
             $user = new class () {
                 public int $input = 10;
+
                 public int $output = 20;
             };
 
@@ -772,6 +775,7 @@ describe('Generics Inside Array Shapes and Object Shapes', function () {
 
             $badUser = new class () {
                 public int $input = 10;
+
                 public string $output = 'mismatch';
             };
 
