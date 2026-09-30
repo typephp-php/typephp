@@ -155,6 +155,13 @@ final class DocblockParser
     ];
 
     /**
+     * 2D Cache for resolved magic property contracts: [$className][$propertyName] => ?array.
+     *
+     * @var array<string, array<string, ?array{readable: bool, writable: bool, readType: ?TypeNode, writeType: ?TypeNode}>>
+     */
+    private static array $magicPropertyContractCache = [];
+
+    /**
      * Resets the contract, property, and class-level docblock caches.
      */
     public static function reset(): void
@@ -163,6 +170,7 @@ final class DocblockParser
         self::$propertyCache = [];
         self::$magicMethodCache = [];
         self::$classLevelDocCache = [];
+        self::$magicPropertyContractCache = [];
         InlineChecker::reset();
         DocblockExtractor::reset();
         FileFilter::reset();
@@ -506,6 +514,68 @@ final class DocblockParser
     }
 
     /**
+     * Resolves access permissions and types for magic @property annotations with zero-allocation 2D caching.
+     *
+     * @return array{readable: bool, writable: bool, readType: ?TypeNode, writeType: ?TypeNode}|null
+     */
+    public static function parseMagicPropertyContract(string $className, string $propertyName): ?array
+    {
+        if (isset(self::$magicPropertyContractCache[$className][$propertyName]) || \array_key_exists($propertyName, self::$magicPropertyContractCache[$className] ?? [])) {
+            return self::$magicPropertyContractCache[$className][$propertyName];
+        }
+
+        if (! class_exists($className, false) && ! class_exists($className) && ! trait_exists($className) && ! interface_exists($className)) {
+            return self::$magicPropertyContractCache[$className][$propertyName] = null;
+        }
+
+        try {
+            /** @var class-string<object> $className */
+            $refClass = new \ReflectionClass($className);
+            $classHierarchy = HierarchyResolver::getClassHierarchy($refClass);
+
+            foreach ($classHierarchy as $hierClass) {
+                $hierClassName = $hierClass->getName();
+                $fileName = $hierClass->getFileName();
+                $stubDoc = StubManager::getClassDoc($hierClassName);
+
+                if ($stubDoc === null && $hierClass !== $refClass && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
+                    continue;
+                }
+
+                $classDoc = $stubDoc ?? $hierClass->getDocComment();
+                if ($classDoc !== false && $classDoc !== null) {
+                    $contract = DocblockExtractor::extractMagicPropertyContract($classDoc, $propertyName);
+                    if ($contract !== null) {
+                        $aliases = [];
+                        $classTemplates = [];
+                        self::parseClassLevelDocs($hierClass, $classTemplates, $aliases);
+
+                        if ($contract['readType'] !== null) {
+                            $contract['readType'] = SpecialTypeResolver::resolve(
+                                self::substituteAliases($contract['readType'], $aliases),
+                                $hierClass
+                            );
+                        }
+
+                        if ($contract['writeType'] !== null) {
+                            $contract['writeType'] = SpecialTypeResolver::resolve(
+                                self::substituteAliases($contract['writeType'], $aliases),
+                                $hierClass
+                            );
+                        }
+
+                        return self::$magicPropertyContractCache[$className][$propertyName] = $contract;
+                    }
+                }
+            }
+
+            return self::$magicPropertyContractCache[$className][$propertyName] = null;
+        } catch (\Throwable $e) {
+            return self::$magicPropertyContractCache[$className][$propertyName] = null;
+        }
+    }
+
+    /**
      * @param \ReflectionClass<object> $refClass
      *
      * @return array{doc: string, declaringClass: \ReflectionClass<object>}|null
@@ -567,27 +637,16 @@ final class DocblockParser
      */
     private static function findMagicPropertyDoc(\ReflectionClass $refClass, string $propertyName): ?array
     {
-        $classHierarchy = HierarchyResolver::getClassHierarchy($refClass);
-
-        foreach ($classHierarchy as $hierClass) {
-            $className = $hierClass->getName();
-            $fileName = $hierClass->getFileName();
-            $stubDoc = StubManager::getClassDoc($className);
-
-            if ($stubDoc === null && $hierClass !== $refClass && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
-                continue;
-            }
-
-            $classDoc = $stubDoc ?? $hierClass->getDocComment();
-            if ($classDoc !== false && $classDoc !== null) {
-                $extractedType = DocblockExtractor::extractTypeFromClassPropertyDoc($classDoc, $propertyName);
-                if ($extractedType !== null) {
-                    return [
-                        'doc' => $classDoc,
-                        'declaringClass' => $hierClass,
-                        'typeNode' => $extractedType,
-                    ];
-                }
+        $className = $refClass->getName();
+        $contract = self::parseMagicPropertyContract($className, $propertyName);
+        if ($contract !== null) {
+            $typeNode = $contract['writeType'] ?? $contract['readType'];
+            if ($typeNode !== null) {
+                return [
+                    'doc' => '',
+                    'declaringClass' => $refClass,
+                    'typeNode' => $typeNode,
+                ];
             }
         }
 

@@ -98,6 +98,69 @@ final class DocblockExtractor
     }
 
     /**
+     * Extracts magic property contract permissions (read, write) and types from class docblocks.
+     *
+     * @return array{readable: bool, writable: bool, readType: ?TypeNode, writeType: ?TypeNode}|null
+     */
+    public static function extractMagicPropertyContract(string $doc, string $propName): ?array
+    {
+        try {
+            $phpDocNode = self::parseDocString($doc);
+
+            $propTag = null;
+            foreach ($phpDocNode->getPropertyTagValues() as $tag) {
+                if (ltrim($tag->propertyName, '$') === $propName) {
+                    $propTag = $tag;
+                    break;
+                }
+            }
+
+            $readTag = null;
+            foreach ($phpDocNode->getPropertyReadTagValues() as $tag) {
+                if (ltrim($tag->propertyName, '$') === $propName) {
+                    $readTag = $tag;
+                    break;
+                }
+            }
+
+            $writeTag = null;
+            foreach ($phpDocNode->getPropertyWriteTagValues() as $tag) {
+                if (ltrim($tag->propertyName, '$') === $propName) {
+                    $writeTag = $tag;
+                    break;
+                }
+            }
+
+            if ($propTag === null && $readTag === null && $writeTag === null) {
+                return null;
+            }
+
+            $readType = null;
+            if ($readTag !== null) {
+                $readType = $readTag->type;
+            } elseif ($propTag !== null) {
+                $readType = $propTag->type;
+            }
+
+            $writeType = null;
+            if ($writeTag !== null) {
+                $writeType = $writeTag->type;
+            } elseif ($propTag !== null) {
+                $writeType = $propTag->type;
+            }
+
+            return [
+                'readable' => $readType !== null,
+                'writable' => $writeType !== null,
+                'readType' => $readType,
+                'writeType' => $writeType,
+            ];
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
      * Normalizes and parses a PHPDoc doccomment string into an AST PhpDocNode with in-memory memoization.
      */
     public static function parseDocString(string $doc): PhpDocNode
@@ -275,9 +338,9 @@ final class DocblockExtractor
         }
 
         $unnamed = [];
-        $unnamedPhpstan = array_values(array_filter($node->getVarTagValues('@phpstan-var'), fn ($t) => $t->variableName === ''));
-        $unnamedPsalm = array_values(array_filter($node->getVarTagValues('@psalm-var'), fn ($t) => $t->variableName === ''));
-        $unnamedStandard = array_values(array_filter($node->getVarTagValues('@var'), fn ($t) => $t->variableName === ''));
+        $unnamedPhpstan = array_values(array_filter($node->getVarTagValues('@phpstan-var'), fn($t) => $t->variableName === ''));
+        $unnamedPsalm = array_values(array_filter($node->getVarTagValues('@psalm-var'), fn($t) => $t->variableName === ''));
+        $unnamedStandard = array_values(array_filter($node->getVarTagValues('@var'), fn($t) => $t->variableName === ''));
 
         if (\count($unnamedPhpstan) > 0) {
             $unnamed = $unnamedPhpstan;
@@ -443,12 +506,12 @@ final class DocblockExtractor
     }
 
     /**
-        * Extracts local and imported type aliases (@phpstan-type/@psalm-type and @phpstan-import-type/@psalm-import-type) from a PHPDoc node.
-        * Prioritizes @phpstan-* > @psalm-* within the same docblock, and child class overrides over parent classes across inheritance.
-        *
-         * @param array<string, TypeNode> $aliases
-         * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
-        */
+     * Extracts local and imported type aliases (@phpstan-type/@psalm-type and @phpstan-import-type/@psalm-import-type) from a PHPDoc node.
+     * Prioritizes @phpstan-* > @psalm-* within the same docblock, and child class overrides over parent classes across inheritance.
+     *
+     * @param array<string, TypeNode> $aliases
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     */
     public static function extractAliases(
         PhpDocNode $phpDocNode,
         array &$aliases,

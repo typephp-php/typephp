@@ -198,7 +198,7 @@ final class ReturnChecker
         TypeValidatorRegistry $registry,
         callable $wrapIterableCallback
     ): mixed {
-        if (! Config::isMagicPropertyReadsEnabled()) {
+        if (! Config::isMagicPropertiesEnabled()) {
             return $value;
         }
 
@@ -208,11 +208,20 @@ final class ReturnChecker
         }
 
         $className = explode('::', $effectiveFunction, 2)[0];
-        $typeNode = DocblockParser::parseProperty($className, $propName);
+        $magicContract = DocblockParser::parseMagicPropertyContract($className, $propName);
 
-        if ($typeNode === null) {
+        if ($magicContract === null) {
             return $value;
         }
+        if (! $magicContract['readable']) {
+            return ErrorFactory::createError("Cannot read from write-only property {$className}::\${$propName}");
+        }
+
+        if (! Config::isMagicPropertyReadsEnabled() || $magicContract['readType'] === null) {
+            return $value;
+        }
+
+        $typeNode = $magicContract['readType'];
 
         if ($thisObj !== null) {
             $constructorTarget = $className . '::__construct';

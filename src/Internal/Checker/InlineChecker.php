@@ -24,6 +24,7 @@ use PHPStan\PhpDocParser\Parser\ConstExprParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
@@ -306,6 +307,9 @@ final class InlineChecker
     /**
      * Evaluates class property validation dynamically based on configuration with zero-allocation 2D caching.
      */
+    /**
+     * Evaluates class property validation dynamically based on configuration with zero-allocation 2D caching.
+     */
     public static function checkProperty(mixed $value, mixed $objectOrClass, string $propName, string $file, TypeValidatorRegistry $registry): mixed
     {
         if (! \is_object($objectOrClass) && ! \is_string($objectOrClass)) {
@@ -322,7 +326,26 @@ final class InlineChecker
             return $value;
         }
 
-        $rawTypeNode = DocblockParser::parseProperty($className, $propName);
+        $rawTypeNode = null;
+        if (Config::isMagicPropertiesEnabled()) {
+            $magicContract = DocblockParser::parseMagicPropertyContract($className, $propName);
+            if ($magicContract !== null) {
+                if (! Config::isMagicPropertyWritesEnabled()) {
+                    return $value;
+                }
+
+                if (! $magicContract['writable']) {
+                    return ErrorFactory::createError("Cannot write to read-only property {$className}::\${$propName}");
+                }
+
+                $rawTypeNode = $magicContract['writeType'];
+            }
+        }
+
+        if ($rawTypeNode === null) {
+            $rawTypeNode = DocblockParser::parseProperty($className, $propName);
+        }
+
         if ($rawTypeNode === null) {
             self::$nullPropertyCache[$className][$propName] = true;
 
