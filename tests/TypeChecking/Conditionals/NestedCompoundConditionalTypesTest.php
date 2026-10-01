@@ -102,7 +102,7 @@ function testConditionalInNullableReturn(mixed $v, mixed $result): mixed
  */
 function testConditionalInCallableReturn(mixed $v, mixed $closureReturn): callable
 {
-    return fn() => $closureReturn;
+    return fn () => $closureReturn;
 }
 
 /**
@@ -137,7 +137,6 @@ function testConditionalInObjectShapeReturn(mixed $v, mixed $out): stdClass
     return $obj;
 }
 
-
 /**
  * Parameter-based conditional inside an Array Shape return
  *
@@ -161,7 +160,6 @@ function testParamConditionalInListParam(string $format, array $items): bool
 {
     return true;
 }
-
 
 class NestedConditionalServiceFixture
 {
@@ -192,30 +190,32 @@ class NestedConditionalServiceFixture
     }
 }
 
-
 describe('Nested Conditional Types Inside Compound Structures', function () {
     describe('1. Conditionals Inside Array Shapes (array{key: (T is Target ? A : B)})', function () {
         test('evaluates conditional inside array shape return when T is int (positive-int)', function () {
             $valid = testConditionalInArrayShapeReturn(5, 42);
             expect($valid)->toBe(['out' => 42]);
 
-            expect(fn() => testConditionalInArrayShapeReturn(5, -5))
-                ->toThrow(TypeError::class, "['out'] must be of type positive-int");
+            expect(fn () => testConditionalInArrayShapeReturn(5, -5))
+                ->toThrow(TypeError::class, "['out'] must be of type positive-int")
+            ;
         });
 
         test('evaluates fallback branch inside array shape return when T is string (T)', function () {
             $valid = testConditionalInArrayShapeReturn('hello', 'world');
             expect($valid)->toBe(['out' => 'world']);
 
-            expect(fn() => testConditionalInArrayShapeReturn('hello', 12345))
-                ->toThrow(TypeError::class, "['out'] must be of type string");
+            expect(fn () => testConditionalInArrayShapeReturn('hello', 12345))
+                ->toThrow(TypeError::class, "['out'] must be of type string")
+            ;
         });
 
         test('evaluates conditional inside array shape parameter', function () {
             expect(testConditionalInArrayShapeParam(10, ['data' => 100]))->toBeTrue();
 
-            expect(fn() => testConditionalInArrayShapeParam(10, ['data' => -50]))
-                ->toThrow(TypeError::class, "['data'] must be of type positive-int");
+            expect(fn () => testConditionalInArrayShapeParam(10, ['data' => -50]))
+                ->toThrow(TypeError::class, "['data'] must be of type positive-int")
+            ;
         });
     });
 
@@ -224,23 +224,26 @@ describe('Nested Conditional Types Inside Compound Structures', function () {
             $valid = testConditionalInGenericListReturn(5, [1, 2, 3]);
             expect($valid)->toBe([1, 2, 3]);
 
-            expect(fn() => testConditionalInGenericListReturn(5, [1, -5, 3]))
-                ->toThrow(TypeError::class, 'positive-int');
+            expect(fn () => testConditionalInGenericListReturn(5, [1, -5, 3]))
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
         });
 
         test('evaluates fallback branch inside generic list return when T is string', function () {
             $valid = testConditionalInGenericListReturn('tag', ['alpha', 'beta']);
             expect($valid)->toBe(['alpha', 'beta']);
 
-            expect(fn() => testConditionalInGenericListReturn('tag', ['alpha', 123]))
-                ->toThrow(TypeError::class, 'string');
+            expect(fn () => testConditionalInGenericListReturn('tag', ['alpha', 123]))
+                ->toThrow(TypeError::class, 'string')
+            ;
         });
 
         test('evaluates conditional inside generic list parameter', function () {
             expect(testConditionalInGenericListParam(10, [10, 20, 30]))->toBeTrue();
 
-            expect(fn() => testConditionalInGenericListParam(10, [10, -5, 30]))
-                ->toThrow(TypeError::class, '[1] must be of type positive-int');
+            expect(fn () => testConditionalInGenericListParam(10, [10, -5, 30]))
+                ->toThrow(TypeError::class, '[1] must be of type positive-int')
+            ;
         });
     });
 
@@ -249,16 +252,18 @@ describe('Nested Conditional Types Inside Compound Structures', function () {
             expect(testConditionalInUnionReturn(5, null))->toBeNull();
             expect(testConditionalInUnionReturn(5, 42))->toBe(42);
 
-            expect(fn() => testConditionalInUnionReturn(5, -5))
-                ->toThrow(TypeError::class, 'must be of type (positive-int | null)');
+            expect(fn () => testConditionalInUnionReturn(5, -5))
+                ->toThrow(TypeError::class, 'must be of type (positive-int | null)')
+            ;
         });
 
         test('evaluates conditional inside nullable return and allows null', function () {
             expect(testConditionalInNullableReturn(5, null))->toBeNull();
             expect(testConditionalInNullableReturn(5, 100))->toBe(100);
 
-            expect(fn() => testConditionalInNullableReturn(5, -5))
-                ->toThrow(TypeError::class, 'positive-int');
+            expect(fn () => testConditionalInNullableReturn(5, -5))
+                ->toThrow(TypeError::class, 'positive-int')
+            ;
         });
     });
 
@@ -268,17 +273,19 @@ describe('Nested Conditional Types Inside Compound Structures', function () {
             expect($validCb())->toBe(42);
 
             $invalidCb = testConditionalInCallableReturn(5, -5);
-            expect(fn() => $invalidCb())
-                ->toThrow(TypeError::class, 'return value must be of type positive-int');
+            expect(fn () => $invalidCb())
+                ->toThrow(TypeError::class, 'return value must be of type positive-int')
+            ;
         });
 
         test('evaluates conditional in callable parameter and validates callback argument', function () {
-            $cb = fn(int $x): bool => $x > 0;
+            $cb = fn (int $x): bool => $x > 0;
 
             expect(testConditionalInCallableParam(5, $cb, 10))->toBeTrue();
 
-            expect(fn() => testConditionalInCallableParam(5, $cb, -50))
-                ->toThrow(TypeError::class, 'must be of type positive-int');
+            expect(fn () => testConditionalInCallableParam(5, $cb, -50))
+                ->toThrow(TypeError::class, 'must be of type positive-int')
+            ;
         });
     });
 
@@ -287,8 +294,9 @@ describe('Nested Conditional Types Inside Compound Structures', function () {
             $valid = testConditionalInObjectShapeReturn(5, 42);
             expect($valid->out)->toBe(42);
 
-            expect(fn() => testConditionalInObjectShapeReturn(5, -5))
-                ->toThrow(TypeError::class, '->out must be of type positive-int');
+            expect(fn () => testConditionalInObjectShapeReturn(5, -5))
+                ->toThrow(TypeError::class, '->out must be of type positive-int')
+            ;
         });
     });
 
@@ -297,26 +305,30 @@ describe('Nested Conditional Types Inside Compound Structures', function () {
             $resInt = testParamConditionalInShapeReturn(true, 100);
             expect($resInt)->toBe(['result' => 100]);
 
-            expect(fn() => testParamConditionalInShapeReturn(true, -50))
-                ->toThrow(TypeError::class, "['result'] must be of type positive-int");
+            expect(fn () => testParamConditionalInShapeReturn(true, -50))
+                ->toThrow(TypeError::class, "['result'] must be of type positive-int")
+            ;
 
             $resStr = testParamConditionalInShapeReturn(false, 'active_status');
             expect($resStr)->toBe(['result' => 'active_status']);
 
-            expect(fn() => testParamConditionalInShapeReturn(false, ''))
-                ->toThrow(TypeError::class, "['result'] must be of type non-empty-string");
+            expect(fn () => testParamConditionalInShapeReturn(false, ''))
+                ->toThrow(TypeError::class, "['result'] must be of type non-empty-string")
+            ;
         });
 
         test('evaluates parameter conditional inside generic list parameter', function () {
             expect(testParamConditionalInListParam('int', [10, 20]))->toBeTrue();
 
-            expect(fn() => testParamConditionalInListParam('int', [10, -5]))
-                ->toThrow(TypeError::class, '[1] must be of type positive-int');
+            expect(fn () => testParamConditionalInListParam('int', [10, -5]))
+                ->toThrow(TypeError::class, '[1] must be of type positive-int')
+            ;
 
             expect(testParamConditionalInListParam('str', ['a', 'b']))->toBeTrue();
 
-            expect(fn() => testParamConditionalInListParam('str', ['a', '']))
-                ->toThrow(TypeError::class, '[1] must be of type non-empty-string');
+            expect(fn () => testParamConditionalInListParam('str', ['a', '']))
+                ->toThrow(TypeError::class, '[1] must be of type non-empty-string')
+            ;
         });
     });
 
@@ -326,8 +338,9 @@ describe('Nested Conditional Types Inside Compound Structures', function () {
 
             expect($service->transformShape(10, 42))->toBe(['out' => 42]);
 
-            expect(fn() => $service->transformShape(10, -5))
-                ->toThrow(TypeError::class, "['out'] must be of type positive-int");
+            expect(fn () => $service->transformShape(10, -5))
+                ->toThrow(TypeError::class, "['out'] must be of type positive-int")
+            ;
         });
 
         test('evaluates nested conditional list in class methods', function () {
@@ -335,7 +348,7 @@ describe('Nested Conditional Types Inside Compound Structures', function () {
 
             expect($service->transformList('sample', ['valid_a', 'valid_b']))->toBe(['valid_a', 'valid_b']);
 
-            expect(fn() => $service->transformList('sample', ['valid_a', '']))
+            expect(fn () => $service->transformList('sample', ['valid_a', '']))
                 ->toThrow(TypeError::class, '[1] must be of type non-empty-string');
         });
     });

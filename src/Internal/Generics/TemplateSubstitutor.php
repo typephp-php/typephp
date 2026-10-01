@@ -43,6 +43,91 @@ final class TemplateSubstitutor
     }
 
     /**
+     * Flattens, deduplicates, and normalizes union types recursively.
+     *
+     * @param array<TypeNode> $types
+     */
+    public static function normalizeUnion(array $types): TypeNode
+    {
+        $unique = [];
+        /** @var list<TypeNode> $deduped */
+        $deduped = [];
+
+        foreach (self::flatten($types, UnionTypeNode::class) as $t) {
+            if ($t instanceof IdentifierTypeNode && strtolower($t->name) === 'mixed') {
+                return new IdentifierTypeNode('mixed');
+            }
+
+            $str = (string) $t;
+            if (! isset($unique[$str])) {
+                $unique[$str] = true;
+                $deduped[] = $t;
+            }
+        }
+
+        if (\count($deduped) === 0) {
+            return new IdentifierTypeNode('mixed');
+        }
+
+        return \count($deduped) === 1 ? $deduped[0] : new UnionTypeNode($deduped);
+    }
+
+    /**
+     * Flattens, deduplicates, and normalizes intersection types recursively.
+     *
+     * @param array<TypeNode> $types
+     */
+    public static function normalizeIntersection(array $types): TypeNode
+    {
+        $unique = [];
+        /** @var list<TypeNode> $deduped */
+        $deduped = [];
+
+        foreach (self::flatten($types, IntersectionTypeNode::class) as $t) {
+            if ($t instanceof IdentifierTypeNode && strtolower($t->name) === 'mixed') {
+                continue;
+            }
+
+            $str = (string) $t;
+            if (! isset($unique[$str])) {
+                $unique[$str] = true;
+                $deduped[] = $t;
+            }
+        }
+
+        if (\count($deduped) === 0) {
+            return new IdentifierTypeNode('mixed');
+        }
+
+        return \count($deduped) === 1 ? $deduped[0] : new IntersectionTypeNode($deduped);
+    }
+
+    /**
+     * Recursively inlines nested nodes of the given container class.
+     *
+     * @param array<TypeNode> $types
+     * @param class-string<UnionTypeNode>|class-string<IntersectionTypeNode> $containerClass
+     *
+     * @return list<TypeNode>
+     */
+    private static function flatten(array $types, string $containerClass): array
+    {
+        $result = [];
+
+        foreach ($types as $t) {
+            if ($t instanceof $containerClass) {
+                foreach (self::flatten($t->types, $containerClass) as $inner) {
+                    $result[] = $inner;
+                }
+            } else {
+                $result[] = $t;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
      * @param array<string, true> $visited
@@ -82,17 +167,21 @@ final class TemplateSubstitutor
         }
 
         if ($node instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(
+            $types = array_map(
                 fn ($t) => self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited),
                 $node->types
-            ));
+            );
+
+            return self::normalizeUnion($types);
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(
+            $types = array_map(
                 fn ($t) => self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited),
                 $node->types
-            ));
+            );
+
+            return self::normalizeIntersection($types);
         }
 
         if ($node instanceof ArrayShapeNode) {

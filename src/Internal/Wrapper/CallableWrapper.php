@@ -13,6 +13,7 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use ReflectionFunction;
 use TypeError;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
+use TypePHP\Internal\Checker\ConditionalChecker;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Internal\Docblock\DocblockParser;
@@ -21,7 +22,6 @@ use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
-use TypePHP\Internal\Checker\ConditionalChecker;
 
 /**
  * Wraps callables to enforce argument and return type contracts dynamically at runtime.
