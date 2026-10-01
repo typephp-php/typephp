@@ -79,6 +79,13 @@ final class InlineChecker
     private static array $classHasSelfOutCache = [];
 
     /**
+     * In-memory cache for resolved static property generic types: [$className][$propName] => TypeNode.
+     *
+     * @var array<string, array<string, TypeNode>>
+     */
+    private static array $resolvedStaticPropertyTypeCache = [];
+
+    /**
      * Resets internal type node and function caches. Useful for test isolation.
      */
     public static function reset(): void
@@ -88,6 +95,7 @@ final class InlineChecker
         self::$nullPropertyCache = [];
         self::$propertyUsesTemplatesCache = [];
         self::$classHasSelfOutCache = [];
+        self::$resolvedStaticPropertyTypeCache = [];
     }
 
     /**
@@ -307,9 +315,6 @@ final class InlineChecker
     /**
      * Evaluates class property validation dynamically based on configuration with zero-allocation 2D caching.
      */
-    /**
-     * Evaluates class property validation dynamically based on configuration with zero-allocation 2D caching.
-     */
     public static function checkProperty(mixed $value, mixed $objectOrClass, string $propName, string $file, TypeValidatorRegistry $registry): mixed
     {
         if (! \is_object($objectOrClass) && ! \is_string($objectOrClass)) {
@@ -326,8 +331,9 @@ final class InlineChecker
             return $value;
         }
 
+        // 1. Enforce magic property access permissions only for non-physical dynamic properties
         $rawTypeNode = null;
-        if (Config::isMagicPropertiesEnabled()) {
+        if (! property_exists($className, $propName) && Config::isMagicPropertiesEnabled()) {
             $magicContract = DocblockParser::parseMagicPropertyContract($className, $propName);
             if ($magicContract !== null) {
                 if (! Config::isMagicPropertyWritesEnabled()) {
@@ -342,6 +348,7 @@ final class InlineChecker
             }
         }
 
+        // 2. Fall back to standard declared class property if not intercepted by a magic contract
         if ($rawTypeNode === null) {
             $rawTypeNode = DocblockParser::parseProperty($className, $propName);
         }
@@ -363,6 +370,11 @@ final class InlineChecker
             $propertyUsesTemplates = self::propertyUsesTemplates($rawTypeNode, $className, $propName);
             if ($propertyUsesTemplates) {
                 $typeNode = self::substitutePropertyGenerics($rawTypeNode, $objectOrClass, $className);
+            }
+        } elseif (\is_string($objectOrClass)) {
+            $propertyUsesTemplates = self::propertyUsesTemplates($rawTypeNode, $className, $propName);
+            if ($propertyUsesTemplates) {
+                $typeNode = self::substituteStaticPropertyGenerics($rawTypeNode, $className, $propName);
             }
         }
 
@@ -671,6 +683,40 @@ final class InlineChecker
         }
 
         return $typeNode;
+    }
+
+    /**
+     * Substitutes generic template types declared on static class properties with zero-allocation memoization.
+     */
+    private static function substituteStaticPropertyGenerics(TypeNode $typeNode, string $className, string $propName): TypeNode
+    {
+        if (isset(self::$resolvedStaticPropertyTypeCache[$className][$propName])) {
+            return self::$resolvedStaticPropertyTypeCache[$className][$propName];
+        }
+
+        $constructorTarget = $className . '::__construct';
+        $contract = DocblockParser::parse($constructorTarget);
+
+        $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        $classBindings = TemplateManager::getClassInheritedBindings($className);
+        $classAliases = DocblockParser::parseClassAliases($className);
+        $activeBindings = [...$classAliases, ...$classBindings];
+
+        if (\count($activeBindings) > 0 || \count($allTemplates) > 0) {
+            $typeNode = TemplateSubstitutor::substitute($typeNode, $activeBindings, $allTemplates);
+
+            if (class_exists($className, false) || class_exists($className) || interface_exists($className) || trait_exists($className)) {
+                try {
+                    /** @var class-string<object> $className */
+                    $refClass = new \ReflectionClass($className);
+                    $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
+                } catch (\ReflectionException $e) {
+                    // Silently continue if reflection fails
+                }
+            }
+        }
+
+        return self::$resolvedStaticPropertyTypeCache[$className][$propName] = $typeNode;
     }
 
     /**

@@ -273,8 +273,10 @@ final class ParamChecker
         array $classTemplates,
         object|string|null $thisOrClass = null
     ): void {
-        if (\count($methodTemplates) > 0) {
-            TemplateManager::clearCallBindings($effectiveFunction, $methodTemplates);
+        $hasTemplatesToClear = \count($methodTemplates) > 0 || ($thisObj === null && \count($classTemplates) > 0);
+
+        if ($hasTemplatesToClear) {
+            TemplateManager::clearCallBindings($effectiveFunction, [...$classTemplates, ...$methodTemplates]);
         }
 
         if (\count($classTemplates) > 0 && str_contains($effectiveFunction, '::')) {
