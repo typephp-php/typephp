@@ -6,7 +6,10 @@ namespace TypePHP\Internal\Ast;
 
 use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Docblock\DocblockExtractor;
+use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Util\Config;
 
 /**
@@ -29,6 +32,11 @@ final class ContractVisitor extends NodeVisitorAbstract
         Node\Expr\AssignOp\ShiftRight::class => Node\Expr\BinaryOp\ShiftRight::class,
         Node\Expr\AssignOp\Coalesce::class => Node\Expr\BinaryOp\Coalesce::class,
     ];
+
+    /**
+     * @var array<string, array<string|int, string>>
+     */
+    private static array $parsedShapeCache = [];
 
     private ScopeManager $scopeManager;
 
@@ -441,6 +449,16 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         /** @var Node\Expr\List_|Node\Expr\Array_ $destructuringVar */
         $destructuringVar = $node->expr->var;
+
+        // Auto-propagate types from RHS if it's a known ArrayShape in scope
+        $rhs = $node->expr->expr;
+        if ($rhs instanceof Node\Expr\Variable && \is_string($rhs->name)) {
+            $sourceType = $this->scopeManager->getVarTypeFromScope($rhs->name);
+            if ($sourceType !== null && str_contains($sourceType, '{')) {
+                $this->propagateShapeTypesToDestructuring($destructuringVar, $sourceType);
+            }
+        }
+
         $destructuredVars = $this->extractDestructuringVariables($destructuringVar);
         $checkStmts = [];
 
@@ -461,6 +479,81 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         return $checkStmts !== [] ? [$node, ...$checkStmts] : null;
+    }
+
+    /**
+     * Propagates field types from an array shape into destructured local variables with O(1) AST memoization.
+     */
+    private function propagateShapeTypesToDestructuring(Node\Expr\List_|Node\Expr\Array_ $destructuringVar, string $shapeTypeString): void
+    {
+        try {
+            $shapeMap = self::$parsedShapeCache[$shapeTypeString] ?? null;
+
+            if ($shapeMap === null) {
+                $normalized = DocblockNormalizer::normalize($shapeTypeString);
+                [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+                $tokens = new TokenIterator($lexer->tokenize($normalized));
+                $parsed = $typeParser->parse($tokens);
+
+                if (! ($parsed instanceof ArrayShapeNode)) {
+                    return;
+                }
+
+                $shapeMap = [];
+                $autoIdx = 0;
+                foreach ($parsed->items as $item) {
+                    $key = match (true) {
+                        $item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode => $item->keyName->value,
+                        $item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode => (int) $item->keyName->value,
+                        $item->keyName instanceof \PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode => $item->keyName->name,
+                        $item->keyName !== null => (string) $item->keyName,
+                        default => $autoIdx,
+                    };
+
+                    if (\is_int($key)) {
+                        $autoIdx = max($autoIdx, $key + 1);
+                    }
+
+                    $shapeMap[$key] = (string) $item->valueType;
+                }
+
+                self::$parsedShapeCache[$shapeTypeString] = $shapeMap;
+            }
+
+            $currentIdx = 0;
+            foreach ($destructuringVar->items as $item) {
+                if ($item === null) {
+                    $currentIdx++;
+
+                    continue;
+                }
+
+                $destructKey = null;
+                if ($item->key instanceof Node\Scalar\String_) {
+                    $destructKey = $item->key->value;
+                } elseif ($item->key instanceof Node\Scalar\LNumber) {
+                    $destructKey = $item->key->value;
+                    $currentIdx = max($currentIdx, $destructKey + 1);
+                } elseif ($item->key === null) {
+                    $destructKey = $currentIdx;
+                    $currentIdx++;
+                }
+
+                if ($destructKey !== null && isset($shapeMap[$destructKey])) {
+                    $targetVar = $item->value;
+                    $fieldType = $shapeMap[$destructKey];
+
+                    if ($targetVar instanceof Node\Expr\Variable && \is_string($targetVar->name)) {
+                        $this->scopeManager->registerVarType($targetVar->name, $fieldType);
+                    } elseif ($targetVar instanceof Node\Expr\List_ || $targetVar instanceof Node\Expr\Array_) {
+                        // Recursively propagate nested shape fields
+                        $this->propagateShapeTypesToDestructuring($targetVar, $fieldType);
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore parsing errors
+        }
     }
 
     private function handleAssign(Node\Expr\Assign $node): void

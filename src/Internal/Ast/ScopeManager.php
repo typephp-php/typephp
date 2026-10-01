@@ -30,6 +30,19 @@ final class ScopeManager
     private int $depth = 0;
 
     /**
+     * Programmatically registers a variable's type into the current scope frame.
+     * Preserves explicit inline @var declarations in the current frame unless overwrite is true.
+     */
+    public function registerVarType(string $varName, string $typeString, bool $overwrite = false): void
+    {
+        if (! $overwrite && isset($this->scopeStack[$this->depth][$varName])) {
+            return;
+        }
+
+        $this->scopeStack[$this->depth][$varName] = $typeString;
+    }
+
+    /**
      * Pushes a new lexical scope frame (O(1)).
      *
      * @param bool $isIsolated Whether this scope is a hard boundary (function, method, closure)
