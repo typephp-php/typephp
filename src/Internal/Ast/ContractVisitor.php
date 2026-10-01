@@ -223,6 +223,21 @@ final class ContractVisitor extends NodeVisitorAbstract
             if ($stmt instanceof Node\Stmt\ClassMethod && strtolower($stmt->name->toString()) === '__construct') {
                 $hasConstructor = true;
             } elseif ($stmt instanceof Node\Stmt\Property && ! $stmt->isStatic()) {
+                $hasGetHook = false;
+                if (isset($stmt->hooks) && \is_array($stmt->hooks)) {
+                    foreach ($stmt->hooks as $hook) {
+                        if (strtolower($hook->name->toString()) === 'get') {
+                            $hasGetHook = true;
+
+                            break;
+                        }
+                    }
+                }
+
+                if ($hasGetHook) {
+                    continue;
+                }
+
                 $doc = $stmt->getDocComment();
                 if ($doc !== null && str_contains($doc->getText(), '@var') && ! str_contains($doc->getText(), '@typephp-ignore')) {
                     foreach ($stmt->props as $p) {

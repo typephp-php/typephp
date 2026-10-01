@@ -349,7 +349,8 @@ describe('Nested Conditional Types Inside Compound Structures', function () {
             expect($service->transformList('sample', ['valid_a', 'valid_b']))->toBe(['valid_a', 'valid_b']);
 
             expect(fn () => $service->transformList('sample', ['valid_a', '']))
-                ->toThrow(TypeError::class, '[1] must be of type non-empty-string');
+                ->toThrow(TypeError::class, '[1] must be of type non-empty-string')
+            ;
         });
     });
 });

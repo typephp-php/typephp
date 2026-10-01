@@ -16,6 +16,39 @@ describe('ContractVisitor AST Transformation Unit Tests', function () {
         $this->printer = new TypePHPPrinter();
     });
 
+    test('skips constructor default check for properties with a get hook', function () {
+        if (PHP_VERSION_ID < 80400) {
+            expect(true)->toBeTrue();
+
+            return;
+        }
+
+        $code = <<<'PHP'
+<?php
+class HookedClass {
+    /** @var positive-int */
+    public int $count = 5 {
+        get => -1;
+        set (int $val) { $this->count = $val; }
+    }
+
+    /** @var positive-int */
+    public int $regularCount = 10;
+}
+PHP;
+
+        $stmts = $this->parser->parse($code);
+        $traverser = new NodeTraverser();
+        $traverser->addVisitor(new ContractVisitor());
+        $newStmts = $traverser->traverse($stmts);
+
+        $transformed = $this->printer->prettyPrint($newStmts);
+
+        expect($transformed)->toContain("RuntimeTypeChecker::checkProperty(\$this->regularCount, \$this, 'regularCount'");
+
+        expect($transformed)->not()->toContain("RuntimeTypeChecker::checkProperty(\$this->count, \$this, 'count'");
+    });
+
     test('transforms compound assignment operators (*=, +=, -=) into checkVariable wrappers', function () {
         $code = <<<'PHP'
 <?php
