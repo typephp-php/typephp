@@ -111,6 +111,7 @@ final class DocblockExtractor
             foreach ($phpDocNode->getPropertyTagValues() as $tag) {
                 if (ltrim($tag->propertyName, '$') === $propName) {
                     $propTag = $tag;
+
                     break;
                 }
             }
@@ -119,6 +120,7 @@ final class DocblockExtractor
             foreach ($phpDocNode->getPropertyReadTagValues() as $tag) {
                 if (ltrim($tag->propertyName, '$') === $propName) {
                     $readTag = $tag;
+
                     break;
                 }
             }
@@ -127,6 +129,7 @@ final class DocblockExtractor
             foreach ($phpDocNode->getPropertyWriteTagValues() as $tag) {
                 if (ltrim($tag->propertyName, '$') === $propName) {
                     $writeTag = $tag;
+
                     break;
                 }
             }
@@ -338,9 +341,9 @@ final class DocblockExtractor
         }
 
         $unnamed = [];
-        $unnamedPhpstan = array_values(array_filter($node->getVarTagValues('@phpstan-var'), fn($t) => $t->variableName === ''));
-        $unnamedPsalm = array_values(array_filter($node->getVarTagValues('@psalm-var'), fn($t) => $t->variableName === ''));
-        $unnamedStandard = array_values(array_filter($node->getVarTagValues('@var'), fn($t) => $t->variableName === ''));
+        $unnamedPhpstan = array_values(array_filter($node->getVarTagValues('@phpstan-var'), fn ($t) => $t->variableName === ''));
+        $unnamedPsalm = array_values(array_filter($node->getVarTagValues('@psalm-var'), fn ($t) => $t->variableName === ''));
+        $unnamedStandard = array_values(array_filter($node->getVarTagValues('@var'), fn ($t) => $t->variableName === ''));
 
         if (\count($unnamedPhpstan) > 0) {
             $unnamed = $unnamedPhpstan;

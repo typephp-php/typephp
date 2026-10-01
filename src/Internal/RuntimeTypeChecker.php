@@ -253,8 +253,11 @@ final class RuntimeTypeChecker
 
         $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] ?? null;
         if ($hasMethodTemplates === null) {
+            $isStaticCall = ($thisObj === null);
             $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] = (
-                (($contract['templates'] ?? []) !== []) || ($contract['returnUsesMethodTemplates'] ?? false)
+                (($contract['templates'] ?? []) !== [])
+                || ($contract['returnUsesMethodTemplates'] ?? false)
+                || ($isStaticCall && ($contract['classTemplates'] ?? []) !== [])
             );
             self::$hasMethodTemplatesCache[$function] = $hasMethodTemplates;
         }
