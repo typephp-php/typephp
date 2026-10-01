@@ -140,9 +140,7 @@ describe('Union & Intersection Accumulation, Flattening and Deduplication', func
 
             $col->push(new Cat('Whiskers'));
             $col->push(new AccumulationBird('Tweety'));
-            // Push Dog again (already present from initial state)
             $col->push(new Dog('Rex'));
-            // Push Cat again
             $col->push(new Cat('Shadow'));
 
             $expected = '(' . Dog::class . ' | ' . Cat::class . ' | ' . AccumulationBird::class . ')';
