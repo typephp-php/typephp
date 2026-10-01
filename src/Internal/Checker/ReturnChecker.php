@@ -6,7 +6,6 @@ namespace TypePHP\Internal\Checker;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
-use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
@@ -343,9 +342,9 @@ final class ReturnChecker
 
         $hasGenerics = (\count($templates) > 0);
         $hasAliases = (\count($aliases) > 0);
-        $isParamConditional = ($returnTypeNode instanceof ConditionalTypeForParameterNode);
+        $hasConditionals = ConditionalChecker::containsConditional($returnTypeNode);
 
-        if (! $hasGenerics && ! $hasAliases && ! $isParamConditional && ! ($returnTypeNode instanceof CallableTypeNode)) {
+        if (! $hasGenerics && ! $hasAliases && ! $hasConditionals && ! ($returnTypeNode instanceof CallableTypeNode)) {
             $isDynamic = $contract['returnIsDynamic'] ?? (str_contains((string) $returnTypeNode, 'static') || str_contains((string) $returnTypeNode, '$this'));
 
             if (! $isDynamic) {
@@ -386,7 +385,7 @@ final class ReturnChecker
 
         $sig = null;
         $boundCount = \count($boundTemplates);
-        if ($boundCount > 0 && $boundCount <= 2 && ! $isParamConditional && \count($aliases) === 0 && $thisObj === null) {
+        if ($boundCount > 0 && $boundCount <= 2 && ! $hasConditionals && \count($aliases) === 0 && $thisObj === null) {
             if ($boundCount === 1) {
                 $first = reset($boundTemplates);
                 $sig = $first instanceof IdentifierTypeNode ? $first->name : (string) $first;
@@ -409,7 +408,7 @@ final class ReturnChecker
                 $resolvedType = $aliases[$resolvedType->name];
             }
 
-            if (\count($boundTemplates) === 0 && \count($templates) > 0 && ! $isParamConditional && $thisObj === null) {
+            if (\count($boundTemplates) === 0 && \count($templates) > 0 && ! $hasConditionals && $thisObj === null) {
                 $resolvedType = self::$unboundReturnCache[$function] ??= SpecialTypeResolver::resolve(
                     TemplateSubstitutor::substitute($returnTypeNode, [], $templates),
                     $function,

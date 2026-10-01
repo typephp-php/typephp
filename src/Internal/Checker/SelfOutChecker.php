@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Checker;
 
-use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode;
-use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
@@ -79,10 +77,7 @@ final class SelfOutChecker
             $selfOutNode = SpecialTypeResolver::resolve($selfOutNode, $effectiveFunction, $thisObj);
         }
 
-        if (
-            $selfOutNode instanceof ConditionalTypeForParameterNode ||
-            $selfOutNode instanceof ConditionalTypeNode
-        ) {
+        if (ConditionalChecker::containsConditional($selfOutNode)) {
             $selfOutNode = ConditionalChecker::resolve($selfOutNode, $vars, $boundTemplates, $registry, $effectiveFunction);
         }
 

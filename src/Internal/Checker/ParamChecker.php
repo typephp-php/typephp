@@ -8,8 +8,6 @@ use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
-use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode;
-use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
@@ -238,10 +236,7 @@ final class ParamChecker
     ): ?ErrorMessage {
         foreach ($types as $paramName => $typeNode) {
             if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
-                if (
-                    $typeNode instanceof ConditionalTypeForParameterNode ||
-                    $typeNode instanceof ConditionalTypeNode
-                ) {
+                if (ConditionalChecker::containsConditional($typeNode)) {
                     $typeNode = ConditionalChecker::resolve($typeNode, $vars, [], $registry, $effectiveFunction);
                 }
 
@@ -1095,10 +1090,7 @@ final class ParamChecker
         object|string|null $thisOrClass = null,
         bool $isSensitive = false
     ): ?ErrorMessage {
-        if (
-            $typeNode instanceof ConditionalTypeForParameterNode ||
-            $typeNode instanceof ConditionalTypeNode
-        ) {
+        if (ConditionalChecker::containsConditional($typeNode)) {
             $typeNode = ConditionalChecker::resolve($typeNode, $vars, $boundTemplates, $registry, $effectiveFunction);
         }
 
@@ -1115,10 +1107,7 @@ final class ParamChecker
             $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
         }
 
-        if (
-            $typeNode instanceof ConditionalTypeForParameterNode ||
-            $typeNode instanceof ConditionalTypeNode
-        ) {
+        if (ConditionalChecker::containsConditional($typeNode)) {
             $typeNode = ConditionalChecker::resolve($typeNode, $vars, $boundTemplates, $registry, $effectiveFunction);
         }
 

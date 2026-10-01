@@ -13,6 +13,7 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use ReflectionFunction;
 use TypeError;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
+use TypePHP\Internal\Checker\ConditionalChecker;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Internal\Docblock\DocblockParser;
@@ -86,6 +87,10 @@ final class CallableWrapper
         if ($typeNode !== null && (\count($boundTemplates) > 0 || \count($templates) > 0)) {
             $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
             $typeNode = SpecialTypeResolver::resolve($typeNode, $function, $thisObj);
+        }
+
+        if ($typeNode !== null && ConditionalChecker::containsConditional($typeNode)) {
+            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $function);
         }
 
         $prefix = ($paramName === 'return') ? "$function(): Return value" : "$function(): Callback \$$paramName";
