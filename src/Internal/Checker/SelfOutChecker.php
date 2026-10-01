@@ -79,10 +79,7 @@ final class SelfOutChecker
             $selfOutNode = SpecialTypeResolver::resolve($selfOutNode, $effectiveFunction, $thisObj);
         }
 
-        if (
-            $selfOutNode instanceof ConditionalTypeForParameterNode ||
-            $selfOutNode instanceof ConditionalTypeNode
-        ) {
+        if (ConditionalChecker::containsConditional($selfOutNode)) {
             $selfOutNode = ConditionalChecker::resolve($selfOutNode, $vars, $boundTemplates, $registry, $effectiveFunction);
         }
 

@@ -51,7 +51,7 @@ final class DocblockNormalizer
         }
 
         if (stripos($doc, 'callable') !== false || stripos($doc, 'closure') !== false) {
-            $doc = preg_replace('/(callable|Closure|static-closure)\s*\(([^)]*)\)(?!\s*:)/i', '$1($2): mixed', $doc) ?? $doc;
+            $doc = preg_replace('/(callable|Closure|static-closure)\s*(\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))(?!\s*:)/i', '$1$2: mixed', $doc) ?? $doc;
         }
 
         if (str_contains($doc, '::') && str_contains($doc, ':')) {

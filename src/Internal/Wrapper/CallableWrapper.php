@@ -21,6 +21,7 @@ use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Checker\ConditionalChecker;
 
 /**
  * Wraps callables to enforce argument and return type contracts dynamically at runtime.
@@ -86,6 +87,10 @@ final class CallableWrapper
         if ($typeNode !== null && (\count($boundTemplates) > 0 || \count($templates) > 0)) {
             $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
             $typeNode = SpecialTypeResolver::resolve($typeNode, $function, $thisObj);
+        }
+
+        if ($typeNode !== null && ConditionalChecker::containsConditional($typeNode)) {
+            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $function);
         }
 
         $prefix = ($paramName === 'return') ? "$function(): Return value" : "$function(): Callback \$$paramName";

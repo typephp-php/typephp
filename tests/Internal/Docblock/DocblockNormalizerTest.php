@@ -102,6 +102,37 @@ describe('DocblockNormalizer', function () {
             $expected3 = '/** @param callable(): mixed $emptyCallable */';
             expect(DocblockNormalizer::normalize($doc3))->toBe($expected3);
         });
+
+        test('preserves callable signatures containing inner parenthesized conditional types without inserting premature : mixed', function () {
+            $doc1 = '/** @param callable((T is int ? positive-int : T)): bool $callback */';
+            expect(DocblockNormalizer::normalize($doc1))->toBe($doc1);
+
+            $doc2 = '/** @param Closure((T is string ? non-empty-string : int)): string $closure */';
+            expect(DocblockNormalizer::normalize($doc2))->toBe($doc2);
+        });
+
+        test('preserves callable signatures containing inner parenthesized unions and intersections', function () {
+            $doc1 = '/** @param callable((int|string)): bool $cb */';
+            expect(DocblockNormalizer::normalize($doc1))->toBe($doc1);
+
+            $doc2 = '/** @param callable((Countable&ArrayAccess)): void $cb */';
+            expect(DocblockNormalizer::normalize($doc2))->toBe($doc2);
+        });
+
+        test('preserves nested higher-order callable signatures', function () {
+            $doc = '/** @param callable(callable(int): string): bool $cb */';
+            expect(DocblockNormalizer::normalize($doc))->toBe($doc);
+        });
+
+        test('auto-completes omitted return types for callables with inner parenthesized parameter types', function () {
+            $doc1 = '/** @param callable((T is int ? positive-int : T) $x) $cb */';
+            $expected1 = '/** @param callable((T is int ? positive-int : T) $x): mixed $cb */';
+            expect(DocblockNormalizer::normalize($doc1))->toBe($expected1);
+
+            $doc2 = '/** @param callable((int|string) $x) $cb */';
+            $expected2 = '/** @param callable((int|string) $x): mixed $cb */';
+            expect(DocblockNormalizer::normalize($doc2))->toBe($expected2);
+        });
     });
 
     describe('Type Alias Normalization (@phpstan-type and @psalm-type)', function () {

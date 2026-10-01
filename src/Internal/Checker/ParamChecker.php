@@ -238,10 +238,7 @@ final class ParamChecker
     ): ?ErrorMessage {
         foreach ($types as $paramName => $typeNode) {
             if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
-                if (
-                    $typeNode instanceof ConditionalTypeForParameterNode ||
-                    $typeNode instanceof ConditionalTypeNode
-                ) {
+                if (ConditionalChecker::containsConditional($typeNode)) {
                     $typeNode = ConditionalChecker::resolve($typeNode, $vars, [], $registry, $effectiveFunction);
                 }
 
@@ -1095,10 +1092,7 @@ final class ParamChecker
         object|string|null $thisOrClass = null,
         bool $isSensitive = false
     ): ?ErrorMessage {
-        if (
-            $typeNode instanceof ConditionalTypeForParameterNode ||
-            $typeNode instanceof ConditionalTypeNode
-        ) {
+        if (ConditionalChecker::containsConditional($typeNode)) {
             $typeNode = ConditionalChecker::resolve($typeNode, $vars, $boundTemplates, $registry, $effectiveFunction);
         }
 
@@ -1115,10 +1109,7 @@ final class ParamChecker
             $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
         }
 
-        if (
-            $typeNode instanceof ConditionalTypeForParameterNode ||
-            $typeNode instanceof ConditionalTypeNode
-        ) {
+        if (ConditionalChecker::containsConditional($typeNode)) {
             $typeNode = ConditionalChecker::resolve($typeNode, $vars, $boundTemplates, $registry, $effectiveFunction);
         }
 
