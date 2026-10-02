@@ -6,110 +6,95 @@ if (PHP_VERSION_ID < 80400) {
     return;
 }
 
+require_once __DIR__ . '/../../Fixtures/PropertyHooks/HookedPropertyDefaultFixtures.php';
+
 use TypePHP\Exception\TypeError;
+use TypePHP\Tests\Fixtures\PropertyHooks\BackedPropertyWithViolatingGetHook;
+use TypePHP\Tests\Fixtures\PropertyHooks\BasicTransformingHooks;
+use TypePHP\Tests\Fixtures\PropertyHooks\HookedPropertyAccessingConstructorState;
+use TypePHP\Tests\Fixtures\PropertyHooks\MixedHookedAndRegularPropertiesClass;
+use TypePHP\Tests\Fixtures\PropertyHooks\MixedSetOnlyAndUnprotectedPropertyModel;
+use TypePHP\Tests\Fixtures\PropertyHooks\SetOnlyHookedModel;
+use TypePHP\Tests\Fixtures\PropertyHooks\SetOnlyHookTransformingModel;
 
-class BackedPropertyWithViolatingGetHook
-{
-    /**
-     * Backed property with default value 5 and a get hook returning -1.
-     * The default (5) is valid, but the getter returns an invalid value.
-     *
-     * @var positive-int
-     */
-    public int $count = 5 {
-        get => -1;
-        set(int $value) {
-            $this->count = $value;
-        }
-    }
-}
+describe('PHP 8.4 Hooked Property Default Value Validation', function () {
+    describe('Get Hooks with Defaults', function () {
+        test('does not invoke get hook during instantiation for backed properties with defaults', function () {
+            $broken = new BackedPropertyWithViolatingGetHook();
 
-class HookedPropertyAccessingConstructorState
-{
-    private string $prefix;
+            expect($broken)->toBeInstanceOf(BackedPropertyWithViolatingGetHook::class);
 
-    /**
-     * Backed property whose get hook accesses an uninitialized dependency.
-     *
-     * @var non-empty-string
-     */
-    public string $title = 'default' {
-        get => $this->prefix . ': ' . $this->title;
-    }
+            expect(fn () => $broken->count)
+                ->toThrow(TypeError::class, 'Property TypePHP\Tests\Fixtures\PropertyHooks\BackedPropertyWithViolatingGetHook::$count must be of type positive-int, negative int (-1) given')
+            ;
+        });
 
-    public function __construct(string $prefix)
-    {
-        $this->prefix = $prefix;
-    }
-}
+        test('does not execute get hook before constructor initializes required object state', function () {
+            $obj = new HookedPropertyAccessingConstructorState('ITEM');
 
-class MixedHookedAndRegularPropertiesClass
-{
-    /**
-     * Hooked property with get hook (should skip constructor validation)
-     *
-     * @var positive-int
-     */
-    public int $hookedCount = 10 {
-        get => $this->hookedCount * 2;
-    }
+            expect($obj)->toBeInstanceOf(HookedPropertyAccessingConstructorState::class)
+                ->and($obj->title)->toBe('ITEM: default')
+            ;
+        });
 
-    /**
-     * Regular property with an invalid default value (must be caught in __construct)
-     *
-     * @var positive-int
-     */
-    public int $invalidDefault = -5;
-}
+        test('still enforces default value validation in constructor for regular properties in the same class', function () {
+            expect(fn () => new MixedHookedAndRegularPropertiesClass())
+                ->toThrow(TypeError::class, 'Property TypePHP\Tests\Fixtures\PropertyHooks\MixedHookedAndRegularPropertiesClass::$invalidDefault must be of type positive-int')
+            ;
+        });
 
-class BasicTransformingHooks
-{
-    /**
-     * @var non-empty-string
-     */
-    public string $greeting = 'hello' {
-        get => strtoupper($this->greeting);
-        set(string $value) {
-            $this->greeting = trim($value);
-        }
-    }
-}
+        test('executes get and set transformations accurately without constructor interference', function () {
+            $basic = new BasicTransformingHooks();
 
-describe('PHP 8.4 Backed Property Hook Default Initialization', function () {
-    test('does not invoke get hook during instantiation for backed properties with defaults', function () {
-        $broken = new BackedPropertyWithViolatingGetHook();
+            expect($basic->greeting)->toBe('HELLO');
 
-        expect($broken)->toBeInstanceOf(BackedPropertyWithViolatingGetHook::class);
+            $basic->greeting = '  world  ';
+            expect($basic->greeting)->toBe('WORLD');
 
-        expect(fn () => $broken->count)
-            ->toThrow(TypeError::class, 'Property BackedPropertyWithViolatingGetHook::$count must be of type positive-int, negative int (-1) given')
-        ;
+            expect(fn () => $basic->greeting = '')
+                ->toThrow(TypeError::class, 'Property TypePHP\Tests\Fixtures\PropertyHooks\BasicTransformingHooks::$greeting must be of type non-empty-string')
+            ;
+        });
     });
 
-    test('does not execute get hook before constructor initializes required object state', function () {
-        $obj = new HookedPropertyAccessingConstructorState('ITEM');
+    describe('Set-Only Hooks with Defaults', function () {
+        test('does not throw false positive on constructor entry when set-only hook has transient sentinel default', function () {
+            $model = new SetOnlyHookedModel('  hello  ');
 
-        expect($obj)->toBeInstanceOf(HookedPropertyAccessingConstructorState::class)
-            ->and($obj->title)->toBe('ITEM: default')
-        ;
-    });
+            expect($model)->toBeInstanceOf(SetOnlyHookedModel::class)
+                ->and($model->label)->toBe('hello')
+            ;
+        });
 
-    test('still enforces default value validation in constructor for regular properties in the same class', function () {
-        expect(fn () => new MixedHookedAndRegularPropertiesClass())
-            ->toThrow(TypeError::class, 'Property MixedHookedAndRegularPropertiesClass::$invalidDefault must be of type positive-int')
-        ;
-    });
+        test('still enforces type contract on set hook when constructor assigns invalid value', function () {
+            expect(fn () => new SetOnlyHookedModel(''))
+                ->toThrow(TypeError::class, 'Argument $label must be of type non-empty-string, empty string (\'\') given')
+            ;
 
-    test('executes get and set transformations accurately without constructor interference', function () {
-        $basic = new BasicTransformingHooks();
+            $model = new SetOnlyHookedModel('valid');
+            expect(fn () => $model->label = '')
+                ->toThrow(TypeError::class, 'Property TypePHP\Tests\Fixtures\PropertyHooks\SetOnlyHookedModel::$label must be of type non-empty-string, empty string (\'\') given')
+            ;
+        });
 
-        expect($basic->greeting)->toBe('HELLO');
+        test('validates positive-int set-only hook with zero default when constructor assigns valid integer', function () {
+            $model = new SetOnlyHookTransformingModel(42);
 
-        $basic->greeting = '  world  ';
-        expect($basic->greeting)->toBe('WORLD');
+            expect($model->score)->toBe(42);
 
-        expect(fn () => $basic->greeting = '')
-            ->toThrow(TypeError::class, 'Property BasicTransformingHooks::$greeting must be of type non-empty-string')
-        ;
+            expect(fn () => new SetOnlyHookTransformingModel(-5))
+                ->toThrow(TypeError::class, 'Argument $score must be of type positive-int, negative int (-5) given')
+            ;
+
+            expect(fn () => $model->score = -5)
+                ->toThrow(TypeError::class, 'Property TypePHP\Tests\Fixtures\PropertyHooks\SetOnlyHookTransformingModel::$score must be of type positive-int, negative int (-5) given')
+            ;
+        });
+
+        test('still catches invalid defaults on regular unhooked properties in set-only class', function () {
+            expect(fn () => new MixedSetOnlyAndUnprotectedPropertyModel('valid'))
+                ->toThrow(TypeError::class, 'Property TypePHP\Tests\Fixtures\PropertyHooks\MixedSetOnlyAndUnprotectedPropertyModel::$invalidDefault must be of type positive-int')
+            ;
+        });
     });
 });
