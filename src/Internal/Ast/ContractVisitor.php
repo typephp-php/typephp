@@ -364,6 +364,14 @@ final class ContractVisitor extends NodeVisitorAbstract
                     $hasTraits = true;
                 } elseif ($stmt instanceof Node\Stmt\Property && $stmt->getDocComment() !== null) {
                     $hasPropertyWithDoc = true;
+                } elseif ($stmt instanceof Node\Stmt\ClassMethod && strtolower($stmt->name->toString()) === '__construct') {
+                    foreach ($stmt->params as $param) {
+                        if ($param->isPromoted() && $param->getDocComment() !== null) {
+                            $hasPropertyWithDoc = true;
+
+                            break;
+                        }
+                    }
                 }
             }
 

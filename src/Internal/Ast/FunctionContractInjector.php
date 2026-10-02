@@ -48,6 +48,17 @@ final class FunctionContractInjector
 
         $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
         $isConstructor = $isClassMethod && $methodName === '__construct';
+
+        if ($isConstructor && ! $hasPropertyWithDoc) {
+            foreach ($node->params as $param) {
+                if ($param->isPromoted() && $param->getDocComment() !== null) {
+                    $hasPropertyWithDoc = true;
+
+                    break;
+                }
+            }
+        }
+
         $isMagicLifecycle = $isClassMethod && \in_array($methodName, ['__construct', '__destruct', '__clone'], true);
         $isMagicGet = $isClassMethod && $methodName === '__get';
         $isMagicCall = $isClassMethod && ($methodName === '__call' || $methodName === '__callstatic');
@@ -188,7 +199,7 @@ final class FunctionContractInjector
             return false;
         }
 
-        if ($isPrivate && $docText === '') {
+        if ($isPrivate && $docText === '' && ! ($isConstructor && $hasPropertyWithDoc)) {
             return false;
         }
 
@@ -204,7 +215,7 @@ final class FunctionContractInjector
             return self::hasNonMixedParam($docText);
         }
 
-        return $isClassMethod && ! $isPrivate;
+        return $isClassMethod && (! $isPrivate || ($isConstructor && $hasPropertyWithDoc));
     }
 
     private static function hasNonMixedParam(string $docText): bool
@@ -469,7 +480,10 @@ final class FunctionContractInjector
         $wrappers = [];
 
         foreach ($params as $param) {
-            if ($predicate($param, $docText) && $param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
+            $paramDoc = $param->getDocComment() !== null ? $param->getDocComment()->getText() : '';
+            $effectiveDoc = $docText . ' ' . $paramDoc;
+
+            if ($predicate($param, $effectiveDoc) && $param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
                 $paramName = $param->var->name;
                 $assignExpr = new Node\Expr\Assign(
                     new Node\Expr\Variable($paramName),
