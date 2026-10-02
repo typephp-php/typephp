@@ -317,4 +317,40 @@ PHP;
 
         expect($caught)->toBeTrue();
     });
+
+    test('preserves exact line numbers when a constructor has multi-line parameters and an empty body', function () {
+        $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+class MultiLineEmptyConstructor
+{
+    /**
+     * @param positive-int $id
+     * @param non-empty-string $name
+     */
+    public function __construct(
+        private int $id,
+        private string $name
+    ) {}
+}
+
+$targetCall = true;
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_multiline_empty_ctor.php');
+
+        $origLines = explode("\n", str_replace("\r\n", "\n", $source));
+        $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
+
+        expect(\count($transLines))->toBe(\count($origLines));
+
+        $origIndex = array_search('$targetCall = true;', array_map('trim', $origLines), true);
+        $transIndex = array_search('$targetCall = true;', array_map('trim', $transLines), true);
+
+        expect($transIndex)->toBe($origIndex)
+            ->and($origIndex)->toBe(16)
+        ;
+    });
 });

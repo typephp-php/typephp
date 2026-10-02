@@ -221,12 +221,18 @@ final class StreamWrapper implements StreamWrapperInterface
         $transformed = $printer->printFormatPreserving($newStmts, $oldStmts, $oldTokens);
 
         $transformed = self::neutralizeTrailingLineComments($transformed);
-        $transformed = preg_replace('/[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\//', ' /*__TYPEPHP_INJECTED_START__*/', $transformed) ?? $transformed;
 
         $transformedLineCount = substr_count($transformed, "\n");
         $drift = $transformedLineCount - $originalLineCount;
+        $count0 = 0;
         $count1 = 0;
         $count2 = 0;
+        $count3 = 0;
+
+        if ($drift > 0) {
+            $transformed = preg_replace('/[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\//', ' /*__TYPEPHP_INJECTED_START__*/', $transformed, $drift, $count0) ?? $transformed;
+            $drift -= $count0;
+        }
 
         if ($drift > 0) {
             $transformed = preg_replace('/[ \t]*\r?\n[ \t]*\{[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\//', ' { /*__TYPEPHP_INJECTED_START__*/', $transformed, $drift, $count1) ?? $transformed;
@@ -239,7 +245,13 @@ final class StreamWrapper implements StreamWrapperInterface
         }
 
         if ($drift > 0) {
-            $transformed = preg_replace('/\/\*__TYPEPHP_INJECTED_END__\*\/[ \t]*\r?\n[ \t]*/', '/*__TYPEPHP_INJECTED_END__*/ ', $transformed, $drift) ?? $transformed;
+            $transformed = preg_replace('/\/\*__TYPEPHP_INJECTED_END__\*\/[ \t]*\r?\n[ \t]*/', '/*__TYPEPHP_INJECTED_END__*/ ', $transformed, $drift, $count3) ?? $transformed;
+            $drift -= $count3;
+        }
+
+        if ($drift < 0) {
+            $nl = str_contains($transformed, "\r\n") ? "\r\n" : "\n";
+            $transformed .= str_repeat($nl, abs($drift));
         }
 
         return str_replace(['/*__TYPEPHP_INJECTED_START__*/', '/*__TYPEPHP_INJECTED_END__*/'], '', $transformed);
