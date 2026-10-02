@@ -164,6 +164,31 @@ describe('DocblockNormalizer', function () {
         });
     });
 
+    describe('Unqualified int-mask-of Wildcard Normalization', function () {
+        test('quotes unqualified wildcard constant patterns in int-mask-of', function () {
+            $doc1 = '/** @param int-mask-of<E_*> $flags */';
+            $expected1 = '/** @param int-mask-of<"E_*"> $flags */';
+            expect(DocblockNormalizer::normalize($doc1))->toBe($expected1);
+
+            $doc2 = '/** @param int-mask-of<JSON_*> $flags */';
+            $expected2 = '/** @param int-mask-of<"JSON_*"> $flags */';
+            expect(DocblockNormalizer::normalize($doc2))->toBe($expected2);
+        });
+
+        test('preserves class-scoped int-mask-of wildcards without quoting', function () {
+            $doc1 = '/** @param int-mask-of<Permissions::*> $mask */';
+            expect(DocblockNormalizer::normalize($doc1))->toBe($doc1);
+
+            $doc2 = '/** @param int-mask-of<HttpOptions::FLAG_*> $flags */';
+            expect(DocblockNormalizer::normalize($doc2))->toBe($doc2);
+        });
+
+        test('does not double-quote already quoted int-mask-of wildcards', function () {
+            $doc = '/** @param int-mask-of<"E_*"> $flags */';
+            expect(DocblockNormalizer::normalize($doc))->toBe($doc);
+        });
+    });
+
     describe('Variadic Tuple and Spread Syntax Normalization', function () {
         test('normalizes trailing ...Type[] spread syntax to ...<Type>', function () {
             $doc = '/** @param array{string, int, ...float[]} $tuple */';

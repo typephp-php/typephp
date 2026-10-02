@@ -8,6 +8,7 @@ namespace TypePHP\Internal\Docblock;
  * Normalizes PHPDoc comment strings before AST parsing.
  * Converts class-specific shapes like stdClass{id: int} into intersection shapes (stdClass & object{id: int}).
  * Normalizes variadic tuple spread syntax (...Type[] and ...list<Type>) into PHPStan-compliant ...<Type> syntax.
+ * Normalizes unqualified wildcard bitmasks (int-mask-of<E_*>) into quoted string literals.
  *
  * @internal
  */
@@ -56,6 +57,10 @@ final class DocblockNormalizer
 
         if (str_contains($doc, '::') && str_contains($doc, ':')) {
             $doc = preg_replace('/(\\\\?[a-zA-Z_\x80-\xff][\\\\a-zA-Z0-9_\x80-\xff]*::[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)\s*(\??:)/', '"$1"$2', $doc) ?? $doc;
+        }
+
+        if (str_contains($doc, 'int-mask-of') && str_contains($doc, '*')) {
+            $doc = preg_replace('/int-mask-of<\s*([a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*\*)\s*>/', 'int-mask-of<"$1">', $doc) ?? $doc;
         }
 
         if (str_contains($doc, '...')) {

@@ -62,6 +62,13 @@ final class GenericValidator implements TypeValidatorInterface
     private static array $enumValueCache = [];
 
     /**
+     * Cache for resolved int-mask-of masks: [$cacheKey] => array{0: int, 1: bool}.
+     *
+     * @var array<string, array{0: int, 1: bool}>
+     */
+    private static array $maskOfCache = [];
+
+    /**
      * Validates a value against a GenericTypeNode AST.
      */
     public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
@@ -280,6 +287,18 @@ final class GenericValidator implements TypeValidatorInterface
                         $allowedMask |= $constVal;
                     }
                 }
+            } elseif ($typeNode instanceof IdentifierTypeNode) {
+                $constName = $typeNode->name;
+                if (str_contains($constName, '::')) {
+                    [$className, $name] = explode('::', $constName, 2);
+                    $constVal = $this->resolveConstantValue($className, $name);
+                } else {
+                    $constVal = $this->resolveConstantValue('', $constName);
+                }
+
+                if (\is_int($constVal)) {
+                    $allowedMask |= $constVal;
+                }
             }
         }
 
@@ -300,36 +319,104 @@ final class GenericValidator implements TypeValidatorInterface
         $allowedMask = 0;
         $foundFlags = false;
 
+        $className = '';
+        $pattern = '';
+
         if ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstFetchNode) {
-            $constExpr = $targetType->constExpr;
-            $fqcn = $constExpr->className;
-            $pattern = $constExpr->name;
+            $className = $targetType->constExpr->className;
+            $pattern = $targetType->constExpr->name;
+        } elseif ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstExprStringNode) {
+            $className = '';
+            $pattern = $targetType->constExpr->value;
+        } elseif ($targetType instanceof IdentifierTypeNode) {
+            if (str_contains($targetType->name, '::')) {
+                [$className, $pattern] = explode('::', $targetType->name, 2);
+            } else {
+                $className = '';
+                $pattern = $targetType->name;
+            }
+        } elseif ($targetType instanceof UnionTypeNode) {
+            foreach ($targetType->types as $unionMember) {
+                if ($unionMember instanceof ConstTypeNode) {
+                    $expr = $unionMember->constExpr;
+                    if ($expr instanceof ConstExprIntegerNode) {
+                        $allowedMask |= (int) $expr->value;
+                        $foundFlags = true;
+                    } elseif ($expr instanceof ConstFetchNode) {
+                        $val = $this->resolveConstantValue($expr->className, $expr->name);
+                        if (\is_int($val)) {
+                            $allowedMask |= $val;
+                            $foundFlags = true;
+                        }
+                    }
+                } elseif ($unionMember instanceof IdentifierTypeNode) {
+                    $name = $unionMember->name;
+                    if (str_contains($name, '::')) {
+                        [$cls, $cName] = explode('::', $name, 2);
+                        $val = $this->resolveConstantValue($cls, $cName);
+                    } else {
+                        $val = $this->resolveConstantValue('', $name);
+                    }
+                    if (\is_int($val)) {
+                        $allowedMask |= $val;
+                        $foundFlags = true;
+                    }
+                }
+            }
+        }
 
-            if ($fqcn !== '' && (class_exists($fqcn) || interface_exists($fqcn))) {
-                $refClass = new \ReflectionClass($fqcn);
+        if ($pattern !== '') {
+            $cacheKey = $className !== '' ? "$className::$pattern" : $pattern;
 
-                if (str_contains($pattern, '*')) {
-                    $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
-                    foreach ($refClass->getConstants() as $cName => $cValue) {
-                        if (\is_int($cValue) && preg_match($regex, $cName) === 1) {
+            if (isset(self::$maskOfCache[$cacheKey])) {
+                [$allowedMask, $foundFlags] = self::$maskOfCache[$cacheKey];
+            } else {
+                if ($className !== '') {
+                    if (class_exists($className) || interface_exists($className)) {
+                        $refClass = new \ReflectionClass($className);
+
+                        if (str_contains($pattern, '*')) {
+                            $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
+                            foreach ($refClass->getConstants() as $cName => $cValue) {
+                                if (\is_int($cValue) && preg_match($regex, $cName) === 1) {
+                                    $allowedMask |= $cValue;
+                                    $foundFlags = true;
+                                }
+                            }
+                        } else {
+                            $cValue = $this->resolveConstantValue($className, $pattern);
+                            if (\is_int($cValue)) {
+                                $allowedMask |= $cValue;
+                                $foundFlags = true;
+                            } elseif (\is_array($cValue)) {
+                                foreach ($cValue as $item) {
+                                    if (\is_int($item)) {
+                                        $allowedMask |= $item;
+                                        $foundFlags = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    if (str_contains($pattern, '*')) {
+                        $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
+                        foreach (get_defined_constants() as $cName => $cValue) {
+                            if (\is_int($cValue) && preg_match($regex, $cName) === 1) {
+                                $allowedMask |= $cValue;
+                                $foundFlags = true;
+                            }
+                        }
+                    } else {
+                        $cValue = $this->resolveConstantValue('', $pattern);
+                        if (\is_int($cValue)) {
                             $allowedMask |= $cValue;
                             $foundFlags = true;
                         }
                     }
-                } else {
-                    $cValue = $this->resolveConstantValue($fqcn, $pattern);
-                    if (\is_int($cValue)) {
-                        $allowedMask |= $cValue;
-                        $foundFlags = true;
-                    } elseif (\is_array($cValue)) {
-                        foreach ($cValue as $item) {
-                            if (\is_int($item)) {
-                                $allowedMask |= $item;
-                                $foundFlags = true;
-                            }
-                        }
-                    }
                 }
+
+                self::$maskOfCache[$cacheKey] = [$allowedMask, $foundFlags];
             }
         }
 
