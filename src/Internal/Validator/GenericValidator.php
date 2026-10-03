@@ -15,6 +15,7 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
+use PHPStan\PhpDocParser\Ast\Node as PhpDocNode;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
@@ -62,8 +63,6 @@ final class GenericValidator implements TypeValidatorInterface
     private static array $enumValueCache = [];
 
     /**
-     * Cache for resolved int-mask-of masks: [$cacheKey] => array{0: int, 1: bool}.
-     *
      * @var array<string, array{0: int, 1: bool}>
      */
     private static array $maskOfCache = [];
@@ -90,130 +89,109 @@ final class GenericValidator implements TypeValidatorInterface
         };
     }
 
-    private function resolveConstantValue(string $fqcn, string $constName): mixed
-    {
-        $cacheKey = $fqcn !== '' ? "$fqcn::$constName" : $constName;
-
-        if (! \array_key_exists($cacheKey, self::$constantCache)) {
-            $constValue = false;
-            if ($fqcn !== '') {
-                if (class_exists($fqcn) || interface_exists($fqcn)) {
-                    $refClass = new \ReflectionClass($fqcn);
-                    if ($refClass->hasConstant($constName)) {
-                        $constValue = $refClass->getConstant($constName);
-                    }
-                }
-            } else {
-                if (\defined($constName)) {
-                    $constValue = \constant($constName);
-                }
-            }
-            self::$constantCache[$cacheKey] = $constValue;
-        }
-
-        return self::$constantCache[$cacheKey];
-    }
-
     private function validateKeyOf(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         $targetType = $node->genericTypes[0] ?? null;
-
-        if ($targetType instanceof GenericTypeNode && strtolower($targetType->type->name) === 'value-of') {
-            $innerTarget = $targetType->genericTypes[0] ?? null;
-            if ($innerTarget instanceof ArrayShapeNode) {
-                $validKeys = [];
-                foreach ($innerTarget->items as $item) {
-                    if ($item->valueType instanceof ArrayShapeNode) {
-                        foreach ($item->valueType->items as $subItem) {
-                            $subKey = self::extractKeyFromItem($subItem);
-                            if ($subKey !== null) {
-                                $validKeys[] = $subKey;
-                            }
-                        }
-                    }
-                }
-                if (! \in_array($value, $validKeys, strict: true)) {
-                    return ErrorFactory::createError($context . ' must be a key of the specified array shape, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
-                }
-
-                return null;
-            }
+        if ($targetType === null) {
+            return null;
         }
 
-        if ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstFetchNode) {
-            $constExpr = $targetType->constExpr;
-            $fqcn = $constExpr->className;
-            $constName = $constExpr->name;
-            $cacheKey = $fqcn !== '' ? "$fqcn::$constName" : $constName;
+        if ($targetType instanceof GenericTypeNode && strtolower($targetType->type->name) === 'value-of') {
+            return $this->validateKeyOfNestedValueOf($value, $targetType, $context, $isSensitive);
+        }
 
-            $constValue = $this->resolveConstantValue($fqcn, $constName);
+        if ($targetType instanceof IdentifierTypeNode && ClassNameValidator::isValid($targetType->name) && enum_exists($targetType->name)) {
+            return $this->validateKeyOfEnum($value, $targetType->name, $context, $isSensitive);
+        }
 
-            if (\is_array($constValue)) {
-                if ((! \is_int($value) && ! \is_string($value)) || ! \array_key_exists($value, $constValue)) {
-                    return ErrorFactory::createError($context . " must be a key of $cacheKey, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
-                }
+        if ($targetType instanceof ArrayShapeNode) {
+            return $this->validateKeyOfArrayShape($value, $targetType, $context, $isSensitive);
+        }
 
-                return null;
-            }
-        } elseif ($targetType instanceof IdentifierTypeNode) {
-            $enumClass = $targetType->name;
-            if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass)) {
-                if (! isset(self::$enumKeyCache[$enumClass])) {
-                    self::$enumKeyCache[$enumClass] = array_map(fn ($case) => $case->name, $enumClass::cases());
-                }
-
-                if (! \in_array($value, self::$enumKeyCache[$enumClass], strict: true)) {
-                    return ErrorFactory::createError($context . " must be a key of enum $enumClass, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
-                }
-
-                return null;
-            }
-        } elseif ($targetType instanceof ArrayShapeNode) {
-            $validKeys = [];
-            $nextAutoIndex = 0;
-
-            foreach ($targetType->items as $item) {
-                if ($item->keyName instanceof ConstExprStringNode) {
-                    $validKeys[] = $item->keyName->value;
-                } elseif ($item->keyName instanceof IdentifierTypeNode) {
-                    $validKeys[] = $item->keyName->name;
-                } elseif ($item->keyName instanceof ConstExprIntegerNode) {
-                    $key = (int) $item->keyName->value;
-                    $validKeys[] = $key;
-                    $nextAutoIndex = max($nextAutoIndex, $key + 1);
-                } elseif ($item->keyName !== null) {
-                    $validKeys[] = (string) $item->keyName;
-                } else {
-                    $validKeys[] = $nextAutoIndex;
-                    $nextAutoIndex++;
-                }
-            }
-
-            if (! \in_array($value, $validKeys, strict: true)) {
-                return ErrorFactory::createError($context . ' must be a key of the specified array shape, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
-            }
-
-            return null;
+        $target = $this->extractConstantTarget($targetType);
+        if ($target !== null) {
+            return $this->validateKeyOfConstant($value, $target[0], $target[1], $context, $isSensitive);
         }
 
         return null;
     }
 
-    private static function extractKeyFromItem(ArrayShapeItemNode $item): string|int|null
+    private function validateKeyOfNestedValueOf(mixed $value, GenericTypeNode $targetType, string $context, bool $isSensitive): ?ErrorMessage
     {
-        $keyName = $item->keyName;
+        $innerTarget = $targetType->genericTypes[0] ?? null;
+        if (! $innerTarget instanceof ArrayShapeNode) {
+            return null;
+        }
 
-        if ($keyName instanceof ConstExprStringNode) {
-            return $keyName->value;
+        $validKeys = [];
+        foreach ($innerTarget->items as $item) {
+            if ($item->valueType instanceof ArrayShapeNode) {
+                foreach ($item->valueType->items as $subItem) {
+                    $subKey = self::extractKeyFromItem($subItem);
+                    if ($subKey !== null) {
+                        $validKeys[] = $subKey;
+                    }
+                }
+            }
         }
-        if ($keyName instanceof ConstExprIntegerNode) {
-            return (int) $keyName->value;
+
+        if (! \in_array($value, $validKeys, strict: true)) {
+            return ErrorFactory::createError($context . ' must be a key of the specified array shape, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
-        if ($keyName instanceof IdentifierTypeNode) {
-            return $keyName->name;
+
+        return null;
+    }
+
+    private function validateKeyOfEnum(mixed $value, string $enumClass, string $context, bool $isSensitive): ?ErrorMessage
+    {
+        if (! isset(self::$enumKeyCache[$enumClass])) {
+            self::$enumKeyCache[$enumClass] = array_map(fn($case) => $case->name, $enumClass::cases());
         }
-        if ($keyName instanceof ConstFetchNode) {
-            return (string) $keyName;
+
+        if (! \in_array($value, self::$enumKeyCache[$enumClass], strict: true)) {
+            return ErrorFactory::createError($context . " must be a key of enum $enumClass, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+
+        return null;
+    }
+
+    private function validateKeyOfArrayShape(mixed $value, ArrayShapeNode $targetType, string $context, bool $isSensitive): ?ErrorMessage
+    {
+        $validKeys = [];
+        $nextAutoIndex = 0;
+
+        foreach ($targetType->items as $item) {
+            $key = self::extractKeyFromItem($item);
+            if ($key === null) {
+                $key = $nextAutoIndex;
+                $nextAutoIndex++;
+            } elseif (\is_int($key)) {
+                $nextAutoIndex = max($nextAutoIndex, $key + 1);
+            }
+
+            $validKeys[] = $key;
+        }
+
+        if (! \in_array($value, $validKeys, strict: true)) {
+            return ErrorFactory::createError($context . ' must be a key of the specified array shape, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+
+        return null;
+    }
+
+    private function validateKeyOfConstant(mixed $value, string $className, string $constName, string $context, bool $isSensitive): ?ErrorMessage
+    {
+        if ($constName === '') {
+            return null;
+        }
+
+        $cacheKey = $className !== '' ? "$className::$constName" : $constName;
+        $constValue = $this->resolveConstantValue($className, $constName);
+
+        if (\is_array($constValue)) {
+            if ((! \is_int($value) && ! \is_string($value)) || ! \array_key_exists($value, $constValue)) {
+                return ErrorFactory::createError($context . " must be a key of $cacheKey, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+            }
         }
 
         return null;
@@ -222,47 +200,65 @@ final class GenericValidator implements TypeValidatorInterface
     private function validateValueOf(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         $targetType = $node->genericTypes[0] ?? null;
+        if ($targetType === null) {
+            return null;
+        }
 
-        if ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstFetchNode) {
-            $constExpr = $targetType->constExpr;
-            $fqcn = $constExpr->className;
-            $constName = $constExpr->name;
-            $cacheKey = $fqcn !== '' ? "$fqcn::$constName" : $constName;
+        if ($targetType instanceof IdentifierTypeNode && ClassNameValidator::isValid($targetType->name) && enum_exists($targetType->name)) {
+            return $this->validateValueOfEnum($value, $targetType->name, $context, $isSensitive);
+        }
 
-            $constValue = $this->resolveConstantValue($fqcn, $constName);
+        if ($targetType instanceof ArrayShapeNode) {
+            return $this->validateValueOfArrayShape($value, $targetType, $context, $registry, $isSensitive);
+        }
 
-            if (\is_array($constValue)) {
-                if (! \in_array($value, $constValue, strict: true)) {
-                    return ErrorFactory::createError($context . " must be a value of $cacheKey, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
-                }
+        $target = $this->extractConstantTarget($targetType);
+        if ($target !== null) {
+            return $this->validateValueOfConstant($value, $target[0], $target[1], $context, $isSensitive);
+        }
 
+        return null;
+    }
+
+    private function validateValueOfEnum(mixed $value, string $enumClass, string $context, bool $isSensitive): ?ErrorMessage
+    {
+        if (! is_subclass_of($enumClass, \BackedEnum::class)) {
+            return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+
+        if (! isset(self::$enumValueCache[$enumClass])) {
+            self::$enumValueCache[$enumClass] = array_map(fn($case) => $case->value, $enumClass::cases());
+        }
+
+        if (! \in_array($value, self::$enumValueCache[$enumClass], strict: true)) {
+            return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+
+        return null;
+    }
+
+    private function validateValueOfArrayShape(mixed $value, ArrayShapeNode $targetType, string $context, TypeValidatorRegistry $registry, bool $isSensitive): ?ErrorMessage
+    {
+        foreach ($targetType->items as $item) {
+            if ($registry->validate($value, $item->valueType, '', $isSensitive) === null) {
                 return null;
             }
-        } elseif ($targetType instanceof IdentifierTypeNode) {
-            $enumClass = $targetType->name;
-            if (ClassNameValidator::isValid($enumClass) && enum_exists($enumClass)) {
-                if (is_subclass_of($enumClass, \BackedEnum::class)) {
-                    if (! isset(self::$enumValueCache[$enumClass])) {
-                        self::$enumValueCache[$enumClass] = array_map(fn ($case) => $case->value, $enumClass::cases());
-                    }
+        }
 
-                    if (! \in_array($value, self::$enumValueCache[$enumClass], strict: true)) {
-                        return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
-                    }
+        return ErrorFactory::createError($context . ' must be a value of the specified array shape, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+    }
 
-                    return null;
-                }
+    private function validateValueOfConstant(mixed $value, string $className, string $constName, string $context, bool $isSensitive): ?ErrorMessage
+    {
+        if ($constName === '') {
+            return null;
+        }
 
-                return ErrorFactory::createError($context . " must be a value of enum $enumClass, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
-            }
-        } elseif ($targetType instanceof ArrayShapeNode) {
-            foreach ($targetType->items as $item) {
-                if ($registry->validate($value, $item->valueType, '', $isSensitive) === null) {
-                    return null;
-                }
-            }
+        $cacheKey = $className !== '' ? "$className::$constName" : $constName;
+        $constValue = $this->resolveConstantValue($className, $constName);
 
-            return ErrorFactory::createError($context . ' must be a value of the specified array shape, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        if (\is_array($constValue) && ! \in_array($value, $constValue, strict: true)) {
+            return ErrorFactory::createError($context . " must be a value of $cacheKey, " . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         return null;
@@ -274,9 +270,23 @@ final class GenericValidator implements TypeValidatorInterface
             return ErrorFactory::createError($context . ' must be of type int (bitmask), ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
+        $allowedMask = $this->computeAllowedMask($node->genericTypes);
+
+        if (($value & ~$allowedMask) !== 0) {
+            return ErrorFactory::createError($context . ' must be a valid bitmask combination of the allowed flags, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<TypeNode> $genericTypes
+     */
+    private function computeAllowedMask(array $genericTypes): int
+    {
         $allowedMask = 0;
 
-        foreach ($node->genericTypes as $typeNode) {
+        foreach ($genericTypes as $typeNode) {
             if ($typeNode instanceof ConstTypeNode) {
                 $expr = $typeNode->constExpr;
                 if ($expr instanceof ConstExprIntegerNode) {
@@ -288,25 +298,17 @@ final class GenericValidator implements TypeValidatorInterface
                     }
                 }
             } elseif ($typeNode instanceof IdentifierTypeNode) {
-                $constName = $typeNode->name;
-                if (str_contains($constName, '::')) {
-                    [$className, $name] = explode('::', $constName, 2);
-                    $constVal = $this->resolveConstantValue($className, $name);
-                } else {
-                    $constVal = $this->resolveConstantValue('', $constName);
-                }
-
-                if (\is_int($constVal)) {
-                    $allowedMask |= $constVal;
+                $target = $this->extractConstantTarget($typeNode);
+                if ($target !== null) {
+                    $constVal = $this->resolveConstantValue($target[0], $target[1]);
+                    if (\is_int($constVal)) {
+                        $allowedMask |= $constVal;
+                    }
                 }
             }
         }
 
-        if (($value & ~$allowedMask) !== 0) {
-            return ErrorFactory::createError($context . ' must be a valid bitmask combination of the allowed flags, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
-        }
-
-        return null;
+        return $allowedMask;
     }
 
     private function validateIntMaskOf(mixed $value, GenericTypeNode $node, string $context, bool $isSensitive = false): ?ErrorMessage
@@ -316,107 +318,19 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         $targetType = $node->genericTypes[0] ?? null;
+        if ($targetType === null) {
+            return null;
+        }
+
         $allowedMask = 0;
         $foundFlags = false;
 
-        $className = '';
-        $pattern = '';
-
-        if ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstFetchNode) {
-            $className = $targetType->constExpr->className;
-            $pattern = $targetType->constExpr->name;
-        } elseif ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstExprStringNode) {
-            $className = '';
-            $pattern = $targetType->constExpr->value;
-        } elseif ($targetType instanceof IdentifierTypeNode) {
-            if (str_contains($targetType->name, '::')) {
-                [$className, $pattern] = explode('::', $targetType->name, 2);
-            } else {
-                $className = '';
-                $pattern = $targetType->name;
-            }
-        } elseif ($targetType instanceof UnionTypeNode) {
-            foreach ($targetType->types as $unionMember) {
-                if ($unionMember instanceof ConstTypeNode) {
-                    $expr = $unionMember->constExpr;
-                    if ($expr instanceof ConstExprIntegerNode) {
-                        $allowedMask |= (int) $expr->value;
-                        $foundFlags = true;
-                    } elseif ($expr instanceof ConstFetchNode) {
-                        $val = $this->resolveConstantValue($expr->className, $expr->name);
-                        if (\is_int($val)) {
-                            $allowedMask |= $val;
-                            $foundFlags = true;
-                        }
-                    }
-                } elseif ($unionMember instanceof IdentifierTypeNode) {
-                    $name = $unionMember->name;
-                    if (str_contains($name, '::')) {
-                        [$cls, $cName] = explode('::', $name, 2);
-                        $val = $this->resolveConstantValue($cls, $cName);
-                    } else {
-                        $val = $this->resolveConstantValue('', $name);
-                    }
-                    if (\is_int($val)) {
-                        $allowedMask |= $val;
-                        $foundFlags = true;
-                    }
-                }
-            }
-        }
-
-        if ($pattern !== '') {
-            $cacheKey = $className !== '' ? "$className::$pattern" : $pattern;
-
-            if (isset(self::$maskOfCache[$cacheKey])) {
-                [$allowedMask, $foundFlags] = self::$maskOfCache[$cacheKey];
-            } else {
-                if ($className !== '') {
-                    if (class_exists($className) || interface_exists($className)) {
-                        $refClass = new \ReflectionClass($className);
-
-                        if (str_contains($pattern, '*')) {
-                            $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
-                            foreach ($refClass->getConstants() as $cName => $cValue) {
-                                if (\is_int($cValue) && preg_match($regex, $cName) === 1) {
-                                    $allowedMask |= $cValue;
-                                    $foundFlags = true;
-                                }
-                            }
-                        } else {
-                            $cValue = $this->resolveConstantValue($className, $pattern);
-                            if (\is_int($cValue)) {
-                                $allowedMask |= $cValue;
-                                $foundFlags = true;
-                            } elseif (\is_array($cValue)) {
-                                foreach ($cValue as $item) {
-                                    if (\is_int($item)) {
-                                        $allowedMask |= $item;
-                                        $foundFlags = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    if (str_contains($pattern, '*')) {
-                        $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
-                        foreach (get_defined_constants() as $cName => $cValue) {
-                            if (\is_int($cValue) && preg_match($regex, $cName) === 1) {
-                                $allowedMask |= $cValue;
-                                $foundFlags = true;
-                            }
-                        }
-                    } else {
-                        $cValue = $this->resolveConstantValue('', $pattern);
-                        if (\is_int($cValue)) {
-                            $allowedMask |= $cValue;
-                            $foundFlags = true;
-                        }
-                    }
-                }
-
-                self::$maskOfCache[$cacheKey] = [$allowedMask, $foundFlags];
+        if ($targetType instanceof UnionTypeNode) {
+            [$allowedMask, $foundFlags] = $this->computeMaskOfUnion($targetType);
+        } else {
+            $target = $this->extractConstantTarget($targetType);
+            if ($target !== null && $target[1] !== '') {
+                [$allowedMask, $foundFlags] = $this->resolveMaskOfPattern($target[0], $target[1]);
             }
         }
 
@@ -427,100 +341,102 @@ final class GenericValidator implements TypeValidatorInterface
         return null;
     }
 
-    private function validateIntRange(mixed $value, GenericTypeNode $node, string $context, bool $isSensitive = false): ?ErrorMessage
+    /**
+     * @return array{0: int, 1: bool}
+     */
+    private function computeMaskOfUnion(UnionTypeNode $targetType): array
     {
-        if (! \is_int($value)) {
-            return ErrorFactory::createError($context . ' must be of type int, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
-        }
+        $allowedMask = 0;
+        $foundFlags = false;
 
-        $minNode = $node->genericTypes[0] ?? null;
-        $maxNode = $node->genericTypes[1] ?? null;
-
-        if ($minNode !== null) {
-            $minStr = strtolower(trim((string) $minNode));
-            if ($minStr !== 'min' && $minStr !== '*') {
-                $minVal = (int) $minStr;
-                if ($value < $minVal) {
-                    $valDisplay = $isSensitive ? 'int given' : "$value given";
-
-                    return ErrorFactory::createError($context . " must be >= $minVal, $valDisplay");
+        foreach ($targetType->types as $unionMember) {
+            if ($unionMember instanceof ConstTypeNode) {
+                $expr = $unionMember->constExpr;
+                if ($expr instanceof ConstExprIntegerNode) {
+                    $allowedMask |= (int) $expr->value;
+                    $foundFlags = true;
+                } elseif ($expr instanceof ConstFetchNode) {
+                    $val = $this->resolveConstantValue($expr->className, $expr->name);
+                    if (\is_int($val)) {
+                        $allowedMask |= $val;
+                        $foundFlags = true;
+                    }
+                }
+            } elseif ($unionMember instanceof IdentifierTypeNode) {
+                $target = $this->extractConstantTarget($unionMember);
+                if ($target !== null) {
+                    $val = $this->resolveConstantValue($target[0], $target[1]);
+                    if (\is_int($val)) {
+                        $allowedMask |= $val;
+                        $foundFlags = true;
+                    }
                 }
             }
         }
 
-        if ($maxNode !== null) {
-            $maxStr = strtolower(trim((string) $maxNode));
-            if ($maxStr !== 'max' && $maxStr !== '*') {
-                $maxVal = (int) $maxStr;
-                if ($value > $maxVal) {
-                    $valDisplay = $isSensitive ? 'int given' : "$value given";
-
-                    return ErrorFactory::createError($context . " must be <= $maxVal, $valDisplay");
-                }
-            }
-        }
-
-        return null;
+        return [$allowedMask, $foundFlags];
     }
 
-    private function validateClassString(mixed $value, GenericTypeNode $node, string $context, bool $isSensitive = false): ?ErrorMessage
+    /**
+     * @return array{0: int, 1: bool}
+     */
+    private function resolveMaskOfPattern(string $className, string $pattern): array
     {
-        if (! \is_string($value) || ! ClassNameValidator::isValidClassString($value)) {
-            return ErrorFactory::createError($context . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        $cacheKey = $className !== '' ? "$className::$pattern" : $pattern;
+
+        if (isset(self::$maskOfCache[$cacheKey])) {
+            return self::$maskOfCache[$cacheKey];
         }
 
-        $targetClassNode = $node->genericTypes[0] ?? null;
-        if ($targetClassNode === null) {
-            return null;
-        }
+        $allowedMask = 0;
+        $foundFlags = false;
 
-        return $this->validateClassStringBound($value, $targetClassNode, $context, $isSensitive);
-    }
+        if ($className !== '') {
+            if (class_exists($className) || interface_exists($className)) {
+                $refClass = new \ReflectionClass($className);
 
-    private function validateClassStringBound(string $value, TypeNode $targetNode, string $context, bool $isSensitive = false): ?ErrorMessage
-    {
-        if ($targetNode instanceof IdentifierTypeNode) {
-            $targetName = $targetNode->name;
-            $lower = strtolower($targetName);
-            if ($lower === 'object' || $lower === 'mixed') {
-                return null;
-            }
-
-            if (class_exists($targetName) || interface_exists($targetName) || trait_exists($targetName) || enum_exists($targetName)) {
-                if (! is_a($value, $targetName, allow_string: true)) {
-                    $valDisplay = $isSensitive ? 'string given' : "'$value' given";
-
-                    return ErrorFactory::createError($context . ' must be a class-string of ' . $targetName . ", $valDisplay");
+                if (str_contains($pattern, '*')) {
+                    $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
+                    foreach ($refClass->getConstants() as $cName => $cValue) {
+                        if (\is_int($cValue) && preg_match($regex, $cName) === 1) {
+                            $allowedMask |= $cValue;
+                            $foundFlags = true;
+                        }
+                    }
+                } else {
+                    $cValue = $this->resolveConstantValue($className, $pattern);
+                    if (\is_int($cValue)) {
+                        $allowedMask |= $cValue;
+                        $foundFlags = true;
+                    } elseif (\is_array($cValue)) {
+                        foreach ($cValue as $item) {
+                            if (\is_int($item)) {
+                                $allowedMask |= $item;
+                                $foundFlags = true;
+                            }
+                        }
+                    }
                 }
             }
-
-            return null;
-        }
-
-        if ($targetNode instanceof UnionTypeNode) {
-            foreach ($targetNode->types as $unionType) {
-                if ($this->validateClassStringBound($value, $unionType, $context, $isSensitive) === null) {
-                    return null;
+        } else {
+            if (str_contains($pattern, '*')) {
+                $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
+                foreach (get_defined_constants() as $cName => $cValue) {
+                    if (\is_int($cValue) && preg_match($regex, $cName) === 1) {
+                        $allowedMask |= $cValue;
+                        $foundFlags = true;
+                    }
+                }
+            } else {
+                $cValue = $this->resolveConstantValue('', $pattern);
+                if (\is_int($cValue)) {
+                    $allowedMask |= $cValue;
+                    $foundFlags = true;
                 }
             }
-
-            $valDisplay = $isSensitive ? 'string given' : "'$value' given";
-
-            return ErrorFactory::createError($context . ' must be a class-string of ' . (string) $targetNode . ", $valDisplay");
         }
 
-        if ($targetNode instanceof IntersectionTypeNode) {
-            foreach ($targetNode->types as $intersectionType) {
-                $err = $this->validateClassStringBound($value, $intersectionType, $context, $isSensitive);
-                if ($err !== null) {
-                    return $err;
-                }
-            }
-
-            return null;
-        }
-
-        return null;
+        return self::$maskOfCache[$cacheKey] = [$allowedMask, $foundFlags];
     }
 
     private function validateList(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
@@ -605,37 +521,45 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         $typesCount = \count($node->genericTypes);
+
         if ($typesCount === 1) {
-            $valTypeNode = $node->genericTypes[0];
+            return $this->validateSingleTypeArray($value, $node->genericTypes[0], $context, $registry, $isSensitive, $count);
+        }
 
-            if ($valTypeNode instanceof IdentifierTypeNode && \in_array(strtolower($valTypeNode->name), ['mixed', 't', 'tvalue', 'v', 'value', 'telement'], true)) {
-                return null;
+        if ($typesCount >= 2) {
+            return $this->validateKeyValueTypeArray($value, $node->genericTypes[0], $node->genericTypes[1], $context, $registry, $isSensitive, $count);
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<mixed> $value
+     */
+    private function validateSingleTypeArray(
+        array $value,
+        TypeNode $valTypeNode,
+        string $context,
+        TypeValidatorRegistry $registry,
+        bool $isSensitive,
+        int $count
+    ): ?ErrorMessage {
+        if ($valTypeNode instanceof IdentifierTypeNode && \in_array(strtolower($valTypeNode->name), ['mixed', 't', 'tvalue', 'v', 'value', 'telement'], true)) {
+            return null;
+        }
+
+        $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower($valTypeNode->type->name)]));
+
+        if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+            $keys = array_keys($value);
+            $sampleKeys = [$keys[0], $keys[$count - 1]];
+            $samplesToTake = min(3, $count - 2);
+            for ($i = 0; $i < $samplesToTake; $i++) {
+                $sampleKeys[] = $keys[mt_rand(1, $count - 2)];
             }
 
-            $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower($valTypeNode->type->name)]));
-            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
-                $keys = array_keys($value);
-                $sampleKeys = [$keys[0], $keys[$count - 1]];
-                $samplesToTake = min(3, $count - 2);
-                for ($i = 0; $i < $samplesToTake; $i++) {
-                    $sampleKeys[] = $keys[mt_rand(1, $count - 2)];
-                }
-
-                foreach ($sampleKeys as $k) {
-                    $v = $value[$k];
-                    $err = $isComplexObjectGeneric
-                        ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
-                        : $registry->validate($v, $valTypeNode, '', $isSensitive);
-
-                    if ($err !== null) {
-                        return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
-                    }
-                }
-
-                return null;
-            }
-
-            foreach ($value as $k => $v) {
+            foreach ($sampleKeys as $k) {
+                $v = $value[$k];
                 $err = $isComplexObjectGeneric
                     ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
                     : $registry->validate($v, $valTypeNode, '', $isSensitive);
@@ -644,51 +568,53 @@ final class GenericValidator implements TypeValidatorInterface
                     return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
                 }
             }
-        } elseif ($typesCount >= 2) {
-            $keyTypeNode = $node->genericTypes[0];
-            $valTypeNode = $node->genericTypes[1];
 
-            $keyIsArrayKey = ($keyTypeNode instanceof IdentifierTypeNode) && \in_array(strtolower($keyTypeNode->name), ['array-key', 'mixed', 'tkey', 'key', 'k'], true);
-            $valIsMixed = ($valTypeNode instanceof IdentifierTypeNode) && \in_array(strtolower($valTypeNode->name), ['mixed', 'tvalue', 'v', 'value', 't'], true);
+            return null;
+        }
 
-            if ($keyIsArrayKey && $valIsMixed) {
-                return null;
+        foreach ($value as $k => $v) {
+            $err = $isComplexObjectGeneric
+                ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
+                : $registry->validate($v, $valTypeNode, '', $isSensitive);
+
+            if ($err !== null) {
+                return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<mixed> $value
+     */
+    private function validateKeyValueTypeArray(
+        array $value,
+        TypeNode $keyTypeNode,
+        TypeNode $valTypeNode,
+        string $context,
+        TypeValidatorRegistry $registry,
+        bool $isSensitive,
+        int $count
+    ): ?ErrorMessage {
+        $keyIsArrayKey = ($keyTypeNode instanceof IdentifierTypeNode) && \in_array(strtolower($keyTypeNode->name), ['array-key', 'mixed', 'tkey', 'key', 'k'], true);
+        $valIsMixed = ($valTypeNode instanceof IdentifierTypeNode) && \in_array(strtolower($valTypeNode->name), ['mixed', 'tvalue', 'v', 'value', 't'], true);
+
+        if ($keyIsArrayKey && $valIsMixed) {
+            return null;
+        }
+
+        $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower($valTypeNode->type->name)]));
+
+        if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+            $keys = array_keys($value);
+            $sampleKeys = [$keys[0], $keys[$count - 1]];
+            $samplesToTake = min(3, $count - 2);
+            for ($i = 0; $i < $samplesToTake; $i++) {
+                $sampleKeys[] = $keys[mt_rand(1, $count - 2)];
             }
 
-            $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower($valTypeNode->type->name)]));
-
-            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
-                $keys = array_keys($value);
-                $sampleKeys = [$keys[0], $keys[$count - 1]];
-                $samplesToTake = min(3, $count - 2);
-                for ($i = 0; $i < $samplesToTake; $i++) {
-                    $sampleKeys[] = $keys[mt_rand(1, $count - 2)];
-                }
-
-                foreach ($sampleKeys as $k) {
-                    if (! $keyIsArrayKey) {
-                        $err = $registry->validate($k, $keyTypeNode, '');
-                        if ($err !== null) {
-                            return ErrorFactory::createError($context . ' key' . $err->getMessage());
-                        }
-                    }
-
-                    if (! $valIsMixed) {
-                        $v = $value[$k];
-                        $err = $isComplexObjectGeneric
-                            ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
-                            : $registry->validate($v, $valTypeNode, '', $isSensitive);
-
-                        if ($err !== null) {
-                            return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
-                        }
-                    }
-                }
-
-                return null;
-            }
-
-            foreach ($value as $k => $v) {
+            foreach ($sampleKeys as $k) {
                 if (! $keyIsArrayKey) {
                     $err = $registry->validate($k, $keyTypeNode, '');
                     if ($err !== null) {
@@ -697,6 +623,7 @@ final class GenericValidator implements TypeValidatorInterface
                 }
 
                 if (! $valIsMixed) {
+                    $v = $value[$k];
                     $err = $isComplexObjectGeneric
                         ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
                         : $registry->validate($v, $valTypeNode, '', $isSensitive);
@@ -706,6 +633,169 @@ final class GenericValidator implements TypeValidatorInterface
                     }
                 }
             }
+
+            return null;
+        }
+
+        foreach ($value as $k => $v) {
+            if (! $keyIsArrayKey) {
+                $err = $registry->validate($k, $keyTypeNode, '');
+                if ($err !== null) {
+                    return ErrorFactory::createError($context . ' key' . $err->getMessage());
+                }
+            }
+
+            if (! $valIsMixed) {
+                $v = $value[$k];
+                $err = $isComplexObjectGeneric
+                    ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
+                    : $registry->validate($v, $valTypeNode, '', $isSensitive);
+
+                if ($err !== null) {
+                    return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function resolveIntBound(PhpDocNode $node): ?int
+    {
+        if ($node instanceof ConstExprIntegerNode) {
+            return (int) $node->value;
+        }
+
+        if ($node instanceof ConstTypeNode) {
+            $expr = $node->constExpr;
+            if ($expr instanceof ConstExprIntegerNode) {
+                return (int) $expr->value;
+            }
+            if ($expr instanceof ConstFetchNode) {
+                $val = $this->resolveConstantValue($expr->className, $expr->name);
+                if (\is_int($val)) {
+                    return $val;
+                }
+            }
+        }
+
+        if ($node instanceof ConstFetchNode) {
+            $val = $this->resolveConstantValue($node->className, $node->name);
+            if (\is_int($val)) {
+                return $val;
+            }
+        }
+
+        if ($node instanceof IdentifierTypeNode) {
+            $name = $node->name;
+            $lower = strtolower($name);
+            if ($lower === 'min' || $lower === 'max' || $lower === '*') {
+                return null;
+            }
+
+            if (is_numeric($name)) {
+                return (int) $name;
+            }
+
+            $target = $this->extractConstantTarget($node);
+            if ($target !== null) {
+                $val = $this->resolveConstantValue($target[0], $target[1]);
+                if (\is_int($val)) {
+                    return $val;
+                }
+            }
+        }
+
+        $str = (string) $node;
+        if (is_numeric($str)) {
+            return (int) $str;
+        }
+
+        return null;
+    }
+
+    private function validateIntRange(mixed $value, GenericTypeNode $node, string $context, bool $isSensitive = false): ?ErrorMessage
+    {
+        if (! \is_int($value)) {
+            return ErrorFactory::createError($context . ' must be of type int, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+
+        $minNode = $node->genericTypes[0] ?? null;
+        $maxNode = $node->genericTypes[1] ?? null;
+
+        $minVal = $minNode !== null ? $this->resolveIntBound($minNode) : null;
+        $maxVal = $maxNode !== null ? $this->resolveIntBound($maxNode) : null;
+
+        if ($minVal !== null && $value < $minVal) {
+            $valDisplay = $isSensitive ? 'int given' : "$value given";
+
+            return ErrorFactory::createError($context . " must be >= $minVal, $valDisplay");
+        }
+
+        if ($maxVal !== null && $value > $maxVal) {
+            $valDisplay = $isSensitive ? 'int given' : "$value given";
+
+            return ErrorFactory::createError($context . " must be <= $maxVal, $valDisplay");
+        }
+
+        return null;
+    }
+
+    private function validateClassString(mixed $value, GenericTypeNode $node, string $context, bool $isSensitive = false): ?ErrorMessage
+    {
+        if (! \is_string($value) || ! ClassNameValidator::isValidClassString($value)) {
+            return ErrorFactory::createError($context . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+
+        $targetClassNode = $node->genericTypes[0] ?? null;
+        if ($targetClassNode === null) {
+            return null;
+        }
+
+        return $this->validateClassStringBound($value, $targetClassNode, $context, $isSensitive);
+    }
+
+    private function validateClassStringBound(string $value, TypeNode $targetNode, string $context, bool $isSensitive = false): ?ErrorMessage
+    {
+        if ($targetNode instanceof IdentifierTypeNode) {
+            $targetName = $targetNode->name;
+            $lower = strtolower($targetName);
+            if ($lower === 'object' || $lower === 'mixed') {
+                return null;
+            }
+
+            if (class_exists($targetName) || interface_exists($targetName) || trait_exists($targetName) || enum_exists($targetName)) {
+                if (! is_a($value, $targetName, allow_string: true)) {
+                    $valDisplay = $isSensitive ? 'string given' : "'$value' given";
+
+                    return ErrorFactory::createError($context . ' must be a class-string of ' . $targetName . ", $valDisplay");
+                }
+            }
+
+            return null;
+        }
+
+        if ($targetNode instanceof UnionTypeNode) {
+            foreach ($targetNode->types as $unionType) {
+                if ($this->validateClassStringBound($value, $unionType, $context, $isSensitive) === null) {
+                    return null;
+                }
+            }
+
+            $valDisplay = $isSensitive ? 'string given' : "'$value' given";
+
+            return ErrorFactory::createError($context . ' must be a class-string of ' . (string) $targetNode . ", $valDisplay");
+        }
+
+        if ($targetNode instanceof IntersectionTypeNode) {
+            foreach ($targetNode->types as $intersectionType) {
+                $err = $this->validateClassStringBound($value, $intersectionType, $context, $isSensitive);
+                if ($err !== null) {
+                    return $err;
+                }
+            }
+
+            return null;
         }
 
         return null;
@@ -726,5 +816,81 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         return RuntimeTypeChecker::bindInstanceFromNode($value, $node, $context);
+    }
+
+    // =========================================================================
+    // SHARED UTILITIES
+    // =========================================================================
+
+    /**
+     * Extracts constant class name and constant name from ConstTypeNode or IdentifierTypeNode.
+     *
+     * @return array{0: string, 1: string}|null
+     */
+    private function extractConstantTarget(?TypeNode $targetType): ?array
+    {
+        if ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstFetchNode) {
+            return [$targetType->constExpr->className, $targetType->constExpr->name];
+        }
+
+        if ($targetType instanceof ConstTypeNode && $targetType->constExpr instanceof ConstExprStringNode) {
+            return ['', $targetType->constExpr->value];
+        }
+
+        if ($targetType instanceof IdentifierTypeNode) {
+            if (str_contains($targetType->name, '::')) {
+                [$className, $constName] = explode('::', $targetType->name, 2);
+
+                return [$className, $constName];
+            }
+
+            return ['', $targetType->name];
+        }
+
+        return null;
+    }
+
+    private static function extractKeyFromItem(ArrayShapeItemNode $item): string|int|null
+    {
+        $keyName = $item->keyName;
+
+        if ($keyName instanceof ConstExprStringNode) {
+            return $keyName->value;
+        }
+        if ($keyName instanceof ConstExprIntegerNode) {
+            return (int) $keyName->value;
+        }
+        if ($keyName instanceof IdentifierTypeNode) {
+            return $keyName->name;
+        }
+        if ($keyName instanceof ConstFetchNode) {
+            return (string) $keyName;
+        }
+
+        return null;
+    }
+
+    private function resolveConstantValue(string $fqcn, string $constName): mixed
+    {
+        $cacheKey = $fqcn !== '' ? "$fqcn::$constName" : $constName;
+
+        if (! \array_key_exists($cacheKey, self::$constantCache)) {
+            $constValue = false;
+            if ($fqcn !== '') {
+                if (class_exists($fqcn) || interface_exists($fqcn)) {
+                    $refClass = new \ReflectionClass($fqcn);
+                    if ($refClass->hasConstant($constName)) {
+                        $constValue = $refClass->getConstant($constName);
+                    }
+                }
+            } else {
+                if (\defined($constName)) {
+                    $constValue = \constant($constName);
+                }
+            }
+            self::$constantCache[$cacheKey] = $constValue;
+        }
+
+        return self::$constantCache[$cacheKey];
     }
 }
