@@ -11,9 +11,11 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
+use TypePHP\Internal\Reporting\ViolationCollector;
 use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
@@ -145,7 +147,10 @@ final class IterableWrapper
                         return;
                     }
 
-                    throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
+                    $handled = ViolationCollector::handle($err, 'yield', null, function: $function);
+                    if ($handled instanceof ErrorMessage) {
+                        throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
+                    }
                 }
             }
 
@@ -160,7 +165,10 @@ final class IterableWrapper
                         return;
                     }
 
-                    throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
+                    $handled = ViolationCollector::handle($err, 'yield', null, function: $function);
+                    if ($handled instanceof ErrorMessage) {
+                        throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
+                    }
                 }
             }
         };
