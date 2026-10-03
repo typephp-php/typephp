@@ -13,6 +13,10 @@ use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Generics\GenericCollection;
 use TypePHP\TypePHP;
 
+if (PHP_VERSION_ID >= 80400) {
+    require_once __DIR__ . '/../Fixtures/PropertyHooks/ReportingHookedFixture.php';
+}
+
 class ReportingModelFixture
 {
     /**
@@ -42,19 +46,6 @@ class ReportingModelFixture
     public function invalidReturnMethod(): int
     {
         return -999;
-    }
-}
-
-class ReportingHookedFixture
-{
-    /**
-     * @var positive-int
-     */
-    public int $hookedScore = 10 {
-        get => -99;
-        set(int $value) {
-            $this->hookedScore = $value;
-        }
     }
 }
 
@@ -382,7 +373,7 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
             }
 
             Config::set(['on_violation' => 'report']);
-            $fixture = new ReportingHookedFixture();
+            $fixture = new \TypePHP\Tests\Fixtures\PropertyHooks\ReportingHookedFixture();
 
             $fixture->hookedScore = -5;
             expect($fixture->hookedScore)->toBe(-99);
@@ -480,6 +471,7 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
 
             testReportingParamFunc(-10, 'ValidRecord');
 
+            // Intentionally write broken JSON into shard folder
             file_put_contents($shardDir . '/shard_broken_123.json', '{{{ corrupted invalid json');
 
             $exported = TypePHP::exportReport($reportFilePath);
