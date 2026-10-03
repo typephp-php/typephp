@@ -40,6 +40,8 @@ final class Config
 
     private static bool $enabled = true;
 
+    private static bool $autoBoot = true;
+
     private static bool $params = true;
 
     private static bool $returns = true;
@@ -89,6 +91,20 @@ final class Config
         }
 
         return self::$enabled;
+    }
+
+    public static function isAutoBootEnabled(): bool
+    {
+        $envAutoBoot = getenv('TYPEPHP_AUTO_BOOT');
+        if ($envAutoBoot !== false) {
+            return filter_var($envAutoBoot, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$autoBoot;
     }
 
     public static function getIgnoreTraceDepth(): int
@@ -358,7 +374,7 @@ final class Config
     }
 
     /**
-     * Loads and caches global configuration from 'typephp.php', explicitly registered extensions, and base defaults.
+     * Loads and caches global configuration from 'typephp.php', 'composer.json' extra, extensions, and base defaults.
      *
      * @return array<string, mixed>
      */
@@ -370,6 +386,7 @@ final class Config
 
         $defaultConfig = [
             'enabled' => true,
+            'auto_boot' => true,
             'params' => true,
             'returns' => true,
             'params_out' => true,
@@ -411,6 +428,26 @@ final class Config
             if (\is_array($loadedConfig)) {
                 /** @var array<string, mixed> $userConfig */
                 $userConfig = $loadedConfig;
+            }
+        }
+
+        if (! isset($userConfig['auto_boot'])) {
+            $composerJsonFile = $projectRoot . '/composer.json';
+            if (file_exists($composerJsonFile)) {
+                $content = @file_get_contents($composerJsonFile);
+                if ($content !== false && str_contains($content, 'auto-boot')) {
+                    $data = json_decode($content, true);
+                    if (
+                        \is_array($data)
+                        && isset($data['extra'])
+                        && \is_array($data['extra'])
+                        && isset($data['extra']['typephp'])
+                        && \is_array($data['extra']['typephp'])
+                        && isset($data['extra']['typephp']['auto-boot'])
+                    ) {
+                        $userConfig['auto_boot'] = filter_var($data['extra']['typephp']['auto-boot'], FILTER_VALIDATE_BOOLEAN);
+                    }
+                }
             }
         }
 
@@ -525,6 +562,7 @@ final class Config
         self::$cachedConfig = null;
         self::$projectRoot = null;
         self::$enabled = true;
+        self::$autoBoot = true;
         self::$params = true;
         self::$returns = true;
         self::$selfOut = true;
@@ -571,6 +609,7 @@ final class Config
     private static function syncFlags(array $config): void
     {
         self::$enabled = (bool) ($config['enabled'] ?? true);
+        self::$autoBoot = (bool) ($config['auto_boot'] ?? true);
         self::$params = (bool) ($config['params'] ?? true);
         self::$paramsOut = (bool) ($config['params_out'] ?? true);
         self::$selfOut = (bool) ($config['self_out'] ?? true);

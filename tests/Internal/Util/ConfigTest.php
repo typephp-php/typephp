@@ -6,6 +6,7 @@ use TypePHP\Internal\Util\Config;
 
 describe('Config Unit Tests', function () {
     afterEach(function () {
+        putenv('TYPEPHP_AUTO_BOOT');
         Config::reset();
     });
 
@@ -14,6 +15,8 @@ describe('Config Unit Tests', function () {
 
         expect($config)->toBeArray()
             ->and($config)->toHaveKey('enabled')
+            ->and($config)->toHaveKey('auto_boot')
+            ->and($config['auto_boot'])->toBeTrue()
             ->and($config)->toHaveKey('cache')
             ->and($config)->toHaveKey('cache_dir')
             ->and($config['cache_dir'])->toBeNull()
@@ -44,6 +47,7 @@ describe('Config Unit Tests', function () {
     test('initializes cachedConfig on demand across all getters when uninitialized and tests cached branch', function () {
         $getters = [
             'isEnabled',
+            'isAutoBootEnabled',
             'getIgnoreTraceDepth',
             'isInlinePropertiesEnabled',
             'isInlineGenericsEnabled',
@@ -333,5 +337,129 @@ describe('Config Unit Tests', function () {
         expect($result)->toBeString()
             ->and($result)->not()->toBeEmpty()
         ;
+    });
+
+    describe('Auto-Boot Configuration Logic', function () {
+        test('isAutoBootEnabled returns true by default', function () {
+            expect(Config::isAutoBootEnabled())->toBeTrue();
+        });
+
+        test('isAutoBootEnabled respects runtime overrides with Config::set', function () {
+            Config::set(['auto_boot' => false]);
+            expect(Config::isAutoBootEnabled())->toBeFalse();
+
+            Config::set(['auto_boot' => true]);
+            expect(Config::isAutoBootEnabled())->toBeTrue();
+        });
+
+        test('isAutoBootEnabled respects TYPEPHP_AUTO_BOOT environment variable', function () {
+            putenv('TYPEPHP_AUTO_BOOT=false');
+            expect(Config::isAutoBootEnabled())->toBeFalse();
+
+            putenv('TYPEPHP_AUTO_BOOT=true');
+            expect(Config::isAutoBootEnabled())->toBeTrue();
+
+            putenv('TYPEPHP_AUTO_BOOT=0');
+            expect(Config::isAutoBootEnabled())->toBeFalse();
+
+            putenv('TYPEPHP_AUTO_BOOT=1');
+            expect(Config::isAutoBootEnabled())->toBeTrue();
+        });
+
+        test('isAutoBootEnabled reads extra.typephp.auto-boot from composer.json', function () {
+            $tempDir = sys_get_temp_dir() . '/typephp_composer_autoboot_' . uniqid();
+            mkdir($tempDir, 0777, true);
+
+            $composerJsonContent = json_encode([
+                'name' => 'test/autoboot-test',
+                'extra' => [
+                    'typephp' => [
+                        'auto-boot' => false,
+                    ],
+                ],
+            ]);
+            file_put_contents($tempDir . '/composer.json', $composerJsonContent);
+
+            try {
+                Config::reset();
+
+                $ref = new ReflectionClass(Config::class);
+                $prop = $ref->getProperty('projectRoot');
+                $prop->setValue(null, $tempDir);
+
+                expect(Config::isAutoBootEnabled())->toBeFalse();
+            } finally {
+                @unlink($tempDir . '/composer.json');
+                @rmdir($tempDir);
+                Config::reset();
+            }
+        });
+
+        test('isAutoBootEnabled prioritizes typephp.php over composer.json', function () {
+            $tempDir = sys_get_temp_dir() . '/typephp_precedence_test_' . uniqid();
+            mkdir($tempDir, 0777, true);
+
+            $composerJsonContent = json_encode([
+                'name' => 'test/autoboot-test',
+                'extra' => [
+                    'typephp' => [
+                        'auto-boot' => false,
+                    ],
+                ],
+            ]);
+            file_put_contents($tempDir . '/composer.json', $composerJsonContent);
+
+            $typephpContent = <<<'PHP'
+<?php
+return [
+    'auto_boot' => true,
+];
+PHP;
+            file_put_contents($tempDir . '/typephp.php', $typephpContent);
+
+            try {
+                Config::reset();
+
+                $ref = new ReflectionClass(Config::class);
+                $prop = $ref->getProperty('projectRoot');
+                $prop->setValue(null, $tempDir);
+
+                expect(Config::isAutoBootEnabled())->toBeTrue();
+            } finally {
+                @unlink($tempDir . '/typephp.php');
+                @unlink($tempDir . '/composer.json');
+                @rmdir($tempDir);
+                Config::reset();
+            }
+        });
+
+        test('isAutoBootEnabled prioritizes TYPEPHP_AUTO_BOOT environment variable over all config files', function () {
+            $tempDir = sys_get_temp_dir() . '/typephp_env_priority_test_' . uniqid();
+            mkdir($tempDir, 0777, true);
+
+            $typephpContent = <<<'PHP'
+<?php
+return [
+    'auto_boot' => false,
+];
+PHP;
+            file_put_contents($tempDir . '/typephp.php', $typephpContent);
+
+            try {
+                Config::reset();
+
+                $ref = new ReflectionClass(Config::class);
+                $prop = $ref->getProperty('projectRoot');
+                $prop->setValue(null, $tempDir);
+
+                putenv('TYPEPHP_AUTO_BOOT=true');
+                expect(Config::isAutoBootEnabled())->toBeTrue();
+            } finally {
+                putenv('TYPEPHP_AUTO_BOOT');
+                @unlink($tempDir . '/typephp.php');
+                @rmdir($tempDir);
+                Config::reset();
+            }
+        });
     });
 });
