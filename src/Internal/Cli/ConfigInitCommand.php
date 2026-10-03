@@ -71,6 +71,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Violation Handling Strategy & Audit Reporting
+    |--------------------------------------------------------------------------
+    | Controls what happens when a type contract is violated at runtime:
+    |
+    | - 'throw'  : (Default / Strict) Immediately throws TypePHP\Exception\TypeError.
+    | - 'report' : (Audit Mode) Does not throw; records each unique violation
+    |              and dumps a structured JSON audit report to 'report_file' at shutdown.
+    | - 'warn'   : Emits PHP E_USER_WARNING once per unique violation to your logs
+    |              and allows execution to continue normally without crashing.
+    |
+    | 'report_file'    : Sets the target JSON output path when 'report' mode is active.
+    | 'fail_on_report' : When true, terminates the process with exit code 1 at shutdown
+    |                    if the violation report is non-empty. Useful for CI gates.
+    */
+    'on_violation'   => 'throw',
+    'report_file'    => null,
+    'fail_on_report' => false,
+
+    /*
+    |--------------------------------------------------------------------------
     | Function Boundary Contracts (@param, @return, @param-out, @self-out)
     |--------------------------------------------------------------------------
     | Controls whether function and method parameter, return, and by-reference
