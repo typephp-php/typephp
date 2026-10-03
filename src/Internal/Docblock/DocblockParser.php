@@ -476,6 +476,17 @@ final class DocblockParser
                 }
             }
 
+            if ($doc === false && $typeNode === null && $refClass->hasProperty($propertyName)) {
+                $refProp = $refClass->getProperty($propertyName);
+                if ($refProp->isPromoted() && $refClass->hasMethod('__construct')) {
+                    $ctorTarget = $refClass->getName() . '::__construct';
+                    $ctorContract = self::parse($ctorTarget);
+                    if (isset($ctorContract['types'][$propertyName])) {
+                        return self::$propertyCache[$className][$propertyName] = $ctorContract['types'][$propertyName];
+                    }
+                }
+            }
+
             if ($doc === false || $declaringClass === null || self::shouldIgnoreDoc($doc)) {
                 return self::$propertyCache[$className][$propertyName] = null;
             }
