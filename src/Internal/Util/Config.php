@@ -11,6 +11,7 @@ use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Io\CacheManager;
 use TypePHP\Internal\Io\StreamWrapper;
+use TypePHP\Internal\Reporting\ViolationCollector;
 use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
@@ -39,6 +40,14 @@ final class Config
     private static ?string $projectRoot = null;
 
     private static bool $enabled = true;
+
+    private static bool $autoBoot = true;
+
+    private static string $onViolation = 'throw';
+
+    private static ?string $reportFile = null;
+
+    private static bool $failOnReport = false;
 
     private static bool $params = true;
 
@@ -89,6 +98,77 @@ final class Config
         }
 
         return self::$enabled;
+    }
+
+    public static function isAutoBootEnabled(): bool
+    {
+        $envAutoBoot = getenv('TYPEPHP_AUTO_BOOT');
+        if ($envAutoBoot !== false && trim((string) $envAutoBoot) !== '') {
+            return filter_var($envAutoBoot, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$autoBoot;
+    }
+
+    public static function getOnViolation(): string
+    {
+        $envMode = getenv('TYPEPHP_ON_VIOLATION');
+        if ($envMode !== false && trim((string) $envMode) !== '') {
+            $normalized = strtolower(trim((string) $envMode));
+            if ($normalized === 'warning') {
+                return 'warn';
+            }
+
+            return $normalized;
+        }
+
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$onViolation;
+    }
+
+    public static function getReportFile(): ?string
+    {
+        $envFile = getenv('TYPEPHP_REPORT_FILE');
+        if ($envFile !== false && trim((string) $envFile) !== '') {
+            return trim((string) $envFile);
+        }
+
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$reportFile;
+    }
+
+    public static function isFailOnReportEnabled(): bool
+    {
+        $envFail = getenv('TYPEPHP_FAIL_ON_REPORT');
+        if ($envFail !== false && trim((string) $envFail) !== '') {
+            return filter_var($envFail, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$failOnReport;
+    }
+
+    public static function isReportMode(): bool
+    {
+        return self::getOnViolation() === 'report';
+    }
+
+    public static function isWarnMode(): bool
+    {
+        return self::getOnViolation() === 'warn';
     }
 
     public static function getIgnoreTraceDepth(): int
@@ -358,7 +438,7 @@ final class Config
     }
 
     /**
-     * Loads and caches global configuration from 'typephp.php', explicitly registered extensions, and base defaults.
+     * Loads and caches global configuration from 'typephp.php', 'composer.json' extra, extensions, and base defaults.
      *
      * @return array<string, mixed>
      */
@@ -370,6 +450,10 @@ final class Config
 
         $defaultConfig = [
             'enabled' => true,
+            'auto_boot' => true,
+            'on_violation' => 'throw',
+            'report_file' => null,
+            'fail_on_report' => false,
             'params' => true,
             'returns' => true,
             'params_out' => true,
@@ -411,6 +495,34 @@ final class Config
             if (\is_array($loadedConfig)) {
                 /** @var array<string, mixed> $userConfig */
                 $userConfig = $loadedConfig;
+            }
+        }
+
+        $composerJsonFile = $projectRoot . '/composer.json';
+        if (file_exists($composerJsonFile)) {
+            $content = @file_get_contents($composerJsonFile);
+            if ($content !== false && (str_contains($content, 'typephp') || str_contains($content, 'auto-boot') || str_contains($content, 'on-violation') || str_contains($content, 'fail-on-report'))) {
+                $data = json_decode($content, true);
+                if (
+                    \is_array($data)
+                    && isset($data['extra'])
+                    && \is_array($data['extra'])
+                    && isset($data['extra']['typephp'])
+                    && \is_array($data['extra']['typephp'])
+                ) {
+                    if (! isset($userConfig['auto_boot']) && isset($data['extra']['typephp']['auto-boot'])) {
+                        $userConfig['auto_boot'] = filter_var($data['extra']['typephp']['auto-boot'], FILTER_VALIDATE_BOOLEAN);
+                    }
+                    if (! isset($userConfig['on_violation']) && isset($data['extra']['typephp']['on-violation']) && \is_string($data['extra']['typephp']['on-violation'])) {
+                        $userConfig['on_violation'] = $data['extra']['typephp']['on-violation'];
+                    }
+                    if (! isset($userConfig['report_file']) && isset($data['extra']['typephp']['report-file']) && \is_string($data['extra']['typephp']['report-file'])) {
+                        $userConfig['report_file'] = $data['extra']['typephp']['report-file'];
+                    }
+                    if (! isset($userConfig['fail_on_report']) && isset($data['extra']['typephp']['fail-on-report'])) {
+                        $userConfig['fail_on_report'] = filter_var($data['extra']['typephp']['fail-on-report'], FILTER_VALIDATE_BOOLEAN);
+                    }
+                }
             }
         }
 
@@ -477,6 +589,7 @@ final class Config
         CacheManager::reset();
         IgnoreManager::reset();
         RuntimeTypeChecker::reset();
+        ViolationCollector::reset();
     }
 
     /**
@@ -525,6 +638,10 @@ final class Config
         self::$cachedConfig = null;
         self::$projectRoot = null;
         self::$enabled = true;
+        self::$autoBoot = true;
+        self::$onViolation = 'throw';
+        self::$reportFile = null;
+        self::$failOnReport = false;
         self::$params = true;
         self::$returns = true;
         self::$selfOut = true;
@@ -561,6 +678,7 @@ final class Config
         CacheManager::reset();
         IgnoreManager::reset();
         RuntimeTypeChecker::reset();
+        ViolationCollector::reset();
     }
 
     /**
@@ -571,6 +689,20 @@ final class Config
     private static function syncFlags(array $config): void
     {
         self::$enabled = (bool) ($config['enabled'] ?? true);
+        self::$autoBoot = (bool) ($config['auto_boot'] ?? true);
+        self::$onViolation = \is_string($config['on_violation'] ?? null) && trim($config['on_violation']) !== ''
+            ? strtolower(trim($config['on_violation']))
+            : 'throw';
+        if (self::$onViolation === 'warning') {
+            self::$onViolation = 'warn';
+        }
+
+        self::$reportFile = \is_string($config['report_file'] ?? null) && trim($config['report_file']) !== ''
+            ? trim($config['report_file'])
+            : null;
+
+        self::$failOnReport = (bool) ($config['fail_on_report'] ?? false);
+
         self::$params = (bool) ($config['params'] ?? true);
         self::$paramsOut = (bool) ($config['params_out'] ?? true);
         self::$selfOut = (bool) ($config['self_out'] ?? true);

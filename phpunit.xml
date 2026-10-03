@@ -14,6 +14,7 @@
         </include>
         <exclude>
             <file>src/bootstrap.php</file>
+            <directory suffix=".php">src/internal/Cli</directory>
         </exclude>
     </source>
 </phpunit>

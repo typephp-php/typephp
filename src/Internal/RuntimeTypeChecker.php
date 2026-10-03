@@ -17,6 +17,7 @@ use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
+use TypePHP\Internal\Reporting\ViolationCollector;
 use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\IgnoreManager;
@@ -54,6 +55,7 @@ final class RuntimeTypeChecker
         CallerBoundaryResolver::reset();
         ParamOutChecker::reset();
         SelfOutChecker::reset();
+        ViolationCollector::reset();
     }
 
     /**
@@ -129,11 +131,18 @@ final class RuntimeTypeChecker
 
         $err = TemplateManager::bindInstanceFromNode($instance, $typeNode, $context, $forceBind);
 
-        if ($err !== null && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($context))) {
-            return null;
+        if ($err !== null) {
+            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($context)) {
+                return null;
+            }
+
+            /** @var ErrorMessage|null $handled */
+            $handled = ViolationCollector::handle($err, 'parameter', null, function: $context);
+
+            return $handled;
         }
 
-        return $err;
+        return null;
     }
 
     /**
@@ -161,8 +170,12 @@ final class RuntimeTypeChecker
             $thisOrClass
         );
 
-        if ($res instanceof ErrorMessage && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($caller ?? ''))) {
-            return $value;
+        if ($res instanceof ErrorMessage) {
+            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($caller !== null ? $caller : '')) {
+                return $value;
+            }
+
+            return ViolationCollector::handle($res, 'variable', $value, $file, null, $caller, '$' . $varName);
         }
 
         return $res;
@@ -184,8 +197,12 @@ final class RuntimeTypeChecker
 
         $res = InlineChecker::checkProperty($value, $objectOrClass, $propName, $file, self::getRegistry());
 
-        if ($res instanceof ErrorMessage && (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName))) {
-            return $value;
+        if ($res instanceof ErrorMessage) {
+            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName)) {
+                return $value;
+            }
+
+            return ViolationCollector::handle($res, 'property', $value, $file, null, $className . '::$' . $propName, '$' . $propName);
         }
 
         return $res;
@@ -248,7 +265,10 @@ final class RuntimeTypeChecker
 
             TemplateManager::popCallFrame($effectiveFunction);
 
-            return $err;
+            $handled = ViolationCollector::handle($err, 'parameter', null, function: $effectiveFunction);
+            if ($handled instanceof ErrorMessage) {
+                return $handled;
+            }
         }
 
         $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] ?? null;
@@ -285,11 +305,18 @@ final class RuntimeTypeChecker
 
         $err = ParamChecker::checkParams($function, $vars, $thisOrClass, self::getRegistry());
 
-        if ($err !== null && IgnoreManager::isCallerIgnored()) {
-            return null;
+        if ($err !== null) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return null;
+            }
+
+            /** @var ErrorMessage|null $handled */
+            $handled = ViolationCollector::handle($err, 'parameter', null, function: $effectiveFunction);
+
+            return $handled;
         }
 
-        return $err;
+        return null;
     }
 
     /**
@@ -310,11 +337,18 @@ final class RuntimeTypeChecker
 
         $res = ParamOutChecker::checkParamOut($function, $paramName, $value, $thisOrClass, self::getRegistry(), $effectiveFunction);
 
-        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
-            return null;
+        if ($res instanceof ErrorMessage) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return null;
+            }
+
+            /** @var ErrorMessage|null $handled */
+            $handled = ViolationCollector::handle($res, 'param-out', null, function: $effectiveFunction, target: '$' . $paramName);
+
+            return $handled;
         }
 
-        return $res;
+        return null;
     }
 
     /**
@@ -348,7 +382,7 @@ final class RuntimeTypeChecker
             return;
         }
 
-        $vars ??= [];
+        $vars = $vars !== null ? $vars : [];
 
         SelfOutChecker::checkSelfOut($function, $thisObj, $vars, self::getRegistry(), $effectiveFunction);
     }
@@ -385,7 +419,7 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        $vars ??= [];
+        $vars = $vars !== null ? $vars : [];
 
         $res = ReturnChecker::checkReturn(
             $function,
@@ -398,8 +432,12 @@ final class RuntimeTypeChecker
             $contract
         );
 
-        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
-            return $value;
+        if ($res instanceof ErrorMessage) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return $value;
+            }
+
+            return ViolationCollector::handle($res, 'return', $value, function: $effectiveFunction, target: 'return');
         }
 
         return $res;
@@ -423,8 +461,12 @@ final class RuntimeTypeChecker
 
         $res = GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass);
 
-        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
-            return $sendValue;
+        if ($res instanceof ErrorMessage) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return $sendValue;
+            }
+
+            return ViolationCollector::handle($res, 'send', $sendValue, function: $effectiveFunction);
         }
 
         return $res;
@@ -448,8 +490,12 @@ final class RuntimeTypeChecker
 
         $res = GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass);
 
-        if ($res instanceof ErrorMessage && IgnoreManager::isCallerIgnored()) {
-            return $value;
+        if ($res instanceof ErrorMessage) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return $value;
+            }
+
+            return ViolationCollector::handle($res, 'yield', $value, function: $effectiveFunction);
         }
 
         return $res;

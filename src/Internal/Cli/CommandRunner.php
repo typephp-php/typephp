@@ -8,6 +8,8 @@ final class CommandRunner
 {
     private const KNOWN_COMMANDS = [
         'config:init',
+        'report',
+        'report:clear',
         'cache:clear',
         'cache:warm',
         'cache:rebuild',
@@ -39,6 +41,14 @@ final class CommandRunner
 
         if ($firstArg === 'config:init' || $firstArg === 'init') {
             return (new ConfigInitCommand())->execute($args, $outputStream, $errorStream);
+        }
+
+        if ($firstArg === 'report' || $firstArg === 'report:show') {
+            return (new ReportCommand())->execute($args, $outputStream, $errorStream);
+        }
+
+        if ($firstArg === 'report:clear') {
+            return (new ReportClearCommand())->execute($args, $outputStream, $errorStream);
         }
 
         if ($firstArg === 'cache:rebuild') {

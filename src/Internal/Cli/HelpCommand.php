@@ -15,12 +15,15 @@ final class HelpCommand implements CommandInterface
         fwrite($outputStream, "    vendor/bin/typephp <script.php>\n\n");
         fwrite($outputStream, '  ' . $c('COMMANDS', 'yellow') . "\n");
         fwrite($outputStream, '    ' . $c('config:init', 'green') . "    Generate default typephp.php configuration file\n");
+        fwrite($outputStream, '    ' . $c('report', 'green') . "         Display audit report summary in terminal\n");
+        fwrite($outputStream, '    ' . $c('report:clear', 'green') . "   Delete generated report file and shards\n");
         fwrite($outputStream, '    ' . $c('cache:clear', 'green') . "    Clear all cached transformed files\n");
         fwrite($outputStream, '    ' . $c('cache:warm', 'green') . "     Pre-transform and warm up cache for included files\n");
         fwrite($outputStream, '    ' . $c('cache:rebuild', 'green') . "  Clear and immediately warm up cache\n");
         fwrite($outputStream, '    ' . $c('help', 'green') . "         Display this help menu\n\n");
         fwrite($outputStream, '  ' . $c('EXAMPLES', 'yellow') . "\n");
         fwrite($outputStream, "    vendor/bin/typephp config:init\n");
+        fwrite($outputStream, "    vendor/bin/typephp report\n");
         fwrite($outputStream, "    vendor/bin/typephp index.php\n");
         fwrite($outputStream, "    vendor/bin/typephp cache:rebuild\n\n");
 
