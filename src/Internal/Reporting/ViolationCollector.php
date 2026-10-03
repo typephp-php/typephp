@@ -185,7 +185,7 @@ final class ViolationCollector
                 }
             }
 
-            if (Config::isFailOnReportEnabled() && $violationCount > 0) {
+            if (Config::isFailOnReportEnabled()) {
                 @fwrite(STDERR, "\n[TypePHP] {$violationCount} contract violation(s) recorded in report. Exiting with status 1.\n");
                 exit(1);
             }
@@ -208,9 +208,12 @@ final class ViolationCollector
             @mkdir($shardDir, 0777, true);
         }
 
-        $workerId = getenv('TEST_TOKEN')
-            ?: getenv('PEST_PARALLEL_WORKER_ID')
-            ?: (string) getmypid();
+        $testToken = getenv('TEST_TOKEN');
+        $pestWorkerId = getenv('PEST_PARALLEL_WORKER_ID');
+
+        $workerId = ($testToken !== false && $testToken !== '')
+            ? $testToken
+            : (($pestWorkerId !== false && $pestWorkerId !== '') ? $pestWorkerId : (string) getmypid());
 
         $safeToken = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $workerId);
         $shardFile = $shardDir . '/shard_' . $safeToken . '_' . bin2hex(random_bytes(4)) . '.json';
@@ -226,7 +229,7 @@ final class ViolationCollector
      */
     public static function exportReport(?string $filePath = null): ?string
     {
-        $targetFile = $filePath ?? Config::getReportFile();
+        $targetFile = $filePath !== null ? $filePath : Config::getReportFile();
         if ($targetFile === null) {
             return null;
         }
@@ -291,8 +294,6 @@ final class ViolationCollector
     }
 
     /**
-     * Resolves the actual user call site (file and line), bypassing internal TypePHP frames.
-     *
      * @return array{0: string, 1: int}
      */
     private static function resolveCallSite(?string $explicitFile, ?int $explicitLine): array
@@ -303,12 +304,12 @@ final class ViolationCollector
 
         $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
         foreach ($trace as $frame) {
-            $f = isset($frame['file']) && \is_string($frame['file']) ? str_replace('\\', '/', $frame['file']) : '';
-            if ($f === '') {
+            if (! isset($frame['file']) || ! \is_string($frame['file'])) {
                 continue;
             }
 
-            if (str_contains($f, 'src/Internal/') || str_contains($f, 'bin/typephp')) {
+            $normalizedFile = str_replace('\\', '/', $frame['file']);
+            if (str_contains($normalizedFile, 'src/Internal/') || str_contains($normalizedFile, 'bin/typephp')) {
                 continue;
             }
 
@@ -317,23 +318,27 @@ final class ViolationCollector
             return [$frame['file'], $l];
         }
 
-        return [$explicitFile ?? 'unknown', $explicitLine ?? 1];
+        return [$explicitFile !== null ? $explicitFile : 'unknown', $explicitLine !== null ? $explicitLine : 1];
     }
 
     /**
-     * Extracts function, target, expected, and given metadata from diagnostic error messages.
-     *
      * @return array{function: string, target: string, expected: string, given: string}
      */
     private static function parseMetadata(string $message, string $kind, ?string $explicitFunction, ?string $explicitTarget): array
     {
-        $function = $explicitFunction ?? '';
-        $target = $explicitTarget ?? '';
+        $function = $explicitFunction !== null ? $explicitFunction : '';
+        $target = $explicitTarget !== null ? $explicitTarget : '';
         $expected = '';
         $given = '';
 
-        if (preg_match('/^([^:]+):/', $message, $m) === 1 && $function === '') {
-            $function = trim($m[1]);
+        if ($function === '') {
+            if (preg_match('/^([a-zA-Z0-9_\\\\]+(?:::[a-zA-Z0-9_\x80-\xff]+)?)\(\):/', $message, $m) === 1) {
+                $function = trim($m[1]);
+            } elseif (preg_match('/^Property\s+([a-zA-Z0-9_\\\\]+(?:::\$[a-zA-Z0-9_\x80-\xff]+)?)/', $message, $m) === 1) {
+                $function = trim($m[1]);
+            } elseif (preg_match('/^([^:]+):/', $message, $m) === 1) {
+                $function = trim($m[1]);
+            }
         }
 
         if (preg_match('/(?:Argument|Parameter)\s+(\$[a-zA-Z0-9_]+)/', $message, $m) === 1 && $target === '') {

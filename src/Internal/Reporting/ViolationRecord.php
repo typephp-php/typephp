@@ -73,22 +73,27 @@ final readonly class ViolationRecord implements JsonSerializable
      */
     public static function fromArray(array $data): ?self
     {
-        if (! isset($data['file'], $data['line'], $data['message'])) {
+        if (
+            ! isset($data['file'], $data['line'], $data['message'])
+            || ! \is_string($data['file'])
+            || ! is_numeric($data['line'])
+            || ! \is_string($data['message'])
+        ) {
             return null;
         }
 
         /** @var 'parameter'|'return'|'property'|'variable'|'param-out'|'self-out'|'callback'|'yield'|'send' $kind */
-        $kind = \is_string($data['kind'] ?? null) ? $data['kind'] : 'parameter';
+        $kind = isset($data['kind']) && \is_string($data['kind']) ? $data['kind'] : 'parameter';
 
         return new self(
-            file: (string) $data['file'],
+            file: $data['file'],
             line: (int) $data['line'],
-            function: (string) ($data['function'] ?? 'unknown'),
+            function: isset($data['function']) && \is_string($data['function']) ? $data['function'] : 'unknown',
             kind: $kind,
-            target: (string) ($data['target'] ?? 'unknown'),
-            expected: (string) ($data['expected'] ?? 'valid type'),
-            given: (string) ($data['given'] ?? 'invalid value'),
-            message: (string) $data['message']
+            target: isset($data['target']) && \is_string($data['target']) ? $data['target'] : 'unknown',
+            expected: isset($data['expected']) && \is_string($data['expected']) ? $data['expected'] : 'valid type',
+            given: isset($data['given']) && \is_string($data['given']) ? $data['given'] : 'invalid value',
+            message: $data['message']
         );
     }
 }

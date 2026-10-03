@@ -7,6 +7,9 @@ use TypePHP\Internal\Util\Config;
 describe('Config Unit Tests', function () {
     afterEach(function () {
         putenv('TYPEPHP_AUTO_BOOT');
+        putenv('TYPEPHP_ON_VIOLATION');
+        putenv('TYPEPHP_REPORT_FILE');
+        putenv('TYPEPHP_FAIL_ON_REPORT');
         Config::reset();
     });
 
@@ -17,6 +20,12 @@ describe('Config Unit Tests', function () {
             ->and($config)->toHaveKey('enabled')
             ->and($config)->toHaveKey('auto_boot')
             ->and($config['auto_boot'])->toBeTrue()
+            ->and($config)->toHaveKey('on_violation')
+            ->and($config['on_violation'])->toBe('throw')
+            ->and($config)->toHaveKey('report_file')
+            ->and($config['report_file'])->toBeNull()
+            ->and($config)->toHaveKey('fail_on_report')
+            ->and($config['fail_on_report'])->toBeFalse()
             ->and($config)->toHaveKey('cache')
             ->and($config)->toHaveKey('cache_dir')
             ->and($config['cache_dir'])->toBeNull()
@@ -29,11 +38,18 @@ describe('Config Unit Tests', function () {
             'inline_vars' => [
                 'scalars' => false,
             ],
+            'on_violation' => 'report',
+            'report_file' => 'var/report.json',
+            'fail_on_report' => true,
         ]);
 
         $config = Config::get();
 
-        expect($config['inline_vars']['scalars'])->toBeFalse();
+        expect($config['inline_vars']['scalars'])->toBeFalse()
+            ->and($config['on_violation'])->toBe('report')
+            ->and($config['report_file'])->toBe('var/report.json')
+            ->and($config['fail_on_report'])->toBeTrue()
+        ;
     });
 
     test('resets configuration cache with reset', function () {
@@ -48,6 +64,11 @@ describe('Config Unit Tests', function () {
         $getters = [
             'isEnabled',
             'isAutoBootEnabled',
+            'getOnViolation',
+            'getReportFile',
+            'isFailOnReportEnabled',
+            'isReportMode',
+            'isWarnMode',
             'getIgnoreTraceDepth',
             'isInlinePropertiesEnabled',
             'isInlineGenericsEnabled',
@@ -424,6 +445,7 @@ PHP;
                 $prop = $ref->getProperty('projectRoot');
                 $prop->setValue(null, $tempDir);
 
+                // typephp.php (true) overrides composer.json (false)
                 expect(Config::isAutoBootEnabled())->toBeTrue();
             } finally {
                 @unlink($tempDir . '/typephp.php');
@@ -452,11 +474,106 @@ PHP;
                 $prop = $ref->getProperty('projectRoot');
                 $prop->setValue(null, $tempDir);
 
+                // Environment variable (true) overrides typephp.php (false)
                 putenv('TYPEPHP_AUTO_BOOT=true');
                 expect(Config::isAutoBootEnabled())->toBeTrue();
             } finally {
                 putenv('TYPEPHP_AUTO_BOOT');
                 @unlink($tempDir . '/typephp.php');
+                @rmdir($tempDir);
+                Config::reset();
+            }
+        });
+    });
+
+    describe('Violation Handling & Reporting Configuration', function () {
+        test('on_violation defaults to throw and normalizes warn/report values', function () {
+            expect(Config::getOnViolation())->toBe('throw')
+                ->and(Config::isReportMode())->toBeFalse()
+                ->and(Config::isWarnMode())->toBeFalse()
+            ;
+
+            Config::set(['on_violation' => 'report']);
+            expect(Config::getOnViolation())->toBe('report')
+                ->and(Config::isReportMode())->toBeTrue()
+                ->and(Config::isWarnMode())->toBeFalse()
+            ;
+
+            Config::set(['on_violation' => 'warn']);
+            expect(Config::getOnViolation())->toBe('warn')
+                ->and(Config::isReportMode())->toBeFalse()
+                ->and(Config::isWarnMode())->toBeTrue()
+            ;
+
+            Config::set(['on_violation' => 'warning']);
+            expect(Config::getOnViolation())->toBe('warn')
+                ->and(Config::isWarnMode())->toBeTrue()
+            ;
+        });
+
+        test('report_file defaults to null and respects custom paths', function () {
+            expect(Config::getReportFile())->toBeNull();
+
+            Config::set(['report_file' => 'var/typephp-report.json']);
+            expect(Config::getReportFile())->toBe('var/typephp-report.json');
+
+            Config::set(['report_file' => '   ']);
+            expect(Config::getReportFile())->toBeNull();
+        });
+
+        test('fail_on_report defaults to false and respects boolean overrides', function () {
+            expect(Config::isFailOnReportEnabled())->toBeFalse();
+
+            Config::set(['fail_on_report' => true]);
+            expect(Config::isFailOnReportEnabled())->toBeTrue();
+        });
+
+        test('respects TYPEPHP_ON_VIOLATION, TYPEPHP_REPORT_FILE, and TYPEPHP_FAIL_ON_REPORT environment variables', function () {
+            putenv('TYPEPHP_ON_VIOLATION=report');
+            putenv('TYPEPHP_REPORT_FILE=var/ci-report.json');
+            putenv('TYPEPHP_FAIL_ON_REPORT=true');
+
+            expect(Config::getOnViolation())->toBe('report')
+                ->and(Config::isReportMode())->toBeTrue()
+                ->and(Config::getReportFile())->toBe('var/ci-report.json')
+                ->and(Config::isFailOnReportEnabled())->toBeTrue()
+            ;
+
+            putenv('TYPEPHP_ON_VIOLATION=warning');
+            expect(Config::getOnViolation())->toBe('warn')
+                ->and(Config::isWarnMode())->toBeTrue()
+            ;
+        });
+
+        test('reads reporting options from composer.json extra section', function () {
+            $tempDir = sys_get_temp_dir() . '/typephp_composer_report_' . uniqid();
+            mkdir($tempDir, 0777, true);
+
+            $composerJsonContent = json_encode([
+                'name' => 'test/report-config',
+                'extra' => [
+                    'typephp' => [
+                        'on-violation' => 'report',
+                        'report-file' => 'var/composer-report.json',
+                        'fail-on-report' => true,
+                    ],
+                ],
+            ]);
+            file_put_contents($tempDir . '/composer.json', $composerJsonContent);
+
+            try {
+                Config::reset();
+
+                $ref = new ReflectionClass(Config::class);
+                $prop = $ref->getProperty('projectRoot');
+                $prop->setValue(null, $tempDir);
+
+                expect(Config::getOnViolation())->toBe('report')
+                    ->and(Config::getReportFile())->toBe('var/composer-report.json')
+                    ->and(Config::isFailOnReportEnabled())->toBeTrue()
+                ;
+            } finally {
+                @unlink($tempDir . '/composer.json');
                 @rmdir($tempDir);
                 Config::reset();
             }
