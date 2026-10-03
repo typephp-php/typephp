@@ -108,8 +108,9 @@ describe('Global Constant key-of, value-of, and int<min, max> Bounds', function 
         });
 
         test('rejects undeclared keys for global array constant declared via const', function () {
-            expect(fn() => testGlobalConstKeyOf('nonexistent'))
-                ->toThrow(TypeError::class, 'must be a key of TEST_GLOBAL_DEFAULTS, string \'nonexistent\' given');
+            expect(fn () => testGlobalConstKeyOf('nonexistent'))
+                ->toThrow(TypeError::class, 'must be a key of TEST_GLOBAL_DEFAULTS, string \'nonexistent\' given')
+            ;
         });
 
         test('accepts valid keys from global array constant defined via define()', function () {
@@ -120,8 +121,9 @@ describe('Global Constant key-of, value-of, and int<min, max> Bounds', function 
         });
 
         test('rejects undeclared keys for global array constant defined via define()', function () {
-            expect(fn() => testGlobalDefineKeyOf('invalid'))
-                ->toThrow(TypeError::class, 'must be a key of TEST_GLOBAL_HTTP_CODES, string \'invalid\' given');
+            expect(fn () => testGlobalDefineKeyOf('invalid'))
+                ->toThrow(TypeError::class, 'must be a key of TEST_GLOBAL_HTTP_CODES, string \'invalid\' given')
+            ;
         });
     });
 
@@ -134,8 +136,9 @@ describe('Global Constant key-of, value-of, and int<min, max> Bounds', function 
         });
 
         test('rejects undeclared values for global array constant declared via const', function () {
-            expect(fn() => testGlobalConstValueOf(999))
-                ->toThrow(TypeError::class, 'must be a value of TEST_GLOBAL_DEFAULTS, int (999) given');
+            expect(fn () => testGlobalConstValueOf(999))
+                ->toThrow(TypeError::class, 'must be a value of TEST_GLOBAL_DEFAULTS, int (999) given')
+            ;
         });
 
         test('accepts valid values from global array constant defined via define()', function () {
@@ -146,8 +149,9 @@ describe('Global Constant key-of, value-of, and int<min, max> Bounds', function 
         });
 
         test('rejects undeclared values for global array constant defined via define()', function () {
-            expect(fn() => testGlobalDefineValueOf(418))
-                ->toThrow(TypeError::class, 'must be a value of TEST_GLOBAL_HTTP_CODES, int (418) given');
+            expect(fn () => testGlobalDefineValueOf(418))
+                ->toThrow(TypeError::class, 'must be a value of TEST_GLOBAL_HTTP_CODES, int (418) given')
+            ;
         });
     });
 
@@ -155,29 +159,33 @@ describe('Global Constant key-of, value-of, and int<min, max> Bounds', function 
         test('validates key-of inside array shape', function () {
             expect(testGlobalKeyOfInShape(['key' => 'timeout', 'override' => 0]))->toBe(30);
 
-            expect(fn() => testGlobalKeyOfInShape(['key' => 'invalid', 'override' => 0]))
-                ->toThrow(TypeError::class, "Argument \$config['key'] must be a key of TEST_GLOBAL_DEFAULTS, string 'invalid' given");
+            expect(fn () => testGlobalKeyOfInShape(['key' => 'invalid', 'override' => 0]))
+                ->toThrow(TypeError::class, "Argument \$config['key'] must be a key of TEST_GLOBAL_DEFAULTS, string 'invalid' given")
+            ;
         });
 
         test('validates value-of inside array shape', function () {
             expect(testGlobalValueOfInShape(['role' => 1, 'user' => 'Alice']))->toBe('Alice:1');
 
-            expect(fn() => testGlobalValueOfInShape(['role' => 99, 'user' => 'Alice']))
-                ->toThrow(TypeError::class, "Argument \$data['role'] must be a value of TEST_GLOBAL_ROLES, int (99) given");
+            expect(fn () => testGlobalValueOfInShape(['role' => 99, 'user' => 'Alice']))
+                ->toThrow(TypeError::class, "Argument \$data['role'] must be a value of TEST_GLOBAL_ROLES, int (99) given")
+            ;
         });
 
         test('validates key-of inside generic list', function () {
             expect(testGlobalKeyOfInList(['admin', 'user']))->toBe(2);
 
-            expect(fn() => testGlobalKeyOfInList(['admin', 'superuser']))
-                ->toThrow(TypeError::class, "Argument \$keys[1] must be a key of TEST_GLOBAL_ROLES, string 'superuser' given");
+            expect(fn () => testGlobalKeyOfInList(['admin', 'superuser']))
+                ->toThrow(TypeError::class, "Argument \$keys[1] must be a key of TEST_GLOBAL_ROLES, string 'superuser' given")
+            ;
         });
 
         test('validates key-of on return value', function () {
             expect(testGlobalKeyOfReturn('timeout'))->toBe('timeout');
 
-            expect(fn() => testGlobalKeyOfReturn('invalid_key'))
-                ->toThrow(TypeError::class, 'Return value must be a key of TEST_GLOBAL_DEFAULTS');
+            expect(fn () => testGlobalKeyOfReturn('invalid_key'))
+                ->toThrow(TypeError::class, 'Return value must be a key of TEST_GLOBAL_DEFAULTS')
+            ;
         });
 
         test('validates key-of on inline @var variable assignment', function () {
@@ -201,10 +209,11 @@ describe('Global Constant key-of, value-of, and int<min, max> Bounds', function 
         });
 
         test('rejects values exceeding global constant max bound', function () {
-            expect(fn() => testGlobalConstantIntRange(10))
-                ->toThrow(TypeError::class, 'Argument $n must be <= 5, 10 given');
+            expect(fn () => testGlobalConstantIntRange(10))
+                ->toThrow(TypeError::class, 'Argument $n must be <= 5, 10 given')
+            ;
 
-            expect(fn() => testGlobalConstantIntRange(0))
+            expect(fn () => testGlobalConstantIntRange(0))
                 ->toThrow(TypeError::class, 'Argument $n must be >= 1, 0 given');
         });
     });

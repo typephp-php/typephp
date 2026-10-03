@@ -7,6 +7,7 @@ namespace TypePHP\Internal\Validator;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
+use PHPStan\PhpDocParser\Ast\Node as PhpDocNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
@@ -15,7 +16,6 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
-use PHPStan\PhpDocParser\Ast\Node as PhpDocNode;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
@@ -142,10 +142,20 @@ final class GenericValidator implements TypeValidatorInterface
         return null;
     }
 
+    /**
+     * @param class-string<\UnitEnum>|string $enumClass
+     */
     private function validateKeyOfEnum(mixed $value, string $enumClass, string $context, bool $isSensitive): ?ErrorMessage
     {
+        if (! is_subclass_of($enumClass, \UnitEnum::class)) {
+            return null;
+        }
+
         if (! isset(self::$enumKeyCache[$enumClass])) {
-            self::$enumKeyCache[$enumClass] = array_map(fn($case) => $case->name, $enumClass::cases());
+            self::$enumKeyCache[$enumClass] = array_map(
+                static fn (\UnitEnum $case): string => $case->name,
+                $enumClass::cases()
+            );
         }
 
         if (! \in_array($value, self::$enumKeyCache[$enumClass], strict: true)) {
@@ -220,6 +230,9 @@ final class GenericValidator implements TypeValidatorInterface
         return null;
     }
 
+    /**
+     * @param class-string<\BackedEnum>|string $enumClass
+     */
     private function validateValueOfEnum(mixed $value, string $enumClass, string $context, bool $isSensitive): ?ErrorMessage
     {
         if (! is_subclass_of($enumClass, \BackedEnum::class)) {
@@ -227,7 +240,10 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         if (! isset(self::$enumValueCache[$enumClass])) {
-            self::$enumValueCache[$enumClass] = array_map(fn($case) => $case->value, $enumClass::cases());
+            self::$enumValueCache[$enumClass] = array_map(
+                static fn (\BackedEnum $case): string|int => $case->value,
+                $enumClass::cases()
+            );
         }
 
         if (! \in_array($value, self::$enumValueCache[$enumClass], strict: true)) {
