@@ -6,10 +6,20 @@ use TypePHP\Internal\Util\Config;
 
 describe('Config Unit Tests', function () {
     afterEach(function () {
-        putenv('TYPEPHP_AUTO_BOOT');
-        putenv('TYPEPHP_ON_VIOLATION');
-        putenv('TYPEPHP_REPORT_FILE');
-        putenv('TYPEPHP_FAIL_ON_REPORT');
+        putenv('TYPEPHP_AUTO_BOOT=');
+        putenv('TYPEPHP_ON_VIOLATION=');
+        putenv('TYPEPHP_REPORT_FILE=');
+        putenv('TYPEPHP_FAIL_ON_REPORT=');
+        unset(
+            $_ENV['TYPEPHP_AUTO_BOOT'],
+            $_SERVER['TYPEPHP_AUTO_BOOT'],
+            $_ENV['TYPEPHP_ON_VIOLATION'],
+            $_SERVER['TYPEPHP_ON_VIOLATION'],
+            $_ENV['TYPEPHP_REPORT_FILE'],
+            $_SERVER['TYPEPHP_REPORT_FILE'],
+            $_ENV['TYPEPHP_FAIL_ON_REPORT'],
+            $_SERVER['TYPEPHP_FAIL_ON_REPORT']
+        );
         Config::reset();
     });
 

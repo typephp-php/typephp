@@ -103,7 +103,7 @@ final class Config
     public static function isAutoBootEnabled(): bool
     {
         $envAutoBoot = getenv('TYPEPHP_AUTO_BOOT');
-        if ($envAutoBoot !== false) {
+        if ($envAutoBoot !== false && trim((string) $envAutoBoot) !== '') {
             return filter_var($envAutoBoot, FILTER_VALIDATE_BOOLEAN);
         }
 
@@ -117,8 +117,8 @@ final class Config
     public static function getOnViolation(): string
     {
         $envMode = getenv('TYPEPHP_ON_VIOLATION');
-        if ($envMode !== false && trim($envMode) !== '') {
-            $normalized = strtolower(trim($envMode));
+        if ($envMode !== false && trim((string) $envMode) !== '') {
+            $normalized = strtolower(trim((string) $envMode));
             if ($normalized === 'warning') {
                 return 'warn';
             }
@@ -136,8 +136,8 @@ final class Config
     public static function getReportFile(): ?string
     {
         $envFile = getenv('TYPEPHP_REPORT_FILE');
-        if ($envFile !== false && trim($envFile) !== '') {
-            return trim($envFile);
+        if ($envFile !== false && trim((string) $envFile) !== '') {
+            return trim((string) $envFile);
         }
 
         if (self::$cachedConfig === null) {
@@ -150,7 +150,7 @@ final class Config
     public static function isFailOnReportEnabled(): bool
     {
         $envFail = getenv('TYPEPHP_FAIL_ON_REPORT');
-        if ($envFail !== false) {
+        if ($envFail !== false && trim((string) $envFail) !== '') {
             return filter_var($envFail, FILTER_VALIDATE_BOOLEAN);
         }
 
