@@ -20,6 +20,7 @@ final class ReportCommand implements CommandInterface
         $reportDir = \dirname($reportFile);
         $shardDir = $reportDir . '/.typephp-shards';
 
+        // Consolidate any parallel shards if present
         if (is_dir($shardDir)) {
             ViolationCollector::exportReport($reportFile);
         }
@@ -50,22 +51,26 @@ final class ReportCommand implements CommandInterface
 
         $violations = $data['violations'];
         $totalCount = \count($violations);
+
+        /** @var array<string, list<array<string, mixed>>> $grouped */
+        $grouped = [];
+        $filesAffectedMap = [];
+
+        foreach ($violations as $v) {
+            $file = isset($v['file']) && \is_string($v['file']) ? $v['file'] : 'unknown';
+            $grouped[$file][] = $v;
+            $filesAffectedMap[$file] = true;
+        }
+
         $filesAffected = isset($data['summary']['files_affected']) && \is_int($data['summary']['files_affected'])
             ? $data['summary']['files_affected']
-            : \count(array_unique(array_column($violations, 'file')));
+            : \count($filesAffectedMap);
 
         $relativeReportPath = ViolationCollector::normalizeRelativePath($reportFile);
 
         fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Total Violations: ' . $c((string) $totalCount, 'bold') . "\n");
         fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Files Affected:   ' . $c((string) $filesAffected, 'bold') . "\n");
         fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Report Source:    ' . $c($relativeReportPath, 'gray') . "\n\n");
-
-        /** @var array<string, list<array<string, mixed>>> $grouped */
-        $grouped = [];
-        foreach ($violations as $v) {
-            $file = isset($v['file']) && \is_string($v['file']) ? $v['file'] : 'unknown';
-            $grouped[$file][] = $v;
-        }
 
         foreach ($grouped as $file => $items) {
             fwrite($outputStream, '  ' . $c($file, 'bold') . "\n");
