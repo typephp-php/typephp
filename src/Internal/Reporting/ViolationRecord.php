@@ -77,7 +77,7 @@ final readonly class ViolationRecord implements JsonSerializable
             return null;
         }
 
-        /** @var 'parameter'|'return'|'property'|'variable'|'param-out'|'self-out'|'callback'|'yield'|'send' */
+        /** @var 'parameter'|'return'|'property'|'variable'|'param-out'|'self-out'|'callback'|'yield'|'send' $kind */
         $kind = \is_string($data['kind'] ?? null) ? $data['kind'] : 'parameter';
 
         return new self(

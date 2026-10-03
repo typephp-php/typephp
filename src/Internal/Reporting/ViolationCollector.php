@@ -158,28 +158,36 @@ final class ViolationCollector
     }
 
     /**
-     * Registers shutdown hook to write worker shards or master report.
+     * Registers shutdown hook to write worker shards or master report and optionally exit with failure.
      */
     private static function registerShutdownHandler(): void
     {
         register_shutdown_function(static function (): void {
-            if (self::$violations === []) {
+            $violationCount = \count(self::$violations);
+            if ($violationCount === 0) {
                 return;
             }
 
             $reportFile = Config::getReportFile();
-            if ($reportFile === null) {
-                return;
+            $testToken = getenv('TEST_TOKEN');
+            $pestWorkerId = getenv('PEST_PARALLEL_WORKER_ID');
+            $isParaTest = getenv('PARATEST') !== false;
+
+            $isParallelWorker = ($testToken !== false && $testToken !== '')
+                || ($pestWorkerId !== false && $pestWorkerId !== '')
+                || $isParaTest;
+
+            if ($reportFile !== null) {
+                if ($isParallelWorker) {
+                    self::writeWorkerShard($reportFile);
+                } else {
+                    self::exportReport($reportFile);
+                }
             }
 
-            $isParallelWorker = getenv('TEST_TOKEN') !== false
-                || getenv('PARATEST') !== false
-                || getenv('PEST_PARALLEL_WORKER_ID') !== false;
-
-            if ($isParallelWorker) {
-                self::writeWorkerShard($reportFile);
-            } else {
-                self::exportReport($reportFile);
+            if (Config::isFailOnReportEnabled() && $violationCount > 0) {
+                @fwrite(STDERR, "\n[TypePHP] {$violationCount} contract violation(s) recorded in report. Exiting with status 1.\n");
+                exit(1);
             }
         });
     }
@@ -204,7 +212,8 @@ final class ViolationCollector
             ?: getenv('PEST_PARALLEL_WORKER_ID')
             ?: (string) getmypid();
 
-        $shardFile = $shardDir . '/shard_' . preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $workerId) . '_' . bin2hex(random_bytes(4)) . '.json';
+        $safeToken = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $workerId);
+        $shardFile = $shardDir . '/shard_' . $safeToken . '_' . bin2hex(random_bytes(4)) . '.json';
         $content = json_encode(array_values(self::$violations), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 
         if ($content !== false) {
