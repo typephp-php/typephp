@@ -55,6 +55,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Auto-Boot on Composer Autoload
+    |--------------------------------------------------------------------------
+    | When true (default), TypePHP automatically hooks into the stream wrapper
+    | as soon as 'vendor/autoload.php' is required.
+    |
+    | Set to false to disable auto-booting project-wide. You can then manually
+    | boot TypePHP where desired (e.g. in 'tests/bootstrap.php') via:
+    |   \TypePHP\TypePHP::boot();
+    |
+    | Can also be configured in root composer.json:
+    |   "extra": { "typephp": { "auto-boot": false } }
+    */
+    'auto_boot' => true,
+
+    /*
+    |--------------------------------------------------------------------------
     | Function Boundary Contracts (@param, @return, @param-out, @self-out)
     |--------------------------------------------------------------------------
     | Controls whether function and method parameter, return, and by-reference

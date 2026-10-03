@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace TypePHP;
 
+use TypePHP\Internal\Util\Config;
+
 if (class_exists(TypePHP::class) && ! \defined('TYPEPHP_BOOTED')) {
     \define('TYPEPHP_BOOTED', true);
 
@@ -62,7 +64,7 @@ if (class_exists(TypePHP::class) && ! \defined('TYPEPHP_BOOTED')) {
         }
     }
 
-    if (! $isDisabledEnv && ! $isDisabledConst && ! $isTooling && ! $isParallelParent) {
+    if (! $isDisabledEnv && ! $isDisabledConst && ! $isTooling && ! $isParallelParent && Config::isAutoBootEnabled()) {
         TypePHP::boot();
     }
 }
