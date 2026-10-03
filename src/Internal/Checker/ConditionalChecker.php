@@ -146,7 +146,7 @@ final class ConditionalChecker
         if ($typeNode instanceof GenericTypeNode) {
             $genericType = self::resolve($typeNode->type, $vars, $boundTemplates, $registry, $function);
             $genericTypes = array_map(
-                fn($t) => self::resolve($t, $vars, $boundTemplates, $registry, $function),
+                fn ($t) => self::resolve($t, $vars, $boundTemplates, $registry, $function),
                 $typeNode->genericTypes
             );
 
@@ -159,14 +159,14 @@ final class ConditionalChecker
 
         if ($typeNode instanceof UnionTypeNode) {
             return new UnionTypeNode(array_map(
-                fn($t) => self::resolve($t, $vars, $boundTemplates, $registry, $function),
+                fn ($t) => self::resolve($t, $vars, $boundTemplates, $registry, $function),
                 $typeNode->types
             ));
         }
 
         if ($typeNode instanceof IntersectionTypeNode) {
             return new IntersectionTypeNode(array_map(
-                fn($t) => self::resolve($t, $vars, $boundTemplates, $registry, $function),
+                fn ($t) => self::resolve($t, $vars, $boundTemplates, $registry, $function),
                 $typeNode->types
             ));
         }
@@ -212,7 +212,7 @@ final class ConditionalChecker
 
         if ($typeNode instanceof CallableTypeNode) {
             $parameters = array_map(
-                fn(CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
                     self::resolve($param->type, $vars, $boundTemplates, $registry, $function),
                     $param->isReference,
                     $param->isVariadic,

@@ -214,7 +214,8 @@ describe('Global Constant key-of, value-of, and int<min, max> Bounds', function 
             ;
 
             expect(fn () => testGlobalConstantIntRange(0))
-                ->toThrow(TypeError::class, 'Argument $n must be >= 1, 0 given');
+                ->toThrow(TypeError::class, 'Argument $n must be >= 1, 0 given')
+            ;
         });
     });
 });
