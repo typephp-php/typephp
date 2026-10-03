@@ -408,6 +408,10 @@ final class ReturnChecker
                 $resolvedType = $aliases[$resolvedType->name];
             }
 
+            if (ConditionalChecker::containsConditional($resolvedType)) {
+                $resolvedType = ConditionalChecker::resolve($resolvedType, $vars, $boundTemplates, $registry, $function);
+            }
+
             if (\count($boundTemplates) === 0 && \count($templates) > 0 && ! $hasConditionals && $thisObj === null) {
                 $resolvedType = self::$unboundReturnCache[$function] ??= SpecialTypeResolver::resolve(
                     TemplateSubstitutor::substitute($returnTypeNode, [], $templates),
@@ -419,7 +423,9 @@ final class ReturnChecker
                 $resolvedType = SpecialTypeResolver::resolve($resolvedType, $function, $thisObj);
             }
 
-            $resolvedType = ConditionalChecker::resolve($resolvedType, $vars, $boundTemplates, $registry, $function);
+            if (ConditionalChecker::containsConditional($resolvedType)) {
+                $resolvedType = ConditionalChecker::resolve($resolvedType, $vars, $boundTemplates, $registry, $function);
+            }
 
             if ($sig !== null) {
                 self::$substitutedReturnCache[$function][$sig] = $resolvedType;

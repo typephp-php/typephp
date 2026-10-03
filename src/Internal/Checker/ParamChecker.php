@@ -220,6 +220,35 @@ final class ParamChecker
         );
     }
 
+    private static function refineInferredTypeFromBound(mixed $val, TypeNode $bound, TypeNode $defaultInferred): TypeNode
+    {
+        if ($bound instanceof \PHPStan\PhpDocParser\Ast\Type\ConstTypeNode) {
+            $expectedVal = match (true) {
+                $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode => $bound->constExpr->value,
+                $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode => (int) $bound->constExpr->value,
+                $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprTrueNode => true,
+                $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFalseNode => false,
+                $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprNullNode => null,
+                default => null,
+            };
+
+            if ($expectedVal !== null && $val === $expectedVal) {
+                return $bound;
+            }
+        }
+
+        if ($bound instanceof UnionTypeNode) {
+            foreach ($bound->types as $member) {
+                $refined = self::refineInferredTypeFromBound($val, $member, $defaultInferred);
+                if ($refined !== $defaultInferred) {
+                    return $refined;
+                }
+            }
+        }
+
+        return $defaultInferred;
+    }
+
     /**
      * Validates simple parameters when no generics/aliases are involved.
      *
@@ -1442,6 +1471,8 @@ final class ParamChecker
 
         if ($templateNode->bound !== null) {
             $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
+            $inferredType = self::refineInferredTypeFromBound($sampleVal, $resolvedBound, $inferredType);
+
             $err = $registry->validate($sampleVal, $resolvedBound, $function . '(): Argument $' . $paramName . ' (template ' . $templateName . ')');
             if ($err !== null) {
                 return $err;
