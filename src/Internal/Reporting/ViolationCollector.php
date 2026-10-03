@@ -77,10 +77,6 @@ final class ViolationCollector
         if ($mode === 'warn') {
             self::emitWarningOnce($hash, $message);
 
-            if (Config::getReportFile() !== null) {
-                self::recordViolation($hash, $record);
-            }
-
             return $passThroughValue;
         }
 
@@ -103,7 +99,7 @@ final class ViolationCollector
         }
 
         self::$warnedHashes[$hash] = true;
-        @trigger_error("[TypePHP Violation] {$message}", E_USER_WARNING);
+        trigger_error("[TypePHP Violation] {$message}", E_USER_WARNING);
     }
 
     /**
