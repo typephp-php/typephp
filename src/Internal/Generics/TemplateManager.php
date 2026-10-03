@@ -5,12 +5,19 @@ declare(strict_types=1);
 namespace TypePHP\Internal\Generics;
 
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeUnsealedTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ObjectShapeItemNode;
+use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ThisTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
@@ -1571,6 +1578,69 @@ final class TemplateManager
 
         if ($n instanceof IntersectionTypeNode) {
             return new IntersectionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+        }
+
+        if ($n instanceof ArrayShapeNode) {
+            $items = array_map(function ($item) use ($ref) {
+                return new ArrayShapeItemNode(
+                    $item->keyName,
+                    $item->optional,
+                    self::resolveTypeNodeAst($item->valueType, $ref)
+                );
+            }, $n->items);
+
+            $unsealed = null;
+            if ($n->unsealedType !== null) {
+                $unsealedKey = $n->unsealedType->keyType !== null
+                    ? self::resolveTypeNodeAst($n->unsealedType->keyType, $ref)
+                    : null;
+                $unsealedVal = self::resolveTypeNodeAst($n->unsealedType->valueType, $ref);
+                $unsealed = new ArrayShapeUnsealedTypeNode($unsealedVal, $unsealedKey);
+            }
+
+            if ($n->sealed) {
+                return ArrayShapeNode::createSealed($items, $n->kind);
+            }
+
+            return ArrayShapeNode::createUnsealed($items, $unsealed, $n->kind);
+        }
+
+        if ($n instanceof ObjectShapeNode) {
+            $items = array_map(function ($item) use ($ref) {
+                return new ObjectShapeItemNode(
+                    $item->keyName,
+                    $item->optional,
+                    self::resolveTypeNodeAst($item->valueType, $ref)
+                );
+            }, $n->items);
+
+            return new ObjectShapeNode($items);
+        }
+
+        if ($n instanceof CallableTypeNode) {
+            $params = array_map(function ($p) use ($ref) {
+                return new CallableTypeParameterNode(
+                    self::resolveTypeNodeAst($p->type, $ref),
+                    $p->isReference,
+                    $p->isVariadic,
+                    $p->parameterName,
+                    $p->isOptional
+                );
+            }, $n->parameters);
+
+            return new CallableTypeNode(
+                $n->identifier,
+                $params,
+                self::resolveTypeNodeAst($n->returnType, $ref),
+                $n->templateTypes
+            );
+        }
+
+        if ($n instanceof OffsetAccessTypeNode) {
+            return new OffsetAccessTypeNode(
+                self::resolveTypeNodeAst($n->type, $ref),
+                self::resolveTypeNodeAst($n->offset, $ref)
+            );
         }
 
         return $n;

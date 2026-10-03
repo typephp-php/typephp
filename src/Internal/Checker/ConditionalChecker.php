@@ -23,6 +23,7 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use ReflectionClass;
 use Throwable;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
@@ -293,6 +294,28 @@ final class ConditionalChecker
         }
 
         $isTargetMatch = TemplateManager::checkVariance($subjectTypeNode, $node->targetType, GenericTypeNode::VARIANCE_COVARIANT);
+
+        if (! $isTargetMatch && $node->targetType instanceof \PHPStan\PhpDocParser\Ast\Type\ConstTypeNode && $function !== '' && \count($vars) > 0) {
+            $contract = DocblockParser::parse($function);
+            foreach ($contract['types'] as $pName => $pType) {
+                $pTemplateName = ($pType instanceof IdentifierTypeNode) ? $pType->name : null;
+                $matchesSubject = false;
+
+                if ($pTemplateName !== null && $node->subjectType instanceof IdentifierTypeNode) {
+                    $matchesSubject = ($pTemplateName === $node->subjectType->name)
+                        || (isset($boundTemplates[$pTemplateName]) && (string) $boundTemplates[$pTemplateName] === (string) $node->subjectType);
+                }
+
+                if ($matchesSubject && (isset($vars[$pName]) || \array_key_exists($pName, $vars))) {
+                    if ($registry->validate($vars[$pName], $node->targetType, 'condition') === null) {
+                        $isTargetMatch = true;
+
+                        break;
+                    }
+                }
+            }
+        }
+
         if ($node->negated) {
             $isTargetMatch = ! $isTargetMatch;
         }
