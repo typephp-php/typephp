@@ -159,6 +159,10 @@ final class ViolationCollector
     private static function registerShutdownHandler(): void
     {
         register_shutdown_function(static function (): void {
+            if (Config::getOnViolation() !== 'report') {
+                return;
+            }
+
             $violationCount = \count(self::$violations);
             if ($violationCount === 0) {
                 return;

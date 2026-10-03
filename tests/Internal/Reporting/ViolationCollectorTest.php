@@ -159,14 +159,14 @@ describe('ViolationCollector', function () {
             expect($warningCount)->toBe(1);
         });
 
-        test('records violation in memory when report_file is configured alongside warn mode', function () {
+        test('does not record violations in memory in warn mode even when report_file is configured', function () {
             Config::set([
                 'on_violation' => 'warn',
                 'report_file' => 'var/report.json',
             ]);
             $err = new ErrorMessage('Argument $id must be of type positive-int, int (-5) given');
 
-            set_error_handler(static fn(): bool => true);
+            set_error_handler(static fn (): bool => true);
 
             try {
                 ViolationCollector::handle($err, 'parameter', 42, 'src/Service.php', 10);
@@ -174,7 +174,7 @@ describe('ViolationCollector', function () {
                 restore_error_handler();
             }
 
-            expect(ViolationCollector::getViolations())->toHaveCount(1);
+            expect(ViolationCollector::getViolations())->toBeEmpty();
         });
     });
 

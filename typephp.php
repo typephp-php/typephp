@@ -52,8 +52,8 @@ return [
     | 'fail_on_report' : When true, terminates the process with exit code 1 at shutdown
     |                    if the violation report is non-empty. Useful for CI gates.
     */
-    'on_violation' => 'warn',
-    'report_file' => 'var/typephp-report.json',
+    'on_violation' => 'throw',
+    'report_file' => null,
     'fail_on_report' => false,
 
     /*
