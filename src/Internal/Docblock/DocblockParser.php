@@ -476,6 +476,17 @@ final class DocblockParser
                 }
             }
 
+            if ($doc === false && $typeNode === null && $refClass->hasProperty($propertyName)) {
+                $refProp = $refClass->getProperty($propertyName);
+                if ($refProp->isPromoted() && $refClass->hasMethod('__construct')) {
+                    $ctorTarget = $refClass->getName() . '::__construct';
+                    $ctorContract = self::parse($ctorTarget);
+                    if (isset($ctorContract['types'][$propertyName])) {
+                        return self::$propertyCache[$className][$propertyName] = $ctorContract['types'][$propertyName];
+                    }
+                }
+            }
+
             if ($doc === false || $declaringClass === null || self::shouldIgnoreDoc($doc)) {
                 return self::$propertyCache[$className][$propertyName] = null;
             }
@@ -1673,7 +1684,7 @@ final class DocblockParser
 
         if ($node instanceof CallableTypeNode) {
             $parameters = array_map(
-                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+                fn(CallableTypeParameterNode $param) => new CallableTypeParameterNode(
                     self::substituteAliases($param->type, $aliases),
                     $param->isReference,
                     $param->isVariadic,
@@ -1707,7 +1718,7 @@ final class DocblockParser
         if ($node instanceof GenericTypeNode) {
             $genericType = self::substituteAliases($node->type, $aliases);
             $genericTypes = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->genericTypes
             );
 
@@ -1724,7 +1735,7 @@ final class DocblockParser
 
         if ($node instanceof UnionTypeNode) {
             $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 
@@ -1739,7 +1750,7 @@ final class DocblockParser
 
         if ($node instanceof IntersectionTypeNode) {
             $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
+                fn($t) => self::substituteAliases($t, $aliases),
                 $node->types
             );
 
