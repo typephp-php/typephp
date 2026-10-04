@@ -47,6 +47,8 @@ final class StreamWrapper implements StreamWrapperInterface
      */
     private $dirHandle = null;
 
+    private bool $eof = false;
+
     private static bool $isRegistered = false;
 
     private static bool $cacheEnabled = true;
@@ -347,6 +349,7 @@ final class StreamWrapper implements StreamWrapperInterface
                     : fopen($target, $mode)
             );
             $this->handle = $handle !== false ? $handle : null;
+            $this->eof = false;
             self::register();
 
             return $this->handle !== null;
@@ -359,6 +362,23 @@ final class StreamWrapper implements StreamWrapperInterface
         self::register();
 
         return $success;
+    }
+
+    /**
+     * Determines whether the stream is being probed by Phar or PharData internal archive routines.
+     */
+    private static function isPharCall(): bool
+    {
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 4);
+
+        for ($i = 1; $i < \count($trace); $i++) {
+            $class = $trace[$i]['class'] ?? '';
+            if ($class === 'PharData' || $class === 'Phar') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -391,9 +411,10 @@ final class StreamWrapper implements StreamWrapperInterface
                 : fopen($targetFile, $mode, $useIncludePath)
         );
         $this->handle = $handle !== false ? $handle : null;
+        $this->eof = false;
         self::register();
 
-        if ($this->handle === null && ! $isInclude) {
+        if ($this->handle === null && ! $isInclude && ! self::isPharCall()) {
             trigger_error("fopen({$targetFile}): Failed to open stream: No such file or directory", E_USER_WARNING);
         }
 
@@ -408,7 +429,15 @@ final class StreamWrapper implements StreamWrapperInterface
 
         $res = fread($this->handle, $count);
 
-        return $res !== false ? $res : '';
+        if ($res === false || $res === '') {
+            if (feof($this->handle)) {
+                $this->eof = true;
+            }
+
+            return '';
+        }
+
+        return $res;
     }
 
     public function stream_write(string $data): int
@@ -471,7 +500,7 @@ final class StreamWrapper implements StreamWrapperInterface
             return true;
         }
 
-        return feof($this->handle);
+        return $this->eof;
     }
 
     /**
@@ -502,7 +531,12 @@ final class StreamWrapper implements StreamWrapperInterface
             return false;
         }
 
-        return @fseek($this->handle, $offset, $whence) === 0;
+        $res = @fseek($this->handle, $offset, $whence) === 0;
+        if ($res) {
+            $this->eof = false;
+        }
+
+        return $res;
     }
 
     public function stream_set_option(int $option, int $arg1, int $arg2): bool
@@ -515,6 +549,7 @@ final class StreamWrapper implements StreamWrapperInterface
         if ($this->handle !== null) {
             fclose($this->handle);
             $this->handle = null;
+            $this->eof = false;
         }
     }
 
