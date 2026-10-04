@@ -91,6 +91,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Global Value Redaction
+    |--------------------------------------------------------------------------
+    | When true, TypePHP redacts all raw parameter, return, property, and
+    | variable values from TypeError exception messages and audit reports,
+    | displaying only their types (e.g. 'string given' instead of 'secret_pwd').
+    |
+    | Useful for production environments, staging logs, and HIPAA/GDPR compliance.
+    |
+    | Can also be set via environment variable: TYPEPHP_REDACT_VALUES=true
+    | Can also be configured in root composer.json:
+    |   "extra": { "typephp": { "redact-values": true } }
+    */
+    'redact_values' => false,
+
+    /*
+    |--------------------------------------------------------------------------
     | Function Boundary Contracts (@param, @return, @param-out, @self-out)
     |--------------------------------------------------------------------------
     | Controls whether function and method parameter, return, and by-reference

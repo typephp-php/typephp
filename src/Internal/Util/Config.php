@@ -49,6 +49,8 @@ final class Config
 
     private static bool $failOnReport = false;
 
+    private static bool $redactValues = false;
+
     private static bool $params = true;
 
     private static bool $returns = true;
@@ -159,6 +161,20 @@ final class Config
         }
 
         return self::$failOnReport;
+    }
+
+    public static function isRedactValuesEnabled(): bool
+    {
+        $envRedact = getenv('TYPEPHP_REDACT_VALUES');
+        if ($envRedact !== false && trim((string) $envRedact) !== '') {
+            return filter_var($envRedact, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$redactValues;
     }
 
     public static function isReportMode(): bool
@@ -454,6 +470,7 @@ final class Config
             'on_violation' => 'throw',
             'report_file' => null,
             'fail_on_report' => false,
+            'redact_values' => false,
             'params' => true,
             'returns' => true,
             'params_out' => true,
@@ -501,7 +518,7 @@ final class Config
         $composerJsonFile = $projectRoot . '/composer.json';
         if (file_exists($composerJsonFile)) {
             $content = @file_get_contents($composerJsonFile);
-            if ($content !== false && (str_contains($content, 'typephp') || str_contains($content, 'auto-boot') || str_contains($content, 'on-violation') || str_contains($content, 'fail-on-report'))) {
+            if ($content !== false && (str_contains($content, 'typephp') || str_contains($content, 'auto-boot') || str_contains($content, 'on-violation') || str_contains($content, 'fail-on-report') || str_contains($content, 'redact-values'))) {
                 $data = json_decode($content, true);
                 if (
                     \is_array($data)
@@ -521,6 +538,9 @@ final class Config
                     }
                     if (! isset($userConfig['fail_on_report']) && isset($data['extra']['typephp']['fail-on-report'])) {
                         $userConfig['fail_on_report'] = filter_var($data['extra']['typephp']['fail-on-report'], FILTER_VALIDATE_BOOLEAN);
+                    }
+                    if (! isset($userConfig['redact_values']) && isset($data['extra']['typephp']['redact-values'])) {
+                        $userConfig['redact_values'] = filter_var($data['extra']['typephp']['redact-values'], FILTER_VALIDATE_BOOLEAN);
                     }
                 }
             }
@@ -642,6 +662,7 @@ final class Config
         self::$onViolation = 'throw';
         self::$reportFile = null;
         self::$failOnReport = false;
+        self::$redactValues = false;
         self::$params = true;
         self::$returns = true;
         self::$selfOut = true;
@@ -702,6 +723,7 @@ final class Config
             : null;
 
         self::$failOnReport = (bool) ($config['fail_on_report'] ?? false);
+        self::$redactValues = (bool) ($config['redact_values'] ?? false);
 
         self::$params = (bool) ($config['params'] ?? true);
         self::$paramsOut = (bool) ($config['params_out'] ?? true);

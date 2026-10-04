@@ -10,6 +10,7 @@ describe('Config Unit Tests', function () {
         putenv('TYPEPHP_ON_VIOLATION=');
         putenv('TYPEPHP_REPORT_FILE=');
         putenv('TYPEPHP_FAIL_ON_REPORT=');
+        putenv('TYPEPHP_REDACT_VALUES=');
         unset(
             $_ENV['TYPEPHP_AUTO_BOOT'],
             $_SERVER['TYPEPHP_AUTO_BOOT'],
@@ -18,7 +19,9 @@ describe('Config Unit Tests', function () {
             $_ENV['TYPEPHP_REPORT_FILE'],
             $_SERVER['TYPEPHP_REPORT_FILE'],
             $_ENV['TYPEPHP_FAIL_ON_REPORT'],
-            $_SERVER['TYPEPHP_FAIL_ON_REPORT']
+            $_SERVER['TYPEPHP_FAIL_ON_REPORT'],
+            $_ENV['TYPEPHP_REDACT_VALUES'],
+            $_SERVER['TYPEPHP_REDACT_VALUES']
         );
         Config::reset();
     });
@@ -36,6 +39,8 @@ describe('Config Unit Tests', function () {
             ->and($config['report_file'])->toBeNull()
             ->and($config)->toHaveKey('fail_on_report')
             ->and($config['fail_on_report'])->toBeFalse()
+            ->and($config)->toHaveKey('redact_values')
+            ->and($config['redact_values'])->toBeFalse()
             ->and($config)->toHaveKey('cache')
             ->and($config)->toHaveKey('cache_dir')
             ->and($config['cache_dir'])->toBeNull()
@@ -51,6 +56,7 @@ describe('Config Unit Tests', function () {
             'on_violation' => 'report',
             'report_file' => 'var/report.json',
             'fail_on_report' => true,
+            'redact_values' => true,
         ]);
 
         $config = Config::get();
@@ -59,6 +65,7 @@ describe('Config Unit Tests', function () {
             ->and($config['on_violation'])->toBe('report')
             ->and($config['report_file'])->toBe('var/report.json')
             ->and($config['fail_on_report'])->toBeTrue()
+            ->and($config['redact_values'])->toBeTrue()
         ;
     });
 
@@ -77,6 +84,7 @@ describe('Config Unit Tests', function () {
             'getOnViolation',
             'getReportFile',
             'isFailOnReportEnabled',
+            'isRedactValuesEnabled',
             'isReportMode',
             'isWarnMode',
             'getIgnoreTraceDepth',
@@ -582,6 +590,63 @@ PHP;
                     ->and(Config::getReportFile())->toBe('var/composer-report.json')
                     ->and(Config::isFailOnReportEnabled())->toBeTrue()
                 ;
+            } finally {
+                @unlink($tempDir . '/composer.json');
+                @rmdir($tempDir);
+                Config::reset();
+            }
+        });
+    });
+
+    describe('Global Value Redaction Configuration (redact_values)', function () {
+        test('isRedactValuesEnabled returns false by default', function () {
+            expect(Config::isRedactValuesEnabled())->toBeFalse();
+        });
+
+        test('isRedactValuesEnabled respects runtime overrides with Config::set', function () {
+            Config::set(['redact_values' => true]);
+            expect(Config::isRedactValuesEnabled())->toBeTrue();
+
+            Config::set(['redact_values' => false]);
+            expect(Config::isRedactValuesEnabled())->toBeFalse();
+        });
+
+        test('isRedactValuesEnabled respects TYPEPHP_REDACT_VALUES environment variable', function () {
+            putenv('TYPEPHP_REDACT_VALUES=true');
+            expect(Config::isRedactValuesEnabled())->toBeTrue();
+
+            putenv('TYPEPHP_REDACT_VALUES=false');
+            expect(Config::isRedactValuesEnabled())->toBeFalse();
+
+            putenv('TYPEPHP_REDACT_VALUES=1');
+            expect(Config::isRedactValuesEnabled())->toBeTrue();
+
+            putenv('TYPEPHP_REDACT_VALUES=0');
+            expect(Config::isRedactValuesEnabled())->toBeFalse();
+        });
+
+        test('isRedactValuesEnabled reads extra.typephp.redact-values from composer.json', function () {
+            $tempDir = sys_get_temp_dir() . '/typephp_composer_redact_' . uniqid();
+            mkdir($tempDir, 0777, true);
+
+            $composerJsonContent = json_encode([
+                'name' => 'test/redact-test',
+                'extra' => [
+                    'typephp' => [
+                        'redact-values' => true,
+                    ],
+                ],
+            ]);
+            file_put_contents($tempDir . '/composer.json', $composerJsonContent);
+
+            try {
+                Config::reset();
+
+                $ref = new ReflectionClass(Config::class);
+                $prop = $ref->getProperty('projectRoot');
+                $prop->setValue(null, $tempDir);
+
+                expect(Config::isRedactValuesEnabled())->toBeTrue();
             } finally {
                 @unlink($tempDir . '/composer.json');
                 @rmdir($tempDir);

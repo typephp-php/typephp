@@ -15,6 +15,8 @@ function resetTypePHPTestEnvironment(): void
     putenv('TYPEPHP_REPORT_FILE=');
     putenv('TYPEPHP_FAIL_ON_REPORT');
     putenv('TYPEPHP_FAIL_ON_REPORT=');
+    putenv('TYPEPHP_REDACT_VALUES');
+    putenv('TYPEPHP_REDACT_VALUES=');
 
     unset(
         $_ENV['TYPEPHP_AUTO_BOOT'],
@@ -24,7 +26,9 @@ function resetTypePHPTestEnvironment(): void
         $_ENV['TYPEPHP_REPORT_FILE'],
         $_SERVER['TYPEPHP_REPORT_FILE'],
         $_ENV['TYPEPHP_FAIL_ON_REPORT'],
-        $_SERVER['TYPEPHP_FAIL_ON_REPORT']
+        $_SERVER['TYPEPHP_FAIL_ON_REPORT'],
+        $_ENV['TYPEPHP_REDACT_VALUES'],
+        $_SERVER['TYPEPHP_REDACT_VALUES']
     );
 
     ViolationCollector::reset();
