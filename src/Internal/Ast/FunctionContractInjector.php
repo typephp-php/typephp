@@ -131,7 +131,8 @@ final class FunctionContractInjector
                     $needsReturnVars,
                     $hasReturn,
                     $hasParamOut ? $byRefParams : [],
-                    $hasSelfOut
+                    $hasSelfOut,
+                    $node->byRef
                 );
         }
 
@@ -601,9 +602,9 @@ final class FunctionContractInjector
         );
     }
 
-    public static function buildTypeErrorThrowStmt(Node\Expr $errorVar): Node\Stmt\Expression
+    public static function buildTypeErrorThrowStmt(Node\Expr $errorVar, ?int $line = null): Node\Stmt\Expression
     {
-        return new Node\Stmt\Expression(self::buildTypeErrorThrowExpr($errorVar));
+        return new Node\Stmt\Expression(self::buildTypeErrorThrowExpr($errorVar, $line));
     }
 
     public static function buildReturnCheckCall(Node\Expr $exprToWrap, Node\Expr $thisArg, bool $needsReturnVars = false): Node\Expr\FuncCall
@@ -641,6 +642,23 @@ final class FunctionContractInjector
         $retStmt->setAttribute('typephp_injected', true);
 
         return [$ifStmt, $retStmt];
+    }
+
+    /**
+     * @return array<Node\Stmt>
+     */
+    public static function buildByRefReturnGuard(Node\Expr\FuncCall $checkCall, Node\Stmt\Return_ $returnStmt, ?int $line = null): array
+    {
+        $ifStmt = new Node\Stmt\If_(
+            new Node\Expr\Instanceof_(
+                new Node\Expr\Assign(new Node\Expr\Variable('__typephpRet'), $checkCall),
+                new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
+            ),
+            ['stmts' => [self::buildTypeErrorThrowStmt(new Node\Expr\Variable('__typephpRet'), $line)]]
+        );
+        $ifStmt->setAttribute('typephp_injected', true);
+
+        return [$ifStmt, $returnStmt];
     }
 
     public static function buildTernaryReturnExpr(Node\Expr\FuncCall $checkCall, ?int $line = null): Node\Expr\Ternary
@@ -762,10 +780,11 @@ final class FunctionContractInjector
         bool $needsReturnVars = false,
         bool $hasReturn = true,
         array $byRefParams = [],
-        bool $hasSelfOut = false
+        bool $hasSelfOut = false,
+        bool $isByRefReturn = false
     ): array {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class ($thisArg, $isNativeVoid, $needsReturnVars, $hasReturn, $byRefParams, $hasSelfOut) extends NodeVisitorAbstract {
+        $traverser->addVisitor(new class ($thisArg, $isNativeVoid, $needsReturnVars, $hasReturn, $byRefParams, $hasSelfOut, $isByRefReturn) extends NodeVisitorAbstract {
             /**
              * @param array<string> $byRefParams
              */
@@ -775,7 +794,8 @@ final class FunctionContractInjector
                 private bool $needsReturnVars,
                 private bool $hasReturn,
                 private array $byRefParams,
-                private bool $hasSelfOut
+                private bool $hasSelfOut,
+                private bool $isByRefReturn
             ) {
             }
 
@@ -817,6 +837,13 @@ final class FunctionContractInjector
                     }
 
                     $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
+
+                    if ($this->isByRefReturn) {
+                        $byRefGuardStmts = FunctionContractInjector::buildByRefReturnGuard($checkCall, $n, $n->getStartLine());
+
+                        return [...$exitStmts, ...$byRefGuardStmts];
+                    }
+
                     $n->expr = FunctionContractInjector::buildTernaryReturnExpr($checkCall, $n->getStartLine());
 
                     return $exitStmts !== [] ? [...$exitStmts, $n] : null;
@@ -853,6 +880,12 @@ final class FunctionContractInjector
 
                 if ($isNativeVoid) {
                     $newStmts = [...$newStmts, ...$exitStmts, ...self::buildVoidReturnGuard($checkCall)];
+                } elseif ($isByRefReturn) {
+                    $fallbackLine = $lastStmt instanceof Node\Stmt ? $lastStmt->getStartLine() : null;
+                    $retStmt = new Node\Stmt\Return_(null);
+                    $retStmt->setAttribute('typephp_injected', true);
+                    $byRefGuardStmts = self::buildByRefReturnGuard($checkCall, $retStmt, $fallbackLine);
+                    $newStmts = [...$newStmts, ...$exitStmts, ...$byRefGuardStmts];
                 } else {
                     $fallbackLine = $lastStmt instanceof Node\Stmt ? $lastStmt->getStartLine() : null;
                     $ternaryExpr = self::buildTernaryReturnExpr($checkCall, $fallbackLine);
