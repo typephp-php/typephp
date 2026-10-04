@@ -931,6 +931,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     private function isSoftScopeBoundary(Node $node): bool
     {
         return $node instanceof Node\Expr\ArrowFunction
+            || $node instanceof Node\Stmt\Block
             || $node instanceof Node\Stmt\If_
             || $node instanceof Node\Stmt\Else_
             || $node instanceof Node\Stmt\ElseIf_
