@@ -96,12 +96,21 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         if ($node instanceof Node\Expr\Assign || $node instanceof Node\Expr\AssignOp) {
             $this->markWriteContext($node->var);
+        } elseif ($node instanceof Node\Expr\AssignRef) {
+            $this->markWriteContext($node->var);
+            $this->markWriteContext($node->expr);
         } elseif ($node instanceof Node\Expr\PreInc || $node instanceof Node\Expr\PostInc || $node instanceof Node\Expr\PreDec || $node instanceof Node\Expr\PostDec) {
             $this->markWriteContext($node->var);
         } elseif ($node instanceof Node\Stmt\Unset_) {
             foreach ($node->vars as $v) {
                 $this->markWriteContext($v);
             }
+        } elseif ($node instanceof Node\Expr\Isset_) {
+            foreach ($node->vars as $v) {
+                $this->markWriteContext($v);
+            }
+        } elseif ($node instanceof Node\Expr\Empty_) {
+            $this->markWriteContext($node->expr);
         }
 
         if ($node instanceof Node\Stmt\Class_) {
@@ -207,6 +216,12 @@ final class ContractVisitor extends NodeVisitorAbstract
         $node->setAttribute('typephp_write_context', true);
         if ($node instanceof Node\Expr\ArrayDimFetch || $node instanceof Node\Expr\PropertyFetch) {
             $this->markWriteContext($node->var);
+        } elseif ($node instanceof Node\Expr\Array_ || $node instanceof Node\Expr\List_) {
+            foreach ($node->items as $item) {
+                if ($item !== null) {
+                    $this->markWriteContext($item->value);
+                }
+            }
         }
     }
 

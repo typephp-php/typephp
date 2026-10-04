@@ -65,6 +65,8 @@ final class SpecialTypeResolver
         'static' => true,
         'parent' => true,
         '$this' => true,
+        'static-closure' => true,
+        'static-pure-closure' => true,
         'positive-int' => true,
         'negative-int' => true,
         'non-positive-int' => true,
