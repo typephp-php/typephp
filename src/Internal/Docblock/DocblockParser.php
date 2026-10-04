@@ -508,7 +508,10 @@ final class DocblockParser
 
             $aliases = [];
             $classTemplates = [];
-            self::parseClassLevelDocs($declaringClass, $classTemplates, $aliases);
+            self::parseClassLevelDocs($refClass, $classTemplates, $aliases);
+            if ($declaringClass->getName() !== $refClass->getName()) {
+                self::parseClassLevelDocs($declaringClass, $classTemplates, $aliases);
+            }
 
             if (! $isMagicProperty) {
                 $phpDocNode = DocblockExtractor::parseDocString($doc);
@@ -601,12 +604,16 @@ final class DocblockParser
                 return ['doc' => $stubDoc, 'declaringClass' => $current];
             }
 
-            foreach ($current->getTraits() as $trait) {
+            foreach (self::getTraitsRecursive($current) as $trait) {
                 if ($trait->hasProperty($propertyName)) {
                     $traitProp = $trait->getProperty($propertyName);
+                    $declaringClass = $traitProp->getDeclaringClass();
                     $doc = $traitProp->getDocComment();
+                    if ($doc === false && $declaringClass->getName() !== $trait->getName() && $declaringClass->hasProperty($propertyName)) {
+                        $doc = $declaringClass->getProperty($propertyName)->getDocComment();
+                    }
                     if ($doc !== false) {
-                        return ['doc' => $doc, 'declaringClass' => $traitProp->getDeclaringClass()];
+                        return ['doc' => $doc, 'declaringClass' => $declaringClass];
                     }
                 }
             }
@@ -639,6 +646,38 @@ final class DocblockParser
         }
 
         return null;
+    }
+
+    /**
+     * Recursively collects all traits used by a class or trait, deepest (innermost) first.
+     *
+     * @param \ReflectionClass<object> $class
+     * @param array<string, bool> $visited
+     *
+     * @return array<string, \ReflectionClass<object>>
+     */
+    private static function getTraitsRecursive(\ReflectionClass $class, array &$visited = []): array
+    {
+        $traits = [];
+        foreach ($class->getTraits() as $trait) {
+            $name = $trait->getName();
+            if (isset($visited[$name])) {
+                continue;
+            }
+            $visited[$name] = true;
+
+            foreach (self::getTraitsRecursive($trait, $visited) as $nestedName => $nestedTrait) {
+                if (! isset($traits[$nestedName])) {
+                    $traits[$nestedName] = $nestedTrait;
+                }
+            }
+
+            if (! isset($traits[$name])) {
+                $traits[$name] = $trait;
+            }
+        }
+
+        return $traits;
     }
 
     /**
