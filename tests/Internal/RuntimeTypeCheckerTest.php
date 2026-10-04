@@ -58,6 +58,42 @@ class RuntimeCheckerIgnoredCaller
 }
 
 /**
+ * Self-contained fixture: by-reference param-out
+ *
+ * @param mixed &$id
+ *
+ * @param-out positive-int $id
+ */
+function runtimeTestParamOutFixture(mixed &$id): void
+{
+}
+
+/**
+ * Self-contained fixture: self-out state transitions
+ *
+ * @template T of 'unauthenticated'|'authenticated'
+ */
+class RuntimeTestSessionFixture
+{
+    /**
+     * @self-out self<'authenticated'>
+     */
+    public function login(): void
+    {
+    }
+}
+
+/**
+ * Self-contained fixture: generator with yield and send contracts
+ *
+ * @return Generator<string, positive-int, positive-int, void>
+ */
+function runtimeTestGeneratorFixture(): Generator
+{
+    yield 'a' => 10;
+}
+
+/**
  * @param mixed $a
  */
 function runtimeUnconstrainedParams(mixed $a): void
@@ -166,8 +202,10 @@ describe('RuntimeTypeChecker Unit Tests', function () {
             ->and($invalid->getMessage())->toContain("['count'] must be of type int")
         ;
 
+        // Atomic state preservation: original array must remain untouched
         expect($root['count'])->toBe(5);
 
+        // Master switch disabled
         Config::set(['enabled' => false]);
         expect(RuntimeTypeChecker::checkMemberAssign($root, $chain, 'not_an_int', 'array{count: int}', 'stats', __FILE__))->toBe('not_an_int');
     });
@@ -260,7 +298,7 @@ describe('RuntimeTypeChecker Unit Tests', function () {
     });
 
     test('checkParamOut validates post-conditions and handles disabled switch', function () {
-        $target = 'TypePHP\Tests\Internal\Checker\internalParamOutScalarFixture';
+        $target = 'runtimeTestParamOutFixture';
 
         expect(RuntimeTypeChecker::checkParamOut($target, 'id', 42))->toBeNull();
 
@@ -272,8 +310,8 @@ describe('RuntimeTypeChecker Unit Tests', function () {
     });
 
     test('checkSelfOut executes state transition and handles disabled switch', function () {
-        $session = new TypePHP\Tests\TypeChecking\Generics\FixtureSession();
-        $target = TypePHP\Tests\TypeChecking\Generics\FixtureSession::class . '::login';
+        $session = new RuntimeTestSessionFixture();
+        $target = RuntimeTestSessionFixture::class . '::login';
 
         RuntimeTypeChecker::checkSelfOut($target, $session);
         expect(true)->toBeTrue();
@@ -371,12 +409,12 @@ describe('RuntimeTypeChecker Unit Tests', function () {
         expect($resParams)->toBeNull();
 
         $resOut = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkParamOut('TypePHP\Tests\Internal\Checker\internalParamOutScalarFixture', 'id', -50)
+            fn () => RuntimeTypeChecker::checkParamOut('runtimeTestParamOutFixture', 'id', -50)
         );
         expect($resOut)->toBeNull();
 
         RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkSelfOut(TypePHP\Tests\TypeChecking\Generics\FixtureSession::class . '::login', new TypePHP\Tests\TypeChecking\Generics\FixtureSession())
+            fn () => RuntimeTypeChecker::checkSelfOut(RuntimeTestSessionFixture::class . '::login', new RuntimeTestSessionFixture())
         );
 
         $resRet = RuntimeCheckerIgnoredCaller::run(
@@ -385,12 +423,12 @@ describe('RuntimeTypeChecker Unit Tests', function () {
         expect($resRet)->toBe(['id' => -1, 'name' => 'Alice']);
 
         $resSend = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkSend('sampleGeneratorFixture', -50)
+            fn () => RuntimeTypeChecker::checkSend('runtimeTestGeneratorFixture', -50)
         );
         expect($resSend)->toBe(-50);
 
         $resYield = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkYield('sampleGeneratorFixture', 123, -50)
+            fn () => RuntimeTypeChecker::checkYield('runtimeTestGeneratorFixture', 123, -50)
         );
         expect($resYield)->toBe(-50);
     });
