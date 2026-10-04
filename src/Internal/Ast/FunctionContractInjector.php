@@ -68,17 +68,14 @@ final class FunctionContractInjector
 
         $paramCount = \count($node->params);
 
-        $hasParam = ($isMagicGet || $isMagicCall) || self::hasParamContracts(
-            $docText,
-            $isClassMethod,
-            $hasInheritance,
-            $paramCount,
-            $isPrivate,
-            $isConstructor,
-            $hasPropertyWithDoc,
-            $classContext === null,
-            $node->attrGroups !== []
-        );
+        $hasReturnDoc = str_contains($docText, '@return')
+            || str_contains($docText, '@phpstan-return')
+            || str_contains($docText, '@psalm-return');
+
+        $hasReturn = ! $isMagicLifecycle
+            && ! $isNativeNever
+            && ! ($isNativeVoid && ! $hasReturnDoc)
+            && ($isMagicGet || $isMagicCall || self::hasReturnContracts($docText, $isClassMethod, $isPrivate));
 
         $byRefParams = [];
         foreach ($node->params as $p) {
@@ -96,14 +93,19 @@ final class FunctionContractInjector
         $hasSelfOutDoc = str_contains($docText, 'self-out') || str_contains($docText, 'this-out');
         $hasSelfOut = $isClassMethod && ! $node->isStatic() && ($hasSelfOutDoc || ($hasClassTemplates && $hasRealInheritance));
 
-        $hasReturnDoc = str_contains($docText, '@return')
-            || str_contains($docText, '@phpstan-return')
-            || str_contains($docText, '@psalm-return');
-
-        $hasReturn = ! $isMagicLifecycle
-            && ! $isNativeNever
-            && ! ($isNativeVoid && ! $hasReturnDoc)
-            && ($isMagicGet || $isMagicCall || self::hasReturnContracts($docText, $isClassMethod, $isPrivate));
+        $hasParam = ($isMagicGet || $isMagicCall) || ($paramCount > 0 && (
+            str_contains($docText, ' is ') || (($hasReturnDoc || $hasSelfOutDoc) && str_contains($docText, '$'))
+        )) || self::hasParamContracts(
+            $docText,
+            $isClassMethod,
+            $hasInheritance,
+            $paramCount,
+            $isPrivate,
+            $isConstructor,
+            $hasPropertyWithDoc,
+            $classContext === null,
+            $node->attrGroups !== []
+        );
 
         if (! $hasParam && ! $hasReturn && ! $hasParamOut && ! $hasSelfOut) {
             return;

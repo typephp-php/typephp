@@ -246,6 +246,9 @@ final class RuntimeTypeChecker
 
         $contract = DocblockParser::parse($effectiveFunction);
         if (! $isMagicCall && ($contract['allParamsUnconstrained'] ?? false)) {
+            ParamChecker::$noParamContractCache[$effectiveFunction] = true;
+            ParamChecker::$noParamContractCache[$function] = true;
+
             return null;
         }
 
