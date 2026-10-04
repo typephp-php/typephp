@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Tests\TypeChecking\ArraysAndShapes;
 
 use TypePHP\Exception\TypeError;
+use TypePHP\Internal\Util\Config;
 
 describe('Array Dimension & Key Assignment Validation ($arr[$key] = $val)', function () {
     test('throws TypeError when assigning an invalid value to an array shape key (User Bug Report)', function () {
@@ -140,5 +141,50 @@ describe('Object Shape Property Assignment Validation ($obj->prop = $val)', func
         expect(function () use (&$data) {
             $data['user']->name = '';
         })->toThrow(TypeError::class, 'non-empty-string');
+    });
+});
+
+describe('Array Validation Strategy Configuration in Dimension Assignments (hybrid vs full)', function () {
+    test('catches invalid assignment on large array in hybrid mode in O(1) without missing interior elements', function () {
+        Config::set(['array_validation' => 'hybrid']);
+
+        /** @var list<positive-int> $largeList */
+        $largeList = range(1, 200);
+
+        expect(function () use (&$largeList) {
+            $largeList[50] = -99;
+        })->toThrow(TypeError::class, 'positive-int');
+    });
+
+    test('allows valid assignment on large array in hybrid mode', function () {
+        Config::set(['array_validation' => 'hybrid']);
+
+        /** @var list<positive-int> $largeList */
+        $largeList = range(1, 200);
+
+        $largeList[50] = 500;
+        expect($largeList[50])->toBe(500);
+    });
+
+    test('catches invalid key type on generic map in hybrid mode in O(1)', function () {
+        Config::set(['array_validation' => 'hybrid']);
+
+        /** @var array<string, positive-int> $map */
+        $map = ['a' => 1, 'b' => 2];
+
+        expect(function () use (&$map) {
+            $map[123] = 10;
+        })->toThrow(TypeError::class, 'key must be of type string');
+    });
+
+    test('validates exhaustive scan on large array in full mode', function () {
+        Config::set(['array_validation' => 'full']);
+
+        /** @var list<positive-int> $largeList */
+        $largeList = range(1, 200);
+
+        expect(function () use (&$largeList) {
+            $largeList[50] = -99;
+        })->toThrow(TypeError::class, 'positive-int');
     });
 });

@@ -51,9 +51,9 @@ final class NodeBuilder
         );
     }
 
-    public static function createPathCheckCall(
+    public static function createMemberAssignCheckCall(
         Node\Expr $rootExpr,
-        Node\Expr $pathExpr,
+        Node\Expr $chainExpr,
         Node\Expr $valueExpr,
         string $typeString,
         string $varName,
@@ -62,7 +62,7 @@ final class NodeBuilder
     ): Node\Expr\FuncCall {
         $args = [
             new Node\Arg($rootExpr),
-            new Node\Arg($pathExpr),
+            new Node\Arg($chainExpr),
             new Node\Arg($valueExpr),
             new Node\Arg(new Node\Scalar\String_($typeString)),
             new Node\Arg(new Node\Scalar\String_($varName)),
@@ -77,7 +77,7 @@ final class NodeBuilder
         }
 
         return new Node\Expr\FuncCall(
-            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkPathAssign'),
+            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkMemberAssign'),
             $args
         );
     }

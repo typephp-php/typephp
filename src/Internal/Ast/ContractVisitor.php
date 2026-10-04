@@ -6,7 +6,10 @@ namespace TypePHP\Internal\Ast;
 
 use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
@@ -530,9 +533,9 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $autoIdx = 0;
                 foreach ($parsed->items as $item) {
                     $key = match (true) {
-                        $item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode => $item->keyName->value,
-                        $item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode => (int) $item->keyName->value,
-                        $item->keyName instanceof \PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode => $item->keyName->name,
+                        $item->keyName instanceof ConstExprStringNode => $item->keyName->value,
+                        $item->keyName instanceof ConstExprIntegerNode => (int) $item->keyName->value,
+                        $item->keyName instanceof IdentifierTypeNode => $item->keyName->name,
                         $item->keyName !== null => (string) $item->keyName,
                         default => $autoIdx,
                     };
@@ -615,21 +618,22 @@ final class ContractVisitor extends NodeVisitorAbstract
 
                 $node->expr = $this->wrapVariableCheck($expr, $typeString, $varName, $node->var->getStartLine());
             }
-        } elseif (($pathInfo = $this->extractPathInfo($node->var)) !== null) {
-            $root = $pathInfo['root'];
-            $path = $pathInfo['path'];
+        } elseif (($chainInfo = $this->extractMemberChain($node->var)) !== null) {
+            $root = $chainInfo['root'];
+            $chain = $chainInfo['chain'];
 
             if ($root instanceof Node\Expr\Variable && \is_string($root->name)) {
                 $varName = $root->name;
                 $typeString = $this->scopeManager->getVarTypeFromScope($varName);
 
-                if ($typeString !== null && $this->shouldHandlePathCheck($typeString, $path)) {
-                    $node->expr = $this->wrapPathCheck($node->expr, $root, $path, $typeString, $varName, $node->var->getStartLine());
+                if ($typeString !== null && $this->shouldHandleMemberAssignCheck($typeString, $chain)) {
+                    $node->expr = $this->wrapMemberAssignCheck($node->expr, $root, $chain, $typeString, $varName, $node->var->getStartLine());
 
                     return;
                 }
             }
 
+            // Fallback for direct single property access
             if ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
                 $node->expr = $this->wrapPropertyCheck($node->expr, $node->var->var, $node->var->name->toString(), $node->var->getStartLine());
             } elseif ($node->var instanceof Node\Expr\StaticPropertyFetch && $node->var->name instanceof Node\VarLikeIdentifier) {
@@ -669,18 +673,18 @@ final class ContractVisitor extends NodeVisitorAbstract
                     $this->wrapVariableCheck($binaryExpr, $typeString, $varName, $node->var->getStartLine())
                 );
             }
-        } elseif (($pathInfo = $this->extractPathInfo($node->var)) !== null) {
-            $root = $pathInfo['root'];
-            $path = $pathInfo['path'];
+        } elseif (($chainInfo = $this->extractMemberChain($node->var)) !== null) {
+            $root = $chainInfo['root'];
+            $chain = $chainInfo['chain'];
 
             if ($root instanceof Node\Expr\Variable && \is_string($root->name)) {
                 $varName = $root->name;
                 $typeString = $this->scopeManager->getVarTypeFromScope($varName);
 
-                if ($typeString !== null && $this->shouldHandlePathCheck($typeString, $path)) {
+                if ($typeString !== null && $this->shouldHandleMemberAssignCheck($typeString, $chain)) {
                     return new Node\Expr\Assign(
                         $node->var,
-                        $this->wrapPathCheck($binaryExpr, $root, $path, $typeString, $varName, $node->var->getStartLine())
+                        $this->wrapMemberAssignCheck($binaryExpr, $root, $chain, $typeString, $varName, $node->var->getStartLine())
                     );
                 }
             }
@@ -735,18 +739,18 @@ final class ContractVisitor extends NodeVisitorAbstract
                     $this->wrapVariableCheck($binaryExpr, $typeString, $varName, $node->var->getStartLine())
                 );
             }
-        } elseif (($pathInfo = $this->extractPathInfo($node->var)) !== null) {
-            $root = $pathInfo['root'];
-            $path = $pathInfo['path'];
+        } elseif (($chainInfo = $this->extractMemberChain($node->var)) !== null) {
+            $root = $chainInfo['root'];
+            $chain = $chainInfo['chain'];
 
             if ($root instanceof Node\Expr\Variable && \is_string($root->name)) {
                 $varName = $root->name;
                 $typeString = $this->scopeManager->getVarTypeFromScope($varName);
 
-                if ($typeString !== null && $this->shouldHandlePathCheck($typeString, $path)) {
+                if ($typeString !== null && $this->shouldHandleMemberAssignCheck($typeString, $chain)) {
                     return new Node\Expr\Assign(
                         $node->var,
-                        $this->wrapPathCheck($binaryExpr, $root, $path, $typeString, $varName, $node->var->getStartLine())
+                        $this->wrapMemberAssignCheck($binaryExpr, $root, $chain, $typeString, $varName, $node->var->getStartLine())
                     );
                 }
             }
@@ -788,20 +792,20 @@ final class ContractVisitor extends NodeVisitorAbstract
     /**
      * Unpacks any nested chain of ArrayDimFetch and PropertyFetch down to its root expression.
      *
-     * @return array{root: Node\Expr, path: list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}>}|null
+     * @return array{root: Node\Expr, chain: list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}>}|null
      */
-    private function extractPathInfo(Node\Expr $target): ?array
+    private function extractMemberChain(Node\Expr $target): ?array
     {
         $curr = $target;
-        $path = [];
+        $chain = [];
 
         while ($curr instanceof Node\Expr\ArrayDimFetch || $curr instanceof Node\Expr\PropertyFetch) {
             if ($curr instanceof Node\Expr\ArrayDimFetch) {
-                array_unshift($path, ['dim', $curr->dim]);
+                array_unshift($chain, ['dim', $curr->dim]);
                 $curr = $curr->var;
             } elseif ($curr instanceof Node\Expr\PropertyFetch) {
                 if ($curr->name instanceof Node\Identifier) {
-                    array_unshift($path, ['prop', $curr->name->toString()]);
+                    array_unshift($chain, ['prop', $curr->name->toString()]);
                     $curr = $curr->var;
                 } else {
                     return null;
@@ -809,22 +813,22 @@ final class ContractVisitor extends NodeVisitorAbstract
             }
         }
 
-        if ($path === []) {
+        if ($chain === []) {
             return null;
         }
 
         return [
             'root' => $curr,
-            'path' => $path,
+            'chain' => $chain,
         ];
     }
 
     /**
-     * @param list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}> $path
+     * @param list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}> $chain
      */
-    private function shouldHandlePathCheck(string $typeString, array $path): bool
+    private function shouldHandleMemberAssignCheck(string $typeString, array $chain): bool
     {
-        foreach ($path as $step) {
+        foreach ($chain as $step) {
             if ($step[0] === 'dim') {
                 return true;
             }
@@ -834,18 +838,18 @@ final class ContractVisitor extends NodeVisitorAbstract
     }
 
     /**
-     * @param list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}> $path
+     * @param list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}> $chain
      */
-    private function wrapPathCheck(
+    private function wrapMemberAssignCheck(
         Node\Expr $valueExpr,
         Node\Expr $rootExpr,
-        array $path,
+        array $chain,
         string $typeString,
         string $varName,
         int $line
     ): Node\Expr\Ternary {
-        $pathItems = [];
-        foreach ($path as $step) {
+        $chainItems = [];
+        foreach ($chain as $step) {
             $kind = new Node\Scalar\String_($step[0]);
             if ($step[0] === 'dim') {
                 $dimExpr = $step[1] instanceof Node\Expr ? $step[1] : new Node\Expr\ConstFetch(new Node\Name('null'));
@@ -857,7 +861,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $dimExpr = new Node\Scalar\String_('');
             }
 
-            $pathItems[] = new Node\ArrayItem(
+            $chainItems[] = new Node\ArrayItem(
                 new Node\Expr\Array_([
                     new Node\ArrayItem($kind),
                     new Node\ArrayItem($dimExpr),
@@ -865,11 +869,11 @@ final class ContractVisitor extends NodeVisitorAbstract
             );
         }
 
-        $pathAst = new Node\Expr\Array_($pathItems);
+        $chainAst = new Node\Expr\Array_($chainItems);
 
-        $checkCall = NodeBuilder::createPathCheckCall(
+        $checkCall = NodeBuilder::createMemberAssignCheckCall(
             $rootExpr,
-            $pathAst,
+            $chainAst,
             $valueExpr,
             $typeString,
             $varName,

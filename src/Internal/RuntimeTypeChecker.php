@@ -9,6 +9,7 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Internal\Ast\ScopeCleaner;
 use TypePHP\Internal\Checker\GeneratorChecker;
 use TypePHP\Internal\Checker\InlineChecker;
+use TypePHP\Internal\Checker\MemberAssignChecker;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ParamOutChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
@@ -67,14 +68,14 @@ final class RuntimeTypeChecker
     }
 
     /**
-     * Evaluates path-based mutation assignments ($arr[$key] = $val or $obj->prop = $val)
+     * Evaluates member mutation assignments ($arr[$key] = $val or $obj->prop = $val)
      * against the root variable's type contract atomically before writing.
      *
-     * @param list<array{0: 'dim'|'prop', 1: mixed}> $path
+     * @param list<array{0: 'dim'|'prop', 1: mixed}> $chain
      */
-    public static function checkPathAssign(
+    public static function checkMemberAssign(
         mixed $root,
-        array $path,
+        array $chain,
         mixed $value,
         string $typeString,
         string $varName,
@@ -86,66 +87,10 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        $copy = self::deepCopyForMutation($root);
-
-        $current = &$copy;
-        $count = \count($path);
-
-        for ($i = 0; $i < $count; $i++) {
-            [$kind, $key] = $path[$i];
-            $isLast = ($i === $count - 1);
-
-            if ($kind === 'dim') {
-                if ($key === null) {
-                    if (! \is_array($current)) {
-                        $current = [];
-                    }
-                    if ($isLast) {
-                        $current[] = $value;
-                    } else {
-                        $current[] = [];
-                        $keys = array_keys($current);
-                        $lastKey = end($keys);
-                        $current = &$current[$lastKey];
-                    }
-                } else {
-                    $arrayKey = \is_int($key) ? $key : (\is_string($key) ? $key : '');
-                    if (! \is_array($current)) {
-                        $current = [];
-                    }
-                    if ($isLast) {
-                        $current[$arrayKey] = $value;
-                    } else {
-                        if (! isset($current[$arrayKey]) || (! \is_array($current[$arrayKey]) && ! \is_object($current[$arrayKey]))) {
-                            $current[$arrayKey] = [];
-                        }
-                        $current = &$current[$arrayKey];
-                    }
-                }
-            } elseif ($kind === 'prop') {
-                $propName = \is_string($key) ? $key : (\is_int($key) ? (string) $key : '');
-                if (! \is_object($current)) {
-                    $current = new \stdClass();
-                }
-                if ($isLast) {
-                    // @phpstan-ignore property.dynamicName
-                    $current->$propName = $value;
-                } else {
-                    // @phpstan-ignore property.dynamicName
-                    $propVal = $current->$propName ?? null;
-                    if (! \is_object($propVal) && ! \is_array($propVal)) {
-                        // @phpstan-ignore property.dynamicName
-                        $current->$propName = new \stdClass();
-                    }
-                    // @phpstan-ignore property.dynamicName
-                    $current = &$current->$propName;
-                }
-            }
-        }
-        unset($current);
-
-        $res = InlineChecker::checkVariable(
-            $copy,
+        $res = MemberAssignChecker::check(
+            $root,
+            $chain,
+            $value,
             $typeString,
             $varName,
             $file,
@@ -162,7 +107,7 @@ final class RuntimeTypeChecker
             return ViolationCollector::handle($res, 'variable', $value, $file, null, $caller, '$' . $varName);
         }
 
-        return $value;
+        return $res;
     }
 
     /**
@@ -681,37 +626,5 @@ final class RuntimeTypeChecker
     public static function getRegistry(): TypeValidatorRegistry
     {
         return self::$registry ??= new TypeValidatorRegistry();
-    }
-
-    /**
-     * Recursively creates an isolated deep copy of arrays and stdClass instances for prospective validation.
-     */
-    private static function deepCopyForMutation(mixed $value): mixed
-    {
-        if (\is_array($value)) {
-            $copy = [];
-            foreach ($value as $k => $v) {
-                $copy[$k] = self::deepCopyForMutation($v);
-            }
-
-            return $copy;
-        }
-
-        if ($value instanceof \stdClass) {
-            $copy = clone $value;
-            foreach (get_object_vars($copy) as $k => $v) {
-                if (\is_array($v) || \is_object($v)) {
-                    $copy->$k = self::deepCopyForMutation($v);
-                }
-            }
-
-            return $copy;
-        }
-
-        if (\is_object($value)) {
-            return clone $value;
-        }
-
-        return $value;
     }
 }

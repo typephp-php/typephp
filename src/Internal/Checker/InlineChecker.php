@@ -25,6 +25,7 @@ use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
@@ -224,6 +225,81 @@ final class InlineChecker
         }
 
         return $value;
+    }
+
+    /**
+     * Directly validates a mutated collection element in O(1) for hybrid validation mode.
+     *
+     * @param list<array{0: 'dim'|'prop', 1: mixed}> $path
+     */
+    public static function validateCollectionElementMutation(
+        mixed $value,
+        array $path,
+        string $typeString,
+        string $varName,
+        string $file,
+        TypeValidatorRegistry $registry
+    ): ?ErrorMessage {
+        if (\count($path) !== 1 || $path[0][0] !== 'dim') {
+            return null;
+        }
+
+        try {
+            $normalized = DocblockNormalizer::normalize($typeString);
+            [$typeNode] = self::parseTypeString($normalized);
+
+            if ($file !== '') {
+                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+            }
+
+            $key = $path[0][1];
+            $keyStr = \is_string($key) ? $key : (\is_int($key) ? (string) $key : '');
+
+            if ($typeNode instanceof GenericTypeNode) {
+                $base = strtolower($typeNode->type->name);
+
+                if ($base === 'list' || $base === 'non-empty-list') {
+                    if ($key !== null && ! \is_int($key)) {
+                        return ErrorFactory::createError("Variable \${$varName} must be a list, non-integer key '{$keyStr}' given");
+                    }
+
+                    $valueType = $typeNode->genericTypes[0] ?? null;
+                    if ($valueType !== null) {
+                        $context = "Variable \${$varName}" . ($key !== null ? "[{$key}]" : '[]');
+
+                        return $registry->validate($value, $valueType, $context);
+                    }
+                } elseif (isset(self::ARRAY_TYPES[$base]) || $base === 'non-empty-array') {
+                    $genericCount = \count($typeNode->genericTypes);
+
+                    if ($genericCount >= 2 && $key !== null) {
+                        $keyType = $typeNode->genericTypes[0];
+                        $keyErr = $registry->validate($key, $keyType, "Variable \${$varName} key");
+                        if ($keyErr !== null) {
+                            return $keyErr;
+                        }
+                    }
+
+                    $valueType = $genericCount >= 2
+                        ? $typeNode->genericTypes[1]
+                        : ($typeNode->genericTypes[0] ?? null);
+
+                    if ($valueType !== null) {
+                        $context = "Variable \${$varName}" . ($key !== null ? "['{$keyStr}']" : '[]');
+
+                        return $registry->validate($value, $valueType, $context);
+                    }
+                }
+            } elseif ($typeNode instanceof ArrayTypeNode) {
+                $context = "Variable \${$varName}" . ($key !== null ? "[{$keyStr}]" : '[]');
+
+                return $registry->validate($value, $typeNode->type, $context);
+            }
+        } catch (\Throwable $e) {
+            // Silently fall back to prospective whole-structure validation
+        }
+
+        return null;
     }
 
     /**
