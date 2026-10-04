@@ -34,4 +34,19 @@ describe('Block-Level Scope Shadowing (@var inside if/foreach/try blocks)', func
             $x = -50;
         })->toThrow(TypeError::class, 'Variable $x must be of type positive-int');
     });
+
+    test('restores outer scope variable contract after exiting a bare block', function () {
+        /** @var positive-int $a */
+        $a = 10;
+        {
+            /** @var non-empty-string $a */
+            $a = 'inner';
+            expect($a)->toBe('inner');
+        }
+
+        // Outside bare block, $a reverts back to outer contract: positive-int!
+        expect(function () use (&$a) {
+            $a = -1;
+        })->toThrow(TypeError::class, 'Variable $a must be of type positive-int');
+    });
 });

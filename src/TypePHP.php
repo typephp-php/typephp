@@ -6,6 +6,8 @@ namespace TypePHP;
 
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Io\StreamWrapper;
+use TypePHP\Internal\Reporting\ViolationCollector;
+use TypePHP\Internal\Reporting\ViolationRecord;
 use TypePHP\Internal\Util\Config;
 
 final class TypePHP
@@ -16,6 +18,32 @@ final class TypePHP
     public static function boot(): void
     {
         StreamWrapper::register(Config::get());
+    }
+
+    /**
+     * Returns all type contract violations recorded during execution in report mode.
+     *
+     * @return list<ViolationRecord>
+     */
+    public static function getViolations(): array
+    {
+        return ViolationCollector::getViolations();
+    }
+
+    /**
+     * Clears all recorded type contract violations.
+     */
+    public static function clearViolations(): void
+    {
+        ViolationCollector::clear();
+    }
+
+    /**
+     * Consolidates worker shards and exports the master JSON report file.
+     */
+    public static function exportReport(?string $filePath = null): ?string
+    {
+        return ViolationCollector::exportReport($filePath);
     }
 
     /**

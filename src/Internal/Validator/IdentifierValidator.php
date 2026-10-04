@@ -33,6 +33,7 @@ final class IdentifierValidator implements TypeValidatorInterface
             'list' => \is_array($value) && (\count($value) === 0 || array_is_list($value)),
             'object', 'self', 'static', 'parent', '$this' => \is_object($value),
             'callable', 'pure-callable' => CallableWrapper::isCallable($value),
+            'static-closure', 'static-pure-closure' => $value instanceof \Closure && (new \ReflectionFunction($value))->getClosureThis() === null,
             'iterable' => is_iterable($value),
             'resource' => \is_resource($value),
             'null' => $value === null,
@@ -78,6 +79,10 @@ final class IdentifierValidator implements TypeValidatorInterface
         };
 
         if (! $ok) {
+            if (($lower === 'static-closure' || $lower === 'static-pure-closure') && $value instanceof \Closure && (new \ReflectionFunction($value))->getClosureThis() !== null) {
+                return ErrorFactory::createError($context . ' must be a static Closure (not bound to $this)');
+            }
+
             return ErrorFactory::createError($context . ' must be of type ' . $identifierNode->name . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 

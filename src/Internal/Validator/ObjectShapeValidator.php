@@ -48,10 +48,14 @@ final class ObjectShapeValidator implements TypeValidatorInterface
         $shapeNode = $node;
 
         if ($value instanceof \stdClass) {
+            $knownProps = [];
+
             foreach ($shapeNode->items as $item) {
                 $propName = $item->keyName instanceof IdentifierTypeNode
                     ? $item->keyName->name
                     : (string) $item->keyName;
+
+                $knownProps[$propName] = true;
 
                 if (! isset($value->$propName) && ! property_exists($value, $propName)) {
                     if (! $item->optional) {
@@ -66,6 +70,13 @@ final class ObjectShapeValidator implements TypeValidatorInterface
                 $err = $registry->validate($propValue, $item->valueType, '', $isSensitive);
                 if ($err !== null) {
                     return ErrorFactory::createError($context . "->{$propName}" . $err->getMessage());
+                }
+            }
+
+            $actualProps = get_object_vars($value);
+            foreach ($actualProps as $propName => $_) {
+                if (! isset($knownProps[$propName])) {
+                    return ErrorFactory::createError($context . " contains unexpected property '{$propName}'");
                 }
             }
 

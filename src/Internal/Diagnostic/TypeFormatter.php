@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Diagnostic;
 
+use TypePHP\Internal\Util\Config;
+
 /**
  * @internal
  */
@@ -11,7 +13,7 @@ final class TypeFormatter
 {
     public static function formatGivenValue(mixed $value, bool $isSensitive = false): string
     {
-        if ($isSensitive) {
+        if ($isSensitive || Config::isRedactValuesEnabled()) {
             return get_debug_type($value);
         }
 

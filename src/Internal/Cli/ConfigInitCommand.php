@@ -55,6 +55,58 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Auto-Boot on Composer Autoload
+    |--------------------------------------------------------------------------
+    | When true (default), TypePHP automatically hooks into the stream wrapper
+    | as soon as 'vendor/autoload.php' is required.
+    |
+    | Set to false to disable auto-booting project-wide. You can then manually
+    | boot TypePHP where desired (e.g. in 'tests/bootstrap.php') via:
+    |   \TypePHP\TypePHP::boot();
+    |
+    | Can also be configured in root composer.json:
+    |   "extra": { "typephp": { "auto-boot": false } }
+    */
+    'auto_boot' => true,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Violation Handling Strategy & Audit Reporting
+    |--------------------------------------------------------------------------
+    | Controls what happens when a type contract is violated at runtime:
+    |
+    | - 'throw'  : (Default / Strict) Immediately throws TypePHP\Exception\TypeError.
+    | - 'report' : (Audit Mode) Does not throw; records each unique violation
+    |              and dumps a structured JSON audit report to 'report_file' at shutdown.
+    | - 'warn'   : Emits PHP E_USER_WARNING once per unique violation to your logs
+    |              and allows execution to continue normally without crashing.
+    |
+    | 'report_file'    : Sets the target JSON output path when 'report' mode is active.
+    | 'fail_on_report' : When true, terminates the process with exit code 1 at shutdown
+    |                    if the violation report is non-empty. Useful for CI gates.
+    */
+    'on_violation'   => 'throw',
+    'report_file'    => null,
+    'fail_on_report' => false,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Global Value Redaction
+    |--------------------------------------------------------------------------
+    | When true, TypePHP redacts all raw parameter, return, property, and
+    | variable values from TypeError exception messages and audit reports,
+    | displaying only their types (e.g. 'string given' instead of 'secret_pwd').
+    |
+    | Useful for production environments, staging logs, and HIPAA/GDPR compliance.
+    |
+    | Can also be set via environment variable: TYPEPHP_REDACT_VALUES=true
+    | Can also be configured in root composer.json:
+    |   "extra": { "typephp": { "redact-values": true } }
+    */
+    'redact_values' => false,
+
+    /*
+    |--------------------------------------------------------------------------
     | Function Boundary Contracts (@param, @return, @param-out, @self-out)
     |--------------------------------------------------------------------------
     | Controls whether function and method parameter, return, and by-reference

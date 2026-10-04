@@ -5,6 +5,8 @@ declare(strict_types=1);
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use TypePHP\Exception\TypeError;
+use TypePHP\Internal\Checker\ParamChecker;
+use TypePHP\Internal\Checker\SelfOutChecker;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\RuntimeTypeChecker;
 use TypePHP\Internal\Util\Config;
@@ -44,9 +46,6 @@ class ScopeTestService
     }
 }
 
-use TypePHP\Internal\Checker\ParamChecker;
-use TypePHP\Internal\Checker\SelfOutChecker;
-
 class RuntimeCheckerIgnoredCaller
 {
     /**
@@ -56,6 +55,42 @@ class RuntimeCheckerIgnoredCaller
     {
         return $fn();
     }
+}
+
+/**
+ * Self-contained fixture: by-reference param-out
+ *
+ * @param mixed &$id
+ *
+ * @param-out positive-int $id
+ */
+function runtimeTestParamOutFixture(mixed &$id): void
+{
+}
+
+/**
+ * Self-contained fixture: self-out state transitions
+ *
+ * @template T of 'unauthenticated'|'authenticated'
+ */
+class RuntimeTestSessionFixture
+{
+    /**
+     * @self-out self<'authenticated'>
+     */
+    public function login(): void
+    {
+    }
+}
+
+/**
+ * Self-contained fixture: generator with yield and send contracts
+ *
+ * @return Generator<string, positive-int, positive-int, void>
+ */
+function runtimeTestGeneratorFixture(): Generator
+{
+    yield 'a' => 10;
 }
 
 /**
@@ -155,6 +190,74 @@ describe('RuntimeTypeChecker Unit Tests', function () {
         expect(RuntimeTypeChecker::checkProperty(['a'], $fixture, 'numbers', __FILE__))->toBe(['a']);
     });
 
+    test('checkMemberAssign validates array dimension assignment and handles disabled switch', function () {
+        $root = ['count' => 5];
+        $chain = [['dim', 'count']];
+
+        $valid = RuntimeTypeChecker::checkMemberAssign($root, $chain, 10, 'array{count: int}', 'stats', __FILE__);
+        expect($valid)->toBe(10);
+
+        $invalid = RuntimeTypeChecker::checkMemberAssign($root, $chain, 'not_an_int', 'array{count: int}', 'stats', __FILE__);
+        expect($invalid)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalid->getMessage())->toContain("['count'] must be of type int")
+        ;
+
+        // Atomic state preservation: original array must remain untouched
+        expect($root['count'])->toBe(5);
+
+        // Master switch disabled
+        Config::set(['enabled' => false]);
+        expect(RuntimeTypeChecker::checkMemberAssign($root, $chain, 'not_an_int', 'array{count: int}', 'stats', __FILE__))->toBe('not_an_int');
+    });
+
+    test('checkMemberAssign validates list append and multi-dimensional nested chains', function () {
+        $list = [1, 2];
+        $chainAppend = [['dim', null]];
+
+        $validAppend = RuntimeTypeChecker::checkMemberAssign($list, $chainAppend, 3, 'list<positive-int>', 'list', __FILE__);
+        expect($validAppend)->toBe(3);
+
+        $invalidAppend = RuntimeTypeChecker::checkMemberAssign($list, $chainAppend, -1, 'list<positive-int>', 'list', __FILE__);
+        expect($invalidAppend)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalidAppend->getMessage())->toContain('positive-int')
+        ;
+
+        $nested = ['user' => ['id' => 1]];
+        $chainNested = [['dim', 'user'], ['dim', 'id']];
+        $invalidNested = RuntimeTypeChecker::checkMemberAssign($nested, $chainNested, -99, 'array{user: array{id: positive-int}}', 'nested', __FILE__);
+        expect($invalidNested)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalidNested->getMessage())->toContain("['user']['id']")
+        ;
+    });
+
+    test('checkMemberAssign validates object shape properties and preserves state atomically', function () {
+        $obj = (object) ['count' => 5];
+        $chain = [['prop', 'count']];
+
+        $valid = RuntimeTypeChecker::checkMemberAssign($obj, $chain, 10, 'object{count: int}', 'obj', __FILE__);
+        expect($valid)->toBe(10);
+
+        $invalid = RuntimeTypeChecker::checkMemberAssign($obj, $chain, 'not_an_int', 'object{count: int}', 'obj', __FILE__);
+        expect($invalid)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalid->getMessage())->toContain('->count must be of type int')
+        ;
+
+        // Atomic state preservation: original stdClass must remain untouched
+        expect($obj->count)->toBe(5);
+
+        // Nested object shape
+        $nestedObj = (object) ['user' => (object) ['id' => 1]];
+        $nestedChain = [['prop', 'user'], ['prop', 'id']];
+        $validNested = RuntimeTypeChecker::checkMemberAssign($nestedObj, $nestedChain, 100, 'object{user: object{id: positive-int}}', 'nestedObj', __FILE__);
+        expect($validNested)->toBe(100);
+
+        $invalidNested = RuntimeTypeChecker::checkMemberAssign($nestedObj, $nestedChain, -50, 'object{user: object{id: positive-int}}', 'nestedObj', __FILE__);
+        expect($invalidNested)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalidNested->getMessage())->toContain('->user->id')
+        ;
+        expect($nestedObj->user->id)->toBe(1);
+    });
+
     test('bindInstanceFromNode delegates to TemplateManager and respects disabled switch', function () {
         $dog = new Container(new Dog());
         $node = new GenericTypeNode(new IdentifierTypeNode(Container::class), [new IdentifierTypeNode(Dog::class)]);
@@ -195,7 +298,7 @@ describe('RuntimeTypeChecker Unit Tests', function () {
     });
 
     test('checkParamOut validates post-conditions and handles disabled switch', function () {
-        $target = 'TypePHP\Tests\Internal\Checker\internalParamOutScalarFixture';
+        $target = 'runtimeTestParamOutFixture';
 
         expect(RuntimeTypeChecker::checkParamOut($target, 'id', 42))->toBeNull();
 
@@ -207,8 +310,8 @@ describe('RuntimeTypeChecker Unit Tests', function () {
     });
 
     test('checkSelfOut executes state transition and handles disabled switch', function () {
-        $session = new TypePHP\Tests\TypeChecking\Generics\FixtureSession();
-        $target = TypePHP\Tests\TypeChecking\Generics\FixtureSession::class . '::login';
+        $session = new RuntimeTestSessionFixture();
+        $target = RuntimeTestSessionFixture::class . '::login';
 
         RuntimeTypeChecker::checkSelfOut($target, $session);
         expect(true)->toBeTrue();
@@ -295,18 +398,23 @@ describe('RuntimeTypeChecker Unit Tests', function () {
         );
         expect($resProp)->toBe(['bad']);
 
+        $resMember = RuntimeCheckerIgnoredCaller::run(
+            fn () => RuntimeTypeChecker::checkMemberAssign(['count' => 5], [['dim', 'count']], 'not_an_int', 'array{count: int}', 'stats', __FILE__)
+        );
+        expect($resMember)->toBe('not_an_int');
+
         $resParams = RuntimeCheckerIgnoredCaller::run(
             fn () => RuntimeTypeChecker::checkParams(UserService::class . '::find', ['id' => -1], new UserService())
         );
         expect($resParams)->toBeNull();
 
         $resOut = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkParamOut('TypePHP\Tests\Internal\Checker\internalParamOutScalarFixture', 'id', -50)
+            fn () => RuntimeTypeChecker::checkParamOut('runtimeTestParamOutFixture', 'id', -50)
         );
         expect($resOut)->toBeNull();
 
         RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkSelfOut(TypePHP\Tests\TypeChecking\Generics\FixtureSession::class . '::login', new TypePHP\Tests\TypeChecking\Generics\FixtureSession())
+            fn () => RuntimeTypeChecker::checkSelfOut(RuntimeTestSessionFixture::class . '::login', new RuntimeTestSessionFixture())
         );
 
         $resRet = RuntimeCheckerIgnoredCaller::run(
@@ -315,12 +423,12 @@ describe('RuntimeTypeChecker Unit Tests', function () {
         expect($resRet)->toBe(['id' => -1, 'name' => 'Alice']);
 
         $resSend = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkSend('sampleGeneratorFixture', -50)
+            fn () => RuntimeTypeChecker::checkSend('runtimeTestGeneratorFixture', -50)
         );
         expect($resSend)->toBe(-50);
 
         $resYield = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkYield('sampleGeneratorFixture', 123, -50)
+            fn () => RuntimeTypeChecker::checkYield('runtimeTestGeneratorFixture', 123, -50)
         );
         expect($resYield)->toBe(-50);
     });
@@ -384,6 +492,11 @@ PHP
                 fn () => RuntimeTypeChecker::checkProperty(['bad'], 'Acme\VendorTest\VendorCaller', 'prop', __FILE__)
             );
             expect($resProp)->toBe(['bad']);
+
+            $resMember = Acme\VendorTest\VendorCaller::call(
+                fn () => RuntimeTypeChecker::checkMemberAssign(['count' => 5], [['dim', 'count']], 'not_an_int', 'array{count: int}', 'stats', __FILE__, $fnName)
+            );
+            expect($resMember)->toBe('not_an_int');
 
             $resParams = Acme\VendorTest\VendorCaller::call(
                 fn () => RuntimeTypeChecker::checkParams($fnName, ['a' => 1])

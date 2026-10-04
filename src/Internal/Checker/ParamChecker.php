@@ -1288,9 +1288,11 @@ final class ParamChecker
         $isClassLevelTemplate = ! TemplateManager::isMethodTemplate($function, $templateName) && isset($classTemplates[$templateName]);
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
 
+        $redact = $isSensitive || Config::isRedactValuesEnabled();
+
         if (! TemplateManager::isBound($function, $targetObj, $templateName)) {
             if (! \is_string($val) || ! ClassNameValidator::isValidClassString($val)) {
-                return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($val, $isSensitive) . ' given');
+                return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($val, $redact) . ' given');
             }
 
             if ($templateNode->bound !== null) {
@@ -1299,7 +1301,7 @@ final class ParamChecker
                     $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
                     if (! self::checkClassStringSatisfiesBound($val, $resolvedBound)) {
                         $boundDisplay = (string) $resolvedBound;
-                        $displayVal = $isSensitive ? 'string given' : "'" . $val . "' given";
+                        $displayVal = $redact ? 'string given' : "'" . $val . "' given";
 
                         return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' (class-string<' . $templateName . '>) must be a class-string of ' . $boundDisplay . ', ' . $displayVal);
                     }
@@ -1312,7 +1314,7 @@ final class ParamChecker
             $expectedTypeNode = TemplateManager::getBoundType($function, $targetObj, $templateName);
             if ($expectedTypeNode !== null) {
                 if (! \is_string($val) || ! self::checkClassStringSatisfiesBound($val, $expectedTypeNode)) {
-                    $valStr = TypeFormatter::formatGivenValue($val, $isSensitive);
+                    $valStr = TypeFormatter::formatGivenValue($val, $redact);
                     $targetDisplay = (string) $expectedTypeNode;
 
                     return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' must be a class-string of ' . $targetDisplay . ', ' . $valStr . ' given');

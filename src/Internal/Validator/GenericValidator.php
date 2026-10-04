@@ -742,14 +742,16 @@ final class GenericValidator implements TypeValidatorInterface
         $minVal = $minNode !== null ? $this->resolveIntBound($minNode) : null;
         $maxVal = $maxNode !== null ? $this->resolveIntBound($maxNode) : null;
 
+        $redact = $isSensitive || Config::isRedactValuesEnabled();
+
         if ($minVal !== null && $value < $minVal) {
-            $valDisplay = $isSensitive ? 'int given' : "$value given";
+            $valDisplay = $redact ? 'int given' : "$value given";
 
             return ErrorFactory::createError($context . " must be >= $minVal, $valDisplay");
         }
 
         if ($maxVal !== null && $value > $maxVal) {
-            $valDisplay = $isSensitive ? 'int given' : "$value given";
+            $valDisplay = $redact ? 'int given' : "$value given";
 
             return ErrorFactory::createError($context . " must be <= $maxVal, $valDisplay");
         }
@@ -773,6 +775,8 @@ final class GenericValidator implements TypeValidatorInterface
 
     private function validateClassStringBound(string $value, TypeNode $targetNode, string $context, bool $isSensitive = false): ?ErrorMessage
     {
+        $redact = $isSensitive || Config::isRedactValuesEnabled();
+
         if ($targetNode instanceof IdentifierTypeNode) {
             $targetName = $targetNode->name;
             $lower = strtolower($targetName);
@@ -782,7 +786,7 @@ final class GenericValidator implements TypeValidatorInterface
 
             if (class_exists($targetName) || interface_exists($targetName) || trait_exists($targetName) || enum_exists($targetName)) {
                 if (! is_a($value, $targetName, allow_string: true)) {
-                    $valDisplay = $isSensitive ? 'string given' : "'$value' given";
+                    $valDisplay = $redact ? 'string given' : "'$value' given";
 
                     return ErrorFactory::createError($context . ' must be a class-string of ' . $targetName . ", $valDisplay");
                 }
@@ -798,7 +802,7 @@ final class GenericValidator implements TypeValidatorInterface
                 }
             }
 
-            $valDisplay = $isSensitive ? 'string given' : "'$value' given";
+            $valDisplay = $redact ? 'string given' : "'$value' given";
 
             return ErrorFactory::createError($context . ' must be a class-string of ' . (string) $targetNode . ", $valDisplay");
         }

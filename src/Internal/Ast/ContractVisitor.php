@@ -6,7 +6,10 @@ namespace TypePHP\Internal\Ast;
 
 use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
@@ -96,12 +99,21 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         if ($node instanceof Node\Expr\Assign || $node instanceof Node\Expr\AssignOp) {
             $this->markWriteContext($node->var);
+        } elseif ($node instanceof Node\Expr\AssignRef) {
+            $this->markWriteContext($node->var);
+            $this->markWriteContext($node->expr);
         } elseif ($node instanceof Node\Expr\PreInc || $node instanceof Node\Expr\PostInc || $node instanceof Node\Expr\PreDec || $node instanceof Node\Expr\PostDec) {
             $this->markWriteContext($node->var);
         } elseif ($node instanceof Node\Stmt\Unset_) {
             foreach ($node->vars as $v) {
                 $this->markWriteContext($v);
             }
+        } elseif ($node instanceof Node\Expr\Isset_) {
+            foreach ($node->vars as $v) {
+                $this->markWriteContext($v);
+            }
+        } elseif ($node instanceof Node\Expr\Empty_) {
+            $this->markWriteContext($node->expr);
         }
 
         if ($node instanceof Node\Stmt\Class_) {
@@ -207,6 +219,12 @@ final class ContractVisitor extends NodeVisitorAbstract
         $node->setAttribute('typephp_write_context', true);
         if ($node instanceof Node\Expr\ArrayDimFetch || $node instanceof Node\Expr\PropertyFetch) {
             $this->markWriteContext($node->var);
+        } elseif ($node instanceof Node\Expr\Array_ || $node instanceof Node\Expr\List_) {
+            foreach ($node->items as $item) {
+                if ($item !== null) {
+                    $this->markWriteContext($item->value);
+                }
+            }
         }
     }
 
@@ -515,9 +533,9 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $autoIdx = 0;
                 foreach ($parsed->items as $item) {
                     $key = match (true) {
-                        $item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode => $item->keyName->value,
-                        $item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode => (int) $item->keyName->value,
-                        $item->keyName instanceof \PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode => $item->keyName->name,
+                        $item->keyName instanceof ConstExprStringNode => $item->keyName->value,
+                        $item->keyName instanceof ConstExprIntegerNode => (int) $item->keyName->value,
+                        $item->keyName instanceof IdentifierTypeNode => $item->keyName->name,
                         $item->keyName !== null => (string) $item->keyName,
                         default => $autoIdx,
                     };
@@ -600,6 +618,31 @@ final class ContractVisitor extends NodeVisitorAbstract
 
                 $node->expr = $this->wrapVariableCheck($expr, $typeString, $varName, $node->var->getStartLine());
             }
+        } elseif (($chainInfo = $this->extractMemberChain($node->var)) !== null) {
+            $root = $chainInfo['root'];
+            $chain = $chainInfo['chain'];
+
+            if ($root instanceof Node\Expr\Variable && \is_string($root->name)) {
+                $varName = $root->name;
+                $typeString = $this->scopeManager->getVarTypeFromScope($varName);
+
+                if ($typeString !== null && $this->shouldHandleMemberAssignCheck($typeString, $chain)) {
+                    $node->expr = $this->wrapMemberAssignCheck($node->expr, $root, $chain, $typeString, $varName, $node->var->getStartLine());
+
+                    return;
+                }
+            }
+
+            // Fallback for direct single property access
+            if ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
+                $node->expr = $this->wrapPropertyCheck($node->expr, $node->var->var, $node->var->name->toString(), $node->var->getStartLine());
+            } elseif ($node->var instanceof Node\Expr\StaticPropertyFetch && $node->var->name instanceof Node\VarLikeIdentifier) {
+                $classArg = $node->var->class instanceof Node\Name
+                    ? new Node\Expr\ClassConstFetch($node->var->class, 'class')
+                    : $node->var->class;
+
+                $node->expr = $this->wrapPropertyCheck($node->expr, $classArg, $node->var->name->toString(), $node->var->getStartLine());
+            }
         } elseif ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
             $node->expr = $this->wrapPropertyCheck($node->expr, $node->var->var, $node->var->name->toString(), $node->var->getStartLine());
         } elseif ($node->var instanceof Node\Expr\StaticPropertyFetch && $node->var->name instanceof Node\VarLikeIdentifier) {
@@ -628,6 +671,37 @@ final class ContractVisitor extends NodeVisitorAbstract
                 return new Node\Expr\Assign(
                     $node->var,
                     $this->wrapVariableCheck($binaryExpr, $typeString, $varName, $node->var->getStartLine())
+                );
+            }
+        } elseif (($chainInfo = $this->extractMemberChain($node->var)) !== null) {
+            $root = $chainInfo['root'];
+            $chain = $chainInfo['chain'];
+
+            if ($root instanceof Node\Expr\Variable && \is_string($root->name)) {
+                $varName = $root->name;
+                $typeString = $this->scopeManager->getVarTypeFromScope($varName);
+
+                if ($typeString !== null && $this->shouldHandleMemberAssignCheck($typeString, $chain)) {
+                    return new Node\Expr\Assign(
+                        $node->var,
+                        $this->wrapMemberAssignCheck($binaryExpr, $root, $chain, $typeString, $varName, $node->var->getStartLine())
+                    );
+                }
+            }
+
+            if ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
+                return new Node\Expr\Assign(
+                    $node->var,
+                    $this->wrapPropertyCheck($binaryExpr, $node->var->var, $node->var->name->toString(), $node->var->getStartLine())
+                );
+            } elseif ($node->var instanceof Node\Expr\StaticPropertyFetch && $node->var->name instanceof Node\VarLikeIdentifier) {
+                $classArg = $node->var->class instanceof Node\Name
+                    ? new Node\Expr\ClassConstFetch($node->var->class, 'class')
+                    : $node->var->class;
+
+                return new Node\Expr\Assign(
+                    $node->var,
+                    $this->wrapPropertyCheck($binaryExpr, $classArg, $node->var->name->toString(), $node->var->getStartLine())
                 );
             }
         } elseif ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
@@ -665,6 +739,37 @@ final class ContractVisitor extends NodeVisitorAbstract
                     $this->wrapVariableCheck($binaryExpr, $typeString, $varName, $node->var->getStartLine())
                 );
             }
+        } elseif (($chainInfo = $this->extractMemberChain($node->var)) !== null) {
+            $root = $chainInfo['root'];
+            $chain = $chainInfo['chain'];
+
+            if ($root instanceof Node\Expr\Variable && \is_string($root->name)) {
+                $varName = $root->name;
+                $typeString = $this->scopeManager->getVarTypeFromScope($varName);
+
+                if ($typeString !== null && $this->shouldHandleMemberAssignCheck($typeString, $chain)) {
+                    return new Node\Expr\Assign(
+                        $node->var,
+                        $this->wrapMemberAssignCheck($binaryExpr, $root, $chain, $typeString, $varName, $node->var->getStartLine())
+                    );
+                }
+            }
+
+            if ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
+                return new Node\Expr\Assign(
+                    $node->var,
+                    $this->wrapPropertyCheck($binaryExpr, $node->var->var, $node->var->name->toString(), $node->var->getStartLine())
+                );
+            } elseif ($node->var instanceof Node\Expr\StaticPropertyFetch && $node->var->name instanceof Node\VarLikeIdentifier) {
+                $classArg = $node->var->class instanceof Node\Name
+                    ? new Node\Expr\ClassConstFetch($node->var->class, 'class')
+                    : $node->var->class;
+
+                return new Node\Expr\Assign(
+                    $node->var,
+                    $this->wrapPropertyCheck($binaryExpr, $classArg, $node->var->name->toString(), $node->var->getStartLine())
+                );
+            }
         } elseif ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
             return new Node\Expr\Assign(
                 $node->var,
@@ -682,6 +787,101 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         return null;
+    }
+
+    /**
+     * Unpacks any nested chain of ArrayDimFetch and PropertyFetch down to its root expression.
+     *
+     * @return array{root: Node\Expr, chain: list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}>}|null
+     */
+    private function extractMemberChain(Node\Expr $target): ?array
+    {
+        $curr = $target;
+        $chain = [];
+
+        while ($curr instanceof Node\Expr\ArrayDimFetch || $curr instanceof Node\Expr\PropertyFetch) {
+            if ($curr instanceof Node\Expr\ArrayDimFetch) {
+                array_unshift($chain, ['dim', $curr->dim]);
+                $curr = $curr->var;
+            } elseif ($curr instanceof Node\Expr\PropertyFetch) {
+                if ($curr->name instanceof Node\Identifier) {
+                    array_unshift($chain, ['prop', $curr->name->toString()]);
+                    $curr = $curr->var;
+                } else {
+                    return null;
+                }
+            }
+        }
+
+        if ($chain === []) {
+            return null;
+        }
+
+        return [
+            'root' => $curr,
+            'chain' => $chain,
+        ];
+    }
+
+    /**
+     * @param list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}> $chain
+     */
+    private function shouldHandleMemberAssignCheck(string $typeString, array $chain): bool
+    {
+        foreach ($chain as $step) {
+            if ($step[0] === 'dim') {
+                return true;
+            }
+        }
+
+        return str_contains($typeString, '{');
+    }
+
+    /**
+     * @param list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}> $chain
+     */
+    private function wrapMemberAssignCheck(
+        Node\Expr $valueExpr,
+        Node\Expr $rootExpr,
+        array $chain,
+        string $typeString,
+        string $varName,
+        int $line
+    ): Node\Expr\Ternary {
+        $chainItems = [];
+        foreach ($chain as $step) {
+            $kind = new Node\Scalar\String_($step[0]);
+            if ($step[0] === 'dim') {
+                $dimExpr = $step[1] instanceof Node\Expr ? $step[1] : new Node\Expr\ConstFetch(new Node\Name('null'));
+            } elseif (\is_string($step[1])) {
+                $dimExpr = new Node\Scalar\String_($step[1]);
+            } elseif ($step[1] instanceof Node\Expr) {
+                $dimExpr = $step[1];
+            } else {
+                $dimExpr = new Node\Scalar\String_('');
+            }
+
+            $chainItems[] = new Node\ArrayItem(
+                new Node\Expr\Array_([
+                    new Node\ArrayItem($kind),
+                    new Node\ArrayItem($dimExpr),
+                ])
+            );
+        }
+
+        $chainAst = new Node\Expr\Array_($chainItems);
+
+        $checkCall = NodeBuilder::createMemberAssignCheckCall(
+            $rootExpr,
+            $chainAst,
+            $valueExpr,
+            $typeString,
+            $varName,
+            $this->getCurrentCallerExpr(),
+            $this->getCurrentThisExpr()
+        );
+
+        return NodeBuilder::createTernaryThrowExpr($checkCall, $line);
     }
 
     private function wrapVariableCheck(Node\Expr $expr, string $typeString, string $varName, int $line): Node\Expr\Ternary
@@ -731,6 +931,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     private function isSoftScopeBoundary(Node $node): bool
     {
         return $node instanceof Node\Expr\ArrowFunction
+            || $node instanceof Node\Stmt\Block
             || $node instanceof Node\Stmt\If_
             || $node instanceof Node\Stmt\Else_
             || $node instanceof Node\Stmt\ElseIf_
