@@ -58,7 +58,7 @@ final class ViolationCollector
         }
 
         $message = $error->getMessage();
-        [$resolvedFile, $resolvedLine] = self::resolveCallSite($file, $line);
+        [$resolvedFile, $resolvedLine] = self::resolveCallSite($file, $line, $kind);
         $parsed = self::parseMetadata($message, $kind, $function, $target);
 
         $record = new ViolationRecord(
@@ -75,7 +75,7 @@ final class ViolationCollector
         $hash = $record->getHash();
 
         if ($mode === 'warn') {
-            self::emitWarningOnce($hash, $message);
+            self::emitWarningOnce($hash, $message, $resolvedFile, $resolvedLine, $kind);
 
             return $passThroughValue;
         }
@@ -90,16 +90,20 @@ final class ViolationCollector
     }
 
     /**
-     * Emits PHP E_USER_WARNING once per unique violation hash.
+     * Emits PHP E_USER_WARNING once per unique violation hash with caller location.
      */
-    private static function emitWarningOnce(string $hash, string $message): void
+    private static function emitWarningOnce(string $hash, string $message, string $file, int $line, string $kind): void
     {
         if (isset(self::$warnedHashes[$hash])) {
             return;
         }
 
         self::$warnedHashes[$hash] = true;
-        trigger_error("[TypePHP Violation] {$message}", E_USER_WARNING);
+
+        $locationPrefix = ($kind === 'parameter' || $kind === 'callback') ? 'called in' : 'in';
+        $location = ($file !== '' && $file !== 'unknown') ? ", {$locationPrefix} {$file} on line {$line}" : '';
+
+        trigger_error("[TypePHP Violation] {$message}{$location}", E_USER_WARNING);
     }
 
     /**
@@ -296,13 +300,15 @@ final class ViolationCollector
     /**
      * @return array{0: string, 1: int}
      */
-    private static function resolveCallSite(?string $explicitFile, ?int $explicitLine): array
+    private static function resolveCallSite(?string $explicitFile, ?int $explicitLine, string $kind = 'parameter'): array
     {
         if ($explicitFile !== null && $explicitFile !== '' && $explicitLine !== null && $explicitLine > 0) {
             return [$explicitFile, $explicitLine];
         }
 
         $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
+        $appFrames = [];
+
         foreach ($trace as $frame) {
             if (! isset($frame['file']) || ! \is_string($frame['file'])) {
                 continue;
@@ -314,8 +320,15 @@ final class ViolationCollector
             }
 
             $l = isset($frame['line']) && \is_int($frame['line']) ? $frame['line'] : 1;
+            $appFrames[] = [$frame['file'], $l];
+        }
 
-            return [$frame['file'], $l];
+        if (($kind === 'parameter' || $kind === 'callback') && \count($appFrames) >= 2) {
+            return $appFrames[1];
+        }
+
+        if ($appFrames !== []) {
+            return $appFrames[0];
         }
 
         return [$explicitFile !== null ? $explicitFile : 'unknown', $explicitLine !== null ? $explicitLine : 1];

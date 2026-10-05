@@ -179,6 +179,30 @@ describe('ViolationCollector', function () {
     });
 
     describe('Mode: report', function () {
+        test('emits PHP E_USER_WARNING and returns pass-through value with call site location', function () {
+            Config::set(['on_violation' => 'warn']);
+            $err = new ErrorMessage('Argument $code must be of type positive-int, int (-5) given');
+
+            $warningCaught = '';
+            set_error_handler(function (int $errno, string $errstr) use (&$warningCaught): bool {
+                $warningCaught = $errstr;
+
+                return true;
+            });
+
+            try {
+                $result = ViolationCollector::handle($err, 'parameter', 'fallback_val', 'src/Action.php', 15);
+            } finally {
+                restore_error_handler();
+            }
+
+            expect($result)->toBe('fallback_val')
+                ->and($warningCaught)->toContain('[TypePHP Violation]')
+                ->and($warningCaught)->toContain('Argument $code must be of type positive-int')
+                ->and($warningCaught)->toContain('src/Action.php on line 15')
+            ;
+        });
+
         test('records violation in memory, suppresses warnings, and returns pass-through value', function () {
             Config::set(['on_violation' => 'report']);
             $err = new ErrorMessage('App\\Services\\UserService::find(): Argument $id must be of type positive-int, negative int (-10) given');

@@ -76,6 +76,17 @@ final class RunCommand implements CommandInterface
                 ]);
             }
 
+            set_error_handler(static function (int $errno, string $errstr) use ($errorStream): bool {
+                if ($errno === E_USER_WARNING && str_starts_with($errstr, '[TypePHP Violation]')) {
+                    $cleaned = preg_replace('/, (?:called in|in) (.*?) on line (\d+)$/', ' in $1 on line $2', $errstr) ?? $errstr;
+                    fwrite($errorStream, "PHP Warning:  {$cleaned}\n");
+
+                    return true;
+                }
+
+                return false;
+            }, E_USER_WARNING);
+
             TypePHP::boot();
 
             if ($realTarget !== false) {
@@ -93,6 +104,8 @@ final class RunCommand implements CommandInterface
             fwrite($errorStream, "  thrown in {$file} on line {$line}\n");
 
             return 255;
+        } finally {
+            restore_error_handler();
         }
 
         return 0;
