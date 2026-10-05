@@ -19,6 +19,8 @@
 
 TypePHP is a transparent, pure-PHP runtime type checker. You don't have to refactor a single line of your codebase, set up complex build toolchains, or compile C-extensions. Simply run your existing code, and TypePHP will enforce your extended PHPDoc contracts (generics, array shapes, `key-of`/`value-of` extractions, and scalar refinements) dynamically at runtime.
 
+Run in **Strict Mode** to throw immediate `TypeError` exceptions, or switch to **Audit Report Mode** to collect all runtime type violations across your test suites and legacy codebases into structured JSON reports without interrupting execution.
+
 **[Read the full TypePHP documentation »](https://typephp-php.github.io/docs/)** | **[Try it online in the Playground »](https://typephp-php.github.io/docs/playground.html)**
 
 ---
@@ -223,6 +225,39 @@ $service->connect(['driver' => 'pdo_invalid']);
 // Throws TypeError: Argument $params['driver'] must be a key of DriverManager::DRIVER_MAP
 ```
 
+### 4. Zero-Crash Audit & Reporting Mode (CI/CD Quality Gates)
+Audit legacy codebases, massive monolithic applications, or staging environments without crashing execution:
+
+```php
+// typephp.php
+return [
+    'on_violation'   => 'report', // 'throw' | 'report' | 'warn'
+    'report_file'    => 'var/typephp-report.json',
+    'fail_on_report' => true,     // Terminates with exit code 1 at shutdown if violations exist
+    'redact_values'  => true,     // Masks raw values for GDPR / HIPAA compliance
+];
+```
+
+Run your full test suite or application normally, then inspect the formatted violation report directly in your terminal:
+
+```bash
+vendor/bin/typephp report
+```
+
+```
+  TYPEPHP  Violation Audit Report
+
+  • Total Violations: 2
+  • Files Affected:   1
+  • Report Source:    var/typephp-report.json
+
+  src/Services/OrderService.php
+    Line 42    parameter   $amount      expected positive-int, int given
+    Line 88    return      return       expected non-empty-string, string given
+```
+
+Supports parallel test runners (**ParaTest**, **Pest Parallel**) with automatic process-isolated worker sharding and lock-free report consolidation.
+
 ---
 
 ## Documentation
@@ -233,6 +268,7 @@ All the documentation lives on the **[typephp-php.github.io/docs website](https:
 * [Getting Started & Installation Guide](https://typephp-php.github.io/docs/getting-started/installation)
 * [Quick Start Guide](https://typephp-php.github.io/docs/getting-started/quick-start)
 * [Configuration Guide](https://typephp-php.github.io/docs/getting-started/configuration)
+* [Audit Reporting & CI/CD Gates](https://typephp-php.github.io/docs/getting-started/audit-reporting)
 * [CLI Commands Reference](https://typephp-php.github.io/docs/getting-started/cli-commands)
 * [Runtime Generics (Flagship)](https://typephp-php.github.io/docs/generics/basics-and-bounds)
 * [Enforcement Boundaries: Function Contracts](https://typephp-php.github.io/docs/core-concepts/function-contracts)
