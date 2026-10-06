@@ -73,7 +73,8 @@ final class ViolationCollector
             $kind,
             $parsed['target'],
             $resolvedFile,
-            $resolvedLine
+            $resolvedLine,
+            $message
         );
 
         $record = new ViolationRecord(
@@ -260,51 +261,102 @@ final class ViolationCollector
             return null;
         }
 
-        $allViolations = self::$violations;
         $reportDir = \dirname($targetFile);
         $shardDir = $reportDir . '/.typephp-shards';
 
-        if (is_dir($shardDir)) {
-            $shardFiles = glob($shardDir . '/shard_*.json');
-            if ($shardFiles !== false) {
-                foreach ($shardFiles as $sFile) {
-                    $raw = @file_get_contents($sFile);
-                    if ($raw !== false) {
-                        /** @var list<array<string, mixed>>|null $decoded */
-                        $decoded = json_decode($raw, true);
-                        if (\is_array($decoded)) {
-                            foreach ($decoded as $item) {
-                                if (\is_array($item)) {
-                                    $record = ViolationRecord::fromArray($item);
-                                    if ($record !== null) {
-                                        $h = $record->getHash();
-                                        if (isset($allViolations[$h])) {
-                                            $allViolations[$h] = $allViolations[$h]->withIncrementedCount($record->count);
-                                        } else {
-                                            $allViolations[$h] = $record;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    @unlink($sFile);
-                }
-            }
-            @rmdir($shardDir);
-        }
+        $allViolations = self::consolidateShards(self::$violations, $shardDir);
 
         if (! is_dir($reportDir)) {
             @mkdir($reportDir, 0777, true);
         }
 
-        $violationsList = array_values($allViolations);
+        $document = self::buildReportDocument($allViolations);
+        $json = json_encode($document, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+        if ($json === false || @file_put_contents($targetFile, $json) === false) {
+            return null;
+        }
+
+        return $targetFile;
+    }
+
+    /**
+     * @param array<string, ViolationRecord> $baseViolations
+     *
+     * @return array<string, ViolationRecord>
+     */
+    private static function consolidateShards(array $baseViolations, string $shardDir): array
+    {
+        if (! is_dir($shardDir)) {
+            return $baseViolations;
+        }
+
+        $shardFiles = glob($shardDir . '/shard_*.json');
+        if ($shardFiles === false) {
+            @rmdir($shardDir);
+
+            return $baseViolations;
+        }
+
+        foreach ($shardFiles as $sFile) {
+            $raw = @file_get_contents($sFile);
+            if ($raw !== false) {
+                $baseViolations = self::mergeShardContent($baseViolations, $raw);
+            }
+            @unlink($sFile);
+        }
+
+        @rmdir($shardDir);
+
+        return $baseViolations;
+    }
+
+    /**
+     * @param array<string, ViolationRecord> $allViolations
+     *
+     * @return array<string, ViolationRecord>
+     */
+    private static function mergeShardContent(array $allViolations, string $raw): array
+    {
+        /** @var list<array<string, mixed>>|null $decoded */
+        $decoded = json_decode($raw, true);
+        if (! \is_array($decoded)) {
+            return $allViolations;
+        }
+
+        foreach ($decoded as $item) {
+            if (! \is_array($item)) {
+                continue;
+            }
+
+            $record = ViolationRecord::fromArray($item);
+            if ($record === null) {
+                continue;
+            }
+
+            $h = $record->getHash();
+            $allViolations[$h] = isset($allViolations[$h])
+                ? $allViolations[$h]->withIncrementedCount($record->count)
+                : $record;
+        }
+
+        return $allViolations;
+    }
+
+    /**
+     * @param array<string, ViolationRecord> $violations
+     *
+     * @return array{version: string, generated_at: string, summary: array{total_violations: int, files_affected: int}, violations: list<ViolationRecord>}
+     */
+    private static function buildReportDocument(array $violations): array
+    {
+        $violationsList = array_values($violations);
         $filesAffected = [];
         foreach ($violationsList as $v) {
             $filesAffected[$v->file] = true;
         }
 
-        $document = [
+        return [
             'version' => '1.0',
             'generated_at' => gmdate('c'),
             'summary' => [
@@ -313,15 +365,6 @@ final class ViolationCollector
             ],
             'violations' => $violationsList,
         ];
-
-        $json = json_encode($document, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        if ($json !== false) {
-            @file_put_contents($targetFile, $json);
-
-            return $targetFile;
-        }
-
-        return null;
     }
 
     /**
@@ -333,10 +376,16 @@ final class ViolationCollector
         string $kind,
         string $target,
         string $resolvedFile,
-        int $resolvedLine
+        int $resolvedLine,
+        string $message
     ): ?string {
         if ($explicitDeclaredIn !== null && $explicitDeclaredIn !== '') {
             return self::normalizeRelativePath($explicitDeclaredIn);
+        }
+
+        $genericDecl = self::resolveGenericBoundDeclaration($message);
+        if ($genericDecl !== null) {
+            return $genericDecl;
         }
 
         if ($kind === 'variable') {
@@ -344,21 +393,52 @@ final class ViolationCollector
         }
 
         try {
-            return self::resolvePropertyOrigin($function, $kind)
-                ?? self::resolveMethodOrigin($function)
-                ?? self::resolveFunctionOrigin($function);
+            if ($kind === 'property' || str_contains($function, '::$')) {
+                return self::resolvePropertyDeclaration($function);
+            }
+
+            if (str_contains($function, '::')) {
+                return self::resolveMethodDeclaration($function);
+            }
+
+            return self::resolveFunctionDeclaration($function);
         } catch (Throwable) {
-            // Silently fall back to null
             return null;
         }
     }
 
-    private static function resolvePropertyOrigin(string $function, string $kind): ?string
+    private static function resolveGenericBoundDeclaration(string $message): ?string
     {
-        if ($kind !== 'property' && ! str_contains($function, '::$')) {
+        $hasPattern = preg_match('/does not satisfy upper bound .+? in ([a-zA-Z0-9_\\\\]+)/', $message, $m) === 1
+            || preg_match('/of template .+? in ([a-zA-Z0-9_\\\\]+)/', $message, $m) === 1;
+
+        if (! $hasPattern) {
             return null;
         }
 
+        $className = trim($m[1]);
+        if (! (class_exists($className) || interface_exists($className) || trait_exists($className))) {
+            return null;
+        }
+
+        try {
+            /** @var class-string<object> $className */
+            $refClass = new ReflectionClass($className);
+            $file = $refClass->getFileName();
+            if ($file === false) {
+                return null;
+            }
+
+            $startLine = $refClass->getStartLine();
+
+            return self::normalizeRelativePath($file) . ':' . ($startLine !== false ? $startLine : 1);
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    private static function resolvePropertyDeclaration(string $function): ?string
+    {
         $rawTarget = str_replace('::$', '::', $function);
         if (! str_contains($rawTarget, '::')) {
             return null;
@@ -367,7 +447,7 @@ final class ViolationCollector
         [$className, $propName] = explode('::', $rawTarget, 2);
         $propName = ltrim($propName, '$');
 
-        if (! self::classLikeExists($className)) {
+        if (! (class_exists($className) || trait_exists($className) || interface_exists($className))) {
             return null;
         }
 
@@ -391,15 +471,10 @@ final class ViolationCollector
         return self::normalizeRelativePath($file) . ':' . ($line !== false ? $line : 1);
     }
 
-    private static function resolveMethodOrigin(string $function): ?string
+    private static function resolveMethodDeclaration(string $function): ?string
     {
-        if (! str_contains($function, '::')) {
-            return null;
-        }
-
         [$className, $methodName] = explode('::', $function, 2);
-
-        if (! self::classLikeExists($className)) {
+        if (! (class_exists($className) || trait_exists($className) || interface_exists($className))) {
             return null;
         }
 
@@ -410,30 +485,24 @@ final class ViolationCollector
         }
 
         $refMethod = $refClass->getMethod($methodName);
+        $hierarchy = HierarchyResolver::getMethodHierarchy($refMethod);
 
-        foreach (HierarchyResolver::getMethodHierarchy($refMethod) as $hierMethod) {
+        foreach ($hierarchy as $hierMethod) {
             $doc = $hierMethod->getDocComment();
-            if ($doc === false || $doc === null) {
-                continue;
+            if ($doc !== false && $doc !== null) {
+                $file = $hierMethod->getFileName();
+                if ($file !== false) {
+                    return self::normalizeRelativePath($file) . ':' . $hierMethod->getStartLine();
+                }
             }
-
-            $file = $hierMethod->getFileName();
-            if ($file === false) {
-                continue;
-            }
-
-            return self::normalizeRelativePath($file) . ':' . $hierMethod->getStartLine();
         }
 
         $file = $refMethod->getFileName();
-        if ($file === false) {
-            return null;
-        }
 
-        return self::normalizeRelativePath($file) . ':' . $refMethod->getStartLine();
+        return $file !== false ? self::normalizeRelativePath($file) . ':' . $refMethod->getStartLine() : null;
     }
 
-    private static function resolveFunctionOrigin(string $function): ?string
+    private static function resolveFunctionDeclaration(string $function): ?string
     {
         if ($function === '' || ! \function_exists($function)) {
             return null;
@@ -441,22 +510,44 @@ final class ViolationCollector
 
         $refFunc = new ReflectionFunction($function);
         $file = $refFunc->getFileName();
-        if ($file === false) {
-            return null;
-        }
 
-        return self::normalizeRelativePath($file) . ':' . $refFunc->getStartLine();
-    }
-
-    private static function classLikeExists(string $name): bool
-    {
-        return class_exists($name) || trait_exists($name) || interface_exists($name);
+        return $file !== false ? self::normalizeRelativePath($file) . ':' . $refFunc->getStartLine() : null;
     }
 
     /**
      * @return array{0: string, 1: int, 2: ?string}
      */
     private static function resolveCallSite(?string $explicitFile, ?int $explicitLine, string $kind = 'parameter'): array
+    {
+        $appFrames = self::collectApplicationFrames();
+
+        if ($explicitFile !== null && $explicitFile !== '' && $explicitLine !== null && $explicitLine > 0) {
+            $callerLabel = self::formatCallerLabel($appFrames, 0);
+
+            return [$explicitFile, $explicitLine, $callerLabel];
+        }
+
+        if (($kind === 'parameter' || $kind === 'callback') && \count($appFrames) >= 2) {
+            $f = $appFrames[1];
+            $callerLabel = self::formatCallerLabel($appFrames, 1);
+
+            return [$f['file'], $f['line'], $callerLabel];
+        }
+
+        if ($appFrames !== []) {
+            $f = $appFrames[0];
+            $callerLabel = self::formatCallerLabel($appFrames, 1);
+
+            return [$f['file'], $f['line'], $callerLabel];
+        }
+
+        return [$explicitFile ?? 'unknown', $explicitLine ?? 1, null];
+    }
+
+    /**
+     * @return list<array{file: string, line: int, caller: ?string}>
+     */
+    private static function collectApplicationFrames(): array
     {
         $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 12);
         $appFrames = [];
@@ -488,37 +579,21 @@ final class ViolationCollector
             ];
         }
 
-        $hasExplicit = ($explicitFile !== null && $explicitFile !== '' && $explicitLine !== null && $explicitLine > 0);
+        return $appFrames;
+    }
 
-        if ($hasExplicit) {
-            $callerLabel = null;
-            if ($appFrames !== []) {
-                $cf = $appFrames[0];
-                $callerLabel = self::normalizeRelativePath($cf['file']) . ':' . $cf['line'] . ($cf['caller'] !== null ? " ({$cf['caller']})" : '');
-            }
-
-            return [$explicitFile, $explicitLine, $callerLabel];
+    /**
+     * @param list<array{file: string, line: int, caller: ?string}> $appFrames
+     */
+    private static function formatCallerLabel(array $appFrames, int $index): ?string
+    {
+        if (! isset($appFrames[$index])) {
+            return null;
         }
 
-        $callerLabel = null;
-        if (($kind === 'parameter' || $kind === 'callback') && \count($appFrames) >= 2) {
-            $f = $appFrames[1];
-            $callerLabel = self::normalizeRelativePath($f['file']) . ':' . $f['line'] . ($f['caller'] !== null ? " ({$f['caller']})" : '');
+        $f = $appFrames[$index];
 
-            return [$f['file'], $f['line'], $callerLabel];
-        }
-
-        if ($appFrames !== []) {
-            $f = $appFrames[0];
-            if (\count($appFrames) >= 2) {
-                $cf = $appFrames[1];
-                $callerLabel = self::normalizeRelativePath($cf['file']) . ':' . $cf['line'] . ($cf['caller'] !== null ? " ({$cf['caller']})" : '');
-            }
-
-            return [$f['file'], $f['line'], $callerLabel];
-        }
-
-        return [$explicitFile ?? 'unknown', $explicitLine ?? 1, null];
+        return self::normalizeRelativePath($f['file']) . ':' . $f['line'] . ($f['caller'] !== null ? " ({$f['caller']})" : '');
     }
 
     /**
@@ -526,46 +601,13 @@ final class ViolationCollector
      */
     private static function parseMetadata(string $message, string $kind, ?string $explicitFunction, ?string $explicitTarget): array
     {
-        $function = $explicitFunction !== null ? $explicitFunction : '';
-        $target = $explicitTarget !== null ? $explicitTarget : '';
-        $expected = '';
-        $given = '';
+        $function = $explicitFunction ?? self::extractFunctionFromMessage($message);
+        $target = $explicitTarget ?? self::extractTargetFromMessage($message, $kind);
 
-        if ($function === '') {
-            if (preg_match('/^([a-zA-Z0-9_\\\\]+(?:::[a-zA-Z0-9_\x80-\xff]+)?)\(\):/', $message, $m) === 1) {
-                $function = trim($m[1]);
-            } elseif (preg_match('/^Property\s+([a-zA-Z0-9_\\\\]+(?:::\$[a-zA-Z0-9_\x80-\xff]+)?)/', $message, $m) === 1) {
-                $function = trim($m[1]);
-            } elseif (preg_match('/^([^:]+):/', $message, $m) === 1) {
-                $function = trim($m[1]);
-            }
-        }
+        [$expected, $given, $inferredFunction] = self::extractExpectedAndGiven($message);
 
-        if (preg_match('/(?:Argument|Parameter)\s+(\$[a-zA-Z0-9_]+)/', $message, $m) === 1 && $target === '') {
-            $target = $m[1];
-        } elseif (preg_match('/(?:Property)\s+[^$]*(\$[a-zA-Z0-9_]+)/', $message, $m) === 1 && $target === '') {
-            $target = $m[1];
-        } elseif (preg_match('/(?:Variable)\s+(\$[a-zA-Z0-9_]+)/', $message, $m) === 1 && $target === '') {
-            $target = $m[1];
-        } elseif (str_contains($message, 'Return value') && $target === '') {
-            $target = 'return';
-        }
-
-        if (preg_match('/must be of type (.+?),\s*(.+?)\s*(?:given|returned)$/', $message, $m) === 1) {
-            $expected = trim($m[1]);
-            $given = trim($m[2]);
-        } elseif (preg_match('/must be (.+?),\s*(.+?)\s*(?:given|returned)$/', $message, $m) === 1) {
-            $expected = trim($m[1]);
-            $given = trim($m[2]);
-        } elseif (preg_match('/is missing required (?:key|property)\s*\'([^\']+)\'/', $message, $m) === 1) {
-            $expected = "required '{$m[1]}'";
-            $given = 'missing';
-        } elseif (preg_match('/contains unsealed unexpected key\s*\'([^\']+)\'/', $message, $m) === 1) {
-            $expected = 'sealed shape';
-            $given = "unexpected key '{$m[1]}'";
-        } elseif (preg_match('/expects (.+?),\s*but\s*(.+?)\s*was\s*(?:given|returned)/', $message, $m) === 1) {
-            $expected = trim($m[1]);
-            $given = trim($m[2]);
+        if ($function === '' && $inferredFunction !== null) {
+            $function = $inferredFunction;
         }
 
         return [
@@ -574,5 +616,68 @@ final class ViolationCollector
             'expected' => $expected !== '' ? $expected : 'valid type',
             'given' => $given !== '' ? $given : 'invalid value',
         ];
+    }
+
+    private static function extractFunctionFromMessage(string $message): string
+    {
+        if (preg_match('/^([a-zA-Z0-9_\\\\]+(?:::[a-zA-Z0-9_\x80-\xff]+)?)\(\):/', $message, $m) === 1) {
+            return trim($m[1]);
+        }
+        if (preg_match('/^Property\s+([a-zA-Z0-9_\\\\]+(?:::\$[a-zA-Z0-9_\x80-\xff]+)?)/', $message, $m) === 1) {
+            return trim($m[1]);
+        }
+        if (preg_match('/^([^:]+):/', $message, $m) === 1) {
+            return trim($m[1]);
+        }
+
+        return '';
+    }
+
+    private static function extractTargetFromMessage(string $message, string $kind): string
+    {
+        if (preg_match('/(?:Argument|Parameter)\s+(\$[a-zA-Z0-9_]+)/', $message, $m) === 1) {
+            return $m[1];
+        }
+        if (preg_match('/(?:Property)\s+[^$]*(\$[a-zA-Z0-9_]+)/', $message, $m) === 1) {
+            return $m[1];
+        }
+        if (preg_match('/(?:Variable)\s+(\$[a-zA-Z0-9_]+)/', $message, $m) === 1) {
+            return $m[1];
+        }
+        if (str_contains($message, 'Return value')) {
+            return 'return';
+        }
+
+        return $kind;
+    }
+
+    /**
+     * @return array{0: string, 1: string, 2: ?string}
+     */
+    private static function extractExpectedAndGiven(string $message): array
+    {
+        if (preg_match('/Generic type argument (.+?) does not satisfy upper bound (.+?) of template ([a-zA-Z0-9_]+) in ([a-zA-Z0-9_\\\\]+)/', $message, $m) === 1) {
+            return [trim($m[2]), 'type argument ' . trim($m[1]), trim($m[4])];
+        }
+        if (preg_match('/must be of type (.+?),\s*(.+?)\s*(?:given|returned)$/', $message, $m) === 1) {
+            return [trim($m[1]), trim($m[2]), null];
+        }
+        if (preg_match('/must be (.+?),\s*(.+?)\s*(?:given|returned)$/', $message, $m) === 1) {
+            return [trim($m[1]), trim($m[2]), null];
+        }
+        if (preg_match('/is missing required (?:key|property)\s*\'([^\']+)\'/', $message, $m) === 1) {
+            return ["required '{$m[1]}'", 'missing', null];
+        }
+        if (preg_match('/contains unsealed unexpected key\s*\'([^\']+)\'/', $message, $m) === 1) {
+            return ['sealed shape', "unexpected key '{$m[1]}'", null];
+        }
+        if (preg_match('/contains unexpected property\s*\'([^\']+)\'/', $message, $m) === 1) {
+            return ['sealed shape', "unexpected property '{$m[1]}'", null];
+        }
+        if (preg_match('/expects (.+?),\s*but\s*(.+?)\s*was\s*(?:given|returned)/', $message, $m) === 1) {
+            return [trim($m[1]), trim($m[2]), null];
+        }
+
+        return ['', '', null];
     }
 }
