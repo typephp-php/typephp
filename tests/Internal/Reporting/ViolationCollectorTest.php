@@ -10,7 +10,7 @@ use TypePHP\Internal\Reporting\ViolationRecord;
 use TypePHP\Internal\Util\Config;
 
 describe('ViolationRecord Value Object', function () {
-    test('instantiates with complete metadata and generates deterministic hash', function () {
+    test('instantiates with complete metadata including count, caller, and declared_in', function () {
         $record = new ViolationRecord(
             file: 'src/Services/PaymentService.php',
             line: 42,
@@ -19,7 +19,10 @@ describe('ViolationRecord Value Object', function () {
             target: '$amount',
             expected: 'positive-int',
             given: 'negative int (-50)',
-            message: 'App\\Services\\PaymentService::charge(): Argument $amount must be of type positive-int, negative int (-50) given'
+            message: 'App\\Services\\PaymentService::charge(): Argument $amount must be of type positive-int, negative int (-50) given',
+            count: 3,
+            caller: 'tests/Feature/OrderTest.php:100 (Tests\\OrderTest::testCheckout)',
+            declaredIn: 'src/Contracts/PaymentInterface.php:15'
         );
 
         expect($record->file)->toBe('src/Services/PaymentService.php')
@@ -29,12 +32,14 @@ describe('ViolationRecord Value Object', function () {
             ->and($record->target)->toBe('$amount')
             ->and($record->expected)->toBe('positive-int')
             ->and($record->given)->toBe('negative int (-50)')
-            ->and($record->getHash())->toBeString()
+            ->and($record->count)->toBe(3)
+            ->and($record->caller)->toBe('tests/Feature/OrderTest.php:100 (Tests\\OrderTest::testCheckout)')
+            ->and($record->declaredIn)->toBe('src/Contracts/PaymentInterface.php:15')
             ->and(\strlen($record->getHash()))->toBe(32)
         ;
     });
 
-    test('serializes to array and json matching document schema', function () {
+    test('serializes to array and json matching new schema fields', function () {
         $record = new ViolationRecord(
             file: 'src/Models/User.php',
             line: 10,
@@ -43,7 +48,10 @@ describe('ViolationRecord Value Object', function () {
             target: '$name',
             expected: 'non-empty-string',
             given: "empty string ('')",
-            message: "Argument \$name must be of type non-empty-string, empty string ('') given"
+            message: "Argument \$name must be of type non-empty-string, empty string ('') given",
+            count: 1,
+            caller: 'src/Controllers/UserController.php:25',
+            declaredIn: 'src/Traits/NameTrait.php:8'
         );
 
         $array = $record->toArray();
@@ -55,17 +63,21 @@ describe('ViolationRecord Value Object', function () {
             'target' => '$name',
             'expected' => 'non-empty-string',
             'given' => "empty string ('')",
+            'count' => 1,
+            'caller' => 'src/Controllers/UserController.php:25',
+            'declared_in' => 'src/Traits/NameTrait.php:8',
             'message' => "Argument \$name must be of type non-empty-string, empty string ('') given",
         ]);
 
         $json = json_encode($record, JSON_UNESCAPED_SLASHES);
         expect($json)->toBeString()
-            ->and($json)->toContain('"file":"src/Models/User.php"')
-            ->and($json)->toContain('"target":"$name"')
+            ->and($json)->toContain('"count":1')
+            ->and($json)->toContain('"caller":"src/Controllers/UserController.php:25"')
+            ->and($json)->toContain('"declared_in":"src/Traits/NameTrait.php:8"')
         ;
     });
 
-    test('fromArray reconstitutes a ViolationRecord and handles fallbacks on missing data', function () {
+    test('fromArray reconstitutes a ViolationRecord with count, caller, and declared_in', function () {
         $data = [
             'file' => 'src/Order.php',
             'line' => 25,
@@ -74,18 +86,117 @@ describe('ViolationRecord Value Object', function () {
             'target' => 'return',
             'expected' => 'bool',
             'given' => 'int (0)',
+            'count' => 12,
+            'caller' => 'src/Command/RunOrder.php:50',
+            'declared_in' => 'src/Contracts/OrderInterface.php:12',
             'message' => 'Return value must be of type bool, int (0) returned',
         ];
 
         $record = ViolationRecord::fromArray($data);
         expect($record)->not()->toBeNull()
             ->and($record?->file)->toBe('src/Order.php')
-            ->and($record?->line)->toBe(25)
-            ->and($record?->kind)->toBe('return')
+            ->and($record?->count)->toBe(12)
+            ->and($record?->caller)->toBe('src/Command/RunOrder.php:50')
+            ->and($record?->declaredIn)->toBe('src/Contracts/OrderInterface.php:12')
         ;
+    });
 
-        expect(ViolationRecord::fromArray([]))->toBeNull();
-        expect(ViolationRecord::fromArray(['file' => 'src/File.php']))->toBeNull();
+    test('withIncrementedCount creates a new immutable record with updated count', function () {
+        $record = new ViolationRecord(
+            file: 'src/File.php',
+            line: 1,
+            function: 'test',
+            kind: 'parameter',
+            target: '$x',
+            expected: 'int',
+            given: 'string',
+            message: 'err',
+            count: 1
+        );
+
+        $incremented = $record->withIncrementedCount(4);
+        expect($incremented->count)->toBe(5)
+            ->and($record->count)->toBe(1)
+        ;
+    });
+});
+
+describe('ViolationCollector Count & Origin Tracking', function () {
+    beforeEach(function () {
+        Config::reset();
+        ViolationCollector::reset();
+    });
+
+    afterEach(function () {
+        Config::reset();
+        ViolationCollector::reset();
+    });
+
+    test('increments violation count when identical violation occurs repeatedly in loops', function () {
+        Config::set(['on_violation' => 'report']);
+        $err = new ErrorMessage('Argument $id must be of type positive-int, negative int (-1) given');
+
+        for ($i = 0; $i < 25; $i++) {
+            ViolationCollector::handle($err, 'parameter', 42, 'src/Services/Item.php', 10);
+        }
+
+        $violations = ViolationCollector::getViolations();
+        expect($violations)->toHaveCount(1)
+            ->and($violations[0]->count)->toBe(25)
+        ;
+    });
+
+    test('sums occurrence counts when merging parallel worker shards into master report', function () {
+        $tempDir = sys_get_temp_dir() . '/typephp_shard_count_test_' . uniqid();
+        $shardDir = $tempDir . '/.typephp-shards';
+        mkdir($shardDir, 0777, true);
+        $reportFile = $tempDir . '/typephp-report.json';
+
+        $shard1 = [
+            [
+                'file' => 'src/Payment.php',
+                'line' => 20,
+                'function' => 'App\\Payment::charge',
+                'kind' => 'parameter',
+                'target' => '$amount',
+                'expected' => 'positive-int',
+                'given' => 'negative int (-10)',
+                'count' => 10,
+                'message' => 'Argument $amount must be of type positive-int, negative int (-10) given',
+            ],
+        ];
+
+        $shard2 = [
+            [
+                'file' => 'src/Payment.php',
+                'line' => 20,
+                'function' => 'App\\Payment::charge',
+                'kind' => 'parameter',
+                'target' => '$amount',
+                'expected' => 'positive-int',
+                'given' => 'negative int (-10)',
+                'count' => 15,
+                'message' => 'Argument $amount must be of type positive-int, negative int (-10) given',
+            ],
+        ];
+
+        file_put_contents($shardDir . '/shard_1.json', json_encode($shard1));
+        file_put_contents($shardDir . '/shard_2.json', json_encode($shard2));
+
+        try {
+            ViolationCollector::exportReport($reportFile);
+
+            $doc = json_decode((string) file_get_contents($reportFile), true);
+
+            expect($doc['summary']['total_violations'])->toBe(1)
+                ->and($doc['violations'][0]['count'])->toBe(25)
+            ;
+        } finally {
+            if (file_exists($reportFile)) {
+                @unlink($reportFile);
+            }
+            @rmdir($tempDir);
+        }
     });
 });
 

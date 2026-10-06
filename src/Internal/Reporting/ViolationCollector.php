@@ -49,7 +49,8 @@ final class ViolationCollector
         ?string $file = null,
         ?int $line = null,
         ?string $function = null,
-        ?string $target = null
+        ?string $target = null,
+        ?string $declaredIn = null
     ): mixed {
         $mode = Config::getOnViolation();
 
@@ -58,7 +59,7 @@ final class ViolationCollector
         }
 
         $message = $error->getMessage();
-        [$resolvedFile, $resolvedLine] = self::resolveCallSite($file, $line, $kind);
+        [$resolvedFile, $resolvedLine, $resolvedCaller] = self::resolveCallSite($file, $line, $kind);
         $parsed = self::parseMetadata($message, $kind, $function, $target);
 
         $record = new ViolationRecord(
@@ -69,7 +70,10 @@ final class ViolationCollector
             target: $parsed['target'],
             expected: $parsed['expected'],
             given: $parsed['given'],
-            message: $message
+            message: $message,
+            count: 1,
+            caller: $resolvedCaller,
+            declaredIn: $declaredIn !== null ? self::normalizeRelativePath($declaredIn) : null
         );
 
         $hash = $record->getHash();
@@ -107,11 +111,15 @@ final class ViolationCollector
     }
 
     /**
-     * Records violation and ensures shutdown exporter is registered.
+     * Records violation or increments occurrence count if previously encountered.
      */
     private static function recordViolation(string $hash, ViolationRecord $record): void
     {
-        self::$violations[$hash] = $record;
+        if (isset(self::$violations[$hash])) {
+            self::$violations[$hash] = self::$violations[$hash]->withIncrementedCount();
+        } else {
+            self::$violations[$hash] = $record;
+        }
 
         if (! self::$shutdownRegistered) {
             self::registerShutdownHandler();
@@ -255,7 +263,12 @@ final class ViolationCollector
                                 if (\is_array($item)) {
                                     $record = ViolationRecord::fromArray($item);
                                     if ($record !== null) {
-                                        $allViolations[$record->getHash()] = $record;
+                                        $h = $record->getHash();
+                                        if (isset($allViolations[$h])) {
+                                            $allViolations[$h] = $allViolations[$h]->withIncrementedCount($record->count);
+                                        } else {
+                                            $allViolations[$h] = $record;
+                                        }
                                     }
                                 }
                             }
@@ -298,15 +311,11 @@ final class ViolationCollector
     }
 
     /**
-     * @return array{0: string, 1: int}
+     * @return array{0: string, 1: int, 2: ?string}
      */
     private static function resolveCallSite(?string $explicitFile, ?int $explicitLine, string $kind = 'parameter'): array
     {
-        if ($explicitFile !== null && $explicitFile !== '' && $explicitLine !== null && $explicitLine > 0) {
-            return [$explicitFile, $explicitLine];
-        }
-
-        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 12);
         $appFrames = [];
 
         foreach ($trace as $frame) {
@@ -315,23 +324,58 @@ final class ViolationCollector
             }
 
             $normalizedFile = str_replace('\\', '/', $frame['file']);
-            if (str_contains($normalizedFile, 'src/Internal/') || str_contains($normalizedFile, 'bin/typephp')) {
+            if (
+                str_contains($normalizedFile, 'src/Internal/')
+                || str_contains($normalizedFile, 'bin/typephp')
+                || str_contains($normalizedFile, 'vendor/phpunit/')
+                || str_contains($normalizedFile, 'vendor/pestphp/')
+            ) {
                 continue;
             }
 
             $l = isset($frame['line']) && \is_int($frame['line']) ? $frame['line'] : 1;
-            $appFrames[] = [$frame['file'], $l];
+            $func = $frame['function'];
+            $class = isset($frame['class']) && \is_string($frame['class']) ? $frame['class'] . '::' : '';
+            $callLabel = $class . $func;
+
+            $appFrames[] = [
+                'file' => $frame['file'],
+                'line' => $l,
+                'caller' => $callLabel !== '' ? $callLabel : null,
+            ];
         }
 
+        $hasExplicit = ($explicitFile !== null && $explicitFile !== '' && $explicitLine !== null && $explicitLine > 0);
+
+        if ($hasExplicit) {
+            $callerLabel = null;
+            if ($appFrames !== []) {
+                $cf = $appFrames[0];
+                $callerLabel = self::normalizeRelativePath($cf['file']) . ':' . $cf['line'] . ($cf['caller'] !== null ? " ({$cf['caller']})" : '');
+            }
+
+            return [$explicitFile, $explicitLine, $callerLabel];
+        }
+
+        $callerLabel = null;
         if (($kind === 'parameter' || $kind === 'callback') && \count($appFrames) >= 2) {
-            return $appFrames[1];
+            $f = $appFrames[1];
+            $callerLabel = self::normalizeRelativePath($f['file']) . ':' . $f['line'] . ($f['caller'] !== null ? " ({$f['caller']})" : '');
+
+            return [$f['file'], $f['line'], $callerLabel];
         }
 
         if ($appFrames !== []) {
-            return $appFrames[0];
+            $f = $appFrames[0];
+            if (\count($appFrames) >= 2) {
+                $cf = $appFrames[1];
+                $callerLabel = self::normalizeRelativePath($cf['file']) . ':' . $cf['line'] . ($cf['caller'] !== null ? " ({$cf['caller']})" : '');
+            }
+
+            return [$f['file'], $f['line'], $callerLabel];
         }
 
-        return [$explicitFile !== null ? $explicitFile : 'unknown', $explicitLine !== null ? $explicitLine : 1];
+        return [$explicitFile ?? 'unknown', $explicitLine ?? 1, null];
     }
 
     /**

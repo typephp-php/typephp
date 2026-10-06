@@ -22,7 +22,10 @@ final readonly class ViolationRecord implements JsonSerializable
         public string $target,
         public string $expected,
         public string $given,
-        public string $message
+        public string $message,
+        public int $count = 1,
+        public ?string $caller = null,
+        public ?string $declaredIn = null
     ) {
     }
 
@@ -35,6 +38,26 @@ final readonly class ViolationRecord implements JsonSerializable
     }
 
     /**
+     * Returns a new instance with the count incremented by the specified amount.
+     */
+    public function withIncrementedCount(int $amount = 1): self
+    {
+        return new self(
+            file: $this->file,
+            line: $this->line,
+            function: $this->function,
+            kind: $this->kind,
+            target: $this->target,
+            expected: $this->expected,
+            given: $this->given,
+            message: $this->message,
+            count: $this->count + $amount,
+            caller: $this->caller,
+            declaredIn: $this->declaredIn
+        );
+    }
+
+    /**
      * @return array{
      *     file: string,
      *     line: int,
@@ -43,6 +66,9 @@ final readonly class ViolationRecord implements JsonSerializable
      *     target: string,
      *     expected: string,
      *     given: string,
+     *     count: int,
+     *     caller: ?string,
+     *     declared_in: ?string,
      *     message: string
      * }
      */
@@ -56,6 +82,9 @@ final readonly class ViolationRecord implements JsonSerializable
             'target' => $this->target,
             'expected' => $this->expected,
             'given' => $this->given,
+            'count' => $this->count,
+            'caller' => $this->caller,
+            'declared_in' => $this->declaredIn,
             'message' => $this->message,
         ];
     }
@@ -85,6 +114,12 @@ final readonly class ViolationRecord implements JsonSerializable
         /** @var 'parameter'|'return'|'property'|'variable'|'param-out'|'self-out'|'callback'|'yield'|'send' $kind */
         $kind = isset($data['kind']) && \is_string($data['kind']) ? $data['kind'] : 'parameter';
 
+        $count = isset($data['count']) && \is_int($data['count']) && $data['count'] > 0 ? $data['count'] : 1;
+        $caller = isset($data['caller']) && \is_string($data['caller']) ? $data['caller'] : null;
+        $declaredIn = isset($data['declared_in']) && \is_string($data['declared_in'])
+            ? $data['declared_in']
+            : (isset($data['declaredIn']) && \is_string($data['declaredIn']) ? $data['declaredIn'] : null);
+
         return new self(
             file: $data['file'],
             line: (int) $data['line'],
@@ -93,7 +128,10 @@ final readonly class ViolationRecord implements JsonSerializable
             target: isset($data['target']) && \is_string($data['target']) ? $data['target'] : 'unknown',
             expected: isset($data['expected']) && \is_string($data['expected']) ? $data['expected'] : 'valid type',
             given: isset($data['given']) && \is_string($data['given']) ? $data['given'] : 'invalid value',
-            message: $data['message']
+            message: $data['message'],
+            count: $count,
+            caller: $caller,
+            declaredIn: $declaredIn
         );
     }
 }
