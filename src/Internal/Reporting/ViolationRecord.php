@@ -9,23 +9,23 @@ use JsonSerializable;
 /**
  * @internal Immutable value object representing a single type contract violation.
  */
-final readonly class ViolationRecord implements JsonSerializable
+final class ViolationRecord implements JsonSerializable
 {
     /**
      * @param 'parameter'|'return'|'property'|'variable'|'param-out'|'self-out'|'callback'|'yield'|'send' $kind
      */
     public function __construct(
-        public string $file,
-        public int $line,
-        public string $function,
-        public string $kind,
-        public string $target,
-        public string $expected,
-        public string $given,
-        public string $message,
-        public int $count = 1,
-        public ?string $caller = null,
-        public ?string $declaredIn = null
+        public readonly string $file,
+        public readonly int $line,
+        public readonly string $function,
+        public readonly string $kind,
+        public readonly string $target,
+        public readonly string $expected,
+        public readonly string $given,
+        public readonly string $message,
+        public readonly int $count = 1,
+        public readonly ?string $caller = null,
+        public readonly ?string $declaredIn = null
     ) {
     }
 
