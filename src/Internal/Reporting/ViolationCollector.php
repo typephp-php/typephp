@@ -4,7 +4,12 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Reporting;
 
+use ReflectionClass;
+use ReflectionFunction;
+use Throwable;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Docblock\DocblockParser;
+use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Util\Config;
 
 /**
@@ -62,6 +67,15 @@ final class ViolationCollector
         [$resolvedFile, $resolvedLine, $resolvedCaller] = self::resolveCallSite($file, $line, $kind);
         $parsed = self::parseMetadata($message, $kind, $function, $target);
 
+        $resolvedDeclaredIn = self::resolveDeclaredIn(
+            $declaredIn,
+            $parsed['function'],
+            $kind,
+            $parsed['target'],
+            $resolvedFile,
+            $resolvedLine
+        );
+
         $record = new ViolationRecord(
             file: self::normalizeRelativePath($resolvedFile),
             line: $resolvedLine,
@@ -73,7 +87,7 @@ final class ViolationCollector
             message: $message,
             count: 1,
             caller: $resolvedCaller,
-            declaredIn: $declaredIn !== null ? self::normalizeRelativePath($declaredIn) : null
+            declaredIn: $resolvedDeclaredIn
         );
 
         $hash = $record->getHash();
@@ -308,6 +322,135 @@ final class ViolationCollector
         }
 
         return null;
+    }
+
+    /**
+     * Resolves the declaration origin (file and line of the DocBlock).
+     */
+    private static function resolveDeclaredIn(
+        ?string $explicitDeclaredIn,
+        string $function,
+        string $kind,
+        string $target,
+        string $resolvedFile,
+        int $resolvedLine
+    ): ?string {
+        if ($explicitDeclaredIn !== null && $explicitDeclaredIn !== '') {
+            return self::normalizeRelativePath($explicitDeclaredIn);
+        }
+
+        if ($kind === 'variable') {
+            return self::normalizeRelativePath($resolvedFile) . ':' . $resolvedLine;
+        }
+
+        try {
+            return self::resolvePropertyOrigin($function, $kind)
+                ?? self::resolveMethodOrigin($function)
+                ?? self::resolveFunctionOrigin($function);
+        } catch (Throwable) {
+            // Silently fall back to null
+            return null;
+        }
+    }
+
+    private static function resolvePropertyOrigin(string $function, string $kind): ?string
+    {
+        if ($kind !== 'property' && ! str_contains($function, '::$')) {
+            return null;
+        }
+
+        $rawTarget = str_replace('::$', '::', $function);
+        if (! str_contains($rawTarget, '::')) {
+            return null;
+        }
+
+        [$className, $propName] = explode('::', $rawTarget, 2);
+        $propName = ltrim($propName, '$');
+
+        if (! self::classLikeExists($className)) {
+            return null;
+        }
+
+        /** @var class-string<object> $className */
+        $refClass = new ReflectionClass($className);
+        $resolved = DocblockParser::findDeclaredPropertyDoc($refClass, $propName);
+        if ($resolved === null || ! isset($resolved['declaringClass'])) {
+            return null;
+        }
+
+        $declaringClass = $resolved['declaringClass'];
+        $file = $declaringClass->getFileName();
+        if ($file === false) {
+            return null;
+        }
+
+        $line = $declaringClass->hasProperty($propName)
+            ? $declaringClass->getProperty($propName)->getStartLine()
+            : $declaringClass->getStartLine();
+
+        return self::normalizeRelativePath($file) . ':' . ($line !== false ? $line : 1);
+    }
+
+    private static function resolveMethodOrigin(string $function): ?string
+    {
+        if (! str_contains($function, '::')) {
+            return null;
+        }
+
+        [$className, $methodName] = explode('::', $function, 2);
+
+        if (! self::classLikeExists($className)) {
+            return null;
+        }
+
+        /** @var class-string<object> $className */
+        $refClass = new ReflectionClass($className);
+        if (! $refClass->hasMethod($methodName)) {
+            return null;
+        }
+
+        $refMethod = $refClass->getMethod($methodName);
+
+        foreach (HierarchyResolver::getMethodHierarchy($refMethod) as $hierMethod) {
+            $doc = $hierMethod->getDocComment();
+            if ($doc === false || $doc === null) {
+                continue;
+            }
+
+            $file = $hierMethod->getFileName();
+            if ($file === false) {
+                continue;
+            }
+
+            return self::normalizeRelativePath($file) . ':' . $hierMethod->getStartLine();
+        }
+
+        $file = $refMethod->getFileName();
+        if ($file === false) {
+            return null;
+        }
+
+        return self::normalizeRelativePath($file) . ':' . $refMethod->getStartLine();
+    }
+
+    private static function resolveFunctionOrigin(string $function): ?string
+    {
+        if ($function === '' || ! \function_exists($function)) {
+            return null;
+        }
+
+        $refFunc = new ReflectionFunction($function);
+        $file = $refFunc->getFileName();
+        if ($file === false) {
+            return null;
+        }
+
+        return self::normalizeRelativePath($file) . ':' . $refFunc->getStartLine();
+    }
+
+    private static function classLikeExists(string $name): bool
+    {
+        return class_exists($name) || trait_exists($name) || interface_exists($name);
     }
 
     /**

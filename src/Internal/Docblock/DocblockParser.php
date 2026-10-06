@@ -594,7 +594,7 @@ final class DocblockParser
      *
      * @return array{doc: string, declaringClass: \ReflectionClass<object>}|null
      */
-    private static function findDeclaredPropertyDoc(\ReflectionClass $refClass, string $propertyName): ?array
+    public static function findDeclaredPropertyDoc(\ReflectionClass $refClass, string $propertyName): ?array
     {
         $current = $refClass;
         while ($current !== false) {
