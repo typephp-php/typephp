@@ -31,6 +31,13 @@ final class ViolationCollector
      */
     private static array $warnedHashes = [];
 
+    /**
+     * In-memory cache for property declaration lines: [$file][$propName] => ?int.
+     *
+     * @var array<string, array<string, ?int>>
+     */
+    private static array $propertyLineCache = [];
+
     private static bool $shutdownRegistered = false;
 
     /**
@@ -40,6 +47,7 @@ final class ViolationCollector
     {
         self::$violations = [];
         self::$warnedHashes = [];
+        self::$propertyLineCache = [];
     }
 
     /**
@@ -159,6 +167,7 @@ final class ViolationCollector
     {
         self::$violations = [];
         self::$warnedHashes = [];
+        self::$propertyLineCache = [];
     }
 
     /**
@@ -464,11 +473,51 @@ final class ViolationCollector
             return null;
         }
 
-        $line = $declaringClass->hasProperty($propName)
-            ? $declaringClass->getProperty($propName)->getStartLine()
-            : $declaringClass->getStartLine();
+        $propertyLine = self::findPropertyDeclarationLine($file, $propName);
+        $startLine = $declaringClass->getStartLine();
+        $line = $propertyLine ?? ($startLine !== false ? $startLine : 1);
 
-        return self::normalizeRelativePath($file) . ':' . ($line !== false ? $line : 1);
+        return self::normalizeRelativePath($file) . ':' . $line;
+    }
+
+    private static function findPropertyDeclarationLine(string $file, string $propName): ?int
+    {
+        if (isset(self::$propertyLineCache[$file][$propName]) || \array_key_exists($propName, self::$propertyLineCache[$file] ?? [])) {
+            return self::$propertyLineCache[$file][$propName];
+        }
+
+        if (! file_exists($file)) {
+            return self::$propertyLineCache[$file][$propName] = null;
+        }
+
+        $source = @file_get_contents($file);
+        if ($source === false || ! str_contains($source, '$' . $propName)) {
+            return self::$propertyLineCache[$file][$propName] = null;
+        }
+
+        try {
+            $tokens = \PhpToken::tokenize($source);
+            $count = \count($tokens);
+            $hasModifier = false;
+
+            for ($i = 0; $i < $count; $i++) {
+                $token = $tokens[$i];
+
+                if (\in_array($token->id, [T_PUBLIC, T_PROTECTED, T_PRIVATE, T_VAR, T_READONLY], true)) {
+                    $hasModifier = true;
+                } elseif ($token->id === T_FUNCTION || $token->text === ';' || $token->text === '{') {
+                    $hasModifier = false;
+                }
+
+                if ($hasModifier && $token->id === T_VARIABLE && $token->text === '$' . $propName) {
+                    return self::$propertyLineCache[$file][$propName] = $token->line;
+                }
+            }
+        } catch (Throwable) {
+            return self::$propertyLineCache[$file][$propName] = null;
+        }
+
+        return self::$propertyLineCache[$file][$propName] = null;
     }
 
     private static function resolveMethodDeclaration(string $function): ?string
@@ -571,6 +620,9 @@ final class ViolationCollector
             $func = $frame['function'];
             $class = isset($frame['class']) && \is_string($frame['class']) ? $frame['class'] . '::' : '';
             $callLabel = $class . $func;
+            if ($callLabel !== '' && ! str_ends_with($callLabel, '()')) {
+                $callLabel .= '()';
+            }
 
             $appFrames[] = [
                 'file' => $frame['file'],
