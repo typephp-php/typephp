@@ -30,7 +30,6 @@ use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Util\Config;
-use TypePHP\Internal\Util\FileFilter;
 use TypePHP\Internal\Util\StubManager;
 use WeakMap;
 
@@ -1033,14 +1032,6 @@ final class TemplateManager
             $classHierarchy = HierarchyResolver::getClassHierarchy($ref);
 
             foreach ($classHierarchy as $hierClass) {
-                $fileName = $hierClass->getFileName();
-                $hierClassName = $hierClass->getName();
-                $stubDoc = StubManager::getClassDoc($hierClassName);
-
-                if ($stubDoc === null && $hierClass->getName() !== $actualClassName && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
-                    continue;
-                }
-
                 $docsToInspect = self::collectDocsForClassHierarchyMember($hierClass);
 
                 foreach ($docsToInspect as $rawDoc) {
