@@ -594,7 +594,7 @@ final class DocblockParser
      *
      * @return array{doc: string, declaringClass: \ReflectionClass<object>}|null
      */
-    private static function findDeclaredPropertyDoc(\ReflectionClass $refClass, string $propertyName): ?array
+    public static function findDeclaredPropertyDoc(\ReflectionClass $refClass, string $propertyName): ?array
     {
         $current = $refClass;
         while ($current !== false) {
@@ -1227,14 +1227,9 @@ final class DocblockParser
 
         foreach ($classHierarchy as $hierClass) {
             $hierClassName = $hierClass->getName();
-            $fileName = $hierClass->getFileName();
             $stubDoc = StubManager::getClassDoc($hierClassName);
-
-            if ($stubDoc === null && FileFilter::isFileExcluded($fileName !== false ? $fileName : null)) {
-                continue;
-            }
-
             $classDoc = $stubDoc ?? $hierClass->getDocComment();
+
             if ($classDoc !== false && $classDoc !== null) {
                 $classPhpDocNode = DocblockExtractor::parseDocString($classDoc);
 

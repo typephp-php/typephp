@@ -17,6 +17,19 @@ if (PHP_VERSION_ID >= 80400) {
     require_once __DIR__ . '/../Fixtures/PropertyHooks/ReportingHookedFixture.php';
 }
 
+trait ReportingBaseTrait
+{
+    /**
+     * @var positive-int
+     */
+    public int $traitScore = 5;
+}
+
+class ReportingInheritedModel
+{
+    use ReportingBaseTrait;
+}
+
 class ReportingModelFixture
 {
     /**
@@ -162,6 +175,8 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
                 ->and($violations[0]->kind)->toBe('parameter')
                 ->and($violations[0]->expected)->toBe('positive-int')
                 ->and($violations[0]->given)->toBe('negative int (-10)')
+                ->and($violations[0]->count)->toBe(1)
+                ->and($violations[0]->caller)->toContain('ViolationReportingTest.php')
             ;
         });
 
@@ -177,6 +192,8 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
                 ->and($violations[0]->kind)->toBe('parameter')
                 ->and($violations[0]->function)->toContain('formatUser')
                 ->and($violations[0]->target)->toBe('$id')
+                ->and($violations[0]->count)->toBe(1)
+                ->and($violations[0]->caller)->toContain('ViolationReportingTest.php')
             ;
         });
     });
@@ -193,6 +210,7 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
                 ->and($violations[0]->kind)->toBe('return')
                 ->and($violations[0]->target)->toBe('return')
                 ->and($violations[0]->expected)->toBe('positive-int')
+                ->and($violations[0]->count)->toBe(1)
             ;
         });
 
@@ -208,6 +226,7 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
                 ->and($violations[0]->kind)->toBe('return')
                 ->and($violations[0]->expected)->toBe('positive-int')
                 ->and($violations[0]->given)->toBe('negative int (-999)')
+                ->and($violations[0]->count)->toBe(1)
             ;
         });
     });
@@ -225,6 +244,7 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
                 ->and($violations[0]->kind)->toBe('property')
                 ->and($violations[0]->target)->toBe('$score')
                 ->and($violations[0]->expected)->toBe('positive-int')
+                ->and($violations[0]->count)->toBe(1)
             ;
         });
 
@@ -238,6 +258,7 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
                 ->and($violations[0]->kind)->toBe('property')
                 ->and($violations[0]->target)->toBe('$category')
                 ->and($violations[0]->expected)->toBe('non-empty-string')
+                ->and($violations[0]->count)->toBe(1)
             ;
         });
     });
@@ -255,6 +276,7 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
                 ->and($violations[0]->kind)->toBe('variable')
                 ->and($violations[0]->target)->toBe('$userCount')
                 ->and($violations[0]->expected)->toBe('positive-int')
+                ->and($violations[0]->count)->toBe(1)
             ;
         });
     });
@@ -273,6 +295,7 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
                 ->and($violations[0]->kind)->toBe('param-out')
                 ->and($violations[0]->target)->toBe('$code')
                 ->and($violations[0]->expected)->toBe('positive-int')
+                ->and($violations[0]->count)->toBe(1)
             ;
         });
     });
@@ -289,6 +312,7 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
             $violations = TypePHP::getViolations();
             expect($violations)->not()->toBeEmpty()
                 ->and($violations[0]->kind)->toBe('callback')
+                ->and($violations[0]->count)->toBe(1)
             ;
         });
     });
@@ -330,6 +354,7 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
             expect($violations)->toHaveCount(1)
                 ->and($violations[0]->kind)->toBe('parameter')
                 ->and($violations[0]->expected)->toContain(Dog::class)
+                ->and($violations[0]->count)->toBe(1)
             ;
         });
     });
@@ -354,6 +379,7 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
                 ->and($violations[0]->kind)->toBe('parameter')
                 ->and($violations[0]->expected)->toBe('positive-int')
                 ->and($violations[0]->given)->toBe('negative int (-10)')
+                ->and($violations[0]->count)->toBe(1)
             ;
         });
     });
@@ -376,6 +402,7 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
             expect($violations)->toHaveCount(1)
                 ->and($violations[0]->given)->toBe('string')
                 ->and($violations[0]->given)->not()->toContain('super_secret')
+                ->and($violations[0]->count)->toBe(1)
             ;
         });
     });
@@ -397,12 +424,13 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
             $violations = TypePHP::getViolations();
             expect($violations)->not()->toBeEmpty()
                 ->and($violations[0]->kind)->toBe('property')
+                ->and($violations[0]->count)->toBe(1)
             ;
         });
     });
 
-    describe('High-Volume Loop Stress Testing & Deduplication', function () {
-        test('records exactly 1 violation in memory when loop executes 5,000 failing calls', function () {
+    describe('High-Volume Loop Stress Testing & Occurrence Counting', function () {
+        test('records exactly 1 violation in memory with count 5,000 when loop executes 5,000 failing calls', function () {
             Config::set(['on_violation' => 'report']);
 
             for ($i = 0; $i < 5000; $i++) {
@@ -412,15 +440,18 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
             $violations = TypePHP::getViolations();
             expect($violations)->toHaveCount(1)
                 ->and($violations[0]->expected)->toBe('positive-int')
+                ->and($violations[0]->count)->toBe(5000)
             ;
         });
 
-        test('emits E_USER_WARNING exactly once when loop executes 5,000 failing calls in warn mode', function () {
+        test('emits E_USER_WARNING exactly once with call site location when loop executes 5,000 failing calls in warn mode', function () {
             Config::set(['on_violation' => 'warn']);
 
             $warnCount = 0;
-            set_error_handler(function () use (&$warnCount): bool {
+            $warningMsg = '';
+            set_error_handler(function (int $errno, string $errstr) use (&$warnCount, &$warningMsg): bool {
                 $warnCount++;
+                $warningMsg = $errstr;
 
                 return true;
             });
@@ -433,12 +464,14 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
                 restore_error_handler();
             }
 
-            expect($warnCount)->toBe(1);
+            expect($warnCount)->toBe(1)
+                ->and($warningMsg)->toContain('ViolationReportingTest.php')
+            ;
         });
     });
 
-    describe('JSON Report Export & Corrupted Shard Recovery', function () {
-        test('exports structured JSON report matching document schema via TypePHP::exportReport', function () {
+    describe('JSON Report Export & Enhanced Metadata Schema', function () {
+        test('exports structured JSON report matching document schema with count, caller, and declared_in', function () {
             $tempDir = sys_get_temp_dir() . '/typephp_feature_report_' . uniqid();
             mkdir($tempDir, 0777, true);
             $reportFilePath = $tempDir . '/typephp-report.json';
@@ -468,6 +501,10 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
                 ->and($doc['summary']['total_violations'])->toBe(3)
                 ->and($doc['summary']['files_affected'])->toBeGreaterThanOrEqual(1)
                 ->and($doc['violations'])->toHaveCount(3)
+                ->and($doc['violations'][0])->toHaveKey('count')
+                ->and($doc['violations'][0])->toHaveKey('caller')
+                ->and($doc['violations'][0])->toHaveKey('declared_in')
+                ->and($doc['violations'][0]['count'])->toBe(1)
             ;
 
             @unlink($reportFilePath);

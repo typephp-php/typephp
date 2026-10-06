@@ -9,6 +9,7 @@ final class CommandRunner
     private const KNOWN_COMMANDS = [
         'config:init',
         'report',
+        'report:merge',
         'report:clear',
         'cache:clear',
         'cache:warm',
@@ -45,6 +46,10 @@ final class CommandRunner
 
         if ($firstArg === 'report' || $firstArg === 'report:show') {
             return (new ReportCommand())->execute($args, $outputStream, $errorStream);
+        }
+
+        if ($firstArg === 'report:merge') {
+            return (new ReportMergeCommand())->execute($args, $outputStream, $errorStream);
         }
 
         if ($firstArg === 'report:clear') {

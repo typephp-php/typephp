@@ -81,12 +81,24 @@ final class ReportCommand implements CommandInterface
                 $target = isset($item['target']) && \is_string($item['target']) ? $item['target'] : '';
                 $expected = isset($item['expected']) && \is_string($item['expected']) ? $item['expected'] : '';
                 $given = isset($item['given']) && \is_string($item['given']) ? $item['given'] : '';
+                $count = isset($item['count']) && \is_int($item['count']) ? $item['count'] : 1;
+                $caller = isset($item['caller']) && \is_string($item['caller']) ? $item['caller'] : null;
+                $declaredIn = isset($item['declared_in']) && \is_string($item['declared_in']) ? $item['declared_in'] : null;
 
                 $lineFormatted = str_pad("Line {$line}", 10);
                 $kindFormatted = str_pad($kind, 11);
                 $targetFormatted = str_pad($target, 12);
+                $countFormatted = $count > 1 ? $c(" (x{$count})", 'yellow') : '';
 
-                fwrite($outputStream, '    ' . $c($lineFormatted, 'gray') . ' ' . $c($kindFormatted, 'yellow') . ' ' . $c($targetFormatted, 'cyan') . ' expected ' . $c($expected, 'green') . ', ' . $c($given, 'red') . "\n");
+                fwrite($outputStream, '    ' . $c($lineFormatted, 'gray') . ' ' . $c($kindFormatted, 'yellow') . ' ' . $c($targetFormatted, 'cyan') . ' expected ' . $c($expected, 'green') . ', ' . $c($given, 'red') . $countFormatted . "\n");
+
+                if ($caller !== null) {
+                    fwrite($outputStream, '      ' . $c('↳ caller:', 'gray') . ' ' . $c($caller, 'gray') . "\n");
+                }
+
+                if ($declaredIn !== null) {
+                    fwrite($outputStream, '      ' . $c('↳ declared in:', 'gray') . ' ' . $c($declaredIn, 'gray') . "\n");
+                }
             }
 
             fwrite($outputStream, "\n");
