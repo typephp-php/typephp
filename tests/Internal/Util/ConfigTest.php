@@ -255,6 +255,14 @@ describe('Config Unit Tests', function () {
     });
 
     describe('Framework & Dotenv Environment Resolution ($_ENV, $_SERVER, and getenv)', function () {
+        beforeEach(function () {
+            cleanTypePhpEnvVariables();
+        });
+
+        afterEach(function () {
+            cleanTypePhpEnvVariables();
+        });
+
         test('isEnabled dynamically reflects TYPEPHP_DISABLE from $_ENV (Laravel Dotenv compatibility)', function () {
             expect(Config::isEnabled())->toBeTrue();
 
@@ -269,9 +277,12 @@ describe('Config Unit Tests', function () {
 
             $_ENV['TYPEPHP_DISABLE'] = '0';
             expect(Config::isEnabled())->toBeTrue();
+
+            unset($_ENV['TYPEPHP_DISABLE']);
         });
 
         test('isEnabled dynamically reflects TYPEPHP_DISABLE from $_SERVER', function () {
+            unset($_ENV['TYPEPHP_DISABLE']);
             expect(Config::isEnabled())->toBeTrue();
 
             $_SERVER['TYPEPHP_DISABLE'] = 'true';
@@ -279,6 +290,8 @@ describe('Config Unit Tests', function () {
 
             $_SERVER['TYPEPHP_DISABLE'] = 'false';
             expect(Config::isEnabled())->toBeTrue();
+
+            unset($_SERVER['TYPEPHP_DISABLE']);
         });
 
         test('isEnabled dynamically reflects TYPEPHP_ENABLED from $_ENV and $_SERVER', function () {
@@ -296,6 +309,8 @@ describe('Config Unit Tests', function () {
 
             $_SERVER['TYPEPHP_ENABLED'] = 'true';
             expect(Config::isEnabled())->toBeTrue();
+
+            unset($_SERVER['TYPEPHP_ENABLED']);
         });
 
         test('isAutoBootEnabled resolves values from $_ENV and $_SERVER', function () {
@@ -311,6 +326,8 @@ describe('Config Unit Tests', function () {
 
             $_SERVER['TYPEPHP_AUTO_BOOT'] = 'true';
             expect(Config::isAutoBootEnabled())->toBeTrue();
+
+            unset($_SERVER['TYPEPHP_AUTO_BOOT']);
         });
 
         test('getOnViolation resolves strategy from $_ENV and $_SERVER', function () {
@@ -331,6 +348,8 @@ describe('Config Unit Tests', function () {
             expect(Config::getOnViolation())->toBe('warn')
                 ->and(Config::isWarnMode())->toBeTrue()
             ;
+
+            unset($_SERVER['TYPEPHP_ON_VIOLATION']);
         });
 
         test('getReportFile resolves custom file path from $_ENV and $_SERVER', function () {
@@ -340,6 +359,8 @@ describe('Config Unit Tests', function () {
             unset($_ENV['TYPEPHP_REPORT_FILE']);
             $_SERVER['TYPEPHP_REPORT_FILE'] = 'var/ci-report.json';
             expect(Config::getReportFile())->toBe('var/ci-report.json');
+
+            unset($_SERVER['TYPEPHP_REPORT_FILE']);
         });
 
         test('isFailOnReportEnabled resolves from $_ENV and $_SERVER', function () {
@@ -352,6 +373,8 @@ describe('Config Unit Tests', function () {
             unset($_ENV['TYPEPHP_FAIL_ON_REPORT']);
             $_SERVER['TYPEPHP_FAIL_ON_REPORT'] = 'false';
             expect(Config::isFailOnReportEnabled())->toBeFalse();
+
+            unset($_SERVER['TYPEPHP_FAIL_ON_REPORT']);
         });
 
         test('isRedactValuesEnabled resolves from $_ENV and $_SERVER', function () {
@@ -364,6 +387,8 @@ describe('Config Unit Tests', function () {
             unset($_ENV['TYPEPHP_REDACT_VALUES']);
             $_SERVER['TYPEPHP_REDACT_VALUES'] = 'false';
             expect(Config::isRedactValuesEnabled())->toBeFalse();
+
+            unset($_SERVER['TYPEPHP_REDACT_VALUES']);
         });
     });
 
