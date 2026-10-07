@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
 
 describe('DocblockNormalizer', function () {
@@ -30,6 +31,248 @@ describe('DocblockNormalizer', function () {
 
             $doc2 = '/** @param array{id: int} $data */';
             expect(DocblockNormalizer::normalize($doc2))->toBe($doc2);
+        });
+    });
+
+    describe('Nested and Curried Callables / Closures Normalization (Mago & Functional Syntax)', function () {
+        describe('1. Basic 2-Level Nested Callables', function () {
+            test('normalizes unparenthesized 2-level callable (callable -> callable)', function () {
+                $doc = '/** @param callable(int): callable(string): bool $factory */';
+                $expected = '/** @param callable(int): (callable(string): bool) $factory */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes unparenthesized 2-level Closure (Closure -> Closure)', function () {
+                $doc = '/** @param Closure(int): Closure(string): bool $factory */';
+                $expected = '/** @param Closure(int): (Closure(string): bool) $factory */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes unparenthesized static-closure variants', function () {
+                $doc = '/** @param static-closure(int): static-closure(string): bool $factory */';
+                $expected = '/** @param static-closure(int): (static-closure(string): bool) $factory */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes mixed callable, Closure, and static-closure combinations', function () {
+                $doc = '/** @param callable(int): Closure(string): static-closure(float): bool $fn */';
+                $expected = '/** @param callable(int): (Closure(string): (static-closure(float): bool)) $fn */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes parenthesized (static Closure) inside nested callable return type', function () {
+                $doc = '/** @param callable(int): (static Closure)(string): bool $factory */';
+                $expected = '/** @param callable(int): (static-closure(string): bool) $factory */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes bare static Closure inside nested callable return type', function () {
+                $doc = '/** @param callable(int): static Closure(string): bool $factory */';
+                $expected = '/** @param callable(int): (static-closure(string): bool) $factory */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes 3-level currying with mixed static Closure and callable syntax', function () {
+                $doc = '/** @param (static Closure)(int): static Closure(string): (static Closure)(float): int $chain */';
+                $expected = '/** @param static-closure(int): (static-closure(string): (static-closure(float): int)) $chain */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes higher-order callable taking parenthesized (static Closure) argument', function () {
+                $doc = '/** @param callable((static Closure)(int): bool): string $cb */';
+                $expected = '/** @param callable(static-closure(int): bool): string $cb */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+        });
+
+        describe('2. Multi-Level Deep Currying (3+ Levels)', function () {
+            test('normalizes 3-level curried callable pipeline', function () {
+                $doc = '/** @param callable(int): callable(string): callable(float): int $chain */';
+                $expected = '/** @param callable(int): (callable(string): (callable(float): int)) $chain */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes 4-level deeply nested curried callable pipeline', function () {
+                $doc = '/** @param callable(int): callable(string): callable(float): callable(bool): string $deep */';
+                $expected = '/** @param callable(int): (callable(string): (callable(float): (callable(bool): string))) $deep */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+        });
+
+        describe('3. Parameter Signatures (Named, Variadic, and Optional)', function () {
+            test('normalizes nested callables with named parameters ($threshold, $s)', function () {
+                $doc = '/** @param callable(int $threshold): callable(string $s): bool $factory */';
+                $expected = '/** @param callable(int $threshold): (callable(string $s): bool) $factory */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes nested callables with variadic and optional parameters', function () {
+                $doc = '/** @param callable(int ...$ids): callable(string, ?float=): bool $fn */';
+                $expected = '/** @param callable(int ...$ids): (callable(string, ?float=): bool) $fn */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes nested callables taking multiple arguments per stage', function () {
+                $doc = '/** @param callable(int, string): callable(float, bool, array): int $fn */';
+                $expected = '/** @param callable(int, string): (callable(float, bool, array): int) $fn */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+        });
+
+        describe('4. Complex Nested Return Types (Shapes, Unions, Generics, Nullables)', function () {
+            test('normalizes nested callable returning a parenthesized union', function () {
+                $doc = '/** @param callable(int): callable(string): (bool|int) $fn */';
+                $expected = '/** @param callable(int): (callable(string): (bool|int)) $fn */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes nested callable returning an unparenthesized union', function () {
+                $doc = '/** @param callable(int): callable(string): bool|int $fn */';
+                $expected = '/** @param callable(int): (callable(string): bool|int) $fn */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes nested callable returning an array shape', function () {
+                $doc = '/** @param callable(int): callable(string): array{status: bool, code: int} $fn */';
+                $expected = '/** @param callable(int): (callable(string): array{status: bool, code: int}) $fn */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes nested callable returning a generic list/array', function () {
+                $doc = '/** @param callable(int): callable(string): list<positive-int> $fn */';
+                $expected = '/** @param callable(int): (callable(string): list<positive-int>) $fn */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes nested callable returning a nullable type', function () {
+                $doc = '/** @param callable(int): callable(string): ?string $fn */';
+                $expected = '/** @param callable(int): (callable(string): ?string) $fn */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+        });
+
+        describe('5. Tag Contexts (@return, @var, @phpstan-type, @method)', function () {
+            test('normalizes unparenthesized nested callable in @return tag', function () {
+                $doc = '/** @return callable(int): callable(string): bool */';
+                $expected = '/** @return callable(int): (callable(string): bool) */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes unparenthesized nested callable in @var tag', function () {
+                $doc = '/** @var callable(int): callable(string): bool $pipeline */';
+                $expected = '/** @var callable(int): (callable(string): bool) $pipeline */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes unparenthesized nested callable in @phpstan-type alias definition', function () {
+                $doc = '/** @phpstan-type CurriedPipeline callable(int): callable(string): bool */';
+                $expected = '/** @phpstan-type CurriedPipeline callable(int): (callable(string): bool) */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes unparenthesized nested callable in @method tag', function () {
+                $doc = '/** @method callable(int): callable(string): bool createPipeline(string $prefix) */';
+                $expected = '/** @method callable(int): (callable(string): bool) createPipeline(string $prefix) */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+        });
+
+        describe('6. Higher-Order Callables (Callables Taking Callables)', function () {
+            test('preserves higher-order callable where argument is a callable and return is a scalar', function () {
+                $doc = '/** @param callable(callable(int): string): bool $cb */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($doc);
+            });
+
+            test('normalizes higher-order callable where argument is an unparenthesized curried callable', function () {
+                $doc = '/** @param callable(callable(int): callable(string): bool): bool $cb */';
+                $expected = '/** @param callable(callable(int): (callable(string): bool)): bool $cb */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+        });
+
+        describe('7. Omitted Return Type Combinations', function () {
+            test('auto-completes omitted return type on inner callable and parenthesizes', function () {
+                $doc = '/** @param callable(int): callable(string) $fn */';
+                $expected = '/** @param callable(int): (callable(string): mixed) $fn */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('auto-completes zero-argument callables with omitted return types', function () {
+                $doc = '/** @param callable(): callable() $fn */';
+                $expected = '/** @param callable(): (callable(): mixed) $fn */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+        });
+
+        describe('8. Whitespace, Multi-Line & Idempotency Guarantees', function () {
+            test('leaves already parenthesized 2-level and 3-level callables untouched (idempotent)', function () {
+                $doc2 = '/** @param callable(int): (callable(string): bool) $factory */';
+                expect(DocblockNormalizer::normalize($doc2))->toBe($doc2);
+
+                $doc3 = '/** @param callable(int): (callable(string): (callable(float): int)) $chain */';
+                expect(DocblockNormalizer::normalize($doc3))->toBe($doc3);
+            });
+
+            test('normalizes multiple separate nested callable parameters in the same DocBlock', function () {
+                $doc = <<<'DOC'
+/**
+ * @param callable(int): callable(string): bool $a
+ * @param callable(float): callable(bool): int $b
+ */
+DOC;
+                $expected = <<<'DOC'
+/**
+ * @param callable(int): (callable(string): bool) $a
+ * @param callable(float): (callable(bool): int) $b
+ */
+DOC;
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('normalizes nested callables with extra spacing around colons and keywords', function () {
+                $doc = '/** @param callable(int)   :   callable(string)   :   bool $fn */';
+                $expected = '/** @param callable(int)   : (callable(string)   :   bool) $fn */';
+
+                expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+            });
+
+            test('guarantees valid AST parsing through phpstan/phpdoc-parser after normalization', function () {
+                $rawDoc = '/** @param callable(int $a): callable(string $b): callable(float $c): int $chain */';
+                $normalized = DocblockNormalizer::normalize($rawDoc);
+
+                $phpDocNode = DocblockExtractor::parseDocString($normalized);
+                $paramTags = DocblockExtractor::getParamTags($phpDocNode);
+
+                expect($paramTags)->toHaveKey('chain')
+                    ->and((string) $paramTags['chain']->type)->toBe('callable(int $a): (callable(string $b): (callable(float $c): int))')
+                ;
+            });
         });
     });
 

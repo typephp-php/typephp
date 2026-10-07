@@ -93,8 +93,31 @@ final class Config
 
     private static int $ignoreTraceDepth = 25;
 
+    private static function getEnvValue(string $key): mixed
+    {
+        return $_ENV[$key] ?? $_SERVER[$key] ?? getenv($key);
+    }
+
     public static function isEnabled(): bool
     {
+        $envDisable = self::getEnvValue('TYPEPHP_DISABLE');
+        if ($envDisable !== null && $envDisable !== false && trim((string) $envDisable) !== '') {
+            if (filter_var($envDisable, FILTER_VALIDATE_BOOLEAN)) {
+                return false;
+            }
+        }
+
+        $envEnabled = self::getEnvValue('TYPEPHP_ENABLED');
+        if ($envEnabled !== null && $envEnabled !== false && trim((string) $envEnabled) !== '') {
+            if (! filter_var($envEnabled, FILTER_VALIDATE_BOOLEAN)) {
+                return false;
+            }
+        }
+
+        if (\defined('TYPEPHP_DISABLE') && TYPEPHP_DISABLE) {
+            return false;
+        }
+
         if (self::$cachedConfig === null) {
             self::get();
         }
@@ -104,8 +127,8 @@ final class Config
 
     public static function isAutoBootEnabled(): bool
     {
-        $envAutoBoot = getenv('TYPEPHP_AUTO_BOOT');
-        if ($envAutoBoot !== false && trim((string) $envAutoBoot) !== '') {
+        $envAutoBoot = self::getEnvValue('TYPEPHP_AUTO_BOOT');
+        if ($envAutoBoot !== null && $envAutoBoot !== false && trim((string) $envAutoBoot) !== '') {
             return filter_var($envAutoBoot, FILTER_VALIDATE_BOOLEAN);
         }
 
@@ -118,8 +141,8 @@ final class Config
 
     public static function getOnViolation(): string
     {
-        $envMode = getenv('TYPEPHP_ON_VIOLATION');
-        if ($envMode !== false && trim((string) $envMode) !== '') {
+        $envMode = self::getEnvValue('TYPEPHP_ON_VIOLATION');
+        if ($envMode !== null && $envMode !== false && trim((string) $envMode) !== '') {
             $normalized = strtolower(trim((string) $envMode));
             if ($normalized === 'warning') {
                 return 'warn';
@@ -137,8 +160,8 @@ final class Config
 
     public static function getReportFile(): ?string
     {
-        $envFile = getenv('TYPEPHP_REPORT_FILE');
-        if ($envFile !== false && trim((string) $envFile) !== '') {
+        $envFile = self::getEnvValue('TYPEPHP_REPORT_FILE');
+        if ($envFile !== null && $envFile !== false && trim((string) $envFile) !== '') {
             return trim((string) $envFile);
         }
 
@@ -151,8 +174,8 @@ final class Config
 
     public static function isFailOnReportEnabled(): bool
     {
-        $envFail = getenv('TYPEPHP_FAIL_ON_REPORT');
-        if ($envFail !== false && trim((string) $envFail) !== '') {
+        $envFail = self::getEnvValue('TYPEPHP_FAIL_ON_REPORT');
+        if ($envFail !== null && $envFail !== false && trim((string) $envFail) !== '') {
             return filter_var($envFail, FILTER_VALIDATE_BOOLEAN);
         }
 
@@ -165,8 +188,8 @@ final class Config
 
     public static function isRedactValuesEnabled(): bool
     {
-        $envRedact = getenv('TYPEPHP_REDACT_VALUES');
-        if ($envRedact !== false && trim((string) $envRedact) !== '') {
+        $envRedact = self::getEnvValue('TYPEPHP_REDACT_VALUES');
+        if ($envRedact !== null && $envRedact !== false && trim((string) $envRedact) !== '') {
             return filter_var($envRedact, FILTER_VALIDATE_BOOLEAN);
         }
 
