@@ -7,6 +7,10 @@ use TypePHP\Internal\Util\Config;
 
 function resetTypePHPTestEnvironment(): void
 {
+    putenv('TYPEPHP_DISABLE');
+    putenv('TYPEPHP_DISABLE=');
+    putenv('TYPEPHP_ENABLED');
+    putenv('TYPEPHP_ENABLED=');
     putenv('TYPEPHP_AUTO_BOOT');
     putenv('TYPEPHP_AUTO_BOOT=');
     putenv('TYPEPHP_ON_VIOLATION');
@@ -19,6 +23,10 @@ function resetTypePHPTestEnvironment(): void
     putenv('TYPEPHP_REDACT_VALUES=');
 
     unset(
+        $_ENV['TYPEPHP_DISABLE'],
+        $_SERVER['TYPEPHP_DISABLE'],
+        $_ENV['TYPEPHP_ENABLED'],
+        $_SERVER['TYPEPHP_ENABLED'],
         $_ENV['TYPEPHP_AUTO_BOOT'],
         $_SERVER['TYPEPHP_AUTO_BOOT'],
         $_ENV['TYPEPHP_ON_VIOLATION'],

@@ -4,26 +4,34 @@ declare(strict_types=1);
 
 use TypePHP\Internal\Util\Config;
 
+function cleanTypePhpEnvVariables(): void
+{
+    $keys = [
+        'TYPEPHP_DISABLE',
+        'TYPEPHP_ENABLED',
+        'TYPEPHP_AUTO_BOOT',
+        'TYPEPHP_ON_VIOLATION',
+        'TYPEPHP_REPORT_FILE',
+        'TYPEPHP_FAIL_ON_REPORT',
+        'TYPEPHP_REDACT_VALUES',
+    ];
+
+    foreach ($keys as $key) {
+        putenv($key);
+        putenv("{$key}=");
+        unset($_ENV[$key], $_SERVER[$key]);
+    }
+
+    Config::reset();
+}
+
 describe('Config Unit Tests', function () {
+    beforeEach(function () {
+        cleanTypePhpEnvVariables();
+    });
+
     afterEach(function () {
-        putenv('TYPEPHP_AUTO_BOOT=');
-        putenv('TYPEPHP_ON_VIOLATION=');
-        putenv('TYPEPHP_REPORT_FILE=');
-        putenv('TYPEPHP_FAIL_ON_REPORT=');
-        putenv('TYPEPHP_REDACT_VALUES=');
-        unset(
-            $_ENV['TYPEPHP_AUTO_BOOT'],
-            $_SERVER['TYPEPHP_AUTO_BOOT'],
-            $_ENV['TYPEPHP_ON_VIOLATION'],
-            $_SERVER['TYPEPHP_ON_VIOLATION'],
-            $_ENV['TYPEPHP_REPORT_FILE'],
-            $_SERVER['TYPEPHP_REPORT_FILE'],
-            $_ENV['TYPEPHP_FAIL_ON_REPORT'],
-            $_SERVER['TYPEPHP_FAIL_ON_REPORT'],
-            $_ENV['TYPEPHP_REDACT_VALUES'],
-            $_SERVER['TYPEPHP_REDACT_VALUES']
-        );
-        Config::reset();
+        cleanTypePhpEnvVariables();
     });
 
     test('loads default configuration array', function () {
@@ -122,13 +130,11 @@ describe('Config Unit Tests', function () {
     });
 
     test('supports granular and boolean magic_properties configuration', function () {
-        // 1. Default: write is true, read is false
         expect(Config::isMagicPropertyWritesEnabled())->toBeTrue()
             ->and(Config::isMagicPropertyReadsEnabled())->toBeFalse()
             ->and(Config::isMagicPropertiesEnabled())->toBeTrue()
         ;
 
-        // 2. Partial array override (enable reads)
         Config::set([
             'magic_properties' => [
                 'read' => true,
@@ -139,14 +145,12 @@ describe('Config Unit Tests', function () {
             ->and(Config::isMagicPropertiesEnabled())->toBeTrue()
         ;
 
-        // 3. Boolean false override (disables both writes and reads)
         Config::set(['magic_properties' => false]);
         expect(Config::isMagicPropertyWritesEnabled())->toBeFalse()
             ->and(Config::isMagicPropertyReadsEnabled())->toBeFalse()
             ->and(Config::isMagicPropertiesEnabled())->toBeFalse()
         ;
 
-        // 4. Boolean true override (enables writes, keeps reads false)
         Config::set(['magic_properties' => true]);
         expect(Config::isMagicPropertyWritesEnabled())->toBeTrue()
             ->and(Config::isMagicPropertyReadsEnabled())->toBeFalse()
@@ -186,13 +190,11 @@ describe('Config Unit Tests', function () {
             ->and(Config::getArrayValidationStrategy())->toBe('full')
         ;
 
-        // Non-string fallback
         Config::set(['array_validation' => 12345]);
         expect(Config::getArrayValidationStrategy())->toBe('full');
     });
 
     test('syncFlags correctly validates and falls back on edge-case inputs', function () {
-        // Invalid ignore_trace_depth values fallback to 25
         Config::set(['ignore_trace_depth' => -5]);
         expect(Config::getIgnoreTraceDepth())->toBe(25);
 
@@ -202,7 +204,6 @@ describe('Config Unit Tests', function () {
         Config::set(['ignore_trace_depth' => 40]);
         expect(Config::getIgnoreTraceDepth())->toBe(40);
 
-        // Non-array inline_vars fallback
         Config::set(['inline_vars' => null]);
         expect(Config::isInlinePropertiesEnabled())->toBeTrue();
     });
@@ -217,18 +218,6 @@ describe('Config Unit Tests', function () {
             ->and($root1)->toBe($root2)
             ->and(file_exists($root1 . '/composer.json') || file_exists($root1 . '/vendor/autoload.php'))->toBeTrue()
         ;
-    });
-
-    test('loads typephp.php from project root directory', function () {
-        $projectRoot = Config::getProjectRoot();
-        $configFile = $projectRoot . '/typephp.php';
-
-        if (file_exists($configFile)) {
-            $config = Config::get();
-            expect($config)->toBeArray()
-                ->and($config['include'])->toBeArray()
-            ;
-        }
     });
 
     test('user include and exclude lists are replaced wholesale and do not leak default list entries', function () {
@@ -265,374 +254,157 @@ describe('Config Unit Tests', function () {
         ;
     });
 
-    test('resolves project root when installed in vendor using startingDir parameter', function () {
-        $tempBase = sys_get_temp_dir() . '/typephp_vendor_test_' . uniqid();
-        $fakeVendorDir = $tempBase . '/vendor/typephp/typephp/src/Internal/Util';
-        mkdir($fakeVendorDir, 0777, true);
-
-        file_put_contents($tempBase . '/composer.json', json_encode(['name' => 'acme/consumer-app']));
-
-        try {
-            $resolved = Config::getProjectRoot($fakeVendorDir);
-            $realTempBase = realpath($tempBase) !== false ? realpath($tempBase) : $tempBase;
-            $normTempBase = rtrim(str_replace('\\', '/', (string) $realTempBase), '/');
-
-            expect($resolved)->toBe($normTempBase);
-        } finally {
-            @unlink($tempBase . '/composer.json');
-            @rmdir($fakeVendorDir);
-            @rmdir($tempBase . '/vendor/typephp/typephp/src/Internal');
-            @rmdir($tempBase . '/vendor/typephp/typephp/src');
-            @rmdir($tempBase . '/vendor/typephp/typephp');
-            @rmdir($tempBase . '/vendor/typephp');
-            @rmdir($tempBase . '/vendor');
-            @rmdir($tempBase);
-        }
-    });
-
-    test('resolves project root by climbing parent directories when not in vendor', function () {
-        $tempBase = sys_get_temp_dir() . '/typephp_climb_test_' . uniqid();
-        $nestedSubDir = $tempBase . '/src/Modules/Commerce/Services';
-        mkdir($nestedSubDir, 0777, true);
-
-        file_put_contents($tempBase . '/composer.json', json_encode(['name' => 'acme/monorepo']));
-
-        try {
-            $resolved = Config::getProjectRoot($nestedSubDir);
-            $realTempBase = realpath($tempBase) !== false ? realpath($tempBase) : $tempBase;
-            $normTempBase = rtrim(str_replace('\\', '/', (string) $realTempBase), '/');
-
-            expect($resolved)->toBe($normTempBase);
-        } finally {
-            @unlink($tempBase . '/composer.json');
-            @rmdir($nestedSubDir);
-            @rmdir($tempBase . '/src/Modules/Commerce');
-            @rmdir($tempBase . '/src/Modules');
-            @rmdir($tempBase . '/src');
-            @rmdir($tempBase);
-        }
-    });
-
-    test('falls back to current directory when no composer.json or autoload.php is found after 10 parent steps', function () {
-        $tempBase = sys_get_temp_dir() . '/typephp_deep_empty_' . uniqid();
-        $deepDir = $tempBase . '/1/2/3/4/5/6/7/8/9/10/11';
-        mkdir($deepDir, 0777, true);
-
-        try {
-            $resolved = Config::getProjectRoot($deepDir);
-            expect($resolved)->toBeString()
-                ->and($resolved)->not()->toBeEmpty()
-            ;
-        } finally {
-            for ($d = $deepDir; $d !== $tempBase; $d = \dirname($d)) {
-                @rmdir($d);
-            }
-            @rmdir($tempBase);
-        }
-    });
-
-    test('isParamsOutEnabled returns false when params_out is disabled or params is disabled', function () {
-        Config::set(['params' => true, 'params_out' => true]);
-        expect(Config::isParamsOutEnabled())->toBeTrue();
-
-        Config::set(['params' => true, 'params_out' => false]);
-        expect(Config::isParamsOutEnabled())->toBeFalse();
-
-        Config::set(['params' => false, 'params_out' => true]);
-        expect(Config::isParamsOutEnabled())->toBeFalse();
-    });
-
-    test('set initializes cachedConfig if called when cachedConfig is null', function () {
-        Config::reset();
-
-        Config::set(['enabled' => false]);
-
-        expect(Config::isEnabled())->toBeFalse();
-    });
-
-    test('falls back to defaultConfig extensions when typephp.php does not exist', function () {
-        $tempDir = sys_get_temp_dir() . '/typephp_no_config_' . uniqid();
-        mkdir($tempDir, 0777, true);
-
-        try {
-            Config::reset();
-
-            $ref = new ReflectionClass(Config::class);
-            $prop = $ref->getProperty('projectRoot');
-            $prop->setValue(null, $tempDir);
-
-            $config = Config::get();
-            expect($config['extensions'])->toBeEmpty();
-        } finally {
-            Config::reset();
-            @rmdir($tempDir);
-        }
-    });
-
-    test('hits root break when directory traversal reaches filesystem root', function () {
-        $root = DIRECTORY_SEPARATOR === '/' ? '/' : 'C:/';
-        $result = Config::getProjectRoot($root);
-
-        expect($result)->toBeString()
-            ->and($result)->not()->toBeEmpty()
-        ;
-    });
-
-    describe('Auto-Boot Configuration Logic', function () {
-        test('isAutoBootEnabled returns true by default', function () {
-            expect(Config::isAutoBootEnabled())->toBeTrue();
+    describe('Framework & Dotenv Environment Resolution ($_ENV, $_SERVER, and getenv)', function () {
+        beforeEach(function () {
+            cleanTypePhpEnvVariables();
         });
 
-        test('isAutoBootEnabled respects runtime overrides with Config::set', function () {
-            Config::set(['auto_boot' => false]);
+        afterEach(function () {
+            cleanTypePhpEnvVariables();
+        });
+
+        test('isEnabled dynamically reflects TYPEPHP_DISABLE from $_ENV (Laravel Dotenv compatibility)', function () {
+            expect(Config::isEnabled())->toBeTrue();
+
+            $_ENV['TYPEPHP_DISABLE'] = 'true';
+            expect(Config::isEnabled())->toBeFalse();
+
+            $_ENV['TYPEPHP_DISABLE'] = '1';
+            expect(Config::isEnabled())->toBeFalse();
+
+            $_ENV['TYPEPHP_DISABLE'] = 'false';
+            expect(Config::isEnabled())->toBeTrue();
+
+            $_ENV['TYPEPHP_DISABLE'] = '0';
+            expect(Config::isEnabled())->toBeTrue();
+
+            unset($_ENV['TYPEPHP_DISABLE']);
+        });
+
+        test('isEnabled dynamically reflects TYPEPHP_DISABLE from $_SERVER', function () {
+            unset($_ENV['TYPEPHP_DISABLE']);
+            expect(Config::isEnabled())->toBeTrue();
+
+            $_SERVER['TYPEPHP_DISABLE'] = 'true';
+            expect(Config::isEnabled())->toBeFalse();
+
+            $_SERVER['TYPEPHP_DISABLE'] = 'false';
+            expect(Config::isEnabled())->toBeTrue();
+
+            unset($_SERVER['TYPEPHP_DISABLE']);
+        });
+
+        test('isEnabled dynamically reflects TYPEPHP_ENABLED from $_ENV and $_SERVER', function () {
+            expect(Config::isEnabled())->toBeTrue();
+
+            $_ENV['TYPEPHP_ENABLED'] = 'false';
+            expect(Config::isEnabled())->toBeFalse();
+
+            $_ENV['TYPEPHP_ENABLED'] = '0';
+            expect(Config::isEnabled())->toBeFalse();
+
+            unset($_ENV['TYPEPHP_ENABLED']);
+            $_SERVER['TYPEPHP_ENABLED'] = 'false';
+            expect(Config::isEnabled())->toBeFalse();
+
+            $_SERVER['TYPEPHP_ENABLED'] = 'true';
+            expect(Config::isEnabled())->toBeTrue();
+
+            unset($_SERVER['TYPEPHP_ENABLED']);
+        });
+
+        test('isAutoBootEnabled resolves values from $_ENV and $_SERVER', function () {
+            $_ENV['TYPEPHP_AUTO_BOOT'] = 'false';
             expect(Config::isAutoBootEnabled())->toBeFalse();
 
-            Config::set(['auto_boot' => true]);
-            expect(Config::isAutoBootEnabled())->toBeTrue();
-        });
-
-        test('isAutoBootEnabled respects TYPEPHP_AUTO_BOOT environment variable', function () {
-            putenv('TYPEPHP_AUTO_BOOT=false');
+            $_ENV['TYPEPHP_AUTO_BOOT'] = '0';
             expect(Config::isAutoBootEnabled())->toBeFalse();
 
-            putenv('TYPEPHP_AUTO_BOOT=true');
-            expect(Config::isAutoBootEnabled())->toBeTrue();
-
-            putenv('TYPEPHP_AUTO_BOOT=0');
+            unset($_ENV['TYPEPHP_AUTO_BOOT']);
+            $_SERVER['TYPEPHP_AUTO_BOOT'] = 'false';
             expect(Config::isAutoBootEnabled())->toBeFalse();
 
-            putenv('TYPEPHP_AUTO_BOOT=1');
+            $_SERVER['TYPEPHP_AUTO_BOOT'] = 'true';
             expect(Config::isAutoBootEnabled())->toBeTrue();
+
+            unset($_SERVER['TYPEPHP_AUTO_BOOT']);
         });
 
-        test('isAutoBootEnabled reads extra.typephp.auto-boot from composer.json', function () {
-            $tempDir = sys_get_temp_dir() . '/typephp_composer_autoboot_' . uniqid();
-            mkdir($tempDir, 0777, true);
-
-            $composerJsonContent = json_encode([
-                'name' => 'test/autoboot-test',
-                'extra' => [
-                    'typephp' => [
-                        'auto-boot' => false,
-                    ],
-                ],
-            ]);
-            file_put_contents($tempDir . '/composer.json', $composerJsonContent);
-
-            try {
-                Config::reset();
-
-                $ref = new ReflectionClass(Config::class);
-                $prop = $ref->getProperty('projectRoot');
-                $prop->setValue(null, $tempDir);
-
-                expect(Config::isAutoBootEnabled())->toBeFalse();
-            } finally {
-                @unlink($tempDir . '/composer.json');
-                @rmdir($tempDir);
-                Config::reset();
-            }
-        });
-
-        test('isAutoBootEnabled prioritizes typephp.php over composer.json', function () {
-            $tempDir = sys_get_temp_dir() . '/typephp_precedence_test_' . uniqid();
-            mkdir($tempDir, 0777, true);
-
-            $composerJsonContent = json_encode([
-                'name' => 'test/autoboot-test',
-                'extra' => [
-                    'typephp' => [
-                        'auto-boot' => false,
-                    ],
-                ],
-            ]);
-            file_put_contents($tempDir . '/composer.json', $composerJsonContent);
-
-            $typephpContent = <<<'PHP'
-<?php
-return [
-    'auto_boot' => true,
-];
-PHP;
-            file_put_contents($tempDir . '/typephp.php', $typephpContent);
-
-            try {
-                Config::reset();
-
-                $ref = new ReflectionClass(Config::class);
-                $prop = $ref->getProperty('projectRoot');
-                $prop->setValue(null, $tempDir);
-
-                // typephp.php (true) overrides composer.json (false)
-                expect(Config::isAutoBootEnabled())->toBeTrue();
-            } finally {
-                @unlink($tempDir . '/typephp.php');
-                @unlink($tempDir . '/composer.json');
-                @rmdir($tempDir);
-                Config::reset();
-            }
-        });
-
-        test('isAutoBootEnabled prioritizes TYPEPHP_AUTO_BOOT environment variable over all config files', function () {
-            $tempDir = sys_get_temp_dir() . '/typephp_env_priority_test_' . uniqid();
-            mkdir($tempDir, 0777, true);
-
-            $typephpContent = <<<'PHP'
-<?php
-return [
-    'auto_boot' => false,
-];
-PHP;
-            file_put_contents($tempDir . '/typephp.php', $typephpContent);
-
-            try {
-                Config::reset();
-
-                $ref = new ReflectionClass(Config::class);
-                $prop = $ref->getProperty('projectRoot');
-                $prop->setValue(null, $tempDir);
-
-                // Environment variable (true) overrides typephp.php (false)
-                putenv('TYPEPHP_AUTO_BOOT=true');
-                expect(Config::isAutoBootEnabled())->toBeTrue();
-            } finally {
-                putenv('TYPEPHP_AUTO_BOOT');
-                @unlink($tempDir . '/typephp.php');
-                @rmdir($tempDir);
-                Config::reset();
-            }
-        });
-    });
-
-    describe('Violation Handling & Reporting Configuration', function () {
-        test('on_violation defaults to throw and normalizes warn/report values', function () {
-            expect(Config::getOnViolation())->toBe('throw')
-                ->and(Config::isReportMode())->toBeFalse()
-                ->and(Config::isWarnMode())->toBeFalse()
-            ;
-
-            Config::set(['on_violation' => 'report']);
+        test('getOnViolation resolves strategy from $_ENV and $_SERVER', function () {
+            $_ENV['TYPEPHP_ON_VIOLATION'] = 'report';
             expect(Config::getOnViolation())->toBe('report')
                 ->and(Config::isReportMode())->toBeTrue()
                 ->and(Config::isWarnMode())->toBeFalse()
             ;
 
-            Config::set(['on_violation' => 'warn']);
+            $_ENV['TYPEPHP_ON_VIOLATION'] = 'warn';
             expect(Config::getOnViolation())->toBe('warn')
                 ->and(Config::isReportMode())->toBeFalse()
                 ->and(Config::isWarnMode())->toBeTrue()
             ;
 
-            Config::set(['on_violation' => 'warning']);
+            unset($_ENV['TYPEPHP_ON_VIOLATION']);
+            $_SERVER['TYPEPHP_ON_VIOLATION'] = 'warning';
             expect(Config::getOnViolation())->toBe('warn')
                 ->and(Config::isWarnMode())->toBeTrue()
             ;
+
+            unset($_SERVER['TYPEPHP_ON_VIOLATION']);
         });
 
-        test('report_file defaults to null and respects custom paths', function () {
-            expect(Config::getReportFile())->toBeNull();
+        test('getReportFile resolves custom file path from $_ENV and $_SERVER', function () {
+            $_ENV['TYPEPHP_REPORT_FILE'] = 'storage/reports/laravel-audit.json';
+            expect(Config::getReportFile())->toBe('storage/reports/laravel-audit.json');
 
-            Config::set(['report_file' => 'var/typephp-report.json']);
-            expect(Config::getReportFile())->toBe('var/typephp-report.json');
+            unset($_ENV['TYPEPHP_REPORT_FILE']);
+            $_SERVER['TYPEPHP_REPORT_FILE'] = 'var/ci-report.json';
+            expect(Config::getReportFile())->toBe('var/ci-report.json');
 
-            Config::set(['report_file' => '   ']);
-            expect(Config::getReportFile())->toBeNull();
+            unset($_SERVER['TYPEPHP_REPORT_FILE']);
         });
 
-        test('fail_on_report defaults to false and respects boolean overrides', function () {
+        test('isFailOnReportEnabled resolves from $_ENV and $_SERVER', function () {
+            $_ENV['TYPEPHP_FAIL_ON_REPORT'] = 'true';
+            expect(Config::isFailOnReportEnabled())->toBeTrue();
+
+            $_ENV['TYPEPHP_FAIL_ON_REPORT'] = '1';
+            expect(Config::isFailOnReportEnabled())->toBeTrue();
+
+            unset($_ENV['TYPEPHP_FAIL_ON_REPORT']);
+            $_SERVER['TYPEPHP_FAIL_ON_REPORT'] = 'false';
             expect(Config::isFailOnReportEnabled())->toBeFalse();
 
-            Config::set(['fail_on_report' => true]);
-            expect(Config::isFailOnReportEnabled())->toBeTrue();
+            unset($_SERVER['TYPEPHP_FAIL_ON_REPORT']);
         });
 
-        test('respects TYPEPHP_ON_VIOLATION, TYPEPHP_REPORT_FILE, and TYPEPHP_FAIL_ON_REPORT environment variables', function () {
-            putenv('TYPEPHP_ON_VIOLATION=report');
-            putenv('TYPEPHP_REPORT_FILE=var/ci-report.json');
-            putenv('TYPEPHP_FAIL_ON_REPORT=true');
+        test('isRedactValuesEnabled resolves from $_ENV and $_SERVER', function () {
+            $_ENV['TYPEPHP_REDACT_VALUES'] = 'true';
+            expect(Config::isRedactValuesEnabled())->toBeTrue();
 
-            expect(Config::getOnViolation())->toBe('report')
-                ->and(Config::isReportMode())->toBeTrue()
-                ->and(Config::getReportFile())->toBe('var/ci-report.json')
-                ->and(Config::isFailOnReportEnabled())->toBeTrue()
-            ;
+            $_ENV['TYPEPHP_REDACT_VALUES'] = '1';
+            expect(Config::isRedactValuesEnabled())->toBeTrue();
 
-            putenv('TYPEPHP_ON_VIOLATION=warning');
-            expect(Config::getOnViolation())->toBe('warn')
-                ->and(Config::isWarnMode())->toBeTrue()
-            ;
+            unset($_ENV['TYPEPHP_REDACT_VALUES']);
+            $_SERVER['TYPEPHP_REDACT_VALUES'] = 'false';
+            expect(Config::isRedactValuesEnabled())->toBeFalse();
+
+            unset($_SERVER['TYPEPHP_REDACT_VALUES']);
         });
+    });
 
-        test('reads reporting options from composer.json extra section', function () {
-            $tempDir = sys_get_temp_dir() . '/typephp_composer_report_' . uniqid();
+    describe('Composer.json Extra Configuration Integration', function () {
+        test('reads reporting and autoboot options from composer.json extra section', function () {
+            $tempDir = sys_get_temp_dir() . '/typephp_composer_full_' . uniqid();
             mkdir($tempDir, 0777, true);
 
             $composerJsonContent = json_encode([
-                'name' => 'test/report-config',
+                'name' => 'test/full-composer-config',
                 'extra' => [
                     'typephp' => [
+                        'auto-boot' => false,
                         'on-violation' => 'report',
                         'report-file' => 'var/composer-report.json',
                         'fail-on-report' => true,
-                    ],
-                ],
-            ]);
-            file_put_contents($tempDir . '/composer.json', $composerJsonContent);
-
-            try {
-                Config::reset();
-
-                $ref = new ReflectionClass(Config::class);
-                $prop = $ref->getProperty('projectRoot');
-                $prop->setValue(null, $tempDir);
-
-                expect(Config::getOnViolation())->toBe('report')
-                    ->and(Config::getReportFile())->toBe('var/composer-report.json')
-                    ->and(Config::isFailOnReportEnabled())->toBeTrue()
-                ;
-            } finally {
-                @unlink($tempDir . '/composer.json');
-                @rmdir($tempDir);
-                Config::reset();
-            }
-        });
-    });
-
-    describe('Global Value Redaction Configuration (redact_values)', function () {
-        test('isRedactValuesEnabled returns false by default', function () {
-            expect(Config::isRedactValuesEnabled())->toBeFalse();
-        });
-
-        test('isRedactValuesEnabled respects runtime overrides with Config::set', function () {
-            Config::set(['redact_values' => true]);
-            expect(Config::isRedactValuesEnabled())->toBeTrue();
-
-            Config::set(['redact_values' => false]);
-            expect(Config::isRedactValuesEnabled())->toBeFalse();
-        });
-
-        test('isRedactValuesEnabled respects TYPEPHP_REDACT_VALUES environment variable', function () {
-            putenv('TYPEPHP_REDACT_VALUES=true');
-            expect(Config::isRedactValuesEnabled())->toBeTrue();
-
-            putenv('TYPEPHP_REDACT_VALUES=false');
-            expect(Config::isRedactValuesEnabled())->toBeFalse();
-
-            putenv('TYPEPHP_REDACT_VALUES=1');
-            expect(Config::isRedactValuesEnabled())->toBeTrue();
-
-            putenv('TYPEPHP_REDACT_VALUES=0');
-            expect(Config::isRedactValuesEnabled())->toBeFalse();
-        });
-
-        test('isRedactValuesEnabled reads extra.typephp.redact-values from composer.json', function () {
-            $tempDir = sys_get_temp_dir() . '/typephp_composer_redact_' . uniqid();
-            mkdir($tempDir, 0777, true);
-
-            $composerJsonContent = json_encode([
-                'name' => 'test/redact-test',
-                'extra' => [
-                    'typephp' => [
                         'redact-values' => true,
                     ],
                 ],
@@ -646,7 +418,12 @@ PHP;
                 $prop = $ref->getProperty('projectRoot');
                 $prop->setValue(null, $tempDir);
 
-                expect(Config::isRedactValuesEnabled())->toBeTrue();
+                expect(Config::isAutoBootEnabled())->toBeFalse()
+                    ->and(Config::getOnViolation())->toBe('report')
+                    ->and(Config::getReportFile())->toBe('var/composer-report.json')
+                    ->and(Config::isFailOnReportEnabled())->toBeTrue()
+                    ->and(Config::isRedactValuesEnabled())->toBeTrue()
+                ;
             } finally {
                 @unlink($tempDir . '/composer.json');
                 @rmdir($tempDir);

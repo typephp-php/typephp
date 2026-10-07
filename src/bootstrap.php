@@ -9,7 +9,11 @@ use TypePHP\Internal\Util\Config;
 if (class_exists(TypePHP::class) && ! \defined('TYPEPHP_BOOTED')) {
     \define('TYPEPHP_BOOTED', true);
 
-    $isDisabledEnv = getenv('TYPEPHP_DISABLE') !== false && filter_var(getenv('TYPEPHP_DISABLE'), FILTER_VALIDATE_BOOLEAN);
+    $isDisabledEnv = (
+        (getenv('TYPEPHP_DISABLE') !== false && filter_var(getenv('TYPEPHP_DISABLE'), FILTER_VALIDATE_BOOLEAN))
+        || (isset($_ENV['TYPEPHP_DISABLE']) && filter_var($_ENV['TYPEPHP_DISABLE'], FILTER_VALIDATE_BOOLEAN))
+        || (isset($_SERVER['TYPEPHP_DISABLE']) && filter_var($_SERVER['TYPEPHP_DISABLE'], FILTER_VALIDATE_BOOLEAN))
+    );
     $isDisabledConst = \defined('TYPEPHP_DISABLE') && TYPEPHP_DISABLE;
 
     $isTooling = false;
