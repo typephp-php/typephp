@@ -167,19 +167,19 @@ final class TemplateSubstitutor
         }
 
         if ($node instanceof UnionTypeNode) {
-            $types = array_map(
-                fn ($t) => self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited),
-                $node->types
-            );
+            $types = [];
+            foreach ($node->types as $t) {
+                $types[] = self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited);
+            }
 
             return self::normalizeUnion($types);
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            $types = array_map(
-                fn ($t) => self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited),
-                $node->types
-            );
+            $types = [];
+            foreach ($node->types as $t) {
+                $types[] = self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited);
+            }
 
             return self::normalizeIntersection($types);
         }
@@ -236,16 +236,16 @@ final class TemplateSubstitutor
         array $declaredTemplates,
         array $visited
     ): CallableTypeNode {
-        $parameters = array_map(
-            fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+        $parameters = [];
+        foreach ($node->parameters as $param) {
+            $parameters[] = new CallableTypeParameterNode(
                 self::substituteNode($param->type, $boundTemplates, $declaredTemplates, $visited),
                 $param->isReference,
                 $param->isVariadic,
                 $param->parameterName,
                 $param->isOptional
-            ),
-            $node->parameters
-        );
+            );
+        }
 
         $returnType = self::substituteNode($node->returnType, $boundTemplates, $declaredTemplates, $visited);
 
@@ -309,10 +309,10 @@ final class TemplateSubstitutor
         array $visited
     ): GenericTypeNode {
         $type = self::substituteNode($node->type, $boundTemplates, $declaredTemplates, $visited);
-        $genericTypes = array_map(
-            fn ($t) => self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited),
-            $node->genericTypes
-        );
+        $genericTypes = [];
+        foreach ($node->genericTypes as $gt) {
+            $genericTypes[] = self::substituteNode($gt, $boundTemplates, $declaredTemplates, $visited);
+        }
 
         return new GenericTypeNode(
             $type instanceof IdentifierTypeNode ? $type : $node->type,

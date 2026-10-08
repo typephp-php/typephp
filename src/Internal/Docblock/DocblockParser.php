@@ -1717,16 +1717,16 @@ final class DocblockParser
         }
 
         if ($node instanceof CallableTypeNode) {
-            $parameters = array_map(
-                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+            $parameters = [];
+            foreach ($node->parameters as $param) {
+                $parameters[] = new CallableTypeParameterNode(
                     self::substituteAliases($param->type, $aliases),
                     $param->isReference,
                     $param->isVariadic,
                     $param->parameterName,
                     $param->isOptional
-                ),
-                $node->parameters
-            );
+                );
+            }
 
             $returnType = self::substituteAliases($node->returnType, $aliases);
 
@@ -1751,10 +1751,10 @@ final class DocblockParser
 
         if ($node instanceof GenericTypeNode) {
             $genericType = self::substituteAliases($node->type, $aliases);
-            $genericTypes = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
-                $node->genericTypes
-            );
+            $genericTypes = [];
+            foreach ($node->genericTypes as $gt) {
+                $genericTypes[] = self::substituteAliases($gt, $aliases);
+            }
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
@@ -1768,10 +1768,10 @@ final class DocblockParser
         }
 
         if ($node instanceof UnionTypeNode) {
-            $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
-                $node->types
-            );
+            $types = [];
+            foreach ($node->types as $t) {
+                $types[] = self::substituteAliases($t, $aliases);
+            }
 
             foreach ($types as $t) {
                 if ($t instanceof IdentifierTypeNode && strtolower($t->name) === 'mixed') {
@@ -1783,10 +1783,10 @@ final class DocblockParser
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
-                $node->types
-            );
+            $types = [];
+            foreach ($node->types as $t) {
+                $types[] = self::substituteAliases($t, $aliases);
+            }
 
             $filtered = array_values(array_filter($types, function ($t) {
                 return ! ($t instanceof IdentifierTypeNode && strtolower($t->name) === 'mixed');

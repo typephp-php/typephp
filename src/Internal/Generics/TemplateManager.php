@@ -1586,7 +1586,10 @@ final class TemplateManager
             };
 
             $base = new IdentifierTypeNode($baseName);
-            $generics = array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->genericTypes);
+            $generics = [];
+            foreach ($n->genericTypes as $gt) {
+                $generics[] = self::resolveTypeNodeAst($gt, $ref);
+            }
 
             return new GenericTypeNode($base, $generics, $n->variances);
         }
@@ -1600,21 +1603,32 @@ final class TemplateManager
         }
 
         if ($n instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            $types = [];
+            foreach ($n->types as $t) {
+                $types[] = self::resolveTypeNodeAst($t, $ref);
+            }
+
+            return new UnionTypeNode($types);
         }
 
         if ($n instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolveTypeNodeAst($t, $ref), $n->types));
+            $types = [];
+            foreach ($n->types as $t) {
+                $types[] = self::resolveTypeNodeAst($t, $ref);
+            }
+
+            return new IntersectionTypeNode($types);
         }
 
         if ($n instanceof ArrayShapeNode) {
-            $items = array_map(function ($item) use ($ref) {
-                return new ArrayShapeItemNode(
+            $items = [];
+            foreach ($n->items as $item) {
+                $items[] = new ArrayShapeItemNode(
                     $item->keyName,
                     $item->optional,
                     self::resolveTypeNodeAst($item->valueType, $ref)
                 );
-            }, $n->items);
+            }
 
             $unsealed = null;
             if ($n->unsealedType !== null) {
@@ -1633,27 +1647,29 @@ final class TemplateManager
         }
 
         if ($n instanceof ObjectShapeNode) {
-            $items = array_map(function ($item) use ($ref) {
-                return new ObjectShapeItemNode(
+            $items = [];
+            foreach ($n->items as $item) {
+                $items[] = new ObjectShapeItemNode(
                     $item->keyName,
                     $item->optional,
                     self::resolveTypeNodeAst($item->valueType, $ref)
                 );
-            }, $n->items);
+            }
 
             return new ObjectShapeNode($items);
         }
 
         if ($n instanceof CallableTypeNode) {
-            $params = array_map(function ($p) use ($ref) {
-                return new CallableTypeParameterNode(
+            $params = [];
+            foreach ($n->parameters as $p) {
+                $params[] = new CallableTypeParameterNode(
                     self::resolveTypeNodeAst($p->type, $ref),
                     $p->isReference,
                     $p->isVariadic,
                     $p->parameterName,
                     $p->isOptional
                 );
-            }, $n->parameters);
+            }
 
             return new CallableTypeNode(
                 $n->identifier,
