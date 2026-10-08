@@ -103,7 +103,7 @@ final class TemplateSubstitutor
     }
 
     /**
-     * Recursively inlines nested nodes of the given container class.
+     * Inlines nested nodes of the given container class iteratively while preserving in-order traversal.
      *
      * @param array<TypeNode> $types
      * @param class-string<UnionTypeNode>|class-string<IntersectionTypeNode> $containerClass
@@ -116,8 +116,16 @@ final class TemplateSubstitutor
 
         foreach ($types as $t) {
             if ($t instanceof $containerClass) {
-                foreach (self::flatten($t->types, $containerClass) as $inner) {
-                    $result[] = $inner;
+                $stack = array_reverse($t->types);
+                while ($stack !== []) {
+                    $item = array_pop($stack);
+                    if ($item instanceof $containerClass) {
+                        for ($k = \count($item->types) - 1; $k >= 0; $k--) {
+                            $stack[] = $item->types[$k];
+                        }
+                    } else {
+                        $result[] = $item;
+                    }
                 }
             } else {
                 $result[] = $t;

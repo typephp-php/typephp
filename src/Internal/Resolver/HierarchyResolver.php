@@ -177,7 +177,7 @@ final class HierarchyResolver
 
     /**
      * Builds an array of ReflectionClasses representing the complete inheritance hierarchy from child to root.
-     * Recursively traverses parent classes, implemented interfaces, and used traits across all levels.
+     * Traverses parent classes, implemented interfaces, and used traits across all levels iteratively.
      *
      * @param ReflectionClass<object> $ref
      *
@@ -190,32 +190,40 @@ final class HierarchyResolver
             return self::$classHierarchyCache[$cacheKey];
         }
 
-        $hierarchy = [];
-        $visited = [];
+        /** @var list<ReflectionClass<object>> $hierarchy */
+        $hierarchy = [$ref];
+        $visited = [$ref->getName() => true];
+        $i = 0;
 
-        $collect = function (ReflectionClass $class) use (&$collect, &$hierarchy, &$visited): void {
-            $name = $class->getName();
-            if (isset($visited[$name])) {
-                return;
-            }
-            $visited[$name] = true;
-            $hierarchy[] = $class;
+        while (isset($hierarchy[$i])) {
+            $current = $hierarchy[$i];
+            $i++;
 
-            $parent = $class->getParentClass();
+            $parent = $current->getParentClass();
             if ($parent !== false) {
-                $collect($parent);
+                $pName = $parent->getName();
+                if (! isset($visited[$pName])) {
+                    $visited[$pName] = true;
+                    $hierarchy[] = $parent;
+                }
             }
 
-            foreach ($class->getInterfaces() as $interface) {
-                $collect($interface);
+            foreach ($current->getInterfaces() as $interface) {
+                $ifName = $interface->getName();
+                if (! isset($visited[$ifName])) {
+                    $visited[$ifName] = true;
+                    $hierarchy[] = $interface;
+                }
             }
 
-            foreach ($class->getTraits() as $trait) {
-                $collect($trait);
+            foreach ($current->getTraits() as $trait) {
+                $trName = $trait->getName();
+                if (! isset($visited[$trName])) {
+                    $visited[$trName] = true;
+                    $hierarchy[] = $trait;
+                }
             }
-        };
-
-        $collect($ref);
+        }
 
         return self::$classHierarchyCache[$cacheKey] = $hierarchy;
     }

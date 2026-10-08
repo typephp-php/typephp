@@ -19,7 +19,10 @@ final class NullableValidator implements TypeValidatorInterface
             return null;
         }
 
-        /** @var NullableTypeNode $node */
-        return $registry->validate($value, $node->type, $context, $isSensitive);
+        while ($node instanceof NullableTypeNode) {
+            $node = $node->type;
+        }
+
+        return $registry->validate($value, $node, $context, $isSensitive);
     }
 }

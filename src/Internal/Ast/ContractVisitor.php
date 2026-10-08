@@ -216,10 +216,14 @@ final class ContractVisitor extends NodeVisitorAbstract
 
     private function markWriteContext(Node $node): void
     {
+        while ($node instanceof Node\Expr\ArrayDimFetch || $node instanceof Node\Expr\PropertyFetch) {
+            $node->setAttribute('typephp_write_context', true);
+            $node = $node->var;
+        }
+
         $node->setAttribute('typephp_write_context', true);
-        if ($node instanceof Node\Expr\ArrayDimFetch || $node instanceof Node\Expr\PropertyFetch) {
-            $this->markWriteContext($node->var);
-        } elseif ($node instanceof Node\Expr\Array_ || $node instanceof Node\Expr\List_) {
+
+        if ($node instanceof Node\Expr\Array_ || $node instanceof Node\Expr\List_) {
             foreach ($node->items as $item) {
                 if ($item !== null) {
                     $this->markWriteContext($item->value);

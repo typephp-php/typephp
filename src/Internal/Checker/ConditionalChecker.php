@@ -38,12 +38,12 @@ final class ConditionalChecker
      */
     public static function containsConditional(TypeNode $node): bool
     {
-        if ($node instanceof ConditionalTypeNode || $node instanceof ConditionalTypeForParameterNode) {
-            return true;
+        while ($node instanceof NullableTypeNode || $node instanceof ArrayTypeNode) {
+            $node = $node->type;
         }
 
-        if ($node instanceof NullableTypeNode || $node instanceof ArrayTypeNode) {
-            return self::containsConditional($node->type);
+        if ($node instanceof ConditionalTypeNode || $node instanceof ConditionalTypeForParameterNode) {
+            return true;
         }
 
         if ($node instanceof GenericTypeNode) {

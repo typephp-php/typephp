@@ -557,6 +557,10 @@ final class FunctionContractInjector
      */
     private static function typeMatchesName(Node\Identifier|Node\Name|Node\ComplexType|null $type, array $targetNames): bool
     {
+        while ($type instanceof Node\NullableType) {
+            $type = $type->type;
+        }
+
         if ($type instanceof Node\Identifier) {
             return isset($targetNames[strtolower($type->name)]);
         }

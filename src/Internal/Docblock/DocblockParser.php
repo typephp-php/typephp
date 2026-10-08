@@ -190,6 +190,10 @@ final class DocblockParser
             return false;
         }
 
+        while ($node instanceof ArrayTypeNode || $node instanceof NullableTypeNode) {
+            $node = $node->type;
+        }
+
         if ($node instanceof IdentifierTypeNode) {
             return isset($templateNames[$node->name]);
         }
@@ -223,10 +227,6 @@ final class DocblockParser
         if ($node instanceof OffsetAccessTypeNode) {
             return self::typeReferencesTemplate($node->type, $templateNames)
                 || self::typeReferencesTemplate($node->offset, $templateNames);
-        }
-
-        if ($node instanceof ArrayTypeNode || $node instanceof NullableTypeNode) {
-            return self::typeReferencesTemplate($node->type, $templateNames);
         }
 
         if ($node instanceof UnionTypeNode || $node instanceof IntersectionTypeNode) {
@@ -1709,8 +1709,19 @@ final class DocblockParser
         }
 
         if ($node instanceof IdentifierTypeNode) {
-            if (isset($aliases[$node->name])) {
-                return self::substituteAliases($aliases[$node->name], $aliases);
+            $visited = [];
+            while (isset($aliases[$node->name])) {
+                if (isset($visited[$node->name])) {
+                    break;
+                }
+                $visited[$node->name] = true;
+                $target = $aliases[$node->name];
+
+                if ($target instanceof IdentifierTypeNode) {
+                    $node = $target;
+                } else {
+                    return self::substituteAliases($target, $aliases);
+                }
             }
 
             return $node;
