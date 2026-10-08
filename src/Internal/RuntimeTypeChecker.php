@@ -452,17 +452,19 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        $isMagicCall = str_contains($effectiveFunction, '__call');
-        $isMagicGet = str_ends_with($effectiveFunction, '::__get');
+        $isDynamicDispatch = str_contains($effectiveFunction, '::__')
+            && (str_contains($effectiveFunction, '__call') || str_ends_with($effectiveFunction, '::__get'));
 
-        if (! $isMagicCall && ! $isMagicGet && (isset(ReturnChecker::$noReturnContractCache[$function]) || isset(ReturnChecker::$noReturnContractCache[$effectiveFunction]))) {
-            ReturnChecker::$noReturnContractCache[$function] = true;
+        if (! $isDynamicDispatch) {
+            if (isset(ReturnChecker::$noReturnContractCache[$function]) || isset(ReturnChecker::$noReturnContractCache[$effectiveFunction])) {
+                ReturnChecker::$noReturnContractCache[$function] = true;
 
-            return $value;
+                return $value;
+            }
         }
 
         $contract = DocblockParser::parse($effectiveFunction);
-        if (! $isMagicCall && ! $isMagicGet && ($contract['returnUnconstrained'] ?? false)) {
+        if (! $isDynamicDispatch && ($contract['returnUnconstrained'] ?? false)) {
             return $value;
         }
 

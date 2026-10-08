@@ -342,7 +342,7 @@ final class ReturnChecker
 
         $hasGenerics = (\count($templates) > 0);
         $hasAliases = (\count($aliases) > 0);
-        $hasConditionals = ConditionalChecker::containsConditional($returnTypeNode);
+        $hasConditionals = ! ($returnTypeNode instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($returnTypeNode);
 
         if (! $hasGenerics && ! $hasAliases && ! $hasConditionals && ! ($returnTypeNode instanceof CallableTypeNode)) {
             $isDynamic = $contract['returnIsDynamic'] ?? (str_contains((string) $returnTypeNode, 'static') || str_contains((string) $returnTypeNode, '$this'));
@@ -354,8 +354,8 @@ final class ReturnChecker
             }
 
             if ($resolvedType instanceof IdentifierTypeNode) {
-                $lower = strtolower($resolvedType->name);
-                if ($lower === 'mixed' || $lower === 'array') {
+                $name = $resolvedType->name;
+                if ($name === 'mixed' || $name === 'array' || strtolower($name) === 'mixed' || strtolower($name) === 'array') {
                     return $value;
                 }
             }
