@@ -25,10 +25,13 @@ final class IdentifierValidator implements TypeValidatorInterface
         $lower = strtolower($name);
 
         $ok = match ($lower) {
-            'int', 'integer' => \is_int($value),
+            'int' => \is_int($value),
+            'integer' => \is_int($value) || (\is_object($value) && $name !== 'integer' && $this->validateClassOrIgnore($value, $name)),
             'string' => \is_string($value),
-            'float', 'double' => \is_float($value) || \is_int($value),
-            'bool', 'boolean' => \is_bool($value),
+            'float' => \is_float($value) || \is_int($value),
+            'double' => \is_float($value) || \is_int($value) || (\is_object($value) && $name !== 'double' && $this->validateClassOrIgnore($value, $name)),
+            'bool' => \is_bool($value),
+            'boolean' => \is_bool($value) || (\is_object($value) && $name !== 'boolean' && $this->validateClassOrIgnore($value, $name)),
             'array' => \is_array($value),
             'list' => \is_array($value) && (\count($value) === 0 || array_is_list($value)),
             'object', 'self', 'static', 'parent', '$this' => \is_object($value),

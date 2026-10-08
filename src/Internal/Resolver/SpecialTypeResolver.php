@@ -111,6 +111,15 @@ final class SpecialTypeResolver
     ];
 
     /**
+     * Scalar aliases that are not reserved keywords in PHP and can be user class names.
+     */
+    private const OVERRIDABLE_SCALAR_ALIASES = [
+        'integer' => true,
+        'boolean' => true,
+        'double' => true,
+    ];
+
+    /**
      * In-memory cache for Reflection instances per context string.
      *
      * @var array<string, \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod>
@@ -204,7 +213,9 @@ final class SpecialTypeResolver
         if ($node instanceof IdentifierTypeNode) {
             $lower = strtolower($node->name);
             if (isset(self::BUILTIN_TYPE_KEYWORDS[$lower]) && $lower !== 'self' && $lower !== 'parent' && $lower !== 'static' && $lower !== '$this') {
-                return $node;
+                if (! isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) || $node->name === $lower) {
+                    return $node;
+                }
             }
         }
 
@@ -236,7 +247,7 @@ final class SpecialTypeResolver
 
         if ($node instanceof GenericTypeNode) {
             $genericType = self::resolve($node->type, $context, $thisObj);
-            $innerTypes = array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->genericTypes);
+            $innerTypes = array_map(fn($t) => self::resolve($t, $context, $thisObj), $node->genericTypes);
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
@@ -290,11 +301,11 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->types));
+            return new UnionTypeNode(array_map(fn($t) => self::resolve($t, $context, $thisObj), $node->types));
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->types));
+            return new IntersectionTypeNode(array_map(fn($t) => self::resolve($t, $context, $thisObj), $node->types));
         }
 
         return $node;
@@ -328,7 +339,7 @@ final class SpecialTypeResolver
 
         if ($node instanceof GenericTypeNode) {
             $genericType = self::resolveForFile($node->type, $file);
-            $innerTypes = array_map(fn ($t) => self::resolveForFile($t, $file), $node->genericTypes);
+            $innerTypes = array_map(fn($t) => self::resolveForFile($t, $file), $node->genericTypes);
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
@@ -382,11 +393,11 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolveForFile($t, $file), $node->types));
+            return new UnionTypeNode(array_map(fn($t) => self::resolveForFile($t, $file), $node->types));
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolveForFile($t, $file), $node->types));
+            return new IntersectionTypeNode(array_map(fn($t) => self::resolveForFile($t, $file), $node->types));
         }
 
         return clone $node;
@@ -1056,8 +1067,11 @@ final class SpecialTypeResolver
      */
     public static function resolveFqcn(string $name, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref): string
     {
+        $lower = strtolower($name);
         if (self::isBuiltInTypeKeyword($name)) {
-            return $name;
+            if (! isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) || $name === $lower) {
+                return $name;
+            }
         }
 
         if (str_starts_with($name, '\\')) {
@@ -1089,6 +1103,10 @@ final class SpecialTypeResolver
 
         $resolved = self::resolveNameFromImportsAndNamespace($name, [], $namespace);
 
+        if (isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) && $resolved === $name && ! self::symbolExists($name)) {
+            return self::$fqcnCache[$contextKey][$name] = $name;
+        }
+
         return self::$fqcnCache[$contextKey][$name] = $resolved;
     }
 
@@ -1098,9 +1116,12 @@ final class SpecialTypeResolver
     public static function resolveFqcnForFile(string $name, string $file): string
     {
         $file = str_replace('\\', '/', $file);
+        $lower = strtolower($name);
 
         if (self::isBuiltInTypeKeyword($name)) {
-            return $name;
+            if (! isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) || $name === $lower) {
+                return $name;
+            }
         }
 
         if (str_starts_with($name, '\\')) {
@@ -1118,7 +1139,13 @@ final class SpecialTypeResolver
         $imports = self::getUseImportsFromFile($file);
         $namespace = self::getNamespaceFromFile($file);
 
-        return self::$fileFqcnCache[$file][$name] = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
+        $resolved = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
+
+        if (isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) && $resolved === $name && ! self::symbolExists($name)) {
+            return self::$fileFqcnCache[$file][$name] = $name;
+        }
+
+        return self::$fileFqcnCache[$file][$name] = $resolved;
     }
 
     /**
