@@ -265,7 +265,7 @@ final class ParamChecker
     ): ?ErrorMessage {
         foreach ($types as $paramName => $typeNode) {
             if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
-                if (ConditionalChecker::containsConditional($typeNode)) {
+                if (! ($typeNode instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($typeNode)) {
                     $typeNode = ConditionalChecker::resolve($typeNode, $vars, [], $registry, $effectiveFunction);
                 }
 
@@ -422,12 +422,12 @@ final class ParamChecker
             return $function;
         }
 
-        if (str_starts_with($function, $actualClassName . '::') && HierarchyResolver::getTraitAliases($actualClassName) === []) {
-            return $function;
-        }
-
         if (isset(self::$effectiveFunctionCache[$function][$actualClassName])) {
             return self::$effectiveFunctionCache[$function][$actualClassName];
+        }
+
+        if (str_starts_with($function, $actualClassName . '::') && HierarchyResolver::getTraitAliases($actualClassName) === []) {
+            return self::$effectiveFunctionCache[$function][$actualClassName] = $function;
         }
 
         [$classOrTrait, $methodName] = explode('::', $function, 2);

@@ -30,7 +30,8 @@ final class UnionValidator implements TypeValidatorInterface
 
         foreach ($unionNode->types as $type) {
             if ($type instanceof IdentifierTypeNode) {
-                $name = strtolower($type->name);
+                $name = $type->name;
+
                 if ($name === 'object' && \is_object($value)) {
                     return null;
                 }
@@ -47,6 +48,26 @@ final class UnionValidator implements TypeValidatorInterface
                     return null;
                 }
                 if ($name === 'class-string' && \is_string($value) && ClassNameValidator::isValidClassString($value)) {
+                    return null;
+                }
+
+                $lower = strtolower($name);
+                if ($lower === 'object' && \is_object($value)) {
+                    return null;
+                }
+                if (($lower === 'int' || $lower === 'integer') && \is_int($value)) {
+                    return null;
+                }
+                if ($lower === 'string' && \is_string($value)) {
+                    return null;
+                }
+                if (($lower === 'bool' || $lower === 'boolean') && \is_bool($value)) {
+                    return null;
+                }
+                if ($lower === 'null' && $value === null) {
+                    return null;
+                }
+                if ($lower === 'class-string' && \is_string($value) && ClassNameValidator::isValidClassString($value)) {
                     return null;
                 }
             }

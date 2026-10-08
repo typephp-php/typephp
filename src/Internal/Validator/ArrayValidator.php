@@ -6,6 +6,7 @@ namespace TypePHP\Internal\Validator;
 
 use Generator;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use Traversable;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
@@ -42,6 +43,58 @@ final class ArrayValidator implements TypeValidatorInterface
 
             if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
                 return $this->validateArrayHybrid($value, $arrayNode, $context, $registry, $count);
+            }
+
+            if ($arrayNode->type instanceof IdentifierTypeNode) {
+                $elemName = $arrayNode->type->name;
+
+                if ($elemName === 'int') {
+                    foreach ($value as $k => $v) {
+                        if (! \is_int($v)) {
+                            $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
+
+                            return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type int, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
+                        }
+                    }
+
+                    return null;
+                }
+
+                if ($elemName === 'string') {
+                    foreach ($value as $k => $v) {
+                        if (! \is_string($v)) {
+                            $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
+
+                            return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type string, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
+                        }
+                    }
+
+                    return null;
+                }
+
+                if ($elemName === 'bool') {
+                    foreach ($value as $k => $v) {
+                        if (! \is_bool($v)) {
+                            $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
+
+                            return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type bool, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
+                        }
+                    }
+
+                    return null;
+                }
+
+                if ($elemName === 'float') {
+                    foreach ($value as $k => $v) {
+                        if (! \is_float($v) && ! \is_int($v)) {
+                            $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
+
+                            return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type float, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
+                        }
+                    }
+
+                    return null;
+                }
             }
 
             foreach ($value as $k => $v) {
