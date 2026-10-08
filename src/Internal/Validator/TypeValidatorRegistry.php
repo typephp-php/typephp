@@ -85,6 +85,10 @@ final class TypeValidatorRegistry
      */
     public function validate(mixed $value, TypeNode $node, string $context = '', bool $isSensitive = false): ?ErrorMessage
     {
+        if ($node instanceof IdentifierTypeNode) {
+            return $this->identifierValidator->validate($value, $node, $context, $this, $isSensitive);
+        }
+
         $validator = $this->validatorMap[$node::class] ?? null;
         if ($validator === null) {
             return null;

@@ -1187,10 +1187,52 @@ final class TemplateManager
      */
     public static function checkVariance(TypeNode $existing, TypeNode $expected, string $variance): bool
     {
+        if ($existing === $expected || $variance === GenericTypeNode::VARIANCE_BIVARIANT) {
+            return true;
+        }
+
+        if ($existing instanceof IdentifierTypeNode && $expected instanceof IdentifierTypeNode) {
+            $existingName = $existing->name;
+            $expectedName = $expected->name;
+
+            if ($existingName === $expectedName || $expectedName === 'mixed' || $expectedName === '*') {
+                return true;
+            }
+
+            $lowerExpected = strtolower($expectedName);
+            $lowerExisting = strtolower($existingName);
+
+            if ($lowerExpected === 'mixed' || $lowerExpected === '*') {
+                return true;
+            }
+
+            if ($lowerExpected === 'object' && ClassNameValidator::isValid($existingName) && self::isRealTypeSymbol($existingName)) {
+                return true;
+            }
+
+            if (self::isScalarSubtype($lowerExisting, $lowerExpected)) {
+                return true;
+            }
+
+            if ($variance === GenericTypeNode::VARIANCE_COVARIANT && isset(self::COLLECTION_SUBTYPES[$lowerExpected])) {
+                return isset(self::COLLECTION_SUBTYPES[$lowerExpected][$lowerExisting]);
+            }
+
+            if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
+                return self::isSubclass($existingName, $expectedName);
+            }
+
+            if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
+                return self::isSubclass($expectedName, $existingName);
+            }
+
+            return false;
+        }
+
         $existingStr = (string) $existing;
         $expectedStr = (string) $expected;
 
-        if ($existingStr === $expectedStr || $variance === GenericTypeNode::VARIANCE_BIVARIANT || $expectedStr === 'mixed' || $expectedStr === '*') {
+        if ($existingStr === $expectedStr || $expectedStr === 'mixed' || $expectedStr === '*') {
             return true;
         }
 
@@ -1379,7 +1421,14 @@ final class TemplateManager
     private static function checkNestedGenericVariance(GenericTypeNode $existing, GenericTypeNode $expected): bool
     {
         $expectedClassName = $expected->type->name;
-        if (! is_a($existing->type->name, $expectedClassName, true)) {
+        $lowerExpected = strtolower($expectedClassName);
+
+        if (isset(self::COLLECTION_SUBTYPES[$lowerExpected])) {
+            $lowerExisting = strtolower($existing->type->name);
+            if (! isset(self::COLLECTION_SUBTYPES[$lowerExpected][$lowerExisting])) {
+                return false;
+            }
+        } elseif (! is_a($existing->type->name, $expectedClassName, true)) {
             return false;
         }
 

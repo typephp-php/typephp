@@ -22,6 +22,26 @@ final class IdentifierValidator implements TypeValidatorInterface
         /** @var IdentifierTypeNode $identifierNode */
         $identifierNode = $node;
         $name = $identifierNode->name;
+
+        if ($name === 'int') {
+            return \is_int($value) ? null : ErrorFactory::createError($context . ' must be of type int, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+        if ($name === 'string') {
+            return \is_string($value) ? null : ErrorFactory::createError($context . ' must be of type string, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+        if ($name === 'bool') {
+            return \is_bool($value) ? null : ErrorFactory::createError($context . ' must be of type bool, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+        if ($name === 'array') {
+            return \is_array($value) ? null : ErrorFactory::createError($context . ' must be of type array, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+        if ($name === 'mixed') {
+            return null;
+        }
+        if ($name === 'float') {
+            return (\is_float($value) || \is_int($value)) ? null : ErrorFactory::createError($context . ' must be of type float, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+
         $lower = strtolower($name);
 
         $ok = match ($lower) {

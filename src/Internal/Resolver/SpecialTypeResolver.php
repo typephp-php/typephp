@@ -1249,7 +1249,7 @@ final class SpecialTypeResolver
      */
     public static function isBuiltInTypeKeyword(string $name): bool
     {
-        return isset(self::BUILTIN_TYPE_KEYWORDS[strtolower($name)]);
+        return isset(self::BUILTIN_TYPE_KEYWORDS[$name]) || isset(self::BUILTIN_TYPE_KEYWORDS[strtolower($name)]);
     }
 
     /**
