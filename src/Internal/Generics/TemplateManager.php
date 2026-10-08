@@ -377,6 +377,14 @@ final class TemplateManager
     private static array $isMethodTemplateCache = [];
 
     /**
+     * 2D Cache for whether a template is F-bounded (recursive self-bound):
+     * [$context][$templateName] => bool
+     *
+     * @var array<string, array<string, bool>>
+     */
+    private static array $isFBoundCache = [];
+
+    /**
      * Stack storing pending generic instantiations for constructors.
      *
      * @var list<array{typeString: string, file: string, targetClass: string}>
@@ -397,6 +405,7 @@ final class TemplateManager
         self::$pendingCloneSource = null;
         self::$methodTemplatesCache = [];
         self::$isMethodTemplateCache = [];
+        self::$isFBoundCache = [];
         self::$pendingInstantiations = [];
     }
 
@@ -544,6 +553,28 @@ final class TemplateManager
     public static function clearCallBindings(string $function, array $templates): void
     {
         self::pushCallFrame($function);
+    }
+
+    /**
+     * Checks whether a template declaration has an F-bound (self-referential upper bound like T of Comparable<T>).
+     */
+    public static function isFBounded(TemplateTagValueNode $templateNode, string $context = ''): bool
+    {
+        if ($templateNode->bound === null) {
+            return false;
+        }
+
+        $templateName = $templateNode->name;
+        $contextKey = $context !== '' ? $context : spl_object_hash($templateNode);
+
+        if (isset(self::$isFBoundCache[$contextKey][$templateName])) {
+            return self::$isFBoundCache[$contextKey][$templateName];
+        }
+
+        return self::$isFBoundCache[$contextKey][$templateName] = DocblockParser::typeReferencesTemplate(
+            $templateNode->bound,
+            [$templateName => true]
+        );
     }
 
     /**
@@ -899,10 +930,15 @@ final class TemplateManager
         $isWildcardOrMixed = ($expectedTypeNode instanceof IdentifierTypeNode && ($expectedTypeNode->name === '*' || strtolower($expectedTypeNode->name) === 'mixed'));
 
         if ($templateTag->bound !== null && ! $isWildcardOrMixed) {
-            $satisfiesBound = self::checkVariance($expectedTypeNode, $templateTag->bound, GenericTypeNode::VARIANCE_COVARIANT);
+            $boundNode = $templateTag->bound;
+            if (self::isFBounded($templateTag, $className)) {
+                $boundNode = TemplateSubstitutor::substitute($boundNode, [$templateTag->name => $expectedTypeNode]);
+            }
+
+            $satisfiesBound = self::checkVariance($expectedTypeNode, $boundNode, GenericTypeNode::VARIANCE_COVARIANT);
 
             if (! $satisfiesBound) {
-                $contextPrefix = $context !== '' ? (str_ends_with($context, ':') ? $context . ' ' : $context . ': ') : ' ';
+                $contextPrefix = $context !== '' ? (str_ends_with($context, ':') ? $context . ' ' : $context . ' ') : ' ';
 
                 return ErrorFactory::createError(
                     $contextPrefix . "Generic type argument {$expectedTypeNode} does not satisfy upper bound {$templateTag->bound} of template {$templateTag->name} in {$className}"
@@ -1303,7 +1339,7 @@ final class TemplateManager
         if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
             foreach ($expected->types as $intersectionMember) {
                 if (! self::checkVariance($existing, $intersectionMember, $variance)) {
-                    return true;
+                    return false;
                 }
             }
 

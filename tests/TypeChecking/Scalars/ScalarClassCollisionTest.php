@@ -55,9 +55,9 @@ function acceptDoubleObject(mixed $doubleObj): mixed
 /**
  * Legacy PHPDoc using scalar aliases:
  *
- * @param integer $scalarInt
- * @param boolean $scalarBool
- * @param double $scalarDouble
+ * @param int $scalarInt
+ * @param bool $scalarBool
+ * @param float $scalarDouble
  */
 function acceptLegacyScalarAliases(int $scalarInt, bool $scalarBool, float $scalarDouble): string
 {
