@@ -6,6 +6,50 @@ use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Iterators\GenericStreamService;
 
+/**
+ * Generator with valid TReturn
+ *
+ * @param list<string> $items
+ *
+ * @return Generator<int, string, mixed, bool>
+ */
+function testGeneratorWithValidReturn(array $items): Generator
+{
+    foreach ($items as $i => $item) {
+        yield $i => $item;
+    }
+
+    return true;
+}
+
+/**
+ * Generator with invalid TReturn
+ *
+ * @param list<string> $items
+ *
+ * @return Generator<int, string, mixed, bool>
+ */
+function testGeneratorWithInvalidReturn(array $items): Generator
+{
+    foreach ($items as $i => $item) {
+        yield $i => $item;
+    }
+
+    return 12345; // Violates bool!
+}
+
+/**
+ * Generator declared to return void but returns a value
+ *
+ * @return Generator<int, string, mixed, void>
+ */
+function testGeneratorWithInvalidVoidReturn(): Generator
+{
+    yield 0 => 'a';
+
+    return 'not_void';
+}
+
 describe('Generic Iterables & Generators (@template T with iterable<T> and Generator<K, V>)', function () {
     describe('Generic Iterable Parameters (iterable<T>)', function () {
         test('collects items from iterable matching inferred template T = int', function () {
@@ -104,6 +148,38 @@ describe('Generic Iterables & Generators (@template T with iterable<T> and Gener
             expect(fn () => $gen->send('invalid'))
                 ->toThrow(TypeError::class, 'must be of type int')
             ;
+        });
+    });
+
+    describe('Generator Return Value Validation (TReturn)', function () {
+        test('accepts valid TReturn value upon generator completion', function () {
+            $gen = testGeneratorWithValidReturn(['a', 'b']);
+
+            foreach ($gen as $item) {
+                // consume yields
+            }
+
+            expect($gen->getReturn())->toBeTrue();
+        });
+
+        test('throws TypeError when generator return value violates TReturn contract', function () {
+            $gen = testGeneratorWithInvalidReturn(['a', 'b']);
+
+            expect(function () use ($gen) {
+                foreach ($gen as $item) {
+                    // consume yields
+                }
+            })->toThrow(TypeError::class, 'Generator return value (TReturn) must be of type bool, int (12345) given');
+        });
+
+        test('throws TypeError when generator with TReturn = void returns a value', function () {
+            $gen = testGeneratorWithInvalidVoidReturn();
+
+            expect(function () use ($gen) {
+                foreach ($gen as $item) {
+                    // consume yields
+                }
+            })->toThrow(TypeError::class, 'must be of type void');
         });
     });
 });

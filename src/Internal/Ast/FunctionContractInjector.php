@@ -761,12 +761,53 @@ final class FunctionContractInjector
                     );
                 }
 
+                if ($n instanceof Node\Stmt\Return_) {
+                    if ($n->getAttribute('typephp_var_wrapped') === true || $n->getAttribute('typephp_generator_return_wrapped') === true) {
+                        return null;
+                    }
+                    $n->setAttribute('typephp_generator_return_wrapped', true);
+
+                    $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
+                    $checkCall = new Node\Expr\FuncCall(
+                        new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkGeneratorReturn'),
+                        [
+                            new Node\Arg(new Node\Scalar\MagicConst\Method()),
+                            new Node\Arg($exprToWrap),
+                            new Node\Arg($this->thisArg),
+                        ]
+                    );
+
+                    $n->expr = FunctionContractInjector::buildTernaryReturnExpr($checkCall, $n->getStartLine());
+
+                    return $n;
+                }
+
                 return null;
             }
         });
 
         /** @var array<Node\Stmt> $newStmts */
         $newStmts = $traverser->traverse($stmts);
+
+        $lastStmt = end($newStmts);
+        if (! $lastStmt instanceof Node\Stmt\Return_ && ! ($lastStmt instanceof Node\Stmt\Expression && $lastStmt->expr instanceof Node\Expr\Throw_)) {
+            $checkCall = new Node\Expr\FuncCall(
+                new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkGeneratorReturn'),
+                [
+                    new Node\Arg(new Node\Scalar\MagicConst\Method()),
+                    new Node\Arg(new Node\Expr\ConstFetch(new Node\Name('null'))),
+                    new Node\Arg($thisArg),
+                ]
+            );
+
+            $fallbackLine = $lastStmt instanceof Node\Stmt ? $lastStmt->getStartLine() : null;
+            $ternaryExpr = self::buildTernaryReturnExpr($checkCall, $fallbackLine);
+
+            $retStmt = new Node\Stmt\Return_($ternaryExpr);
+            $retStmt->setAttribute('typephp_injected', true);
+            $retStmt->setAttribute('typephp_generator_return_wrapped', true);
+            $newStmts[] = $retStmt;
+        }
 
         return $newStmts;
     }

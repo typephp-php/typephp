@@ -522,6 +522,35 @@ final class RuntimeTypeChecker
     }
 
     /**
+     * Validates a value returned from a generator against TReturn.
+     */
+    public static function checkGeneratorReturn(string $function, mixed $value, object|string|null $thisOrClass = null): mixed
+    {
+        if (! Config::isEnabled() || ! Config::isReturnsEnabled()) {
+            return $value;
+        }
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+            return $value;
+        }
+
+        $res = GeneratorChecker::checkReturn($function, $value, self::getRegistry(), $thisOrClass);
+
+        if ($res instanceof ErrorMessage) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return $value;
+            }
+
+            return ViolationCollector::handle($res, 'return', $value, function: $effectiveFunction, target: 'return');
+        }
+
+        return $res;
+    }
+
+    /**
      * Validates yielded keys and values from a generator function against TKey and TValue.
      */
     public static function checkYield(string $function, mixed $key, mixed $value, object|string|null $thisOrClass = null): mixed
