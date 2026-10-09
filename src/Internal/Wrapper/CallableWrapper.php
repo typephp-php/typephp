@@ -5,11 +5,16 @@ declare(strict_types=1);
 namespace TypePHP\Internal\Wrapper;
 
 use Closure;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use ReflectionFunction;
 use TypeError;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
@@ -169,7 +174,11 @@ final class CallableWrapper
 
         if (! $hasAnyRef) {
             return function (...$args) use ($callable, $typeNode, $registry, $prefix) {
-                self::validateCallbackArguments($typeNode, $args, $prefix, $registry, $callable);
+                $effectiveTypeNode = $typeNode->templateTypes !== []
+                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                    : $typeNode;
+
+                self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
                 try {
                     $result = $callable(...$args);
@@ -177,13 +186,17 @@ final class CallableWrapper
                     throw ErrorFactory::prepareException($e);
                 }
 
-                return self::validateCallbackReturn($typeNode, $result, $prefix, $registry, $callable);
+                return self::validateCallbackReturn($effectiveTypeNode, $result, $prefix, $registry, $callable);
             };
         }
 
         if ($isVariadicRef) {
             return function (&...$args) use ($callable, $typeNode, $registry, $prefix) {
-                self::validateCallbackArguments($typeNode, $args, $prefix, $registry, $callable);
+                $effectiveTypeNode = $typeNode->templateTypes !== []
+                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                    : $typeNode;
+
+                self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
                 try {
                     $result = $callable(...$args);
@@ -191,16 +204,20 @@ final class CallableWrapper
                     throw ErrorFactory::prepareException($e);
                 }
 
-                self::validateCallbackByRefMutations($typeNode, $args, $prefix, $registry, $callable);
+                self::validateCallbackByRefMutations($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
-                return self::validateCallbackReturn($typeNode, $result, $prefix, $registry, $callable);
+                return self::validateCallbackReturn($effectiveTypeNode, $result, $prefix, $registry, $callable);
             };
         }
 
         if ($refPattern === [true]) {
             return function (mixed &$a = null) use ($callable, $typeNode, $registry, $prefix) {
                 $args = [&$a];
-                self::validateCallbackArguments($typeNode, $args, $prefix, $registry, $callable);
+                $effectiveTypeNode = $typeNode->templateTypes !== []
+                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                    : $typeNode;
+
+                self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
                 try {
                     $result = $callable($a);
@@ -208,16 +225,20 @@ final class CallableWrapper
                     throw ErrorFactory::prepareException($e);
                 }
 
-                self::validateCallbackByRefMutations($typeNode, $args, $prefix, $registry, $callable);
+                self::validateCallbackByRefMutations($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
-                return self::validateCallbackReturn($typeNode, $result, $prefix, $registry, $callable);
+                return self::validateCallbackReturn($effectiveTypeNode, $result, $prefix, $registry, $callable);
             };
         }
 
         if ($refPattern === [true, false]) {
             return function (mixed &$a = null, mixed $b = null) use ($callable, $typeNode, $registry, $prefix) {
                 $args = [&$a, $b];
-                self::validateCallbackArguments($typeNode, $args, $prefix, $registry, $callable);
+                $effectiveTypeNode = $typeNode->templateTypes !== []
+                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                    : $typeNode;
+
+                self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
                 try {
                     $result = $callable($a, $b);
@@ -225,16 +246,20 @@ final class CallableWrapper
                     throw ErrorFactory::prepareException($e);
                 }
 
-                self::validateCallbackByRefMutations($typeNode, $args, $prefix, $registry, $callable);
+                self::validateCallbackByRefMutations($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
-                return self::validateCallbackReturn($typeNode, $result, $prefix, $registry, $callable);
+                return self::validateCallbackReturn($effectiveTypeNode, $result, $prefix, $registry, $callable);
             };
         }
 
         if ($refPattern === [false, true]) {
             return function (mixed $a = null, mixed &$b = null) use ($callable, $typeNode, $registry, $prefix) {
                 $args = [$a, &$b];
-                self::validateCallbackArguments($typeNode, $args, $prefix, $registry, $callable);
+                $effectiveTypeNode = $typeNode->templateTypes !== []
+                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                    : $typeNode;
+
+                self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
                 try {
                     $result = $callable($a, $b);
@@ -242,16 +267,20 @@ final class CallableWrapper
                     throw ErrorFactory::prepareException($e);
                 }
 
-                self::validateCallbackByRefMutations($typeNode, $args, $prefix, $registry, $callable);
+                self::validateCallbackByRefMutations($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
-                return self::validateCallbackReturn($typeNode, $result, $prefix, $registry, $callable);
+                return self::validateCallbackReturn($effectiveTypeNode, $result, $prefix, $registry, $callable);
             };
         }
 
         if ($refPattern === [true, true]) {
             return function (mixed &$a = null, mixed &$b = null) use ($callable, $typeNode, $registry, $prefix) {
                 $args = [&$a, &$b];
-                self::validateCallbackArguments($typeNode, $args, $prefix, $registry, $callable);
+                $effectiveTypeNode = $typeNode->templateTypes !== []
+                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                    : $typeNode;
+
+                self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
                 try {
                     $result = $callable($a, $b);
@@ -259,14 +288,18 @@ final class CallableWrapper
                     throw ErrorFactory::prepareException($e);
                 }
 
-                self::validateCallbackByRefMutations($typeNode, $args, $prefix, $registry, $callable);
+                self::validateCallbackByRefMutations($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
-                return self::validateCallbackReturn($typeNode, $result, $prefix, $registry, $callable);
+                return self::validateCallbackReturn($effectiveTypeNode, $result, $prefix, $registry, $callable);
             };
         }
 
         return function (&...$args) use ($callable, $typeNode, $registry, $prefix) {
-            self::validateCallbackArguments($typeNode, $args, $prefix, $registry, $callable);
+            $effectiveTypeNode = $typeNode->templateTypes !== []
+                ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                : $typeNode;
+
+            self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
             try {
                 $result = $callable(...$args);
@@ -274,10 +307,264 @@ final class CallableWrapper
                 throw ErrorFactory::prepareException($e);
             }
 
-            self::validateCallbackByRefMutations($typeNode, $args, $prefix, $registry, $callable);
+            self::validateCallbackByRefMutations($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
-            return self::validateCallbackReturn($typeNode, $result, $prefix, $registry, $callable);
+            return self::validateCallbackReturn($effectiveTypeNode, $result, $prefix, $registry, $callable);
         };
+    }
+
+    /**
+     * @param array<int|string, mixed> $args
+     */
+    private static function resolveEffectiveCallableTypeNode(
+        CallableTypeNode $typeNode,
+        array $args,
+        string $prefix,
+        TypeValidatorRegistry $registry,
+        mixed $callable = null
+    ): CallableTypeNode {
+        if ($typeNode->templateTypes === []) {
+            return $typeNode;
+        }
+
+        /** @var array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode> $localTemplates */
+        $localTemplates = [];
+        foreach ($typeNode->templateTypes as $tTag) {
+            if (! SpecialTypeResolver::isBuiltInTypeKeyword($tTag->name)) {
+                $localTemplates[$tTag->name] = $tTag;
+            }
+        }
+
+        if ($localTemplates === []) {
+            return $typeNode;
+        }
+
+        $boundLocal = [];
+        $argValues = array_values($args);
+
+        foreach ($typeNode->parameters as $index => $paramNode) {
+            $rawParamName = ltrim($paramNode->parameterName !== null ? $paramNode->parameterName : '', '$');
+
+            if ($paramNode->isVariadic) {
+                $variadicVals = \array_slice($argValues, $index);
+                foreach ($variadicVals as $vIdx => $vVal) {
+                    self::inferLocalTemplateFromParam(
+                        $paramNode->type,
+                        $vVal,
+                        $localTemplates,
+                        $boundLocal,
+                        $prefix . ' variadic argument #' . ($index + $vIdx + 1),
+                        $registry,
+                        $callable
+                    );
+                }
+
+                break;
+            }
+
+            $val = null;
+            $hasVal = false;
+
+            if ($rawParamName !== '' && \array_key_exists($rawParamName, $args)) {
+                $val = $args[$rawParamName];
+                $hasVal = true;
+            } elseif (\array_key_exists($index, $argValues)) {
+                $val = $argValues[$index];
+                $hasVal = true;
+            }
+
+            if ($hasVal) {
+                $argLabel = $rawParamName !== '' ? "\$$rawParamName" : ('argument #' . ($index + 1));
+                self::inferLocalTemplateFromParam(
+                    $paramNode->type,
+                    $val,
+                    $localTemplates,
+                    $boundLocal,
+                    $prefix . ' ' . $argLabel,
+                    $registry,
+                    $callable
+                );
+            }
+        }
+
+        if ($callable instanceof Closure) {
+            try {
+                $ref = new ReflectionFunction($callable);
+                if ($ref->hasReturnType()) {
+                    $retType = $ref->getReturnType();
+                    if ($retType instanceof \ReflectionNamedType && $retType->getName() !== 'mixed') {
+                        $retName = $retType->getName();
+                        if ($typeNode->returnType instanceof IdentifierTypeNode && isset($localTemplates[$typeNode->returnType->name])) {
+                            $rName = $typeNode->returnType->name;
+                            if (! isset($boundLocal[$rName])) {
+                                $boundLocal[$rName] = new IdentifierTypeNode($retName);
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        $resolvedParams = [];
+        foreach ($typeNode->parameters as $p) {
+            $resolvedParams[] = new CallableTypeParameterNode(
+                TemplateSubstitutor::substitute($p->type, $boundLocal, $localTemplates),
+                $p->isReference,
+                $p->isVariadic,
+                $p->parameterName,
+                $p->isOptional
+            );
+        }
+
+        $resolvedReturn = TemplateSubstitutor::substitute($typeNode->returnType, $boundLocal, $localTemplates);
+
+        return new CallableTypeNode($typeNode->identifier, $resolvedParams, $resolvedReturn, $typeNode->templateTypes);
+    }
+
+    /**
+     * @param array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode> $localTemplates
+     * @param array<string, TypeNode> $boundLocal
+     */
+    private static function inferLocalTemplateFromParam(
+        TypeNode $typeNode,
+        mixed $value,
+        array $localTemplates,
+        array &$boundLocal,
+        string $context,
+        TypeValidatorRegistry $registry,
+        mixed $callable = null
+    ): void {
+        if ($typeNode instanceof \PHPStan\PhpDocParser\Ast\Type\NullableTypeNode) {
+            if ($value !== null) {
+                self::inferLocalTemplateFromParam($typeNode->type, $value, $localTemplates, $boundLocal, $context, $registry, $callable);
+            }
+
+            return;
+        }
+
+        if ($typeNode instanceof IdentifierTypeNode && isset($localTemplates[$typeNode->name])) {
+            $tName = $typeNode->name;
+            $tTag = $localTemplates[$tName];
+
+            if ($tTag->bound !== null) {
+                $boundErr = $registry->validate($value, $tTag->bound, $context);
+                if ($boundErr !== null) {
+                    if ($callable !== null && CallerBoundaryResolver::shouldBypassCallback($callable, $context)) {
+                        return;
+                    }
+
+                    $handled = ViolationCollector::handle($boundErr, 'callback', null);
+                    if ($handled instanceof ErrorMessage) {
+                        throw ErrorFactory::prepareException(new TypePHPTypeError($boundErr->getMessage()));
+                    }
+                }
+            }
+
+            $inferred = TemplateManager::inferTypeFromValue($value);
+
+            if (! isset($boundLocal[$tName])) {
+                $boundLocal[$tName] = $inferred;
+            } else {
+                $existingType = $boundLocal[$tName];
+                if ($registry->validate($value, $existingType, '') !== null) {
+                    if ($tTag->bound !== null && $registry->validate($value, $tTag->bound, '') === null) {
+                        $boundLocal[$tName] = self::unifyLocalTypes($existingType, $inferred);
+                    }
+                }
+            }
+
+            return;
+        }
+
+        if ($typeNode instanceof ArrayTypeNode && \is_array($value)) {
+            foreach ($value as $item) {
+                self::inferLocalTemplateFromParam($typeNode->type, $item, $localTemplates, $boundLocal, $context, $registry, $callable);
+            }
+
+            return;
+        }
+
+        if ($typeNode instanceof GenericTypeNode) {
+            $baseName = strtolower($typeNode->type->name);
+            if (\in_array($baseName, ['list', 'array', 'iterable'], true) && \is_array($value)) {
+                $innerType = $typeNode->genericTypes[1] ?? $typeNode->genericTypes[0] ?? null;
+                if ($innerType !== null) {
+                    foreach ($value as $item) {
+                        self::inferLocalTemplateFromParam($innerType, $item, $localTemplates, $boundLocal, $context, $registry, $callable);
+                    }
+                }
+            }
+
+            return;
+        }
+
+        if ($typeNode instanceof \PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode && \is_array($value)) {
+            $nextIdx = 0;
+            foreach ($typeNode->items as $item) {
+                $key = match (true) {
+                    $item->keyName instanceof ConstExprStringNode => $item->keyName->value,
+                    $item->keyName instanceof ConstExprIntegerNode => (int) $item->keyName->value,
+                    $item->keyName instanceof IdentifierTypeNode => $item->keyName->name,
+                    $item->keyName !== null => (string) $item->keyName,
+                    default => $nextIdx,
+                };
+                if (\is_int($key)) {
+                    $nextIdx = max($nextIdx, $key + 1);
+                }
+                if (\array_key_exists($key, $value)) {
+                    self::inferLocalTemplateFromParam($item->valueType, $value[$key], $localTemplates, $boundLocal, $context, $registry, $callable);
+                }
+            }
+
+            return;
+        }
+
+        if ($typeNode instanceof ObjectShapeNode && \is_object($value)) {
+            foreach ($typeNode->items as $item) {
+                $prop = $item->keyName instanceof IdentifierTypeNode ? $item->keyName->name : (string) $item->keyName;
+                // @phpstan-ignore property.dynamicName
+                if (isset($value->$prop) || property_exists($value, $prop)) {
+                    // @phpstan-ignore property.dynamicName
+                    $propVal = $value->$prop;
+                    self::inferLocalTemplateFromParam($item->valueType, $propVal, $localTemplates, $boundLocal, $context, $registry, $callable);
+                }
+            }
+        }
+    }
+
+    private static function unifyLocalTypes(TypeNode $type1, TypeNode $type2): TypeNode
+    {
+        if ((string) $type1 === (string) $type2) {
+            return $type1;
+        }
+
+        $types = [];
+        if ($type1 instanceof UnionTypeNode) {
+            $types = $type1->types;
+        } else {
+            $types[] = $type1;
+        }
+
+        if ($type2 instanceof UnionTypeNode) {
+            foreach ($type2->types as $t) {
+                $types[] = $t;
+            }
+        } else {
+            $types[] = $type2;
+        }
+
+        $unique = [];
+        $deduped = [];
+        foreach ($types as $t) {
+            $str = (string) $t;
+            if (! isset($unique[$str])) {
+                $unique[$str] = true;
+                $deduped[] = $t;
+            }
+        }
+
+        return \count($deduped) === 1 ? $deduped[0] : new UnionTypeNode($deduped);
     }
 
     private static function validateCallbackReturn(

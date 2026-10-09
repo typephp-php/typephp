@@ -234,20 +234,30 @@ final class TemplateSubstitutor
     }
 
     /**
-     * @param array<string, TypeNode> $boundTemplates
-     * @param array<string, TemplateTagValueNode> $declaredTemplates
-     * @param array<string, true> $visited
-     */
+       * @param array<string, TypeNode> $boundTemplates
+       * @param array<string, TemplateTagValueNode> $declaredTemplates
+       * @param array<string, true> $visited
+      */
     private static function substituteCallable(
         CallableTypeNode $node,
         array $boundTemplates,
         array $declaredTemplates,
         array $visited
     ): CallableTypeNode {
+        $localTemplateNames = [];
+        foreach ($node->templateTypes as $tTag) {
+            $localTemplateNames[$tTag->name] = true;
+        }
+
+        $unboundLocalNames = array_diff_key($localTemplateNames, $boundTemplates);
+        $effectiveDeclared = $unboundLocalNames !== []
+            ? array_diff_key($declaredTemplates, $unboundLocalNames)
+            : $declaredTemplates;
+
         $parameters = [];
         foreach ($node->parameters as $param) {
             $parameters[] = new CallableTypeParameterNode(
-                self::substituteNode($param->type, $boundTemplates, $declaredTemplates, $visited),
+                self::substituteNode($param->type, $boundTemplates, $effectiveDeclared, $visited),
                 $param->isReference,
                 $param->isVariadic,
                 $param->parameterName,
@@ -255,7 +265,7 @@ final class TemplateSubstitutor
             );
         }
 
-        $returnType = self::substituteNode($node->returnType, $boundTemplates, $declaredTemplates, $visited);
+        $returnType = self::substituteNode($node->returnType, $boundTemplates, $effectiveDeclared, $visited);
 
         return new CallableTypeNode(
             $node->identifier,

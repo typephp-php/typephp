@@ -677,10 +677,32 @@ final class SpecialTypeResolver
      */
     private static function resolveCallable(CallableTypeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context, ?object $thisObj): CallableTypeNode
     {
+        $localTemplates = [];
+        $resolvedTemplateTypes = [];
+        foreach ($node->templateTypes as $tTag) {
+            $localTemplates[$tTag->name] = true;
+            $resolvedBound = $tTag->bound !== null
+                ? self::resolve($tTag->bound, $context, $thisObj)
+                : null;
+            $resolvedDefault = $tTag->default !== null
+                ? self::resolve($tTag->default, $context, $thisObj)
+                : null;
+            $resolvedTemplateTypes[] = new \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode(
+                $tTag->name,
+                $resolvedBound,
+                $tTag->description,
+                $resolvedDefault
+            );
+        }
+
         $resolvedParameters = [];
         foreach ($node->parameters as $param) {
+            $paramType = ($param->type instanceof IdentifierTypeNode && isset($localTemplates[$param->type->name]))
+                ? $param->type
+                : self::resolve($param->type, $context, $thisObj);
+
             $resolvedParameters[] = new CallableTypeParameterNode(
-                self::resolve($param->type, $context, $thisObj),
+                $paramType,
                 $param->isReference,
                 $param->isVariadic,
                 $param->parameterName,
@@ -688,9 +710,11 @@ final class SpecialTypeResolver
             );
         }
 
-        $resolvedReturnType = self::resolve($node->returnType, $context, $thisObj);
+        $resolvedReturnType = ($node->returnType instanceof IdentifierTypeNode && isset($localTemplates[$node->returnType->name]))
+            ? $node->returnType
+            : self::resolve($node->returnType, $context, $thisObj);
 
-        return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $node->templateTypes);
+        return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $resolvedTemplateTypes);
     }
 
     private static function resolveConstTypeForFile(ConstTypeNode $node, string $file): ConstTypeNode
@@ -807,10 +831,32 @@ final class SpecialTypeResolver
 
     private static function resolveCallableForFile(CallableTypeNode $node, string $file): CallableTypeNode
     {
+        $localTemplates = [];
+        $resolvedTemplateTypes = [];
+        foreach ($node->templateTypes as $tTag) {
+            $localTemplates[$tTag->name] = true;
+            $resolvedBound = $tTag->bound !== null
+                ? self::resolveForFile($tTag->bound, $file)
+                : null;
+            $resolvedDefault = $tTag->default !== null
+                ? self::resolveForFile($tTag->default, $file)
+                : null;
+            $resolvedTemplateTypes[] = new \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode(
+                $tTag->name,
+                $resolvedBound,
+                $tTag->description,
+                $resolvedDefault
+            );
+        }
+
         $resolvedParameters = [];
         foreach ($node->parameters as $param) {
+            $paramType = ($param->type instanceof IdentifierTypeNode && isset($localTemplates[$param->type->name]))
+                ? clone $param->type
+                : self::resolveForFile($param->type, $file);
+
             $resolvedParameters[] = new CallableTypeParameterNode(
-                self::resolveForFile($param->type, $file),
+                $paramType,
                 $param->isReference,
                 $param->isVariadic,
                 $param->parameterName,
@@ -818,9 +864,11 @@ final class SpecialTypeResolver
             );
         }
 
-        $resolvedReturnType = self::resolveForFile($node->returnType, $file);
+        $resolvedReturnType = ($node->returnType instanceof IdentifierTypeNode && isset($localTemplates[$node->returnType->name]))
+            ? clone $node->returnType
+            : self::resolveForFile($node->returnType, $file);
 
-        return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $node->templateTypes);
+        return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $resolvedTemplateTypes);
     }
 
     private static function extractOffsetKey(TypeNode $offsetType): string|int|null
