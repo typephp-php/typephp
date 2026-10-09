@@ -1137,7 +1137,11 @@ final class TemplateManager
 
             foreach ($parentTemplateNames as $idx => $templateName) {
                 if (isset($normalizedGenericTypes[$idx])) {
-                    $resolved = self::resolveTypeNodeAst($normalizedGenericTypes[$idx], $hierClass);
+                    $typeArg = $normalizedGenericTypes[$idx];
+                    if ($bindings !== []) {
+                        $typeArg = TemplateSubstitutor::substitute($typeArg, $bindings);
+                    }
+                    $resolved = self::resolveTypeNodeAst($typeArg, $hierClass);
 
                     if ($resolved instanceof IdentifierTypeNode) {
                         $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($resolved->name);
