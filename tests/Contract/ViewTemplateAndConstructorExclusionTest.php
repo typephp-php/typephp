@@ -5,33 +5,13 @@ declare(strict_types=1);
 namespace TypePHP\Tests\Contract;
 
 use PhpParser\NodeTraverser;
-use PhpParser\ParserFactory;
 use TypePHP\Internal\Ast\ContractVisitor;
-use TypePHP\Internal\Ast\TypePHPPrinter;
 use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\FileFilter;
 use TypePHP\Internal\Util\PathMatcher;
 
 describe('View Template, Framework Cache & Constructor Synthesis Regression Tests', function () {
-    beforeEach(function () {
-        Config::reset();
-        FileFilter::reset();
-        PathMatcher::reset();
-        StreamWrapper::reset();
-        StreamWrapper::register();
-        $this->parser = (new ParserFactory())->createForNewestSupportedVersion();
-        $this->printer = new TypePHPPrinter();
-    });
-
-    afterEach(function () {
-        Config::reset();
-        FileFilter::reset();
-        PathMatcher::reset();
-        StreamWrapper::reset();
-        StreamWrapper::register();
-    });
-
     describe('1. View Template & Framework Cache Exclusions (FileFilter & PathMatcher)', function () {
         test('FileFilter excludes view templates (.view.php, .blade.php, .html.php, .phtml)', function () {
             $viewFiles = [
@@ -148,12 +128,12 @@ class CustomTestCase extends \PHPUnit\Framework\TestCase
 }
 PHP;
 
-            $stmts = $this->parser->parse($code);
+            $stmts = StreamWrapper::getParser()->parse($code);
             $traverser = new NodeTraverser();
             $traverser->addVisitor(new ContractVisitor());
             $newStmts = $traverser->traverse($stmts);
 
-            $transformed = $this->printer->prettyPrint($newStmts);
+            $transformed = StreamWrapper::getPrinter()->prettyPrint($newStmts);
 
             expect($transformed)->not()->toContain('function __construct');
         });
@@ -168,12 +148,12 @@ abstract class AbstractBaseModel
 }
 PHP;
 
-            $stmts = $this->parser->parse($code);
+            $stmts = StreamWrapper::getParser()->parse($code);
             $traverser = new NodeTraverser();
             $traverser->addVisitor(new ContractVisitor());
             $newStmts = $traverser->traverse($stmts);
 
-            $transformed = $this->printer->prettyPrint($newStmts);
+            $transformed = StreamWrapper::getPrinter()->prettyPrint($newStmts);
 
             expect($transformed)->not()->toContain('function __construct');
         });
@@ -188,12 +168,12 @@ class StandaloneConfig
 }
 PHP;
 
-            $stmts = $this->parser->parse($code);
+            $stmts = StreamWrapper::getParser()->parse($code);
             $traverser = new NodeTraverser();
             $traverser->addVisitor(new ContractVisitor());
             $newStmts = $traverser->traverse($stmts);
 
-            $transformed = $this->printer->prettyPrint($newStmts);
+            $transformed = StreamWrapper::getPrinter()->prettyPrint($newStmts);
 
             expect($transformed)->toContain('function __construct()')
                 ->and($transformed)->not()->toContain('$_typephp_ctor_args')
@@ -216,12 +196,12 @@ class ClassWithExplicitConstructor extends BaseClass
 }
 PHP;
 
-            $stmts = $this->parser->parse($code);
+            $stmts = StreamWrapper::getParser()->parse($code);
             $traverser = new NodeTraverser();
             $traverser->addVisitor(new ContractVisitor());
             $newStmts = $traverser->traverse($stmts);
 
-            $transformed = $this->printer->prettyPrint($newStmts);
+            $transformed = StreamWrapper::getPrinter()->prettyPrint($newStmts);
 
             expect($transformed)->toContain('function __construct(string $name, array $options = [])')
                 ->and($transformed)->toContain("RuntimeTypeChecker::checkProperty(\$this->limit, \$this, 'limit'")
@@ -238,12 +218,12 @@ $i = 0;
 $result = $data[$i++];
 PHP;
 
-            $stmts = $this->parser->parse($source);
+            $stmts = StreamWrapper::getParser()->parse($source);
             $traverser = new NodeTraverser();
             $traverser->addVisitor(new ContractVisitor());
             $newStmts = $traverser->traverse($stmts);
 
-            $transformed = $this->printer->prettyPrint($newStmts);
+            $transformed = StreamWrapper::getPrinter()->prettyPrint($newStmts);
 
             expect($transformed)->toContain('$data[$i++]')
                 ->and($transformed)->not()->toContain('$i = $i + 1')
@@ -265,12 +245,12 @@ class Tokenizer
 }
 PHP;
 
-            $stmts = $this->parser->parse($source);
+            $stmts = StreamWrapper::getParser()->parse($source);
             $traverser = new NodeTraverser();
             $traverser->addVisitor(new ContractVisitor());
             $newStmts = $traverser->traverse($stmts);
 
-            $transformed = $this->printer->prettyPrint($newStmts);
+            $transformed = StreamWrapper::getPrinter()->prettyPrint($newStmts);
 
             expect($transformed)->toContain('$this->buffer[$this->cursor++]')
                 ->and($transformed)->not()->toContain('checkProperty($this->cursor + 1')
