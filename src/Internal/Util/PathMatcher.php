@@ -256,7 +256,8 @@ final class PathMatcher
         return str_contains($canon, '/var/cache/') || str_starts_with($canon, 'var/cache/')
             || str_contains($canon, '/var/log/') || str_starts_with($canon, 'var/log/')
             || str_contains($canon, '/storage/') || str_starts_with($canon, 'storage/')
-            || str_contains($canon, '/cache/') || str_starts_with($canon, 'cache/');
+            || str_contains($canon, '/cache/') || str_starts_with($canon, 'cache/')
+            || str_contains($canon, '/.tempest/') || str_starts_with($canon, '.tempest/');
     }
 
     /**
@@ -265,6 +266,25 @@ final class PathMatcher
     public static function mayPathBeIncluded(string $normalizedPath): bool
     {
         $canon = self::canonicalizePath($normalizedPath);
+        $lower = strtolower($canon);
+
+        if (
+            str_ends_with($lower, '.view.php')
+            || str_ends_with($lower, '.blade.php')
+            || str_ends_with($lower, '.html.php')
+            || str_ends_with($lower, '.phtml')
+        ) {
+            return false;
+        }
+
+        if (
+            str_contains($canon, '/.tempest/')
+            || str_starts_with($canon, '.tempest/')
+            || str_contains($canon, '/cache/views/')
+            || str_contains($canon, '/framework/views/')
+        ) {
+            return false;
+        }
 
         if (str_contains($canon, '/node_modules/') || str_starts_with($canon, 'node_modules/')) {
             return false;

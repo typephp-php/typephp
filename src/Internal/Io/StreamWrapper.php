@@ -90,6 +90,13 @@ final class StreamWrapper implements StreamWrapperInterface
     private static array $appFileDecisionCache = [];
 
     /**
+     * In-memory fast-path cache for paths identified as non-transformable templates or caches.
+     *
+     * @var array<string, true>
+     */
+    private static array $bypassedPathCache = [];
+
+    /**
      * Native PHP functions that read raw source code for viewing, highlighting, or tokenizing.
      *
      * @var array<string, true>
@@ -135,6 +142,7 @@ final class StreamWrapper implements StreamWrapperInterface
         self::$statCache = [];
         self::$staticNegativeStatCache = [];
         self::$appFileDecisionCache = [];
+        self::$bypassedPathCache = [];
         PathMatcher::reset();
     }
 
@@ -322,7 +330,31 @@ final class StreamWrapper implements StreamWrapperInterface
     {
         $isInclude = ($options & self::STREAM_OPEN_FOR_INCLUDE) !== 0;
 
-        if (! $isInclude || ($mode !== 'r' && $mode !== 'rb' && $mode !== 'rt') || ! str_ends_with(strtolower($path), '.php') || ! Config::isEnabled()) {
+        if (! $isInclude || ($mode !== 'r' && $mode !== 'rb' && $mode !== 'rt') || ! Config::isEnabled()) {
+            return $this->openDirectHandle($path, $mode, $options);
+        }
+
+        if (isset(self::$bypassedPathCache[$path])) {
+            return $this->openDirectHandle($path, $mode, $options);
+        }
+
+        $lowerPath = strtolower($path);
+
+        if (! str_ends_with($lowerPath, '.php')) {
+            return $this->openDirectHandle($path, $mode, $options);
+        }
+
+        if (
+            str_ends_with($lowerPath, '.view.php')
+            || str_ends_with($lowerPath, '.blade.php')
+            || str_ends_with($lowerPath, '.html.php')
+            || str_ends_with($lowerPath, '.phtml')
+            || str_contains($lowerPath, '/.tempest/')
+            || str_contains($lowerPath, '/cache/views/')
+            || str_contains($lowerPath, '/framework/views/')
+        ) {
+            self::$bypassedPathCache[$path] = true;
+
             return $this->openDirectHandle($path, $mode, $options);
         }
 
