@@ -161,6 +161,10 @@ final class PathMatcher
             return true;
         }
 
+        if (str_starts_with($canon, 'config/') || str_contains($canon, '/config/')) {
+            return true;
+        }
+
         if (str_starts_with($canon, 'lib/') || str_contains($canon, '/lib/')) {
             return true;
         }

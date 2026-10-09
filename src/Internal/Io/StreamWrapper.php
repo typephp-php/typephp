@@ -338,20 +338,19 @@ final class StreamWrapper implements StreamWrapperInterface
             return $this->openDirectHandle($path, $mode, $options);
         }
 
-        $lowerPath = strtolower($path);
-
-        if (! str_ends_with($lowerPath, '.php')) {
+        $isPhp = str_ends_with($path, '.php') || str_ends_with(strtolower($path), '.php');
+        if (! $isPhp) {
             return $this->openDirectHandle($path, $mode, $options);
         }
 
         if (
-            str_ends_with($lowerPath, '.view.php')
-            || str_ends_with($lowerPath, '.blade.php')
-            || str_ends_with($lowerPath, '.html.php')
-            || str_ends_with($lowerPath, '.phtml')
-            || str_contains($lowerPath, '/.tempest/')
-            || str_contains($lowerPath, '/cache/views/')
-            || str_contains($lowerPath, '/framework/views/')
+            str_ends_with($path, '.view.php')
+            || str_ends_with($path, '.blade.php')
+            || str_ends_with($path, '.html.php')
+            || str_ends_with($path, '.phtml')
+            || str_contains($path, '/.tempest/')
+            || str_contains($path, '/cache/views/')
+            || str_contains($path, '/framework/views/')
         ) {
             self::$bypassedPathCache[$path] = true;
 
