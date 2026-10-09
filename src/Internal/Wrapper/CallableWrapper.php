@@ -7,11 +7,14 @@ namespace TypePHP\Internal\Wrapper;
 use Closure;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
@@ -37,6 +40,14 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
  */
 final class CallableWrapper
 {
+    /**
+     * Cache for monomorphized callable AST nodes by function, parameter name, and argument signature:
+     * [$function][$paramName][$argTypesSignature] => CallableTypeNode.
+     *
+     * @var array<string, array<string, array<string, CallableTypeNode>>>
+     */
+    private static array $specializedCallableCache = [];
+
     /**
      * Safely checks if a value is callable without triggering PHP 8.2+ deprecation warnings
      * on partially supported callables (e.g. 'static::method', ['static', 'method']).
@@ -103,7 +114,7 @@ final class CallableWrapper
         $prefix = ($paramName === 'return') ? "$function(): Return value" : "$function(): Callback \$$paramName";
 
         if (self::isCallable($callable)) {
-            return self::wrapTypeNode($typeNode, $callable, $prefix, $registry);
+            return self::wrapTypeNode($typeNode, $callable, $prefix, $registry, $function, $paramName);
         }
 
         if (\is_array($callable) && $typeNode !== null) {
@@ -120,7 +131,7 @@ final class CallableWrapper
                 foreach ($callable as $k => $item) {
                     if (self::isCallable($item)) {
                         $itemPrefix = $prefix . (\is_int($k) ? "[$k]" : "['$k']");
-                        $wrappedArray[$k] = self::wrapTypeNode($innerCallableTypeNode, $item, $itemPrefix, $registry);
+                        $wrappedArray[$k] = self::wrapTypeNode($innerCallableTypeNode, $item, $itemPrefix, $registry, $function, $paramName);
                     } else {
                         $wrappedArray[$k] = $item;
                     }
@@ -136,8 +147,14 @@ final class CallableWrapper
     /**
      * Wraps a callable with runtime argument and return value type validation based on a CallableTypeNode AST.
      */
-    public static function wrapTypeNode(?TypeNode $typeNode, mixed $callable, string $prefix, TypeValidatorRegistry $registry): mixed
-    {
+    public static function wrapTypeNode(
+        ?TypeNode $typeNode,
+        mixed $callable,
+        string $prefix,
+        TypeValidatorRegistry $registry,
+        string $function = '',
+        string $paramName = 'callback'
+    ): mixed {
         if (! ($typeNode instanceof CallableTypeNode) || ! self::isCallable($callable)) {
             return $callable;
         }
@@ -146,7 +163,7 @@ final class CallableWrapper
         self::enforceClosureConstraints($identifierName, $callable, $prefix);
 
         /** @var callable $callable */
-        return self::createDispatcherClosure($typeNode, $callable, $prefix, $registry);
+        return self::createDispatcherClosure($typeNode, $callable, $prefix, $registry, $function, $paramName);
     }
 
     /**
@@ -156,7 +173,9 @@ final class CallableWrapper
         CallableTypeNode $typeNode,
         callable $callable,
         string $prefix,
-        TypeValidatorRegistry $registry
+        TypeValidatorRegistry $registry,
+        string $function = '',
+        string $paramName = 'callback'
     ): Closure {
         $hasAnyRef = false;
         $isVariadicRef = false;
@@ -173,9 +192,9 @@ final class CallableWrapper
         }
 
         if (! $hasAnyRef) {
-            return function (...$args) use ($callable, $typeNode, $registry, $prefix) {
+            return function (...$args) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
                 $effectiveTypeNode = $typeNode->templateTypes !== []
-                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
                     : $typeNode;
 
                 self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
@@ -191,9 +210,9 @@ final class CallableWrapper
         }
 
         if ($isVariadicRef) {
-            return function (&...$args) use ($callable, $typeNode, $registry, $prefix) {
+            return function (&...$args) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
                 $effectiveTypeNode = $typeNode->templateTypes !== []
-                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
                     : $typeNode;
 
                 self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
@@ -211,10 +230,10 @@ final class CallableWrapper
         }
 
         if ($refPattern === [true]) {
-            return function (mixed &$a = null) use ($callable, $typeNode, $registry, $prefix) {
+            return function (mixed &$a = null) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
                 $args = [&$a];
                 $effectiveTypeNode = $typeNode->templateTypes !== []
-                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
                     : $typeNode;
 
                 self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
@@ -232,10 +251,10 @@ final class CallableWrapper
         }
 
         if ($refPattern === [true, false]) {
-            return function (mixed &$a = null, mixed $b = null) use ($callable, $typeNode, $registry, $prefix) {
+            return function (mixed &$a = null, mixed $b = null) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
                 $args = [&$a, $b];
                 $effectiveTypeNode = $typeNode->templateTypes !== []
-                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
                     : $typeNode;
 
                 self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
@@ -253,10 +272,10 @@ final class CallableWrapper
         }
 
         if ($refPattern === [false, true]) {
-            return function (mixed $a = null, mixed &$b = null) use ($callable, $typeNode, $registry, $prefix) {
+            return function (mixed $a = null, mixed &$b = null) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
                 $args = [$a, &$b];
                 $effectiveTypeNode = $typeNode->templateTypes !== []
-                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
                     : $typeNode;
 
                 self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
@@ -274,10 +293,10 @@ final class CallableWrapper
         }
 
         if ($refPattern === [true, true]) {
-            return function (mixed &$a = null, mixed &$b = null) use ($callable, $typeNode, $registry, $prefix) {
+            return function (mixed &$a = null, mixed &$b = null) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
                 $args = [&$a, &$b];
                 $effectiveTypeNode = $typeNode->templateTypes !== []
-                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
                     : $typeNode;
 
                 self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
@@ -294,9 +313,9 @@ final class CallableWrapper
             };
         }
 
-        return function (&...$args) use ($callable, $typeNode, $registry, $prefix) {
+        return function (&...$args) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
             $effectiveTypeNode = $typeNode->templateTypes !== []
-                ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable)
+                ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
                 : $typeNode;
 
             self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
@@ -321,13 +340,15 @@ final class CallableWrapper
         array $args,
         string $prefix,
         TypeValidatorRegistry $registry,
-        mixed $callable = null
+        mixed $callable = null,
+        string $function = '',
+        string $paramName = 'callback'
     ): CallableTypeNode {
         if ($typeNode->templateTypes === []) {
             return $typeNode;
         }
 
-        /** @var array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode> $localTemplates */
+        /** @var array<string, TemplateTagValueNode> $localTemplates */
         $localTemplates = [];
         foreach ($typeNode->templateTypes as $tTag) {
             if (! SpecialTypeResolver::isBuiltInTypeKeyword($tTag->name)) {
@@ -337,6 +358,16 @@ final class CallableWrapper
 
         if ($localTemplates === []) {
             return $typeNode;
+        }
+
+        $sigParts = [];
+        foreach ($args as $arg) {
+            $sigParts[] = get_debug_type($arg);
+        }
+        $sig = implode('|', $sigParts);
+
+        if ($function !== '' && isset(self::$specializedCallableCache[$function][$paramName][$sig])) {
+            return self::$specializedCallableCache[$function][$paramName][$sig];
         }
 
         $boundLocal = [];
@@ -355,7 +386,8 @@ final class CallableWrapper
                         $boundLocal,
                         $prefix . ' variadic argument #' . ($index + $vIdx + 1),
                         $registry,
-                        $callable
+                        $callable,
+                        $function
                     );
                 }
 
@@ -382,7 +414,8 @@ final class CallableWrapper
                     $boundLocal,
                     $prefix . ' ' . $argLabel,
                     $registry,
-                    $callable
+                    $callable,
+                    $function
                 );
             }
         }
@@ -418,12 +451,17 @@ final class CallableWrapper
         }
 
         $resolvedReturn = TemplateSubstitutor::substitute($typeNode->returnType, $boundLocal, $localTemplates);
+        $monomorphizedNode = new CallableTypeNode($typeNode->identifier, $resolvedParams, $resolvedReturn, $typeNode->templateTypes);
 
-        return new CallableTypeNode($typeNode->identifier, $resolvedParams, $resolvedReturn, $typeNode->templateTypes);
+        if ($function !== '') {
+            self::$specializedCallableCache[$function][$paramName][$sig] = $monomorphizedNode;
+        }
+
+        return $monomorphizedNode;
     }
 
     /**
-     * @param array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode> $localTemplates
+     * @param array<string, TemplateTagValueNode> $localTemplates
      * @param array<string, TypeNode> $boundLocal
      */
     private static function inferLocalTemplateFromParam(
@@ -433,11 +471,12 @@ final class CallableWrapper
         array &$boundLocal,
         string $context,
         TypeValidatorRegistry $registry,
-        mixed $callable = null
+        mixed $callable = null,
+        string $function = ''
     ): void {
-        if ($typeNode instanceof \PHPStan\PhpDocParser\Ast\Type\NullableTypeNode) {
+        if ($typeNode instanceof NullableTypeNode) {
             if ($value !== null) {
-                self::inferLocalTemplateFromParam($typeNode->type, $value, $localTemplates, $boundLocal, $context, $registry, $callable);
+                self::inferLocalTemplateFromParam($typeNode->type, $value, $localTemplates, $boundLocal, $context, $registry, $callable, $function);
             }
 
             return;
@@ -448,7 +487,20 @@ final class CallableWrapper
             $tTag = $localTemplates[$tName];
 
             if ($tTag->bound !== null) {
-                $boundErr = $registry->validate($value, $tTag->bound, $context);
+                $boundToValidate = $tTag->bound;
+                if ($function !== '') {
+                    $boundToValidate = SpecialTypeResolver::resolve($tTag->bound, $function);
+                } elseif ($callable instanceof Closure) {
+                    try {
+                        $cFile = (new ReflectionFunction($callable))->getFileName();
+                        if ($cFile !== false && $cFile !== '') {
+                            $boundToValidate = SpecialTypeResolver::resolveForFile($tTag->bound, $cFile);
+                        }
+                    } catch (\Throwable) {
+                    }
+                }
+
+                $boundErr = $registry->validate($value, $boundToValidate, $context);
                 if ($boundErr !== null) {
                     if ($callable !== null && CallerBoundaryResolver::shouldBypassCallback($callable, $context)) {
                         return;
@@ -467,8 +519,12 @@ final class CallableWrapper
                 $boundLocal[$tName] = $inferred;
             } else {
                 $existingType = $boundLocal[$tName];
-                if ($registry->validate($value, $existingType, '') !== null) {
-                    if ($tTag->bound !== null && $registry->validate($value, $tTag->bound, '') === null) {
+                if ($registry->validate($value, $existingType, '') !== null && $tTag->bound !== null) {
+                    $boundToCheck = $function !== ''
+                        ? SpecialTypeResolver::resolve($tTag->bound, $function)
+                        : $tTag->bound;
+
+                    if ($registry->validate($value, $boundToCheck, '') === null) {
                         $boundLocal[$tName] = self::unifyLocalTypes($existingType, $inferred);
                     }
                 }
@@ -479,7 +535,7 @@ final class CallableWrapper
 
         if ($typeNode instanceof ArrayTypeNode && \is_array($value)) {
             foreach ($value as $item) {
-                self::inferLocalTemplateFromParam($typeNode->type, $item, $localTemplates, $boundLocal, $context, $registry, $callable);
+                self::inferLocalTemplateFromParam($typeNode->type, $item, $localTemplates, $boundLocal, $context, $registry, $callable, $function);
             }
 
             return;
@@ -491,7 +547,7 @@ final class CallableWrapper
                 $innerType = $typeNode->genericTypes[1] ?? $typeNode->genericTypes[0] ?? null;
                 if ($innerType !== null) {
                     foreach ($value as $item) {
-                        self::inferLocalTemplateFromParam($innerType, $item, $localTemplates, $boundLocal, $context, $registry, $callable);
+                        self::inferLocalTemplateFromParam($innerType, $item, $localTemplates, $boundLocal, $context, $registry, $callable, $function);
                     }
                 }
             }
@@ -499,7 +555,7 @@ final class CallableWrapper
             return;
         }
 
-        if ($typeNode instanceof \PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode && \is_array($value)) {
+        if ($typeNode instanceof ArrayShapeNode && \is_array($value)) {
             $nextIdx = 0;
             foreach ($typeNode->items as $item) {
                 $key = match (true) {
@@ -513,7 +569,7 @@ final class CallableWrapper
                     $nextIdx = max($nextIdx, $key + 1);
                 }
                 if (\array_key_exists($key, $value)) {
-                    self::inferLocalTemplateFromParam($item->valueType, $value[$key], $localTemplates, $boundLocal, $context, $registry, $callable);
+                    self::inferLocalTemplateFromParam($item->valueType, $value[$key], $localTemplates, $boundLocal, $context, $registry, $callable, $function);
                 }
             }
 
@@ -527,7 +583,7 @@ final class CallableWrapper
                 if (isset($value->$prop) || property_exists($value, $prop)) {
                     // @phpstan-ignore property.dynamicName
                     $propVal = $value->$prop;
-                    self::inferLocalTemplateFromParam($item->valueType, $propVal, $localTemplates, $boundLocal, $context, $registry, $callable);
+                    self::inferLocalTemplateFromParam($item->valueType, $propVal, $localTemplates, $boundLocal, $context, $registry, $callable, $function);
                 }
             }
         }
