@@ -15,7 +15,7 @@ final class CacheManager
     /**
      * Cache version prefix string. Bump this whenever AST printer/transformation rules change.
      */
-    public const VERSION_PREFIX = 'v0.10.24_';
+    public const VERSION_PREFIX = 'v0.11.4_';
 
     /**
      * Cached absolute cache directory path.
@@ -27,10 +27,18 @@ final class CacheManager
      */
     private static ?bool $secureDirVerified = null;
 
+    /**
+     * In-memory cache for resolved cache keys: [$resolvedPath] => string
+     *
+     * @var array<string, string>
+     */
+    private static array $cacheKeyMap = [];
+
     public static function reset(): void
     {
         self::$resolvedCacheDir = null;
         self::$secureDirVerified = null;
+        self::$cacheKeyMap = [];
     }
 
     /**
@@ -72,14 +80,18 @@ final class CacheManager
      */
     public static function getCacheKey(string $resolvedPath): string
     {
+        if (isset(self::$cacheKeyMap[$resolvedPath])) {
+            return self::$cacheKeyMap[$resolvedPath];
+        }
+
         if (Config::isCacheCheckMtimeEnabled()) {
             $mtime = @filemtime($resolvedPath);
             $mtimeStr = $mtime !== false ? (string) $mtime : '0';
 
-            return hash('xxh128', self::VERSION_PREFIX . $resolvedPath . $mtimeStr);
+            return self::$cacheKeyMap[$resolvedPath] = hash('xxh128', self::VERSION_PREFIX . $resolvedPath . $mtimeStr);
         }
 
-        return hash('xxh128', self::VERSION_PREFIX . $resolvedPath);
+        return self::$cacheKeyMap[$resolvedPath] = hash('xxh128', self::VERSION_PREFIX . $resolvedPath);
     }
 
     /**
