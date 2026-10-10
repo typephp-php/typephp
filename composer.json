@@ -30,6 +30,7 @@
         "nikic/php-parser": "^5.3"
     },
     "require-dev": {
+        "roave/security-advisories": "dev-latest",
         "laravel/pint": "^1.10",
         "pestphp/pest": "^2.0 || ^3.0 || ^4.0",
         "phpstan/phpstan": "^2.1",
