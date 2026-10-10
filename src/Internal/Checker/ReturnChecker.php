@@ -223,9 +223,14 @@ final class ReturnChecker
         $typeNode = $magicContract['readType'];
 
         if ($thisObj !== null) {
-            $constructorTarget = $className . '::__construct';
-            $contract = DocblockParser::parse($constructorTarget);
-            $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+            $allTemplates = DocblockParser::parseClassTemplates($className);
+
+            if ($allTemplates === []) {
+                $constructorTarget = $className . '::__construct';
+                $contract = DocblockParser::parse($constructorTarget);
+                $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+            }
+
             $boundTemplates = TemplateManager::getBoundTemplates('none', $thisObj, $allTemplates);
 
             if (\count($boundTemplates) > 0 || \count($allTemplates) > 0) {

@@ -359,7 +359,7 @@ final class DocblockParser
                     $refClass = new \ReflectionClass($className);
                     if ($refClass->hasMethod($methodName)) {
                         $ref = $refClass->getMethod($methodName);
-                        $contract = self::parseMethod($ref);
+                        $contract = self::parseMethod($ref, $refClass);
                     } else {
                         $classTemplates = [];
                         $aliases = [];
@@ -441,6 +441,34 @@ final class DocblockParser
         }
 
         return self::$cache[$function] = $contract;
+    }
+
+    /**
+     * Extracts and returns all class-level templates for a given class.
+     *
+     * @return array<string, TemplateTagValueNode>
+     */
+    public static function parseClassTemplates(string $className): array
+    {
+        if (isset(self::$classLevelDocCache[$className])) {
+            return self::$classLevelDocCache[$className]['templates'];
+        }
+
+        if (! class_exists($className, false) && ! class_exists($className) && ! interface_exists($className, false) && ! interface_exists($className) && ! trait_exists($className, false) && ! trait_exists($className) && ! enum_exists($className, false) && ! enum_exists($className)) {
+            return [];
+        }
+
+        try {
+            /** @var class-string<object> $className */
+            $refClass = new \ReflectionClass($className);
+            $aliases = [];
+            $classTemplates = [];
+            self::parseClassLevelDocs($refClass, $classTemplates, $aliases);
+
+            return $classTemplates;
+        } catch (\Throwable $e) {
+            return [];
+        }
     }
 
     /**
@@ -904,9 +932,11 @@ final class DocblockParser
     /**
      * Orchestrates parsing for class methods across the inheritance hierarchy.
      *
+     * @param \ReflectionClass<object>|null $targetClass
+     *
      * @return FunctionContract
      */
-    private static function parseMethod(\ReflectionMethod $ref): array
+    private static function parseMethod(\ReflectionMethod $ref, ?\ReflectionClass $targetClass = null): array
     {
         /** @var array<string, TypeNode> $types */
         $types = [];
@@ -923,7 +953,7 @@ final class DocblockParser
         /** @var array<string, bool> $sensitiveParams */
         $sensitiveParams = [];
 
-        $targetClass = (class_exists($ref->class, false) || class_exists($ref->class) || interface_exists($ref->class) || enum_exists($ref->class) || trait_exists($ref->class))
+        $targetClass ??= (class_exists($ref->class, false) || class_exists($ref->class) || interface_exists($ref->class) || enum_exists($ref->class) || trait_exists($ref->class))
             ? new \ReflectionClass($ref->class)
             : $ref->getDeclaringClass();
 

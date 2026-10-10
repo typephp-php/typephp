@@ -484,9 +484,13 @@ final class InlineChecker
             return self::$propertyUsesTemplatesCache[$className][$propName];
         }
 
-        $constructorTarget = $className . '::__construct';
-        $contract = DocblockParser::parse($constructorTarget);
-        $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        $allTemplates = DocblockParser::parseClassTemplates($className);
+
+        if ($allTemplates === []) {
+            $constructorTarget = $className . '::__construct';
+            $contract = DocblockParser::parse($constructorTarget);
+            $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        }
 
         if ($allTemplates === []) {
             return self::$propertyUsesTemplatesCache[$className][$propName] = false;
@@ -737,10 +741,14 @@ final class InlineChecker
      */
     private static function substitutePropertyGenerics(TypeNode $typeNode, object $object, string $className): TypeNode
     {
-        $constructorTarget = $className . '::__construct';
-        $contract = DocblockParser::parse($constructorTarget);
+        $allTemplates = DocblockParser::parseClassTemplates($className);
 
-        $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        if ($allTemplates === []) {
+            $constructorTarget = $className . '::__construct';
+            $contract = DocblockParser::parse($constructorTarget);
+            $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        }
+
         $boundTemplates = TemplateManager::getBoundTemplates('none', $object, $allTemplates);
         $declaredTemplates = $allTemplates;
 
@@ -770,10 +778,14 @@ final class InlineChecker
             return self::$resolvedStaticPropertyTypeCache[$className][$propName];
         }
 
-        $constructorTarget = $className . '::__construct';
-        $contract = DocblockParser::parse($constructorTarget);
+        $allTemplates = DocblockParser::parseClassTemplates($className);
 
-        $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        if ($allTemplates === []) {
+            $constructorTarget = $className . '::__construct';
+            $contract = DocblockParser::parse($constructorTarget);
+            $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        }
+
         $classBindings = TemplateManager::getClassInheritedBindings($className);
         $classAliases = DocblockParser::parseClassAliases($className);
         $activeBindings = [...$classAliases, ...$classBindings];
