@@ -22,13 +22,36 @@ final class IdentifierValidator implements TypeValidatorInterface
         /** @var IdentifierTypeNode $identifierNode */
         $identifierNode = $node;
         $name = $identifierNode->name;
+
+        if ($name === 'int') {
+            return \is_int($value) ? null : ErrorFactory::createError($context . ' must be of type int, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+        if ($name === 'string') {
+            return \is_string($value) ? null : ErrorFactory::createError($context . ' must be of type string, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+        if ($name === 'bool') {
+            return \is_bool($value) ? null : ErrorFactory::createError($context . ' must be of type bool, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+        if ($name === 'array') {
+            return \is_array($value) ? null : ErrorFactory::createError($context . ' must be of type array, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+        if ($name === 'mixed') {
+            return null;
+        }
+        if ($name === 'float') {
+            return (\is_float($value) || \is_int($value)) ? null : ErrorFactory::createError($context . ' must be of type float, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+
         $lower = strtolower($name);
 
         $ok = match ($lower) {
-            'int', 'integer' => \is_int($value),
+            'int' => \is_int($value),
+            'integer' => \is_int($value) || (\is_object($value) && $name !== 'integer' && $this->validateClassOrIgnore($value, $name)),
             'string' => \is_string($value),
-            'float', 'double' => \is_float($value) || \is_int($value),
-            'bool', 'boolean' => \is_bool($value),
+            'float' => \is_float($value) || \is_int($value),
+            'double' => \is_float($value) || \is_int($value) || (\is_object($value) && $name !== 'double' && $this->validateClassOrIgnore($value, $name)),
+            'bool' => \is_bool($value),
+            'boolean' => \is_bool($value) || (\is_object($value) && $name !== 'boolean' && $this->validateClassOrIgnore($value, $name)),
             'array' => \is_array($value),
             'list' => \is_array($value) && (\count($value) === 0 || array_is_list($value)),
             'object', 'self', 'static', 'parent', '$this' => \is_object($value),

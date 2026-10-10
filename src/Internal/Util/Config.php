@@ -452,15 +452,34 @@ final class Config
             return self::$projectRoot;
         }
 
+        if ($startingDir === null && class_exists(\Composer\InstalledVersions::class)) {
+            try {
+                $rootPackage = \Composer\InstalledVersions::getRootPackage();
+                $installPath = $rootPackage['install_path'] ?? null;
+                if (\is_string($installPath) && $installPath !== '') {
+                    $realPath = realpath($installPath);
+                    $normPath = rtrim(str_replace('\\', '/', $realPath !== false ? $realPath : $installPath), '/');
+                    if (file_exists($normPath . '/composer.json') || file_exists($normPath . '/typephp.php')) {
+                        return self::$projectRoot = $normPath;
+                    }
+                }
+            } catch (\Throwable) {
+            }
+        }
+
         $cwd = getcwd();
         if ($startingDir === null && $cwd !== false) {
-            $realCwd = realpath($cwd) !== false ? realpath($cwd) : $cwd;
-            $normCwd = rtrim(str_replace('\\', '/', (string) $realCwd), '/');
-            if (
-                file_exists($normCwd . '/vendor/autoload.php')
-                || file_exists($normCwd . '/composer.json')
-            ) {
-                return self::$projectRoot = $normCwd;
+            $realCwd = realpath($cwd);
+            $checkCwd = rtrim(str_replace('\\', '/', $realCwd !== false ? $realCwd : $cwd), '/');
+            for ($i = 0; $i < 5; $i++) {
+                if (file_exists($checkCwd . '/composer.json') || file_exists($checkCwd . '/typephp.php')) {
+                    return self::$projectRoot = $checkCwd;
+                }
+                $parent = \dirname($checkCwd);
+                if ($parent === $checkCwd) {
+                    break;
+                }
+                $checkCwd = $parent;
             }
         }
 
@@ -470,19 +489,26 @@ final class Config
             $vendorPos = strrpos($dir, '/vendor/');
             if ($vendorPos !== false) {
                 $candidate = substr($dir, 0, $vendorPos);
-                $realCandidate = realpath($candidate) !== false ? realpath($candidate) : $candidate;
-                $normCandidate = rtrim(str_replace('\\', '/', (string) $realCandidate), '/');
+                $realCandidate = realpath($candidate);
+                $normCandidate = rtrim(str_replace('\\', '/', $realCandidate !== false ? $realCandidate : $candidate), '/');
                 if (file_exists($normCandidate . '/vendor/autoload.php') || file_exists($normCandidate . '/composer.json')) {
                     return self::$projectRoot = $normCandidate;
                 }
             }
         }
 
-        for ($i = 0; $i < 10; $i++) {
-            if (file_exists($dir . '/composer.json') || file_exists($dir . '/vendor/autoload.php')) {
-                $realDir = realpath($dir) !== false ? realpath($dir) : $dir;
+        $firstCandidate = null;
 
-                return self::$projectRoot = rtrim(str_replace('\\', '/', (string) $realDir), '/');
+        for ($i = 0; $i < 15; $i++) {
+            if (file_exists($dir . '/composer.json') || file_exists($dir . '/typephp.php') || file_exists($dir . '/vendor/autoload.php')) {
+                $realDir = realpath($dir);
+                $normFound = rtrim(str_replace('\\', '/', $realDir !== false ? $realDir : $dir), '/');
+
+                if (str_ends_with($normFound, '/typephp/typephp')) {
+                    $firstCandidate ??= $normFound;
+                } else {
+                    return self::$projectRoot = $normFound;
+                }
             }
 
             $parent = \dirname($dir);
@@ -492,9 +518,18 @@ final class Config
             $dir = $parent;
         }
 
-        $fallback = $cwd !== false ? (realpath($cwd) !== false ? realpath($cwd) : $cwd) : '.';
+        if ($firstCandidate !== null) {
+            return self::$projectRoot = $firstCandidate;
+        }
 
-        return self::$projectRoot = rtrim(str_replace('\\', '/', (string) $fallback), '/');
+        if ($cwd !== false) {
+            $realCwd = realpath($cwd);
+            $fallback = $realCwd !== false ? $realCwd : $cwd;
+        } else {
+            $fallback = '.';
+        }
+
+        return self::$projectRoot = rtrim(str_replace('\\', '/', $fallback), '/');
     }
 
     /**

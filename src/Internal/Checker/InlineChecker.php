@@ -369,12 +369,12 @@ final class InlineChecker
      */
     private static function isArrayShapeType(TypeNode $node): bool
     {
-        if ($node instanceof ArrayShapeNode) {
-            return true;
+        while ($node instanceof NullableTypeNode) {
+            $node = $node->type;
         }
 
-        if ($node instanceof NullableTypeNode) {
-            return self::isArrayShapeType($node->type);
+        if ($node instanceof ArrayShapeNode) {
+            return true;
         }
 
         if ($node instanceof UnionTypeNode) {
@@ -484,9 +484,13 @@ final class InlineChecker
             return self::$propertyUsesTemplatesCache[$className][$propName];
         }
 
-        $constructorTarget = $className . '::__construct';
-        $contract = DocblockParser::parse($constructorTarget);
-        $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        $allTemplates = DocblockParser::parseClassTemplates($className);
+
+        if ($allTemplates === []) {
+            $constructorTarget = $className . '::__construct';
+            $contract = DocblockParser::parse($constructorTarget);
+            $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        }
 
         if ($allTemplates === []) {
             return self::$propertyUsesTemplatesCache[$className][$propName] = false;
@@ -737,10 +741,14 @@ final class InlineChecker
      */
     private static function substitutePropertyGenerics(TypeNode $typeNode, object $object, string $className): TypeNode
     {
-        $constructorTarget = $className . '::__construct';
-        $contract = DocblockParser::parse($constructorTarget);
+        $allTemplates = DocblockParser::parseClassTemplates($className);
 
-        $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        if ($allTemplates === []) {
+            $constructorTarget = $className . '::__construct';
+            $contract = DocblockParser::parse($constructorTarget);
+            $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        }
+
         $boundTemplates = TemplateManager::getBoundTemplates('none', $object, $allTemplates);
         $declaredTemplates = $allTemplates;
 
@@ -770,10 +778,14 @@ final class InlineChecker
             return self::$resolvedStaticPropertyTypeCache[$className][$propName];
         }
 
-        $constructorTarget = $className . '::__construct';
-        $contract = DocblockParser::parse($constructorTarget);
+        $allTemplates = DocblockParser::parseClassTemplates($className);
 
-        $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        if ($allTemplates === []) {
+            $constructorTarget = $className . '::__construct';
+            $contract = DocblockParser::parse($constructorTarget);
+            $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+        }
+
         $classBindings = TemplateManager::getClassInheritedBindings($className);
         $classAliases = DocblockParser::parseClassAliases($className);
         $activeBindings = [...$classAliases, ...$classBindings];
@@ -800,6 +812,10 @@ final class InlineChecker
      */
     private static function needsContextResolution(TypeNode $node): bool
     {
+        while ($node instanceof NullableTypeNode || $node instanceof ArrayTypeNode) {
+            $node = $node->type;
+        }
+
         if ($node instanceof ThisTypeNode || $node instanceof OffsetAccessTypeNode || $node instanceof ConditionalTypeNode || $node instanceof ConditionalTypeForParameterNode) {
             return true;
         }
@@ -824,10 +840,6 @@ final class InlineChecker
             }
 
             return false;
-        }
-
-        if ($node instanceof NullableTypeNode || $node instanceof ArrayTypeNode) {
-            return self::needsContextResolution($node->type);
         }
 
         if ($node instanceof UnionTypeNode || $node instanceof IntersectionTypeNode) {
@@ -922,6 +934,10 @@ final class InlineChecker
 
     private static function shouldValidateType(TypeNode $node): bool
     {
+        while ($node instanceof NullableTypeNode) {
+            $node = $node->type;
+        }
+
         $checkArrays = Config::isInlineArraysEnabled();
 
         if ($node instanceof CallableTypeNode) {
@@ -965,10 +981,6 @@ final class InlineChecker
             }
 
             return Config::isInlineObjectsEnabled();
-        }
-
-        if ($node instanceof NullableTypeNode) {
-            return self::shouldValidateType($node->type);
         }
 
         if ($node instanceof UnionTypeNode || $node instanceof IntersectionTypeNode) {

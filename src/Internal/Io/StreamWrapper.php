@@ -76,7 +76,7 @@ final class StreamWrapper implements StreamWrapperInterface
     private static array $statCache = [];
 
     /**
-     * In-memory cache for static-path negative misses only (vendor & package source directories).
+     * In-memory cache for static-path negative misses only (vendor directories).
      *
      * @var array<string, true>
      */
@@ -88,6 +88,27 @@ final class StreamWrapper implements StreamWrapperInterface
      * @var array<string, bool>
      */
     private static array $appFileDecisionCache = [];
+
+    /**
+     * In-memory fast-path cache for paths identified as non-transformable templates or caches.
+     *
+     * @var array<string, true>
+     */
+    private static array $bypassedPathCache = [];
+
+    /**
+     * In-memory cache for resolved positive realpath results: [$path] => string
+     *
+     * @var array<string, string>
+     */
+    private static array $realpathCache = [];
+
+    /**
+     * In-memory cache for verified cached files: [$path] => true
+     *
+     * @var array<string, true>
+     */
+    private static array $verifiedCachedFiles = [];
 
     /**
      * Native PHP functions that read raw source code for viewing, highlighting, or tokenizing.
@@ -135,6 +156,9 @@ final class StreamWrapper implements StreamWrapperInterface
         self::$statCache = [];
         self::$staticNegativeStatCache = [];
         self::$appFileDecisionCache = [];
+        self::$bypassedPathCache = [];
+        self::$realpathCache = [];
+        self::$verifiedCachedFiles = [];
         PathMatcher::reset();
     }
 
@@ -322,7 +346,32 @@ final class StreamWrapper implements StreamWrapperInterface
     {
         $isInclude = ($options & self::STREAM_OPEN_FOR_INCLUDE) !== 0;
 
-        if (! $isInclude || ($mode !== 'r' && $mode !== 'rb' && $mode !== 'rt') || ! str_ends_with(strtolower($path), '.php') || ! Config::isEnabled()) {
+        if (! $isInclude || ($mode !== 'r' && $mode !== 'rb' && $mode !== 'rt') || ! Config::isEnabled()) {
+            return $this->openDirectHandle($path, $mode, $options);
+        }
+
+        if (isset(self::$bypassedPathCache[$path])) {
+            return $this->openDirectHandle($path, $mode, $options);
+        }
+
+        // Fast-path: checks .php directly on $path first, avoiding strtolower() on 99.99% of classes
+        $isPhp = str_ends_with($path, '.php') || str_ends_with(strtolower($path), '.php');
+        if (! $isPhp) {
+            return $this->openDirectHandle($path, $mode, $options);
+        }
+
+        // Fast-path: check template and view caches directly without strtolower()
+        if (
+            str_ends_with($path, '.view.php')
+            || str_ends_with($path, '.blade.php')
+            || str_ends_with($path, '.html.php')
+            || str_ends_with($path, '.phtml')
+            || str_contains($path, '/.tempest/')
+            || str_contains($path, '/cache/views/')
+            || str_contains($path, '/framework/views/')
+        ) {
+            self::$bypassedPathCache[$path] = true;
+
             return $this->openDirectHandle($path, $mode, $options);
         }
 
@@ -337,10 +386,20 @@ final class StreamWrapper implements StreamWrapperInterface
 
         self::unregister();
 
-        $exists = (bool) self::silent(static fn () => file_exists($path));
-        $resolvedPath = $exists ? self::silent(static fn () => realpath($path)) : false;
+        if (isset(self::$realpathCache[$path])) {
+            $resolvedPath = self::$realpathCache[$path];
+        } else {
+            $resolvedPath = self::silent(static fn () => realpath($path));
+            if ($resolvedPath !== false) {
+                self::$realpathCache[$path] = $resolvedPath;
+            }
+        }
 
-        if (! $exists || $resolvedPath === false || ! self::isApplicationFile($path, $resolvedPath)) {
+        if ($resolvedPath === false || ! self::isApplicationFile($path, $resolvedPath)) {
+            if ($resolvedPath !== false) {
+                self::$bypassedPathCache[$path] = true;
+            }
+
             $target = ($resolvedPath !== false) ? $resolvedPath : $path;
             /** @var resource|false $handle */
             $handle = self::silent(
@@ -583,17 +642,19 @@ final class StreamWrapper implements StreamWrapperInterface
         self::register();
 
         if ($result !== false) {
-            $isPhp = str_ends_with(strtolower($normalized), '.php');
-            $isStaticDir = is_dir($path) && PathMatcher::isStaticSourcePath($normalized);
+            $isPhp = str_ends_with($normalized, '.php') || str_ends_with(strtolower($normalized), '.php');
+            $isStatic = PathMatcher::isStaticSourcePath($normalized);
 
-            if ($isPhp || PathMatcher::isVendorPath($normalized) || $isStaticDir) {
+            // Caches all existing PHP files, vendor files, and static files
+            if ($isPhp || PathMatcher::isVendorPath($normalized) || $isStatic) {
                 self::$statCache[$cacheKey] = $result;
             }
 
             return $result;
         }
 
-        if (PathMatcher::isStaticSourcePath($normalized)) {
+        // Only cache negative misses for immutable vendor packages to prevent poisoning application paths
+        if (PathMatcher::isVendorPath($normalized)) {
             self::$staticNegativeStatCache[$normalized] = true;
         }
 
@@ -606,7 +667,9 @@ final class StreamWrapper implements StreamWrapperInterface
         unset(
             self::$statCache[$normalized . ':stat'],
             self::$statCache[$normalized . ':lstat'],
-            self::$staticNegativeStatCache[$normalized]
+            self::$staticNegativeStatCache[$normalized],
+            self::$realpathCache[$path],
+            self::$bypassedPathCache[$path]
         );
 
         self::unregister();
@@ -678,7 +741,9 @@ final class StreamWrapper implements StreamWrapperInterface
         unset(
             self::$statCache[$normalized . ':stat'],
             self::$statCache[$normalized . ':lstat'],
-            self::$staticNegativeStatCache[$normalized]
+            self::$staticNegativeStatCache[$normalized],
+            self::$realpathCache[$path],
+            self::$bypassedPathCache[$path]
         );
 
         self::unregister();
@@ -696,7 +761,9 @@ final class StreamWrapper implements StreamWrapperInterface
         unset(
             self::$statCache[$normalized . ':stat'],
             self::$statCache[$normalized . ':lstat'],
-            self::$staticNegativeStatCache[$normalized]
+            self::$staticNegativeStatCache[$normalized],
+            self::$realpathCache[$path],
+            self::$bypassedPathCache[$path]
         );
 
         self::unregister();
@@ -714,7 +781,9 @@ final class StreamWrapper implements StreamWrapperInterface
         unset(
             self::$statCache[$normalized . ':stat'],
             self::$statCache[$normalized . ':lstat'],
-            self::$staticNegativeStatCache[$normalized]
+            self::$staticNegativeStatCache[$normalized],
+            self::$realpathCache[$path],
+            self::$bypassedPathCache[$path]
         );
 
         self::unregister();
@@ -734,9 +803,13 @@ final class StreamWrapper implements StreamWrapperInterface
             self::$statCache[$normFrom . ':stat'],
             self::$statCache[$normFrom . ':lstat'],
             self::$staticNegativeStatCache[$normFrom],
+            self::$realpathCache[$pathFrom],
+            self::$bypassedPathCache[$pathFrom],
             self::$statCache[$normTo . ':stat'],
             self::$statCache[$normTo . ':lstat'],
-            self::$staticNegativeStatCache[$normTo]
+            self::$staticNegativeStatCache[$normTo],
+            self::$realpathCache[$pathTo],
+            self::$bypassedPathCache[$pathTo]
         );
 
         self::unregister();
@@ -839,15 +912,19 @@ final class StreamWrapper implements StreamWrapperInterface
             return $this->openMemoryStream($resolvedPath);
         }
 
-        if (! file_exists($cachedFile) || is_link($cachedFile)) {
-            $source = file_get_contents($resolvedPath);
-            if ($source === false) {
-                return false;
+        if (! isset(self::$verifiedCachedFiles[$cachedFile])) {
+            if (! file_exists($cachedFile) || is_link($cachedFile)) {
+                $source = file_get_contents($resolvedPath);
+                if ($source === false) {
+                    return false;
+                }
+                $transformed = self::transformSource($source, $resolvedPath);
+                if (! CacheManager::writeCachedFileSafely($cachedFile, $transformed)) {
+                    return $this->openMemoryStream($resolvedPath);
+                }
             }
-            $transformed = self::transformSource($source, $resolvedPath);
-            if (! CacheManager::writeCachedFileSafely($cachedFile, $transformed)) {
-                return $this->openMemoryStream($resolvedPath);
-            }
+
+            self::$verifiedCachedFiles[$cachedFile] = true;
         }
 
         $cacheHandle = ($this->context !== null)

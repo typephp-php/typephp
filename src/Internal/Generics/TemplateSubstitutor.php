@@ -103,7 +103,7 @@ final class TemplateSubstitutor
     }
 
     /**
-     * Recursively inlines nested nodes of the given container class.
+     * Inlines nested nodes of the given container class iteratively while preserving in-order traversal.
      *
      * @param array<TypeNode> $types
      * @param class-string<UnionTypeNode>|class-string<IntersectionTypeNode> $containerClass
@@ -116,8 +116,16 @@ final class TemplateSubstitutor
 
         foreach ($types as $t) {
             if ($t instanceof $containerClass) {
-                foreach (self::flatten($t->types, $containerClass) as $inner) {
-                    $result[] = $inner;
+                $stack = array_reverse($t->types);
+                while ($stack !== []) {
+                    $item = array_pop($stack);
+                    if ($item instanceof $containerClass) {
+                        for ($k = \count($item->types) - 1; $k >= 0; $k--) {
+                            $stack[] = $item->types[$k];
+                        }
+                    } else {
+                        $result[] = $item;
+                    }
                 }
             } else {
                 $result[] = $t;
@@ -167,19 +175,19 @@ final class TemplateSubstitutor
         }
 
         if ($node instanceof UnionTypeNode) {
-            $types = array_map(
-                fn ($t) => self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited),
-                $node->types
-            );
+            $types = [];
+            foreach ($node->types as $t) {
+                $types[] = self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited);
+            }
 
             return self::normalizeUnion($types);
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            $types = array_map(
-                fn ($t) => self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited),
-                $node->types
-            );
+            $types = [];
+            foreach ($node->types as $t) {
+                $types[] = self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited);
+            }
 
             return self::normalizeIntersection($types);
         }
@@ -226,28 +234,38 @@ final class TemplateSubstitutor
     }
 
     /**
-     * @param array<string, TypeNode> $boundTemplates
-     * @param array<string, TemplateTagValueNode> $declaredTemplates
-     * @param array<string, true> $visited
-     */
+       * @param array<string, TypeNode> $boundTemplates
+       * @param array<string, TemplateTagValueNode> $declaredTemplates
+       * @param array<string, true> $visited
+      */
     private static function substituteCallable(
         CallableTypeNode $node,
         array $boundTemplates,
         array $declaredTemplates,
         array $visited
     ): CallableTypeNode {
-        $parameters = array_map(
-            fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
-                self::substituteNode($param->type, $boundTemplates, $declaredTemplates, $visited),
+        $localTemplateNames = [];
+        foreach ($node->templateTypes as $tTag) {
+            $localTemplateNames[$tTag->name] = true;
+        }
+
+        $unboundLocalNames = array_diff_key($localTemplateNames, $boundTemplates);
+        $effectiveDeclared = $unboundLocalNames !== []
+            ? array_diff_key($declaredTemplates, $unboundLocalNames)
+            : $declaredTemplates;
+
+        $parameters = [];
+        foreach ($node->parameters as $param) {
+            $parameters[] = new CallableTypeParameterNode(
+                self::substituteNode($param->type, $boundTemplates, $effectiveDeclared, $visited),
                 $param->isReference,
                 $param->isVariadic,
                 $param->parameterName,
                 $param->isOptional
-            ),
-            $node->parameters
-        );
+            );
+        }
 
-        $returnType = self::substituteNode($node->returnType, $boundTemplates, $declaredTemplates, $visited);
+        $returnType = self::substituteNode($node->returnType, $boundTemplates, $effectiveDeclared, $visited);
 
         return new CallableTypeNode(
             $node->identifier,
@@ -309,10 +327,10 @@ final class TemplateSubstitutor
         array $visited
     ): GenericTypeNode {
         $type = self::substituteNode($node->type, $boundTemplates, $declaredTemplates, $visited);
-        $genericTypes = array_map(
-            fn ($t) => self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited),
-            $node->genericTypes
-        );
+        $genericTypes = [];
+        foreach ($node->genericTypes as $gt) {
+            $genericTypes[] = self::substituteNode($gt, $boundTemplates, $declaredTemplates, $visited);
+        }
 
         return new GenericTypeNode(
             $type instanceof IdentifierTypeNode ? $type : $node->type,

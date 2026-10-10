@@ -38,12 +38,12 @@ final class ConditionalChecker
      */
     public static function containsConditional(TypeNode $node): bool
     {
-        if ($node instanceof ConditionalTypeNode || $node instanceof ConditionalTypeForParameterNode) {
-            return true;
+        while ($node instanceof NullableTypeNode || $node instanceof ArrayTypeNode) {
+            $node = $node->type;
         }
 
-        if ($node instanceof NullableTypeNode || $node instanceof ArrayTypeNode) {
-            return self::containsConditional($node->type);
+        if ($node instanceof ConditionalTypeNode || $node instanceof ConditionalTypeForParameterNode) {
+            return true;
         }
 
         if ($node instanceof GenericTypeNode) {
@@ -145,10 +145,10 @@ final class ConditionalChecker
 
         if ($typeNode instanceof GenericTypeNode) {
             $genericType = self::resolve($typeNode->type, $vars, $boundTemplates, $registry, $function);
-            $genericTypes = array_map(
-                fn ($t) => self::resolve($t, $vars, $boundTemplates, $registry, $function),
-                $typeNode->genericTypes
-            );
+            $genericTypes = [];
+            foreach ($typeNode->genericTypes as $gt) {
+                $genericTypes[] = self::resolve($gt, $vars, $boundTemplates, $registry, $function);
+            }
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $typeNode->type,
@@ -158,17 +158,21 @@ final class ConditionalChecker
         }
 
         if ($typeNode instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(
-                fn ($t) => self::resolve($t, $vars, $boundTemplates, $registry, $function),
-                $typeNode->types
-            ));
+            $types = [];
+            foreach ($typeNode->types as $t) {
+                $types[] = self::resolve($t, $vars, $boundTemplates, $registry, $function);
+            }
+
+            return new UnionTypeNode($types);
         }
 
         if ($typeNode instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(
-                fn ($t) => self::resolve($t, $vars, $boundTemplates, $registry, $function),
-                $typeNode->types
-            ));
+            $types = [];
+            foreach ($typeNode->types as $t) {
+                $types[] = self::resolve($t, $vars, $boundTemplates, $registry, $function);
+            }
+
+            return new IntersectionTypeNode($types);
         }
 
         if ($typeNode instanceof ArrayShapeNode) {
@@ -211,16 +215,16 @@ final class ConditionalChecker
         }
 
         if ($typeNode instanceof CallableTypeNode) {
-            $parameters = array_map(
-                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+            $parameters = [];
+            foreach ($typeNode->parameters as $param) {
+                $parameters[] = new CallableTypeParameterNode(
                     self::resolve($param->type, $vars, $boundTemplates, $registry, $function),
                     $param->isReference,
                     $param->isVariadic,
                     $param->parameterName,
                     $param->isOptional
-                ),
-                $typeNode->parameters
-            );
+                );
+            }
 
             $returnType = self::resolve($typeNode->returnType, $vars, $boundTemplates, $registry, $function);
 

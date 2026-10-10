@@ -265,7 +265,7 @@ final class ParamChecker
     ): ?ErrorMessage {
         foreach ($types as $paramName => $typeNode) {
             if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
-                if (ConditionalChecker::containsConditional($typeNode)) {
+                if (! ($typeNode instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($typeNode)) {
                     $typeNode = ConditionalChecker::resolve($typeNode, $vars, [], $registry, $effectiveFunction);
                 }
 
@@ -422,12 +422,12 @@ final class ParamChecker
             return $function;
         }
 
-        if (str_starts_with($function, $actualClassName . '::') && HierarchyResolver::getTraitAliases($actualClassName) === []) {
-            return $function;
-        }
-
         if (isset(self::$effectiveFunctionCache[$function][$actualClassName])) {
             return self::$effectiveFunctionCache[$function][$actualClassName];
+        }
+
+        if (str_starts_with($function, $actualClassName . '::') && HierarchyResolver::getTraitAliases($actualClassName) === []) {
+            return self::$effectiveFunctionCache[$function][$actualClassName] = $function;
         }
 
         [$classOrTrait, $methodName] = explode('::', $function, 2);
@@ -1472,7 +1472,12 @@ final class ParamChecker
         $inferredType = TemplateManager::inferTypeFromValue($sampleVal);
 
         if ($templateNode->bound !== null) {
-            $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
+            $boundNode = $templateNode->bound;
+            if (TemplateManager::isFBounded($templateNode, $function)) {
+                $boundNode = TemplateSubstitutor::substitute($boundNode, [$templateName => $inferredType]);
+            }
+
+            $resolvedBound = SpecialTypeResolver::resolve($boundNode, $function, $thisObj);
             $inferredType = self::refineInferredTypeFromBound($sampleVal, $resolvedBound, $inferredType);
 
             $err = $registry->validate($sampleVal, $resolvedBound, $function . '(): Argument $' . $paramName . ' (template ' . $templateName . ')');
@@ -1620,12 +1625,11 @@ final class ParamChecker
         ErrorMessage $originalError,
         TypeValidatorRegistry $registry
     ): ?ErrorMessage {
-        if ($isClassLevelTemplate || $templateNode->bound === null) {
+        if ($isClassLevelTemplate || $templateNode->bound === null || TemplateManager::isFBounded($templateNode, $function)) {
             return $originalError;
         }
 
         $resolvedBound = SpecialTypeResolver::resolve($templateNode->bound, $function, $thisObj);
-
         $boundErr = $registry->validate($val, $resolvedBound, $context . ' (template ' . $templateName . ')');
 
         if ($boundErr === null) {

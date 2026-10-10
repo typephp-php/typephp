@@ -190,6 +190,10 @@ final class DocblockParser
             return false;
         }
 
+        while ($node instanceof ArrayTypeNode || $node instanceof NullableTypeNode) {
+            $node = $node->type;
+        }
+
         if ($node instanceof IdentifierTypeNode) {
             return isset($templateNames[$node->name]);
         }
@@ -223,10 +227,6 @@ final class DocblockParser
         if ($node instanceof OffsetAccessTypeNode) {
             return self::typeReferencesTemplate($node->type, $templateNames)
                 || self::typeReferencesTemplate($node->offset, $templateNames);
-        }
-
-        if ($node instanceof ArrayTypeNode || $node instanceof NullableTypeNode) {
-            return self::typeReferencesTemplate($node->type, $templateNames);
         }
 
         if ($node instanceof UnionTypeNode || $node instanceof IntersectionTypeNode) {
@@ -359,7 +359,7 @@ final class DocblockParser
                     $refClass = new \ReflectionClass($className);
                     if ($refClass->hasMethod($methodName)) {
                         $ref = $refClass->getMethod($methodName);
-                        $contract = self::parseMethod($ref);
+                        $contract = self::parseMethod($ref, $refClass);
                     } else {
                         $classTemplates = [];
                         $aliases = [];
@@ -441,6 +441,34 @@ final class DocblockParser
         }
 
         return self::$cache[$function] = $contract;
+    }
+
+    /**
+     * Extracts and returns all class-level templates for a given class.
+     *
+     * @return array<string, TemplateTagValueNode>
+     */
+    public static function parseClassTemplates(string $className): array
+    {
+        if (isset(self::$classLevelDocCache[$className])) {
+            return self::$classLevelDocCache[$className]['templates'];
+        }
+
+        if (! class_exists($className, false) && ! class_exists($className) && ! interface_exists($className, false) && ! interface_exists($className) && ! trait_exists($className, false) && ! trait_exists($className) && ! enum_exists($className, false) && ! enum_exists($className)) {
+            return [];
+        }
+
+        try {
+            /** @var class-string<object> $className */
+            $refClass = new \ReflectionClass($className);
+            $aliases = [];
+            $classTemplates = [];
+            self::parseClassLevelDocs($refClass, $classTemplates, $aliases);
+
+            return $classTemplates;
+        } catch (\Throwable $e) {
+            return [];
+        }
     }
 
     /**
@@ -904,9 +932,11 @@ final class DocblockParser
     /**
      * Orchestrates parsing for class methods across the inheritance hierarchy.
      *
+     * @param \ReflectionClass<object>|null $targetClass
+     *
      * @return FunctionContract
      */
-    private static function parseMethod(\ReflectionMethod $ref): array
+    private static function parseMethod(\ReflectionMethod $ref, ?\ReflectionClass $targetClass = null): array
     {
         /** @var array<string, TypeNode> $types */
         $types = [];
@@ -923,7 +953,7 @@ final class DocblockParser
         /** @var array<string, bool> $sensitiveParams */
         $sensitiveParams = [];
 
-        $targetClass = (class_exists($ref->class, false) || class_exists($ref->class) || interface_exists($ref->class) || enum_exists($ref->class) || trait_exists($ref->class))
+        $targetClass ??= (class_exists($ref->class, false) || class_exists($ref->class) || interface_exists($ref->class) || enum_exists($ref->class) || trait_exists($ref->class))
             ? new \ReflectionClass($ref->class)
             : $ref->getDeclaringClass();
 
@@ -1709,24 +1739,35 @@ final class DocblockParser
         }
 
         if ($node instanceof IdentifierTypeNode) {
-            if (isset($aliases[$node->name])) {
-                return self::substituteAliases($aliases[$node->name], $aliases);
+            $visited = [];
+            while (isset($aliases[$node->name])) {
+                if (isset($visited[$node->name])) {
+                    break;
+                }
+                $visited[$node->name] = true;
+                $target = $aliases[$node->name];
+
+                if ($target instanceof IdentifierTypeNode) {
+                    $node = $target;
+                } else {
+                    return self::substituteAliases($target, $aliases);
+                }
             }
 
             return $node;
         }
 
         if ($node instanceof CallableTypeNode) {
-            $parameters = array_map(
-                fn (CallableTypeParameterNode $param) => new CallableTypeParameterNode(
+            $parameters = [];
+            foreach ($node->parameters as $param) {
+                $parameters[] = new CallableTypeParameterNode(
                     self::substituteAliases($param->type, $aliases),
                     $param->isReference,
                     $param->isVariadic,
                     $param->parameterName,
                     $param->isOptional
-                ),
-                $node->parameters
-            );
+                );
+            }
 
             $returnType = self::substituteAliases($node->returnType, $aliases);
 
@@ -1751,10 +1792,10 @@ final class DocblockParser
 
         if ($node instanceof GenericTypeNode) {
             $genericType = self::substituteAliases($node->type, $aliases);
-            $genericTypes = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
-                $node->genericTypes
-            );
+            $genericTypes = [];
+            foreach ($node->genericTypes as $gt) {
+                $genericTypes[] = self::substituteAliases($gt, $aliases);
+            }
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
@@ -1768,10 +1809,10 @@ final class DocblockParser
         }
 
         if ($node instanceof UnionTypeNode) {
-            $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
-                $node->types
-            );
+            $types = [];
+            foreach ($node->types as $t) {
+                $types[] = self::substituteAliases($t, $aliases);
+            }
 
             foreach ($types as $t) {
                 if ($t instanceof IdentifierTypeNode && strtolower($t->name) === 'mixed') {
@@ -1783,10 +1824,10 @@ final class DocblockParser
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            $types = array_map(
-                fn ($t) => self::substituteAliases($t, $aliases),
-                $node->types
-            );
+            $types = [];
+            foreach ($node->types as $t) {
+                $types[] = self::substituteAliases($t, $aliases);
+            }
 
             $filtered = array_values(array_filter($types, function ($t) {
                 return ! ($t instanceof IdentifierTypeNode && strtolower($t->name) === 'mixed');

@@ -501,6 +501,50 @@ final class GenericValidator implements TypeValidatorInterface
             return null;
         }
 
+        if ($valueTypeNode instanceof IdentifierTypeNode) {
+            $elemName = $valueTypeNode->name;
+
+            if ($elemName === 'int') {
+                foreach ($value as $k => $v) {
+                    if (! \is_int($v)) {
+                        return ErrorFactory::createError($context . '[' . $k . '] must be of type int, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
+                    }
+                }
+
+                return null;
+            }
+
+            if ($elemName === 'string') {
+                foreach ($value as $k => $v) {
+                    if (! \is_string($v)) {
+                        return ErrorFactory::createError($context . '[' . $k . '] must be of type string, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
+                    }
+                }
+
+                return null;
+            }
+
+            if ($elemName === 'bool') {
+                foreach ($value as $k => $v) {
+                    if (! \is_bool($v)) {
+                        return ErrorFactory::createError($context . '[' . $k . '] must be of type bool, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
+                    }
+                }
+
+                return null;
+            }
+
+            if ($elemName === 'float') {
+                foreach ($value as $k => $v) {
+                    if (! \is_float($v) && ! \is_int($v)) {
+                        return ErrorFactory::createError($context . '[' . $k . '] must be of type float, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
+                    }
+                }
+
+                return null;
+            }
+        }
+
         foreach ($value as $k => $v) {
             $err = $isComplexObjectGeneric
                 ? $this->validateObjectGeneric($v, $valueTypeNode, '', $isSensitive)
@@ -586,6 +630,58 @@ final class GenericValidator implements TypeValidatorInterface
             }
 
             return null;
+        }
+
+        if ($valTypeNode instanceof IdentifierTypeNode) {
+            $elemName = $valTypeNode->name;
+
+            if ($elemName === 'int') {
+                foreach ($value as $k => $v) {
+                    if (! \is_int($v)) {
+                        $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
+
+                        return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type int, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
+                    }
+                }
+
+                return null;
+            }
+
+            if ($elemName === 'string') {
+                foreach ($value as $k => $v) {
+                    if (! \is_string($v)) {
+                        $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
+
+                        return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type string, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
+                    }
+                }
+
+                return null;
+            }
+
+            if ($elemName === 'bool') {
+                foreach ($value as $k => $v) {
+                    if (! \is_bool($v)) {
+                        $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
+
+                        return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type bool, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
+                    }
+                }
+
+                return null;
+            }
+
+            if ($elemName === 'float') {
+                foreach ($value as $k => $v) {
+                    if (! \is_float($v) && ! \is_int($v)) {
+                        $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
+
+                        return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type float, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
+                    }
+                }
+
+                return null;
+            }
         }
 
         foreach ($value as $k => $v) {

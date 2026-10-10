@@ -111,6 +111,15 @@ final class SpecialTypeResolver
     ];
 
     /**
+     * Scalar aliases that are not reserved keywords in PHP and can be user class names.
+     */
+    private const OVERRIDABLE_SCALAR_ALIASES = [
+        'integer' => true,
+        'boolean' => true,
+        'double' => true,
+    ];
+
+    /**
      * In-memory cache for Reflection instances per context string.
      *
      * @var array<string, \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod>
@@ -204,7 +213,9 @@ final class SpecialTypeResolver
         if ($node instanceof IdentifierTypeNode) {
             $lower = strtolower($node->name);
             if (isset(self::BUILTIN_TYPE_KEYWORDS[$lower]) && $lower !== 'self' && $lower !== 'parent' && $lower !== 'static' && $lower !== '$this') {
-                return $node;
+                if (! isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) || $node->name === $lower) {
+                    return $node;
+                }
             }
         }
 
@@ -236,7 +247,10 @@ final class SpecialTypeResolver
 
         if ($node instanceof GenericTypeNode) {
             $genericType = self::resolve($node->type, $context, $thisObj);
-            $innerTypes = array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->genericTypes);
+            $innerTypes = [];
+            foreach ($node->genericTypes as $gt) {
+                $innerTypes[] = self::resolve($gt, $context, $thisObj);
+            }
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
@@ -290,11 +304,21 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->types));
+            $types = [];
+            foreach ($node->types as $t) {
+                $types[] = self::resolve($t, $context, $thisObj);
+            }
+
+            return new UnionTypeNode($types);
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolve($t, $context, $thisObj), $node->types));
+            $types = [];
+            foreach ($node->types as $t) {
+                $types[] = self::resolve($t, $context, $thisObj);
+            }
+
+            return new IntersectionTypeNode($types);
         }
 
         return $node;
@@ -328,7 +352,10 @@ final class SpecialTypeResolver
 
         if ($node instanceof GenericTypeNode) {
             $genericType = self::resolveForFile($node->type, $file);
-            $innerTypes = array_map(fn ($t) => self::resolveForFile($t, $file), $node->genericTypes);
+            $innerTypes = [];
+            foreach ($node->genericTypes as $gt) {
+                $innerTypes[] = self::resolveForFile($gt, $file);
+            }
 
             return new GenericTypeNode(
                 $genericType instanceof IdentifierTypeNode ? $genericType : $node->type,
@@ -382,11 +409,21 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof UnionTypeNode) {
-            return new UnionTypeNode(array_map(fn ($t) => self::resolveForFile($t, $file), $node->types));
+            $types = [];
+            foreach ($node->types as $t) {
+                $types[] = self::resolveForFile($t, $file);
+            }
+
+            return new UnionTypeNode($types);
         }
 
         if ($node instanceof IntersectionTypeNode) {
-            return new IntersectionTypeNode(array_map(fn ($t) => self::resolveForFile($t, $file), $node->types));
+            $types = [];
+            foreach ($node->types as $t) {
+                $types[] = self::resolveForFile($t, $file);
+            }
+
+            return new IntersectionTypeNode($types);
         }
 
         return clone $node;
@@ -494,6 +531,17 @@ final class SpecialTypeResolver
             }
         }
 
+        if (str_starts_with($lower, 'self::') && $declaringClass !== null) {
+            return new IdentifierTypeNode($declaringClass . substr($node->name, 4));
+        }
+
+        if (str_starts_with($lower, 'parent::') && $declaringClass !== null) {
+            $parentClass = get_parent_class($declaringClass);
+            if ($parentClass !== false) {
+                return new IdentifierTypeNode($parentClass . substr($node->name, 6));
+            }
+        }
+
         $fqcn = self::resolveFqcn($node->name, $ref);
 
         return $fqcn !== $node->name ? new IdentifierTypeNode($fqcn) : $node;
@@ -560,7 +608,9 @@ final class SpecialTypeResolver
     private static function resolveArrayShape(ArrayShapeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context, ?object $thisObj): ArrayShapeNode
     {
         $ref = self::getReflectionContext($context);
-        $items = array_map(function ($item) use ($ref, $context, $thisObj) {
+        $items = [];
+
+        foreach ($node->items as $item) {
             /** @var ConstExprIntegerNode|ConstExprStringNode|ConstFetchNode|IdentifierTypeNode|null $keyName */
             $keyName = $item->keyName;
 
@@ -578,7 +628,7 @@ final class SpecialTypeResolver
 
             if ($className !== null && $constName !== null) {
                 $lowerClassName = strtolower($className);
-                $declaringClass = $ref instanceof \ReflectionMethod ? $ref->getDeclaringClass()->getName() : null;
+                $declaringClass = $ref instanceof \ReflectionMethod ? $ref->getDeclaringClass()->getName() : ($ref instanceof \ReflectionClass ? $ref->getName() : null);
 
                 if ($lowerClassName === 'self' && $declaringClass !== null) {
                     $resolvedClass = $declaringClass;
@@ -595,12 +645,12 @@ final class SpecialTypeResolver
                 }
             }
 
-            return new ArrayShapeItemNode(
+            $items[] = new ArrayShapeItemNode(
                 $keyName,
                 $item->optional,
                 self::resolve($item->valueType, $context, $thisObj)
             );
-        }, $node->items);
+        }
 
         if ($node->sealed) {
             return ArrayShapeNode::createSealed($items, $node->kind);
@@ -621,13 +671,14 @@ final class SpecialTypeResolver
      */
     private static function resolveObjectShape(ObjectShapeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context, ?object $thisObj): ObjectShapeNode
     {
-        $items = array_map(function ($item) use ($context, $thisObj) {
-            return new ObjectShapeItemNode(
+        $items = [];
+        foreach ($node->items as $item) {
+            $items[] = new ObjectShapeItemNode(
                 $item->keyName,
                 $item->optional,
                 self::resolve($item->valueType, $context, $thisObj)
             );
-        }, $node->items);
+        }
 
         return new ObjectShapeNode($items);
     }
@@ -637,19 +688,44 @@ final class SpecialTypeResolver
      */
     private static function resolveCallable(CallableTypeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context, ?object $thisObj): CallableTypeNode
     {
-        $resolvedParameters = array_map(function (CallableTypeParameterNode $param) use ($context, $thisObj) {
-            return new CallableTypeParameterNode(
-                self::resolve($param->type, $context, $thisObj),
+        $localTemplates = [];
+        $resolvedTemplateTypes = [];
+        foreach ($node->templateTypes as $tTag) {
+            $localTemplates[$tTag->name] = true;
+            $resolvedBound = $tTag->bound !== null
+                ? self::resolve($tTag->bound, $context, $thisObj)
+                : null;
+            $resolvedDefault = $tTag->default !== null
+                ? self::resolve($tTag->default, $context, $thisObj)
+                : null;
+            $resolvedTemplateTypes[] = new \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode(
+                $tTag->name,
+                $resolvedBound,
+                $tTag->description,
+                $resolvedDefault
+            );
+        }
+
+        $resolvedParameters = [];
+        foreach ($node->parameters as $param) {
+            $paramType = ($param->type instanceof IdentifierTypeNode && isset($localTemplates[$param->type->name]))
+                ? $param->type
+                : self::resolve($param->type, $context, $thisObj);
+
+            $resolvedParameters[] = new CallableTypeParameterNode(
+                $paramType,
                 $param->isReference,
                 $param->isVariadic,
                 $param->parameterName,
                 $param->isOptional
             );
-        }, $node->parameters);
+        }
 
-        $resolvedReturnType = self::resolve($node->returnType, $context, $thisObj);
+        $resolvedReturnType = ($node->returnType instanceof IdentifierTypeNode && isset($localTemplates[$node->returnType->name]))
+            ? $node->returnType
+            : self::resolve($node->returnType, $context, $thisObj);
 
-        return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $node->templateTypes);
+        return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $resolvedTemplateTypes);
     }
 
     private static function resolveConstTypeForFile(ConstTypeNode $node, string $file): ConstTypeNode
@@ -700,7 +776,8 @@ final class SpecialTypeResolver
 
     private static function resolveArrayShapeForFile(ArrayShapeNode $node, string $file): ArrayShapeNode
     {
-        $items = array_map(function ($item) use ($file) {
+        $items = [];
+        foreach ($node->items as $item) {
             /** @var ConstExprIntegerNode|ConstExprStringNode|ConstFetchNode|IdentifierTypeNode|null $keyName */
             $keyName = $item->keyName;
 
@@ -728,12 +805,12 @@ final class SpecialTypeResolver
                 }
             }
 
-            return new ArrayShapeItemNode(
+            $items[] = new ArrayShapeItemNode(
                 $keyName,
                 $item->optional,
                 self::resolveForFile($item->valueType, $file)
             );
-        }, $node->items);
+        }
 
         if ($node->sealed) {
             return ArrayShapeNode::createSealed($items, $node->kind);
@@ -751,32 +828,58 @@ final class SpecialTypeResolver
 
     private static function resolveObjectShapeForFile(ObjectShapeNode $node, string $file): ObjectShapeNode
     {
-        $items = array_map(function ($item) use ($file) {
-            return new ObjectShapeItemNode(
+        $items = [];
+        foreach ($node->items as $item) {
+            $items[] = new ObjectShapeItemNode(
                 $item->keyName,
                 $item->optional,
                 self::resolveForFile($item->valueType, $file)
             );
-        }, $node->items);
+        }
 
         return new ObjectShapeNode($items);
     }
 
     private static function resolveCallableForFile(CallableTypeNode $node, string $file): CallableTypeNode
     {
-        $resolvedParameters = array_map(function (CallableTypeParameterNode $param) use ($file) {
-            return new CallableTypeParameterNode(
-                self::resolveForFile($param->type, $file),
+        $localTemplates = [];
+        $resolvedTemplateTypes = [];
+        foreach ($node->templateTypes as $tTag) {
+            $localTemplates[$tTag->name] = true;
+            $resolvedBound = $tTag->bound !== null
+                ? self::resolveForFile($tTag->bound, $file)
+                : null;
+            $resolvedDefault = $tTag->default !== null
+                ? self::resolveForFile($tTag->default, $file)
+                : null;
+            $resolvedTemplateTypes[] = new \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode(
+                $tTag->name,
+                $resolvedBound,
+                $tTag->description,
+                $resolvedDefault
+            );
+        }
+
+        $resolvedParameters = [];
+        foreach ($node->parameters as $param) {
+            $paramType = ($param->type instanceof IdentifierTypeNode && isset($localTemplates[$param->type->name]))
+                ? clone $param->type
+                : self::resolveForFile($param->type, $file);
+
+            $resolvedParameters[] = new CallableTypeParameterNode(
+                $paramType,
                 $param->isReference,
                 $param->isVariadic,
                 $param->parameterName,
                 $param->isOptional
             );
-        }, $node->parameters);
+        }
 
-        $resolvedReturnType = self::resolveForFile($node->returnType, $file);
+        $resolvedReturnType = ($node->returnType instanceof IdentifierTypeNode && isset($localTemplates[$node->returnType->name]))
+            ? clone $node->returnType
+            : self::resolveForFile($node->returnType, $file);
 
-        return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $node->templateTypes);
+        return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $resolvedTemplateTypes);
     }
 
     private static function extractOffsetKey(TypeNode $offsetType): string|int|null
@@ -1056,8 +1159,11 @@ final class SpecialTypeResolver
      */
     public static function resolveFqcn(string $name, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref): string
     {
+        $lower = strtolower($name);
         if (self::isBuiltInTypeKeyword($name)) {
-            return $name;
+            if (! isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) || $name === $lower) {
+                return $name;
+            }
         }
 
         if (str_starts_with($name, '\\')) {
@@ -1089,6 +1195,10 @@ final class SpecialTypeResolver
 
         $resolved = self::resolveNameFromImportsAndNamespace($name, [], $namespace);
 
+        if (isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) && $resolved === $name && ! self::symbolExists($name)) {
+            return self::$fqcnCache[$contextKey][$name] = $name;
+        }
+
         return self::$fqcnCache[$contextKey][$name] = $resolved;
     }
 
@@ -1098,9 +1208,12 @@ final class SpecialTypeResolver
     public static function resolveFqcnForFile(string $name, string $file): string
     {
         $file = str_replace('\\', '/', $file);
+        $lower = strtolower($name);
 
         if (self::isBuiltInTypeKeyword($name)) {
-            return $name;
+            if (! isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) || $name === $lower) {
+                return $name;
+            }
         }
 
         if (str_starts_with($name, '\\')) {
@@ -1118,7 +1231,13 @@ final class SpecialTypeResolver
         $imports = self::getUseImportsFromFile($file);
         $namespace = self::getNamespaceFromFile($file);
 
-        return self::$fileFqcnCache[$file][$name] = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
+        $resolved = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
+
+        if (isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) && $resolved === $name && ! self::symbolExists($name)) {
+            return self::$fileFqcnCache[$file][$name] = $name;
+        }
+
+        return self::$fileFqcnCache[$file][$name] = $resolved;
     }
 
     /**
@@ -1189,7 +1308,7 @@ final class SpecialTypeResolver
      */
     public static function isBuiltInTypeKeyword(string $name): bool
     {
-        return isset(self::BUILTIN_TYPE_KEYWORDS[strtolower($name)]);
+        return isset(self::BUILTIN_TYPE_KEYWORDS[$name]) || isset(self::BUILTIN_TYPE_KEYWORDS[strtolower($name)]);
     }
 
     /**

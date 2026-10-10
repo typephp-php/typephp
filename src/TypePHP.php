@@ -61,7 +61,7 @@ final class TypePHP
             return $types[$templateName];
         }
 
-        if (\count($types) === 1) {
+        if ($templateName === null && \count($types) === 1) {
             return reset($types);
         }
 

@@ -8,6 +8,8 @@ use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
+use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
@@ -15,7 +17,7 @@ use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
- * @internal Evaluates generator yield and send (TSend) type validations.
+ * @internal Evaluates generator yield, send (TSend), and return (TReturn) type validations.
  */
 final class GeneratorChecker
 {
@@ -28,17 +30,17 @@ final class GeneratorChecker
 
     /**
      * Cache for resolved yield & send types of static / non-generic generators:
-     * [$function] => array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode}.
+     * [$function] => array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode}.
      *
-     * @var array<string, array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode}>
+     * @var array<string, array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode}>
      */
     private static array $staticYieldTypeCache = [];
 
     /**
      * 2D Cache for resolved yield & send types of generic generators:
-     * [$function][$templateSignature] => array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode}.
+     * [$function][$templateSignature] => array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode}.
      *
-     * @var array<string, array<string, array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode}>>
+     * @var array<string, array<string, array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode}>>
      */
     private static array $genericYieldTypeCache = [];
 
@@ -105,9 +107,41 @@ final class GeneratorChecker
     }
 
     /**
+     * Validates a value returned from a generator via `return $value;` against TReturn.
+     */
+    public static function checkReturn(
+        string $function,
+        mixed $value,
+        TypeValidatorRegistry $registry,
+        object|string|null $thisOrClass = null
+    ): mixed {
+        $types = self::resolveYieldAndSendTypes($function, $thisOrClass);
+        if ($types === null) {
+            return $value;
+        }
+
+        $returnTypeNode = $types[3];
+        if ($returnTypeNode === null) {
+            return $value;
+        }
+
+        if ($returnTypeNode instanceof IdentifierTypeNode && strtolower($returnTypeNode->name) === 'void') {
+            if ($value !== null) {
+                return ErrorFactory::createError("$function(): Generator return value must be of type void, " . TypeFormatter::formatGivenValue($value) . ' returned');
+            }
+
+            return null;
+        }
+
+        $err = $registry->validate($value, $returnTypeNode, "$function(): Generator return value (TReturn)");
+
+        return $err ?? $value;
+    }
+
+    /**
      * Resolves and caches the generator's yielded key, value, and sent types in memory.
      *
-     * @return array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode}|null
+     * @return array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode}|null
      */
     private static function resolveYieldAndSendTypes(string $function, object|string|null $thisOrClass): ?array
     {
@@ -181,29 +215,38 @@ final class GeneratorChecker
     }
 
     /**
-     * Extracts yielded key, item, and sent (TSend) TypeNodes from a resolved generator/array AST node.
+     * Extracts yielded key, item, sent (TSend), and return (TReturn) TypeNodes from a resolved generator/array AST node.
      *
-     * @return array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode}
+     * @return array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode}
      */
     private static function extractYieldTypes(TypeNode $returnTypeNode): array
     {
         $itemTypeNode = null;
         $keyTypeNode = null;
         $sendTypeNode = null;
+        $generatorReturnTypeNode = null;
 
         if ($returnTypeNode instanceof GenericTypeNode) {
             $typesCount = \count($returnTypeNode->genericTypes);
             if ($typesCount === 1) {
                 $itemTypeNode = $returnTypeNode->genericTypes[0];
-            } elseif ($typesCount >= 2) {
+            } elseif ($typesCount === 2) {
                 $keyTypeNode = $returnTypeNode->genericTypes[0];
                 $itemTypeNode = $returnTypeNode->genericTypes[1];
-                $sendTypeNode = $returnTypeNode->genericTypes[2] ?? null;
+            } elseif ($typesCount === 3) {
+                $keyTypeNode = $returnTypeNode->genericTypes[0];
+                $itemTypeNode = $returnTypeNode->genericTypes[1];
+                $sendTypeNode = $returnTypeNode->genericTypes[2];
+            } elseif ($typesCount >= 4) {
+                $keyTypeNode = $returnTypeNode->genericTypes[0];
+                $itemTypeNode = $returnTypeNode->genericTypes[1];
+                $sendTypeNode = $returnTypeNode->genericTypes[2];
+                $generatorReturnTypeNode = $returnTypeNode->genericTypes[3];
             }
         } elseif ($returnTypeNode instanceof ArrayTypeNode) {
             $itemTypeNode = $returnTypeNode->type;
         }
 
-        return [$keyTypeNode, $itemTypeNode, $sendTypeNode];
+        return [$keyTypeNode, $itemTypeNode, $sendTypeNode, $generatorReturnTypeNode];
     }
 }

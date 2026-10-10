@@ -53,10 +53,8 @@ final class DocblockNormalizer
         }
 
         if (stripos($doc, 'callable') !== false || stripos($doc, 'closure') !== false) {
-            // 1. Auto-complete omitted return types to ': mixed'
-            $doc = preg_replace('/(callable|Closure|static-closure)\s*(\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))(?!\s*:)/i', '$1$2: mixed', $doc) ?? $doc;
+            $doc = preg_replace('/(callable|Closure|static-closure)(?:<[^>]+>)?\s*(\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))(?!\s*:)/i', '$1$2: mixed', $doc) ?? $doc;
 
-            // 2. Auto-parenthesize unparenthesized nested return callables (Mago / Right-associative functional currying)
             if (str_contains($doc, ':')) {
                 $doc = self::normalizeNestedCallables($doc);
             }

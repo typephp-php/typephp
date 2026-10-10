@@ -563,23 +563,37 @@ final class DocblockExtractor
         foreach ($aliases as $name => $type) {
             $aliases[$name] = DocblockParser::substituteAliases($type, $aliases);
         }
+
+        foreach ($currentDocAliases as $name => $_) {
+            if (isset($aliases[$name])) {
+                $aliases[$name] = SpecialTypeResolver::resolve($aliases[$name], $ref);
+            }
+        }
     }
 
     /**
-     * Resolves an imported type alias (@phpstan-import-type / @psalm-import-type) from a target class, interface, trait, or enum.
+     * Resolves an imported type alias (@phpstan-import-type / @psalm-import-type) from a target class, interface, trait, or enum iteratively.
      */
     public static function resolveImportedTypeAlias(string $fqcn, string $importedAlias): ?TypeNode
     {
-        if (! ClassNameValidator::isValid($fqcn) || (! class_exists($fqcn) && ! interface_exists($fqcn) && ! trait_exists($fqcn) && ! enum_exists($fqcn))) {
-            return null;
-        }
+        $visited = [];
 
-        try {
-            $stubDoc = StubManager::getClassDoc($fqcn);
-            $ref = new \ReflectionClass($fqcn);
-            $doc = $stubDoc ?? $ref->getDocComment();
+        while (ClassNameValidator::isValid($fqcn) && (class_exists($fqcn) || interface_exists($fqcn) || trait_exists($fqcn) || enum_exists($fqcn))) {
+            $chainKey = $fqcn . '::' . $importedAlias;
+            if (isset($visited[$chainKey])) {
+                return null;
+            }
+            $visited[$chainKey] = true;
 
-            if ($doc !== false && $doc !== null) {
+            try {
+                $stubDoc = StubManager::getClassDoc($fqcn);
+                $ref = new \ReflectionClass($fqcn);
+                $doc = $stubDoc ?? $ref->getDocComment();
+
+                if ($doc === false || $doc === null) {
+                    return null;
+                }
+
                 $phpDocNode = self::parseDocString($doc);
 
                 $targetAliases = [];
@@ -594,20 +608,27 @@ final class DocblockExtractor
                     ...$phpDocNode->getTagsByName('@phpstan-import-type'),
                 ];
 
+                $nextFound = false;
                 foreach ($importTags as $tag) {
                     if ($tag->value instanceof TypeAliasImportTagValueNode) {
                         $importTag = $tag->value;
                         $localName = $importTag->importedAs ?? $importTag->importedAlias;
                         if ($localName === $importedAlias) {
-                            $nextFqcn = SpecialTypeResolver::resolveFqcn($importTag->importedFrom->name, $ref);
+                            $fqcn = SpecialTypeResolver::resolveFqcn($importTag->importedFrom->name, $ref);
+                            $importedAlias = $importTag->importedAlias;
+                            $nextFound = true;
 
-                            return self::resolveImportedTypeAlias($nextFqcn, $importTag->importedAlias);
+                            break;
                         }
                     }
                 }
+
+                if (! $nextFound) {
+                    return null;
+                }
+            } catch (\Throwable $e) {
+                return null;
             }
-        } catch (\Throwable $e) {
-            // Silently ignore unresolvable types
         }
 
         return null;

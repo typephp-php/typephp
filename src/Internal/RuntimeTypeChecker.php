@@ -452,17 +452,19 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        $isMagicCall = str_contains($effectiveFunction, '__call');
-        $isMagicGet = str_ends_with($effectiveFunction, '::__get');
+        $isDynamicDispatch = str_contains($effectiveFunction, '::__')
+            && (str_contains($effectiveFunction, '__call') || str_ends_with($effectiveFunction, '::__get'));
 
-        if (! $isMagicCall && ! $isMagicGet && (isset(ReturnChecker::$noReturnContractCache[$function]) || isset(ReturnChecker::$noReturnContractCache[$effectiveFunction]))) {
-            ReturnChecker::$noReturnContractCache[$function] = true;
+        if (! $isDynamicDispatch) {
+            if (isset(ReturnChecker::$noReturnContractCache[$function]) || isset(ReturnChecker::$noReturnContractCache[$effectiveFunction])) {
+                ReturnChecker::$noReturnContractCache[$function] = true;
 
-            return $value;
+                return $value;
+            }
         }
 
         $contract = DocblockParser::parse($effectiveFunction);
-        if (! $isMagicCall && ! $isMagicGet && ($contract['returnUnconstrained'] ?? false)) {
+        if (! $isDynamicDispatch && ($contract['returnUnconstrained'] ?? false)) {
             return $value;
         }
 
@@ -514,6 +516,35 @@ final class RuntimeTypeChecker
             }
 
             return ViolationCollector::handle($res, 'send', $sendValue, function: $effectiveFunction);
+        }
+
+        return $res;
+    }
+
+    /**
+     * Validates a value returned from a generator against TReturn.
+     */
+    public static function checkGeneratorReturn(string $function, mixed $value, object|string|null $thisOrClass = null): mixed
+    {
+        if (! Config::isEnabled() || ! Config::isReturnsEnabled()) {
+            return $value;
+        }
+
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+            return $value;
+        }
+
+        $res = GeneratorChecker::checkReturn($function, $value, self::getRegistry(), $thisOrClass);
+
+        if ($res instanceof ErrorMessage) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return $value;
+            }
+
+            return ViolationCollector::handle($res, 'return', $value, function: $effectiveFunction, target: 'return');
         }
 
         return $res;

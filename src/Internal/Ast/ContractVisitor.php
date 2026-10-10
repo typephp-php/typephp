@@ -13,6 +13,7 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Util\Config;
 
 /**
@@ -140,7 +141,13 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         if ($node instanceof Node\Stmt\Expression) {
+            $node->expr->setAttribute('typephp_is_standalone', true);
+
             return $this->handleExpression($node);
+        }
+
+        if ($node instanceof Node\Expr\ArrowFunction) {
+            $node->expr->setAttribute('typephp_is_standalone', true);
         }
 
         if ($node instanceof Node\Stmt\Foreach_) {
@@ -172,6 +179,17 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         if ($node instanceof Node\Expr\AssignOp) {
             $replacement = $this->handleAssignOp($node);
+            if ($replacement !== null) {
+                return $replacement;
+            }
+        }
+
+        if ($node instanceof Node\Expr\PreInc || $node instanceof Node\Expr\PostInc || $node instanceof Node\Expr\PreDec || $node instanceof Node\Expr\PostDec) {
+            if (($node instanceof Node\Expr\PostInc || $node instanceof Node\Expr\PostDec) && $node->getAttribute('typephp_is_standalone') !== true) {
+                return null;
+            }
+
+            $replacement = $this->handleIncDec($node);
             if ($replacement !== null) {
                 return $replacement;
             }
@@ -216,10 +234,14 @@ final class ContractVisitor extends NodeVisitorAbstract
 
     private function markWriteContext(Node $node): void
     {
+        while ($node instanceof Node\Expr\ArrayDimFetch || $node instanceof Node\Expr\PropertyFetch) {
+            $node->setAttribute('typephp_write_context', true);
+            $node = $node->var;
+        }
+
         $node->setAttribute('typephp_write_context', true);
-        if ($node instanceof Node\Expr\ArrayDimFetch || $node instanceof Node\Expr\PropertyFetch) {
-            $this->markWriteContext($node->var);
-        } elseif ($node instanceof Node\Expr\Array_ || $node instanceof Node\Expr\List_) {
+
+        if ($node instanceof Node\Expr\Array_ || $node instanceof Node\Expr\List_) {
             foreach ($node->items as $item) {
                 if ($item !== null) {
                     $this->markWriteContext($item->value);
@@ -237,6 +259,35 @@ final class ContractVisitor extends NodeVisitorAbstract
         $defaultProps = [];
         $hasConstructor = false;
 
+        $classTemplates = [];
+        $nodeDoc = $node->getDocComment();
+        if ($nodeDoc !== null && (str_contains($nodeDoc->getText(), '@template') || str_contains($nodeDoc->getText(), '@phpstan-template') || str_contains($nodeDoc->getText(), '@psalm-template'))) {
+            try {
+                $phpDocNode = DocblockExtractor::parseDocString($nodeDoc->getText());
+                $classTemplates = DocblockExtractor::extractTemplates($phpDocNode);
+            } catch (\Throwable) {
+            }
+        }
+
+        if ($node->name !== null) {
+            $className = $this->resolveQualifiedName($node->name);
+            if ($className !== null) {
+                try {
+                    $loadedTemplates = DocblockParser::parseClassTemplates($className);
+                    $classTemplates = [...$classTemplates, ...$loadedTemplates];
+                } catch (\Throwable) {
+                }
+            }
+        }
+
+        if ($node->extends !== null) {
+            try {
+                $parentTemplates = DocblockParser::parseClassTemplates($node->extends->toString());
+                $classTemplates = [...$classTemplates, ...$parentTemplates];
+            } catch (\Throwable) {
+            }
+        }
+
         foreach ($node->stmts as $stmt) {
             if ($stmt instanceof Node\Stmt\ClassMethod && strtolower($stmt->name->toString()) === '__construct') {
                 $hasConstructor = true;
@@ -247,6 +298,22 @@ final class ContractVisitor extends NodeVisitorAbstract
 
                 $doc = $stmt->getDocComment();
                 if ($doc !== null && str_contains($doc->getText(), '@var') && ! str_contains($doc->getText(), '@typephp-ignore')) {
+                    if ($classTemplates !== []) {
+                        $varTag = DocblockExtractor::extractVarTagFromDoc($doc->getText());
+                        if ($varTag !== null) {
+                            try {
+                                [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+                                $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($varTag[0])));
+                                $propTypeNode = $typeParser->parse($tokens);
+
+                                if (DocblockParser::typeReferencesTemplate($propTypeNode, $classTemplates)) {
+                                    continue;
+                                }
+                            } catch (\Throwable) {
+                            }
+                        }
+                    }
+
                     foreach ($stmt->props as $p) {
                         $isExplicitNull = $p->default instanceof Node\Expr\ConstFetch && strtolower($p->default->name->toString()) === 'null';
                         if ($p->default !== null && ! $isExplicitNull) {
@@ -265,18 +332,11 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         if (! $hasConstructor) {
-            $ctorStmts = [];
-            if ($node->extends !== null) {
-                $ctorStmts[] = new Node\Stmt\If_(
-                    new Node\Expr\FuncCall(new Node\Name('method_exists'), [
-                        new Node\Arg(new Node\Expr\ClassConstFetch(new Node\Name('parent'), 'class')),
-                        new Node\Arg(new Node\Scalar\String_('__construct')),
-                    ]),
-                    ['stmts' => [
-                        new Node\Stmt\Expression(new Node\Expr\StaticCall(new Node\Name('parent'), '__construct', [new Node\Arg(new Node\Expr\Variable('_typephp_ctor_args'), false, true)])),
-                    ]]
-                );
+            if ($node->extends !== null || $node->isAbstract()) {
+                return;
             }
+
+            $ctorStmts = [];
 
             foreach ($defaultProps as $dp) {
                 $checkCall = NodeBuilder::createPropertyCheckCall(
@@ -291,7 +351,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
             $ctor = new Node\Stmt\ClassMethod('__construct', [
                 'flags' => Node\Stmt\Class_::MODIFIER_PUBLIC,
-                'params' => [new Node\Param(new Node\Expr\Variable('_typephp_ctor_args'), null, null, false, true)],
+                'params' => [],
                 'stmts' => $ctorStmts,
             ]);
             $ctor->setAttribute('typephp_injected', true);

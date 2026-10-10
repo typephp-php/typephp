@@ -41,8 +41,21 @@ final class FileFilter
             return self::$pathFilterCache[$normalizedPath];
         }
 
-        // Non-PHP files are always excluded from PHPDoc contract processing
-        if (! str_ends_with(strtolower($normalizedPath), '.php')) {
+        $lower = strtolower($normalizedPath);
+
+        if (! str_ends_with($lower, '.php')) {
+            return self::$pathFilterCache[$normalizedPath] = true;
+        }
+
+        if (
+            str_ends_with($lower, '.view.php')
+            || str_ends_with($lower, '.blade.php')
+            || str_ends_with($lower, '.html.php')
+            || str_ends_with($lower, '.phtml')
+            || str_contains($lower, '/.tempest/')
+            || str_contains($lower, '/cache/views/')
+            || str_contains($lower, '/framework/views/')
+        ) {
             return self::$pathFilterCache[$normalizedPath] = true;
         }
 
