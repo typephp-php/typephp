@@ -1134,10 +1134,14 @@ final class TemplateManager
             $parentTemplateNames = array_keys(DocblockExtractor::extractTemplates($parentPhpDocNode));
             $parentTemplateNodes = array_values(DocblockExtractor::extractTemplates($parentPhpDocNode));
             $normalizedGenericTypes = self::normalizeGenericArguments($genericTypeNode->genericTypes, $parentTemplateNodes);
+            $hierAliases = DocblockParser::parseClassAliases($hierClass->getName());
 
             foreach ($parentTemplateNames as $idx => $templateName) {
                 if (isset($normalizedGenericTypes[$idx])) {
                     $typeArg = $normalizedGenericTypes[$idx];
+                    if ($hierAliases !== []) {
+                        $typeArg = DocblockParser::substituteAliases($typeArg, $hierAliases);
+                    }
                     if ($bindings !== []) {
                         $typeArg = TemplateSubstitutor::substitute($typeArg, $bindings);
                     }
