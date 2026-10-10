@@ -13,6 +13,7 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
+use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Util\Config;
 
 /**
@@ -258,6 +259,35 @@ final class ContractVisitor extends NodeVisitorAbstract
         $defaultProps = [];
         $hasConstructor = false;
 
+        $classTemplates = [];
+        $nodeDoc = $node->getDocComment();
+        if ($nodeDoc !== null && (str_contains($nodeDoc->getText(), '@template') || str_contains($nodeDoc->getText(), '@phpstan-template') || str_contains($nodeDoc->getText(), '@psalm-template'))) {
+            try {
+                $phpDocNode = DocblockExtractor::parseDocString($nodeDoc->getText());
+                $classTemplates = DocblockExtractor::extractTemplates($phpDocNode);
+            } catch (\Throwable) {
+            }
+        }
+
+        if ($node->name !== null) {
+            $className = $this->resolveQualifiedName($node->name);
+            if ($className !== null) {
+                try {
+                    $loadedTemplates = DocblockParser::parseClassTemplates($className);
+                    $classTemplates = [...$classTemplates, ...$loadedTemplates];
+                } catch (\Throwable) {
+                }
+            }
+        }
+
+        if ($node->extends !== null) {
+            try {
+                $parentTemplates = DocblockParser::parseClassTemplates($node->extends->toString());
+                $classTemplates = [...$classTemplates, ...$parentTemplates];
+            } catch (\Throwable) {
+            }
+        }
+
         foreach ($node->stmts as $stmt) {
             if ($stmt instanceof Node\Stmt\ClassMethod && strtolower($stmt->name->toString()) === '__construct') {
                 $hasConstructor = true;
@@ -268,6 +298,22 @@ final class ContractVisitor extends NodeVisitorAbstract
 
                 $doc = $stmt->getDocComment();
                 if ($doc !== null && str_contains($doc->getText(), '@var') && ! str_contains($doc->getText(), '@typephp-ignore')) {
+                    if ($classTemplates !== []) {
+                        $varTag = DocblockExtractor::extractVarTagFromDoc($doc->getText());
+                        if ($varTag !== null) {
+                            try {
+                                [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+                                $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($varTag[0])));
+                                $propTypeNode = $typeParser->parse($tokens);
+
+                                if (DocblockParser::typeReferencesTemplate($propTypeNode, $classTemplates)) {
+                                    continue;
+                                }
+                            } catch (\Throwable) {
+                            }
+                        }
+                    }
+
                     foreach ($stmt->props as $p) {
                         $isExplicitNull = $p->default instanceof Node\Expr\ConstFetch && strtolower($p->default->name->toString()) === 'null';
                         if ($p->default !== null && ! $isExplicitNull) {
