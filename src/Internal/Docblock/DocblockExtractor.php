@@ -563,6 +563,12 @@ final class DocblockExtractor
         foreach ($aliases as $name => $type) {
             $aliases[$name] = DocblockParser::substituteAliases($type, $aliases);
         }
+
+        foreach ($currentDocAliases as $name => $_) {
+            if (isset($aliases[$name])) {
+                $aliases[$name] = SpecialTypeResolver::resolve($aliases[$name], $ref);
+            }
+        }
     }
 
     /**

@@ -531,6 +531,17 @@ final class SpecialTypeResolver
             }
         }
 
+        if (str_starts_with($lower, 'self::') && $declaringClass !== null) {
+            return new IdentifierTypeNode($declaringClass . substr($node->name, 4));
+        }
+
+        if (str_starts_with($lower, 'parent::') && $declaringClass !== null) {
+            $parentClass = get_parent_class($declaringClass);
+            if ($parentClass !== false) {
+                return new IdentifierTypeNode($parentClass . substr($node->name, 6));
+            }
+        }
+
         $fqcn = self::resolveFqcn($node->name, $ref);
 
         return $fqcn !== $node->name ? new IdentifierTypeNode($fqcn) : $node;
@@ -617,7 +628,7 @@ final class SpecialTypeResolver
 
             if ($className !== null && $constName !== null) {
                 $lowerClassName = strtolower($className);
-                $declaringClass = $ref instanceof \ReflectionMethod ? $ref->getDeclaringClass()->getName() : null;
+                $declaringClass = $ref instanceof \ReflectionMethod ? $ref->getDeclaringClass()->getName() : ($ref instanceof \ReflectionClass ? $ref->getName() : null);
 
                 if ($lowerClassName === 'self' && $declaringClass !== null) {
                     $resolvedClass = $declaringClass;
