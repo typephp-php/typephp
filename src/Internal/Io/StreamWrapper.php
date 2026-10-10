@@ -103,6 +103,11 @@ final class StreamWrapper implements StreamWrapperInterface
      */
     private static array $realpathCache = [];
 
+    /**
+     * In-memory cache for verified cached files: [$path] => true
+     *
+     * @var array<string, true>
+     */
     private static array $verifiedCachedFiles = [];
 
     /**
