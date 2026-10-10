@@ -18,16 +18,16 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@v4
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@c541c155eee95eac327059db6fe2353fe1e1cf96 # v2.32.0
+        uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
           coverage: none
 
       - name: Install Dependencies
-        uses: ramsey/composer-install@57532f4beed50d268d86e1054e605f4e64364024 # v3.0.0
+        uses: ramsey/composer-install@v3
 
       - name: Run Security Audit (Composer Audit)
         run: composer audit
@@ -38,17 +38,17 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@v4
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@c541c155eee95eac327059db6fe2353fe1e1cf96 # v2.32.0
+        uses: shivammathur/setup-php@v2
         with:
           php-version: '8.5'
           extensions: dom, mbstring, zip, libxml, json, tokenizer, fileinfo
           coverage: none
 
       - name: Install Dependencies
-        uses: ramsey/composer-install@57532f4beed50d268d86e1054e605f4e64364024 # v3.0.0
+        uses: ramsey/composer-install@v3
 
       - name: Check Code Style (Pint)
         run: ./vendor/bin/pint --test
@@ -59,17 +59,17 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@v4
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@c541c155eee95eac327059db6fe2353fe1e1cf96 # v2.32.0
+        uses: shivammathur/setup-php@v2
         with:
           php-version: '8.5'
           extensions: dom, mbstring, zip, libxml, json, tokenizer, fileinfo
           coverage: none
 
       - name: Install Dependencies
-        uses: ramsey/composer-install@57532f4beed50d268d86e1054e605f4e64364024 # v3.0.0
+        uses: ramsey/composer-install@v3
 
       - name: Run Static Analysis (PHPStan)
         run: ./vendor/bin/phpstan analyse --no-progress
@@ -86,17 +86,17 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@v4
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@c541c155eee95eac327059db6fe2353fe1e1cf96 # v2.32.0
+        uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
           extensions: dom, mbstring, zip, libxml, json, tokenizer, fileinfo
           coverage: ${{ matrix.os == 'ubuntu-latest' && matrix.php == '8.4' && 'pcov' || 'none' }}
 
       - name: Install Dependencies
-        uses: ramsey/composer-install@57532f4beed50d268d86e1054e605f4e64364024 # v3.0.0
+        uses: ramsey/composer-install@v3
         with:
           dependency-versions: ${{ matrix.php == '8.2' && 'lowest' || 'highest' }}
 
@@ -112,7 +112,7 @@ jobs:
         if: "! (matrix.os == 'ubuntu-latest' && matrix.php == '8.4')"
 
       - name: Upload Coverage to Codecov
-        uses: codecov/codecov-action@7f8b3261c2b5d74961760728368266191b90a2d3 # v5.3.1
+        uses: codecov/codecov-action@v5
         if: matrix.os == 'ubuntu-latest' && matrix.php == '8.4'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
