@@ -39,6 +39,11 @@ final class Config
      */
     private static ?string $projectRoot = null;
 
+    /**
+     * Absolute path of the resolved typephp.php config file, or null if defaults were used.
+     */
+    private static ?string $resolvedConfigFile = null;
+
     private static bool $enabled = true;
 
     private static bool $autoBoot = true;
@@ -48,6 +53,8 @@ final class Config
     private static ?string $reportFile = null;
 
     private static bool $failOnReport = false;
+
+    private static bool $failOnZeroFiles = false;
 
     private static bool $redactValues = false;
 
@@ -207,6 +214,20 @@ final class Config
         return self::$failOnReport;
     }
 
+    public static function isFailOnZeroFilesEnabled(): bool
+    {
+        $envFailZero = self::getEnvValue('TYPEPHP_FAIL_ON_ZERO_FILES');
+        if ($envFailZero !== null && trim($envFailZero) !== '') {
+            return filter_var($envFailZero, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$failOnZeroFiles;
+    }
+
     public static function isRedactValuesEnabled(): bool
     {
         $envRedact = self::getEnvValue('TYPEPHP_REDACT_VALUES');
@@ -238,6 +259,15 @@ final class Config
         }
 
         return self::$ignoreTraceDepth;
+    }
+
+    public static function getResolvedConfigFile(): ?string
+    {
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$resolvedConfigFile;
     }
 
     public static function isInlinePropertiesEnabled(): bool
@@ -443,13 +473,23 @@ final class Config
     }
 
     /**
-     * Locates the project root directory by searching upwards for vendor/autoload.php or composer.json.
-     * Caches the result in memory so the search happens exactly once.
+     * Locates the project root directory by searching upwards for typephp.php, composer.json, or vendor/autoload.php.
+     * Prioritizes explicit typephp.php in the current working directory.
      */
     public static function getProjectRoot(?string $startingDir = null): string
     {
         if ($startingDir === null && self::$projectRoot !== null) {
             return self::$projectRoot;
+        }
+
+        $cwd = getcwd();
+        $normCwd = null;
+        if ($startingDir === null && $cwd !== false) {
+            $realCwd = realpath($cwd);
+            $normCwd = rtrim(str_replace('\\', '/', $realCwd !== false ? $realCwd : $cwd), '/');
+            if (file_exists($normCwd . '/typephp.php')) {
+                return self::$projectRoot = $normCwd;
+            }
         }
 
         if ($startingDir === null && class_exists(\Composer\InstalledVersions::class)) {
@@ -459,7 +499,8 @@ final class Config
                 if (\is_string($installPath) && $installPath !== '') {
                     $realPath = realpath($installPath);
                     $normPath = rtrim(str_replace('\\', '/', $realPath !== false ? $realPath : $installPath), '/');
-                    if (file_exists($normPath . '/composer.json') || file_exists($normPath . '/typephp.php')) {
+
+                    if (file_exists($normPath . '/typephp.php') || file_exists($normPath . '/composer.json')) {
                         return self::$projectRoot = $normPath;
                     }
                 }
@@ -467,12 +508,10 @@ final class Config
             }
         }
 
-        $cwd = getcwd();
-        if ($startingDir === null && $cwd !== false) {
-            $realCwd = realpath($cwd);
-            $checkCwd = rtrim(str_replace('\\', '/', $realCwd !== false ? $realCwd : $cwd), '/');
+        if ($startingDir === null && $normCwd !== null) {
+            $checkCwd = $normCwd;
             for ($i = 0; $i < 5; $i++) {
-                if (file_exists($checkCwd . '/composer.json') || file_exists($checkCwd . '/typephp.php')) {
+                if (file_exists($checkCwd . '/typephp.php') || file_exists($checkCwd . '/composer.json')) {
                     return self::$projectRoot = $checkCwd;
                 }
                 $parent = \dirname($checkCwd);
@@ -491,7 +530,7 @@ final class Config
                 $candidate = substr($dir, 0, $vendorPos);
                 $realCandidate = realpath($candidate);
                 $normCandidate = rtrim(str_replace('\\', '/', $realCandidate !== false ? $realCandidate : $candidate), '/');
-                if (file_exists($normCandidate . '/vendor/autoload.php') || file_exists($normCandidate . '/composer.json')) {
+                if (file_exists($normCandidate . '/typephp.php') || file_exists($normCandidate . '/vendor/autoload.php') || file_exists($normCandidate . '/composer.json')) {
                     return self::$projectRoot = $normCandidate;
                 }
             }
@@ -500,7 +539,7 @@ final class Config
         $firstCandidate = null;
 
         for ($i = 0; $i < 15; $i++) {
-            if (file_exists($dir . '/composer.json') || file_exists($dir . '/typephp.php') || file_exists($dir . '/vendor/autoload.php')) {
+            if (file_exists($dir . '/typephp.php') || file_exists($dir . '/composer.json') || file_exists($dir . '/vendor/autoload.php')) {
                 $realDir = realpath($dir);
                 $normFound = rtrim(str_replace('\\', '/', $realDir !== false ? $realDir : $dir), '/');
 
@@ -522,16 +561,18 @@ final class Config
             return self::$projectRoot = $firstCandidate;
         }
 
-        if ($cwd !== false) {
-            $realCwd = realpath($cwd);
-            $fallback = $realCwd !== false ? $realCwd : $cwd;
-        } else {
-            $fallback = '.';
+        if ($normCwd !== null) {
+            return self::$projectRoot = $normCwd;
         }
 
-        return self::$projectRoot = rtrim(str_replace('\\', '/', $fallback), '/');
+        return self::$projectRoot = '.';
     }
 
+    /**
+     * Loads and caches global configuration from 'typephp.php', 'composer.json' extra, extensions, and base defaults.
+     *
+     * @return array<string, mixed>
+     */
     /**
      * Loads and caches global configuration from 'typephp.php', 'composer.json' extra, extensions, and base defaults.
      *
@@ -549,6 +590,7 @@ final class Config
             'on_violation' => 'throw',
             'report_file' => null,
             'fail_on_report' => false,
+            'fail_on_zero_files' => false,
             'redact_values' => false,
             'params' => true,
             'returns' => true,
@@ -585,19 +627,37 @@ final class Config
         $projectRoot = self::getProjectRoot();
         $configFile = $projectRoot . '/typephp.php';
         $userConfig = [];
+        self::$resolvedConfigFile = null;
 
         if (file_exists($configFile)) {
+            self::$resolvedConfigFile = $configFile;
             $loadedConfig = require $configFile;
             if (\is_array($loadedConfig)) {
                 /** @var array<string, mixed> $userConfig */
                 $userConfig = $loadedConfig;
+            }
+        } else {
+            $cwd = getcwd();
+            if ($cwd !== false) {
+                $normCwd = rtrim(str_replace('\\', '/', realpath($cwd) ?: $cwd), '/');
+                $cwdConfig = $normCwd . '/typephp.php';
+                if ($normCwd !== $projectRoot && str_starts_with($projectRoot, $normCwd . '/') && file_exists($cwdConfig)) {
+                    @trigger_error(
+                        \sprintf(
+                            "[TypePHP Warning] Configuration file found at '%s', but project root resolved to '%s' (where no typephp.php exists). Using default configuration.",
+                            $cwdConfig,
+                            $projectRoot
+                        ),
+                        E_USER_WARNING
+                    );
+                }
             }
         }
 
         $composerJsonFile = $projectRoot . '/composer.json';
         if (file_exists($composerJsonFile)) {
             $content = @file_get_contents($composerJsonFile);
-            if ($content !== false && (str_contains($content, 'typephp') || str_contains($content, 'auto-boot') || str_contains($content, 'on-violation') || str_contains($content, 'fail-on-report') || str_contains($content, 'redact-values'))) {
+            if ($content !== false && (str_contains($content, 'typephp') || str_contains($content, 'auto-boot') || str_contains($content, 'on-violation') || str_contains($content, 'fail-on-report') || str_contains($content, 'fail-on-zero-files') || str_contains($content, 'redact-values'))) {
                 $data = json_decode($content, true);
                 if (
                     \is_array($data)
@@ -617,6 +677,9 @@ final class Config
                     }
                     if (! isset($userConfig['fail_on_report']) && isset($data['extra']['typephp']['fail-on-report'])) {
                         $userConfig['fail_on_report'] = filter_var($data['extra']['typephp']['fail-on-report'], FILTER_VALIDATE_BOOLEAN);
+                    }
+                    if (! isset($userConfig['fail_on_zero_files']) && isset($data['extra']['typephp']['fail-on-zero-files'])) {
+                        $userConfig['fail_on_zero_files'] = filter_var($data['extra']['typephp']['fail-on-zero-files'], FILTER_VALIDATE_BOOLEAN);
                     }
                     if (! isset($userConfig['redact_values']) && isset($data['extra']['typephp']['redact-values'])) {
                         $userConfig['redact_values'] = filter_var($data['extra']['typephp']['redact-values'], FILTER_VALIDATE_BOOLEAN);
@@ -736,11 +799,13 @@ final class Config
     {
         self::$cachedConfig = null;
         self::$projectRoot = null;
+        self::$resolvedConfigFile = null;
         self::$enabled = true;
         self::$autoBoot = true;
         self::$onViolation = 'throw';
         self::$reportFile = null;
         self::$failOnReport = false;
+        self::$failOnZeroFiles = false;
         self::$redactValues = false;
         self::$params = true;
         self::$returns = true;
@@ -802,6 +867,7 @@ final class Config
             : null;
 
         self::$failOnReport = (bool) ($config['fail_on_report'] ?? false);
+        self::$failOnZeroFiles = (bool) ($config['fail_on_zero_files'] ?? false);
         self::$redactValues = (bool) ($config['redact_values'] ?? false);
 
         self::$params = (bool) ($config['params'] ?? true);

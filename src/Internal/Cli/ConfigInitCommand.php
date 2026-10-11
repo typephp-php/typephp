@@ -81,13 +81,16 @@ return [
     | - 'warn'   : Emits PHP E_USER_WARNING once per unique violation to your logs
     |              and allows execution to continue normally without crashing.
     |
-    | 'report_file'    : Sets the target JSON output path when 'report' mode is active.
-    | 'fail_on_report' : When true, terminates the process with exit code 1 at shutdown
-    |                    if the violation report is non-empty. Useful for CI gates.
+    | 'report_file'        : Sets the target JSON output path when 'report' mode is active.
+    | 'fail_on_report'     : When true, terminates the process with exit code 1 at shutdown
+    |                        if the violation report is non-empty. Useful for CI gates.
+    | 'fail_on_zero_files' : When true, terminates the process with exit code 1 if 0 application
+    |                        files were instrumented. Prevents CI passes when include patterns match nothing.
     */
-    'on_violation'   => 'throw',
-    'report_file'    => null,
-    'fail_on_report' => false,
+    'on_violation'       => 'throw',
+    'report_file'        => null,
+    'fail_on_report'     => false,
+    'fail_on_zero_files' => false,
 
     /*
     |--------------------------------------------------------------------------
@@ -315,7 +318,7 @@ return [
     |--------------------------------------------------------------------------
     | Globs or specific file paths that should be ignored by the type checker.
     | You can exclude entire directories (e.g. 'vendor/**') or blacklist
-    | single legacy files inside included directories (e.g. 'src/Legacy/File.php').
+    | single legacy files inside included directories (e.g. 'src/Legacy/UnsafeFile.php').
     */
     'exclude' => [
         'vendor/**',

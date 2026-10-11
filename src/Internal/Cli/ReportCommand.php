@@ -20,7 +20,6 @@ final class ReportCommand implements CommandInterface
         $reportDir = \dirname($reportFile);
         $shardDir = $reportDir . '/.typephp-shards';
 
-        // Consolidate any parallel shards if present
         if (is_dir($shardDir)) {
             ViolationCollector::exportReport($reportFile);
         }
@@ -40,19 +39,62 @@ final class ReportCommand implements CommandInterface
             return 0;
         }
 
-        /** @var array{version?: string, generated_at?: string, summary?: array{total_violations?: int, files_affected?: int}, violations?: list<array<string, mixed>>}|null $data */
+        /** @var array{
+         *     version?: string,
+         *     generated_at?: string,
+         *     context?: array{project_root?: string, config_file?: string, files_instrumented?: int},
+         *     summary?: array{total_violations?: int, files_affected?: int, files_instrumented?: int, warning?: string},
+         *     violations?: list<array<string, mixed>>
+         * }|null $data */
         $data = json_decode($rawContent, true);
 
-        if (! \is_array($data) || ! isset($data['violations']) || ! \is_array($data['violations']) || $data['violations'] === []) {
+        if (! \is_array($data)) {
+            fwrite($outputStream, '  ' . $c('✗', 'red') . " Invalid or corrupted report JSON file.\n\n");
+
+            return 1;
+        }
+
+        $violations = (isset($data['violations']) && \is_array($data['violations'])) ? $data['violations'] : [];
+        $totalCount = \count($violations);
+        $filesInstrumented = $data['summary']['files_instrumented'] ?? ($data['context']['files_instrumented'] ?? null);
+        $configSource = $data['context']['config_file'] ?? null;
+        $projectRoot = $data['context']['project_root'] ?? null;
+        $relativeReportPath = ViolationCollector::normalizeRelativePath($reportFile);
+
+        if ($totalCount === 0) {
+            if ($filesInstrumented === 0) {
+                fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Total Violations: ' . $c('0', 'bold') . "\n");
+                fwrite($outputStream, '  ' . $c('•', 'red') . ' Files Instrumented: ' . $c('0 (⚠️  No files matched configuration!)', 'bold') . "\n");
+                if ($configSource !== null) {
+                    fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Config Source: ' . $c($configSource, 'gray') . "\n");
+                }
+                if ($projectRoot !== null) {
+                    fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Project Root: ' . $c($projectRoot, 'gray') . "\n");
+                }
+                fwrite($outputStream, "\n  " . $c('✗', 'red') . " 0 violations over 0 instrumented files. Check your 'include'/'exclude' paths in typephp.php.\n\n");
+
+                return 1;
+            }
+
+            if ($filesInstrumented !== null && $filesInstrumented > 0) {
+                fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Total Violations: ' . $c('0', 'bold') . "\n");
+                fwrite($outputStream, '  ' . $c('•', 'green') . ' Files Instrumented: ' . $c((string) $filesInstrumented, 'bold') . "\n");
+                if ($configSource !== null) {
+                    fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Config Source: ' . $c($configSource, 'gray') . "\n");
+                }
+                fwrite($outputStream, "\n  " . $c('✓', 'green') . " Clean run: No type violations found across {$filesInstrumented} instrumented file(s).\n\n");
+
+                return 0;
+            }
+
             fwrite($outputStream, '  ' . $c('✓', 'green') . " No violations recorded in report.\n\n");
 
             return 0;
         }
 
-        $violations = $data['violations'];
-        $totalCount = \count($violations);
-
-        /** @var array<string, list<array<string, mixed>>> $grouped */
+        /**
+         * @var array<string, list<array<string, mixed>>>
+         */
         $grouped = [];
         $filesAffectedMap = [];
 
@@ -66,11 +108,15 @@ final class ReportCommand implements CommandInterface
             ? $data['summary']['files_affected']
             : \count($filesAffectedMap);
 
-        $relativeReportPath = ViolationCollector::normalizeRelativePath($reportFile);
-
         fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Total Violations: ' . $c((string) $totalCount, 'bold') . "\n");
-        fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Files Affected:   ' . $c((string) $filesAffected, 'bold') . "\n");
-        fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Report Source:    ' . $c($relativeReportPath, 'gray') . "\n\n");
+        fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Files Affected: ' . $c((string) $filesAffected, 'bold') . "\n");
+        if ($filesInstrumented !== null) {
+            fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Files Instrumented: ' . $c((string) $filesInstrumented, 'bold') . "\n");
+        }
+        if ($configSource !== null) {
+            fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Config Source: ' . $c($configSource, 'gray') . "\n");
+        }
+        fwrite($outputStream, '  ' . $c('•', 'cyan') . ' Report File: ' . $c($relativeReportPath, 'gray') . "\n\n");
 
         foreach ($grouped as $file => $items) {
             fwrite($outputStream, '  ' . $c($file, 'bold') . "\n");

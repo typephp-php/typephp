@@ -9,6 +9,7 @@ use ReflectionFunction;
 use Throwable;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
+use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Util\Config;
 
@@ -48,6 +49,7 @@ final class ViolationCollector
         self::$violations = [];
         self::$warnedHashes = [];
         self::$propertyLineCache = [];
+        self::$shutdownRegistered = false;
     }
 
     /**
@@ -144,10 +146,7 @@ final class ViolationCollector
             self::$violations[$hash] = $record;
         }
 
-        if (! self::$shutdownRegistered) {
-            self::registerShutdownHandler();
-            self::$shutdownRegistered = true;
-        }
+        self::registerShutdownHandler();
     }
 
     /**
@@ -192,15 +191,16 @@ final class ViolationCollector
     /**
      * Registers shutdown hook to write worker shards or master report and optionally exit with failure.
      */
-    private static function registerShutdownHandler(): void
+    public static function registerShutdownHandler(): void
     {
+        if (self::$shutdownRegistered) {
+            return;
+        }
+
+        self::$shutdownRegistered = true;
+
         register_shutdown_function(static function (): void {
             if (Config::getOnViolation() !== 'report') {
-                return;
-            }
-
-            $violationCount = \count(self::$violations);
-            if ($violationCount === 0) {
                 return;
             }
 
@@ -221,8 +221,17 @@ final class ViolationCollector
                 }
             }
 
-            if (Config::isFailOnReportEnabled()) {
+            $violationCount = \count(self::$violations);
+            $instrumentedCount = StreamWrapper::getInstrumentedCount();
+            $shouldFailOnZero = Config::isFailOnZeroFilesEnabled() || Config::isFailOnReportEnabled();
+
+            if (Config::isFailOnReportEnabled() && $violationCount > 0) {
                 @fwrite(STDERR, "\n[TypePHP] {$violationCount} contract violation(s) recorded in report. Exiting with status 1.\n");
+                exit(1);
+            }
+
+            if ($instrumentedCount === 0 && $shouldFailOnZero) {
+                @fwrite(STDERR, "\n[TypePHP Error] 0 application files were instrumented matching the configured include patterns.\nExiting with status 1 to prevent silent pass.\n");
                 exit(1);
             }
         });
@@ -233,7 +242,7 @@ final class ViolationCollector
      */
     public static function writeWorkerShard(string $reportFile): void
     {
-        if (self::$violations === []) {
+        if (self::$violations === [] && StreamWrapper::getInstrumentedCount() === 0) {
             return;
         }
 
@@ -253,7 +262,12 @@ final class ViolationCollector
 
         $safeToken = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $workerId);
         $shardFile = $shardDir . '/shard_' . $safeToken . '_' . bin2hex(random_bytes(4)) . '.json';
-        $content = json_encode(array_values(self::$violations), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+        $payload = [
+            'violations' => array_values(self::$violations),
+            'instrumented_files' => StreamWrapper::getInstrumentedFiles(),
+        ];
+        $content = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 
         if ($content !== false) {
             @file_put_contents($shardFile, $content);
@@ -327,13 +341,27 @@ final class ViolationCollector
      */
     private static function mergeShardContent(array $allViolations, string $raw): array
     {
-        /** @var list<array<string, mixed>>|null $decoded */
+        /** @var array<string, mixed>|list<array<string, mixed>>|null $decoded */
         $decoded = json_decode($raw, true);
         if (! \is_array($decoded)) {
             return $allViolations;
         }
 
-        foreach ($decoded as $item) {
+        $violationsData = [];
+        if (isset($decoded['violations']) && \is_array($decoded['violations'])) {
+            $violationsData = $decoded['violations'];
+            if (isset($decoded['instrumented_files']) && \is_array($decoded['instrumented_files'])) {
+                foreach ($decoded['instrumented_files'] as $iFile) {
+                    if (\is_string($iFile)) {
+                        StreamWrapper::recordInstrumentedFile($iFile);
+                    }
+                }
+            }
+        } elseif (array_is_list($decoded)) {
+            $violationsData = $decoded;
+        }
+
+        foreach ($violationsData as $item) {
             if (! \is_array($item)) {
                 continue;
             }
@@ -355,7 +383,13 @@ final class ViolationCollector
     /**
      * @param array<string, ViolationRecord> $violations
      *
-     * @return array{version: string, generated_at: string, summary: array{total_violations: int, files_affected: int}, violations: list<ViolationRecord>}
+     * @return array{
+     *     version: string,
+     *     generated_at: string,
+     *     context: array{project_root: string, config_file: string, files_instrumented: int},
+     *     summary: array{total_violations: int, files_affected: int, files_instrumented: int, warning?: string},
+     *     violations: list<ViolationRecord>
+     * }
      */
     private static function buildReportDocument(array $violations): array
     {
@@ -365,13 +399,29 @@ final class ViolationCollector
             $filesAffected[$v->file] = true;
         }
 
+        $instrumentedCount = StreamWrapper::getInstrumentedCount();
+        $configFile = Config::getResolvedConfigFile();
+        $projectRoot = Config::getProjectRoot();
+
+        $summary = [
+            'total_violations' => \count($violationsList),
+            'files_affected' => \count($filesAffected),
+            'files_instrumented' => $instrumentedCount,
+        ];
+
+        if ($instrumentedCount === 0) {
+            $summary['warning'] = 'No application files were instrumented matching the configured include/exclude patterns.';
+        }
+
         return [
             'version' => '1.0',
             'generated_at' => gmdate('c'),
-            'summary' => [
-                'total_violations' => \count($violationsList),
-                'files_affected' => \count($filesAffected),
+            'context' => [
+                'project_root' => $projectRoot,
+                'config_file' => $configFile !== null ? self::normalizeRelativePath($configFile) : 'defaults',
+                'files_instrumented' => $instrumentedCount,
             ],
+            'summary' => $summary,
             'violations' => $violationsList,
         ];
     }
