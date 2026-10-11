@@ -347,9 +347,12 @@ final class ViolationCollector
             return $allViolations;
         }
 
+        /** @var list<array<string, mixed>> $violationsData */
         $violationsData = [];
         if (isset($decoded['violations']) && \is_array($decoded['violations'])) {
-            $violationsData = $decoded['violations'];
+            /** @var list<array<string, mixed>> $vList */
+            $vList = $decoded['violations'];
+            $violationsData = $vList;
             if (isset($decoded['instrumented_files']) && \is_array($decoded['instrumented_files'])) {
                 foreach ($decoded['instrumented_files'] as $iFile) {
                     if (\is_string($iFile)) {
@@ -358,14 +361,12 @@ final class ViolationCollector
                 }
             }
         } elseif (array_is_list($decoded)) {
-            $violationsData = $decoded;
+            /** @var list<array<string, mixed>> $dList */
+            $dList = $decoded;
+            $violationsData = $dList;
         }
 
         foreach ($violationsData as $item) {
-            if (! \is_array($item)) {
-                continue;
-            }
-
             $record = ViolationRecord::fromArray($item);
             if ($record === null) {
                 continue;

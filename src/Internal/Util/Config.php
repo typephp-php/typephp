@@ -639,7 +639,8 @@ final class Config
         } else {
             $cwd = getcwd();
             if ($cwd !== false) {
-                $normCwd = rtrim(str_replace('\\', '/', realpath($cwd) ?: $cwd), '/');
+                $realCwd = realpath($cwd);
+                $normCwd = rtrim(str_replace('\\', '/', $realCwd !== false ? $realCwd : $cwd), '/');
                 $cwdConfig = $normCwd . '/typephp.php';
                 if ($normCwd !== $projectRoot && str_starts_with($projectRoot, $normCwd . '/') && file_exists($cwdConfig)) {
                     @trigger_error(

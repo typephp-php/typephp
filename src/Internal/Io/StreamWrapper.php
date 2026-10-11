@@ -471,6 +471,10 @@ final class StreamWrapper implements StreamWrapperInterface
             $this->eof = false;
             self::register();
 
+            if ($this->handle === null && ! self::isPharCall()) {
+                trigger_error("include({$target}): Failed to open stream: No such file or directory", E_USER_WARNING);
+            }
+
             return $this->handle !== null;
         }
 
@@ -537,8 +541,9 @@ final class StreamWrapper implements StreamWrapperInterface
         $this->eof = false;
         self::register();
 
-        if ($this->handle === null && ! $isInclude && ! self::isPharCall()) {
-            trigger_error("fopen({$targetFile}): Failed to open stream: No such file or directory", E_USER_WARNING);
+        if ($this->handle === null && ! self::isPharCall()) {
+            $action = $isInclude ? 'include' : 'fopen';
+            trigger_error("{$action}({$targetFile}): Failed to open stream: No such file or directory", E_USER_WARNING);
         }
 
         return $this->handle !== null;
