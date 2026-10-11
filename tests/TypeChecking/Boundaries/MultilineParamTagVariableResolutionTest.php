@@ -28,6 +28,7 @@ function testMultilineUnionWithDescription(array $action): string
 {
     return $action['type'];
 }
+
 /**
  * 3. Class method with parameter name on a separate line below the multi-line union
  */
