@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+namespace TypePHP\Tests\TypeChecking\Boundaries;
+
 use TypePHP\Exception\TypeError;
 
 /**
@@ -96,6 +98,7 @@ describe('Multi-Line @param Union with Variable Name on New Line (TDD)', functio
         ;
 
         expect(fn () => $service->handle(['mode' => 'unknown', 'foo' => 'bar']))
-            ->toThrow(TypeError::class, 'must be of type');
+            ->toThrow(TypeError::class, 'must be of type')
+        ;
     });
 });
