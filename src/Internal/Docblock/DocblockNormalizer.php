@@ -73,6 +73,10 @@ final class DocblockNormalizer
             $doc = preg_replace('/(\.\.\.\s*)(?:list|array)<([^>]+)>/', '$1<$2>', $doc) ?? $doc;
         }
 
+        if (str_contains($doc, '$')) {
+            $doc = preg_replace('/([ \t]*\*[ \t]*(?:\|[^\r\n]+|\@[a-zA-Z\-]+[^\r\n]+))[ \t]*\r?\n[ \t]*\*[ \t]*(\$[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)\b/', '$1 $2', $doc) ?? $doc;
+        }
+
         if (! str_contains($doc, '{')) {
             return $doc;
         }

@@ -45,6 +45,7 @@ final class IntersectionValidator implements TypeValidatorInterface
                     str_starts_with($msg, $context . '->') ||
                     str_starts_with($msg, $context . ' is missing required') ||
                     str_starts_with($msg, $context . ' contains unsealed') ||
+                    str_starts_with($msg, $context . ' contains unexpected') ||
                     str_starts_with($msg, $context . ' property') ||
                     str_starts_with($msg, $context . ' key')
                 ) {

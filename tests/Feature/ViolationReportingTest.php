@@ -493,7 +493,6 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
                 ->and(file_exists($reportFilePath))->toBeTrue()
             ;
 
-            /** @var array{version: string, generated_at: string, summary: array{total_violations: int, files_affected: int}, violations: list<array<string, mixed>>} $doc */
             $doc = json_decode((string) file_get_contents($reportFilePath), true);
 
             expect($doc)->toHaveKey('version')
@@ -524,7 +523,6 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
 
             testReportingParamFunc(-10, 'ValidRecord');
 
-            // Intentionally write broken JSON into shard folder
             file_put_contents($shardDir . '/shard_broken_123.json', '{{{ corrupted invalid json');
 
             $exported = TypePHP::exportReport($reportFilePath);
@@ -533,7 +531,6 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
                 ->and(file_exists($reportFilePath))->toBeTrue()
             ;
 
-            /** @var array{version: string, summary: array{total_violations: int}, violations: list<array<string, mixed>>} $doc */
             $doc = json_decode((string) file_get_contents($reportFilePath), true);
             expect($doc['summary']['total_violations'])->toBe(1);
 

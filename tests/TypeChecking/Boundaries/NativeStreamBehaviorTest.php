@@ -145,6 +145,54 @@ describe('Native Stream I/O Behavior Parity (feof & PharData)', function () {
             $allWarnings = implode("\n", $warnings);
             expect($allWarnings)->toContain('fopen(' . $missing . '): Failed to open stream');
         });
+
+        test('include_once on missing file emits No such file or directory warning naming the path', function () {
+            StreamWrapper::register();
+
+            $missingFile = sys_get_temp_dir() . '/missing_autoloader_probe_' . uniqid() . '.php';
+
+            $warnings = [];
+            set_error_handler(function (int $errno, string $errstr) use (&$warnings): bool {
+                $warnings[] = $errstr;
+
+                return true;
+            });
+
+            try {
+                include_once $missingFile;
+            } finally {
+                restore_error_handler();
+            }
+
+            $allWarnings = implode("\n", $warnings);
+
+            expect($allWarnings)->toContain('No such file or directory')
+                ->and($allWarnings)->toContain(basename($missingFile))
+            ;
+        });
+
+        test('@include_once on missing file respects @ error suppression', function () {
+            StreamWrapper::register();
+
+            $missingFile = sys_get_temp_dir() . '/missing_silent_probe_' . uniqid() . '.php';
+
+            $warnings = [];
+            set_error_handler(function (int $errno, string $errstr) use (&$warnings): bool {
+                if ((error_reporting() & $errno) !== 0) {
+                    $warnings[] = $errstr;
+                }
+
+                return true;
+            });
+
+            try {
+                @include_once $missingFile;
+            } finally {
+                restore_error_handler();
+            }
+
+            expect($warnings)->toBeEmpty();
+        });
     });
 
     describe('3. stream_select() & stream_cast() Interoperability', function () {

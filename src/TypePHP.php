@@ -18,6 +18,10 @@ final class TypePHP
     public static function boot(): void
     {
         StreamWrapper::register(Config::get());
+
+        if (Config::getOnViolation() === 'report') {
+            ViolationCollector::registerShutdownHandler();
+        }
     }
 
     /**

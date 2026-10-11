@@ -244,8 +244,7 @@ final class CacheManager
             return ['total' => 0, 'cached' => 0, 'skipped' => 0];
         }
 
-        $cwd = getcwd();
-        $baseDir = $cwd !== false ? rtrim(str_replace('\\', '/', $cwd), '/') : '';
+        $baseDir = Config::getProjectRoot();
 
         $files = self::findFilesToWarm($baseDir);
         $total = \count($files);

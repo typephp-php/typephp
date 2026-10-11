@@ -477,7 +477,6 @@ describe('ViolationCollector', function () {
                     ->and(is_dir($shardDir))->toBeFalse()
                 ;
 
-                /** @var array{version: string, generated_at: string, summary: array{total_violations: int, files_affected: int}, violations: list<array<string, mixed>>} $doc */
                 $doc = json_decode((string) file_get_contents($reportFile), true);
 
                 expect($doc['version'])->toBe('1.0')

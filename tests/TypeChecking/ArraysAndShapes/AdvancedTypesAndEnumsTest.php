@@ -115,6 +115,14 @@ function testReturnClassConstantContract(bool $valid): mixed
     return 100;
 }
 
+/**
+ * @param stdClass{name: non-empty-string, age: positive-int}|null $payload
+ */
+function testNullableStdClassShapeContract(?stdClass $payload): bool
+{
+    return true;
+}
+
 describe('PHPDoc Object Shapes (object{prop: type})', function () {
     test('accepts stdClass object matching required object shape properties', function () {
         $payload = new stdClass();
@@ -265,6 +273,30 @@ describe('Class Constants as Type Literals (Class::CONST)', function () {
 
         expect(fn () => $setting = 999)
             ->toThrow(TypeError::class, 'Variable $setting')
+        ;
+    });
+});
+
+describe('Strict stdClass Shape Error Precision (Issue Bug Report)', function () {
+    test('names exact unexpected property when stdClass shape receives extra field', function () {
+        $user = json_decode('{"id":42,"name":"Charlie","role":"admin"}');
+
+        expect(fn () => testStrictStdClassShapeContract($user))
+            ->toThrow(
+                TypeError::class,
+                "testStrictStdClassShapeContract(): Argument \$payload contains unexpected property 'role'"
+            )
+        ;
+    });
+
+    test('names exact unexpected property when stdClass shape is nullable (stdClass{...}|null)', function () {
+        $user = json_decode('{"name":"Charlie","age":22,"role":"admin"}');
+
+        expect(fn () => testNullableStdClassShapeContract($user))
+            ->toThrow(
+                TypeError::class,
+                "contains unexpected property 'role'"
+            )
         ;
     });
 });

@@ -111,6 +111,18 @@ final class StreamWrapper implements StreamWrapperInterface
     private static array $verifiedCachedFiles = [];
 
     /**
+     * In-memory registry of unique application files instrumented during report mode.
+     *
+     * @var array<string, bool>
+     */
+    private static array $instrumentedFiles = [];
+
+    /**
+     * Whether telemetry tracking is explicitly forced (e.g. in tests).
+     */
+    private static bool $forceTelemetry = false;
+
+    /**
      * Native PHP functions that read raw source code for viewing, highlighting, or tokenizing.
      *
      * @var array<string, true>
@@ -149,7 +161,7 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Resets all internal in-memory caches and path matchers.
+     * Resets all internal in-memory caches, path matchers, and instrumented file counters.
      */
     public static function reset(): void
     {
@@ -159,7 +171,57 @@ final class StreamWrapper implements StreamWrapperInterface
         self::$bypassedPathCache = [];
         self::$realpathCache = [];
         self::$verifiedCachedFiles = [];
+        self::$instrumentedFiles = [];
+        self::$forceTelemetry = false;
         PathMatcher::reset();
+    }
+
+    /**
+     * Enables or disables explicit telemetry tracking.
+     */
+    public static function enableTelemetry(bool $enable = true): void
+    {
+        self::$forceTelemetry = $enable;
+    }
+
+    /**
+     * Determines whether instrumented file paths should be recorded in memory.
+     * Only active in report mode (or if explicitly forced in tests) to avoid overhead.
+     */
+    public static function shouldTrackTelemetry(): bool
+    {
+        return self::$forceTelemetry || Config::isReportMode();
+    }
+
+    /**
+     * Returns the total number of unique application files instrumented in this process.
+     */
+    public static function getInstrumentedCount(): int
+    {
+        return \count(self::$instrumentedFiles);
+    }
+
+    /**
+     * Returns the list of all application file paths instrumented in this process.
+     *
+     * @return list<string>
+     */
+    public static function getInstrumentedFiles(): array
+    {
+        return array_keys(self::$instrumentedFiles);
+    }
+
+    /**
+     * Manually records an instrumented file path (e.g. when consolidating worker shards).
+     */
+    public static function recordInstrumentedFile(string $filePath): void
+    {
+        if ($filePath === '') {
+            return;
+        }
+
+        $normalized = str_replace('\\', '/', $filePath);
+        self::$instrumentedFiles[$normalized] = true;
     }
 
     /**
@@ -354,13 +416,11 @@ final class StreamWrapper implements StreamWrapperInterface
             return $this->openDirectHandle($path, $mode, $options);
         }
 
-        // Fast-path: checks .php directly on $path first, avoiding strtolower() on 99.99% of classes
         $isPhp = str_ends_with($path, '.php') || str_ends_with(strtolower($path), '.php');
         if (! $isPhp) {
             return $this->openDirectHandle($path, $mode, $options);
         }
 
-        // Fast-path: check template and view caches directly without strtolower()
         if (
             str_ends_with($path, '.view.php')
             || str_ends_with($path, '.blade.php')
@@ -411,12 +471,20 @@ final class StreamWrapper implements StreamWrapperInterface
             $this->eof = false;
             self::register();
 
+            if ($this->handle === null && ! self::isPharCall()) {
+                trigger_error("include({$target}): Failed to open stream: No such file or directory", E_USER_WARNING);
+            }
+
             return $this->handle !== null;
         }
 
         $success = self::$cacheEnabled
             ? $this->openCachedStream($resolvedPath, $mode)
             : $this->openMemoryStream($resolvedPath);
+
+        if ($success && self::shouldTrackTelemetry()) {
+            self::$instrumentedFiles[$resolvedPath] = true;
+        }
 
         self::register();
 
@@ -473,8 +541,9 @@ final class StreamWrapper implements StreamWrapperInterface
         $this->eof = false;
         self::register();
 
-        if ($this->handle === null && ! $isInclude && ! self::isPharCall()) {
-            trigger_error("fopen({$targetFile}): Failed to open stream: No such file or directory", E_USER_WARNING);
+        if ($this->handle === null && ! self::isPharCall()) {
+            $action = $isInclude ? 'include' : 'fopen';
+            trigger_error("{$action}({$targetFile}): Failed to open stream: No such file or directory", E_USER_WARNING);
         }
 
         return $this->handle !== null;
@@ -613,12 +682,7 @@ final class StreamWrapper implements StreamWrapperInterface
     }
 
     /**
-     * Resolves file status with dual-tier memoization caching:
-     * 1. Differentiates between stat() and lstat() (STREAM_URL_STAT_LINK).
-     * 2. Memoizes PHP files, vendor files, and static package source directories.
-     *
-     * NOTE: stat() and lstat() DO trigger recursive url_stat calls when the
-     * file:// wrapper is registered. The unregister/register cycle is REQUIRED.
+     * Resolves file status with dual-tier memoization caching.
      *
      * @return array<int|string, int>|false
      */
@@ -645,7 +709,6 @@ final class StreamWrapper implements StreamWrapperInterface
             $isPhp = str_ends_with($normalized, '.php') || str_ends_with(strtolower($normalized), '.php');
             $isStatic = PathMatcher::isStaticSourcePath($normalized);
 
-            // Caches all existing PHP files, vendor files, and static files
             if ($isPhp || PathMatcher::isVendorPath($normalized) || $isStatic) {
                 self::$statCache[$cacheKey] = $result;
             }
@@ -653,7 +716,6 @@ final class StreamWrapper implements StreamWrapperInterface
             return $result;
         }
 
-        // Only cache negative misses for immutable vendor packages to prevent poisoning application paths
         if (PathMatcher::isVendorPath($normalized)) {
             self::$staticNegativeStatCache[$normalized] = true;
         }
