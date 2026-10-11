@@ -1066,9 +1066,11 @@ final class DocblockParser
         $doc = $stubDoc ?? $ref->getDocComment();
 
         $baseParams = $ref->getParameters();
+        $baseParamNames = [];
         $baseParamVariadic = [];
         $baseParamObjects = [];
-        foreach ($baseParams as $p) {
+        foreach ($baseParams as $idx => $p) {
+            $baseParamNames[$idx] = $p->getName();
             $baseParamVariadic[$p->getName()] = $p->isVariadic();
             $baseParamObjects[$p->getName()] = $p;
             if (self::hasSensitiveAttribute($p)) {
@@ -1109,7 +1111,13 @@ final class DocblockParser
         }
         DocblockExtractor::extractAliases($phpDocNode, $aliases, $ref);
 
+        $paramIndex = 0;
         foreach (DocblockExtractor::getParamTags($phpDocNode) as $paramName => $paramTag) {
+            if ($paramName === '' && isset($baseParamNames[$paramIndex])) {
+                $paramName = $baseParamNames[$paramIndex];
+            }
+            $paramIndex++;
+
             $type = $paramTag->type;
             $pObj = $baseParamObjects[$paramName] ?? null;
 
@@ -1385,6 +1393,7 @@ final class DocblockParser
 
             $paramTags = DocblockExtractor::getParamTags($phpDocNode);
 
+            $paramIndex = 0;
             foreach ($paramTags as $paramName => $paramTag) {
                 $targetParamName = self::resolveTargetParamName(
                     $paramName,
@@ -1393,6 +1402,11 @@ final class DocblockParser
                     $hierNameToIndex,
                     $isConstructor
                 );
+
+                if ($targetParamName === null && $paramName === '' && isset($baseParamNames[$paramIndex])) {
+                    $targetParamName = $baseParamNames[$paramIndex];
+                }
+                $paramIndex++;
 
                 if ($targetParamName !== null && ! isset($types[$targetParamName])) {
                     $type = $paramTag->type;
@@ -1421,6 +1435,7 @@ final class DocblockParser
             }
 
             $paramOutTags = DocblockExtractor::getParamOutTags($phpDocNode);
+            $paramOutIndex = 0;
             foreach ($paramOutTags as $paramName => $paramOutTag) {
                 $targetParamName = self::resolveTargetParamName(
                     $paramName,
@@ -1429,6 +1444,11 @@ final class DocblockParser
                     $hierNameToIndex,
                     $isConstructor
                 );
+
+                if ($targetParamName === null && $paramName === '' && isset($baseParamNames[$paramOutIndex])) {
+                    $targetParamName = $baseParamNames[$paramOutIndex];
+                }
+                $paramOutIndex++;
 
                 if ($targetParamName !== null && ! isset($paramOuts[$targetParamName])) {
                     $type = $paramOutTag->type;
