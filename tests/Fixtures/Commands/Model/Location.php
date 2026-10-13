@@ -9,4 +9,9 @@ final class Location
     final public const STATUS_ONLINE = 1;
     final public const STATUS_OFFLINE = 0;
     final public const KEY_STATUSES = 'statuses';
+
+    final public const STATUS_MAP = [
+        'online' => self::STATUS_ONLINE,
+        'offline' => self::STATUS_OFFLINE,
+    ];
 }
