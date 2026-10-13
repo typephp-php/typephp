@@ -83,7 +83,7 @@ final class TypeFormatter
             $bindings = TemplateManager::getBoundTemplatesForInstance($value);
 
             if ($bindings !== []) {
-                $typeStrings = array_map(static fn($node): string => (string) $node, array_values($bindings));
+                $typeStrings = array_map(static fn ($node): string => (string) $node, array_values($bindings));
 
                 return $className . '<' . implode(', ', $typeStrings) . '>';
             }
