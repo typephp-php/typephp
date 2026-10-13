@@ -22,9 +22,7 @@ interface FBoundComparable
  */
 final class FBoundText implements FBoundComparable
 {
-    public function __construct(public string $value)
-    {
-    }
+    public function __construct(public string $value) {}
 
     public function compareTo(mixed $other): int
     {
@@ -37,9 +35,7 @@ final class FBoundText implements FBoundComparable
  */
 final class FBoundNum implements FBoundComparable
 {
-    public function __construct(public int $value)
-    {
-    }
+    public function __construct(public int $value) {}
 
     public function compareTo(mixed $other): int
     {
@@ -52,9 +48,7 @@ final class FBoundNum implements FBoundComparable
  */
 final class FBoundPlain
 {
-    public function __construct(public int $v)
-    {
-    }
+    public function __construct(public int $v) {}
 }
 
 /**
@@ -126,17 +120,13 @@ abstract class FBoundBase
 /**
  * @extends FBoundBase<FBoundDerived>
  */
-final class FBoundDerived extends FBoundBase
-{
-}
+final class FBoundDerived extends FBoundBase {}
 
 /** Claims T = FBoundDerived, but is FBoundImpostor */
 /**
  * @extends FBoundBase<FBoundDerived>
  */
-final class FBoundImpostor extends FBoundBase
-{
-}
+final class FBoundImpostor extends FBoundBase {}
 
 describe('F-Bounded Polymorphism (@template T of Interface<T>)', function () {
     describe('1. Function-Level F-Bounds (fMin)', function () {
@@ -155,15 +145,13 @@ describe('F-Bounded Polymorphism (@template T of Interface<T>)', function () {
         });
 
         test('fMin rejects heterogeneous types (Text, Num) on entry at parameter $b', function () {
-            expect(fn () => fBoundMin(new FBoundText('cat'), new FBoundNum(3)))
-                ->toThrow(TypeError::class, 'fBoundMin(): Argument $b')
-            ;
+            expect(fn() => fBoundMin(new FBoundText('cat'), new FBoundNum(3)))
+                ->toThrow(TypeError::class, 'fBoundMin(): Argument $b');
         });
 
         test('rawMin intercepts and throws on compareTo() callee boundary', function () {
-            expect(fn () => fBoundRawMin(new FBoundText('cat'), new FBoundNum(3)))
-                ->toThrow(TypeError::class, 'FBoundText::compareTo(): Argument $other')
-            ;
+            expect(fn() => fBoundRawMin(new FBoundText('cat'), new FBoundNum(3)))
+                ->toThrow(TypeError::class, 'FBoundText::compareTo(): Argument $other');
         });
     });
 
@@ -182,9 +170,8 @@ describe('F-Bounded Polymorphism (@template T of Interface<T>)', function () {
             $list = new FBoundSortedList();
             $list->add(new FBoundNum(5));
 
-            expect(fn () => $list->add(new FBoundText('x')))
-                ->toThrow(TypeError::class, 'Argument $item (template T = TypePHP\Tests\TypeChecking\Generics\FBoundNum) must be of type TypePHP\Tests\TypeChecking\Generics\FBoundNum')
-            ;
+            expect(fn() => $list->add(new FBoundText('x')))
+                ->toThrow(TypeError::class, 'Argument $item (template T = TypePHP\Tests\TypeChecking\Generics\FBoundNum) must be of type TypePHP\Tests\TypeChecking\Generics\FBoundNum');
         });
 
         test('SortedList rejects non-comparable class FBoundPlain on pre-binding', function () {
@@ -204,9 +191,11 @@ describe('F-Bounded Polymorphism (@template T of Interface<T>)', function () {
         test('Impostor->copy() violates @return T contract', function () {
             $impostor = new FBoundImpostor();
 
-            expect(fn () => $impostor->copy())
-                ->toThrow(TypeError::class, 'Return value must be of type TypePHP\Tests\TypeChecking\Generics\FBoundDerived, TypePHP\Tests\TypeChecking\Generics\FBoundImpostor returned')
-            ;
+            expect(fn() => $impostor->copy())
+                ->toThrow(
+                    TypeError::class,
+                    'Return value must be of type ' . FBoundDerived::class . ', ' . FBoundImpostor::class . '<' . FBoundDerived::class . '> returned'
+                );
         });
 
         test('rejects candidate when class does not satisfy self-bound Base<C>', function () {
