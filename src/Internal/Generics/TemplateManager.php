@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Generics;
 
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
@@ -11,6 +13,7 @@ use PHPStan\PhpDocParser\Ast\Type\ArrayShapeUnsealedTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
+use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
@@ -919,10 +922,21 @@ final class TemplateManager
         bool $forceBind
     ): ?ErrorMessage {
         if ($expectedTypeNode instanceof IdentifierTypeNode) {
-            $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($expectedTypeNode->name);
-            $isRealType = self::isRealTypeSymbol($expectedTypeNode->name);
+            if (str_contains($expectedTypeNode->name, '::')) {
+                $targetClass = explode('::', $expectedTypeNode->name, 2)[0];
+                if (! self::isRealTypeSymbol($targetClass)) {
+                    return null;
+                }
+            } else {
+                $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($expectedTypeNode->name);
+                $isRealType = self::isRealTypeSymbol($expectedTypeNode->name);
 
-            if (! $isBuiltIn && ! $isRealType) {
+                if (! $isBuiltIn && ! $isRealType) {
+                    return null;
+                }
+            }
+        } elseif ($expectedTypeNode instanceof ConstTypeNode && $expectedTypeNode->constExpr instanceof ConstFetchNode && $expectedTypeNode->constExpr->className !== '') {
+            if (! self::isRealTypeSymbol($expectedTypeNode->constExpr->className)) {
                 return null;
             }
         }
@@ -1148,14 +1162,25 @@ final class TemplateManager
                     $resolved = self::resolveTypeNodeAst($typeArg, $hierClass);
 
                     if ($resolved instanceof IdentifierTypeNode) {
-                        $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($resolved->name);
-                        $isRealType = self::isRealTypeSymbol($resolved->name);
+                        if (str_contains($resolved->name, '::')) {
+                            $targetClass = explode('::', $resolved->name, 2)[0];
+                            if (! self::isRealTypeSymbol($targetClass)) {
+                                continue;
+                            }
+                        } else {
+                            $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($resolved->name);
+                            $isRealType = self::isRealTypeSymbol($resolved->name);
 
-                        if (! $isBuiltIn && ! $isRealType) {
-                            continue;
+                            if (! $isBuiltIn && ! $isRealType) {
+                                continue;
+                            }
+
+                            if (isset($declaredTemplateNames[$resolved->name])) {
+                                continue;
+                            }
                         }
-
-                        if (isset($declaredTemplateNames[$resolved->name])) {
+                    } elseif ($resolved instanceof ConstTypeNode && $resolved->constExpr instanceof ConstFetchNode && $resolved->constExpr->className !== '') {
+                        if (! self::isRealTypeSymbol($resolved->constExpr->className)) {
                             continue;
                         }
                     }
@@ -1627,11 +1652,46 @@ final class TemplateManager
                 return new IdentifierTypeNode($parent !== false ? $parent->getName() : 'parent');
             }
 
+            if (str_contains($n->name, '::')) {
+                [$className, $memberName] = explode('::', $n->name, 2);
+                $lowerClass = strtolower($className);
+                if ($lowerClass === 'self' || $lowerClass === 'static' || $lowerClass === '$this') {
+                    $resolvedClass = $ref->getName();
+                } elseif ($lowerClass === 'parent') {
+                    $parent = $ref->getParentClass();
+                    $resolvedClass = $parent !== false ? $parent->getName() : 'parent';
+                } else {
+                    $resolvedClass = SpecialTypeResolver::resolveFqcn($className, $ref);
+                }
+
+                return new IdentifierTypeNode($resolvedClass . '::' . $memberName);
+            }
+
             return new IdentifierTypeNode(SpecialTypeResolver::resolveFqcn($n->name, $ref));
         }
 
         if ($n instanceof ThisTypeNode) {
             return new IdentifierTypeNode($ref->getName());
+        }
+
+        if ($n instanceof ConstTypeNode) {
+            if ($n->constExpr instanceof ConstFetchNode && $n->constExpr->className !== '') {
+                $className = $n->constExpr->className;
+                $lowerClassName = strtolower($className);
+
+                if ($lowerClassName === 'self' || $lowerClassName === 'static' || $lowerClassName === '$this') {
+                    $resolvedClass = $ref->getName();
+                } elseif ($lowerClassName === 'parent') {
+                    $parent = $ref->getParentClass();
+                    $resolvedClass = $parent !== false ? $parent->getName() : 'parent';
+                } else {
+                    $resolvedClass = SpecialTypeResolver::resolveFqcn($className, $ref);
+                }
+
+                return new ConstTypeNode(new ConstFetchNode($resolvedClass, $n->constExpr->name));
+            }
+
+            return $n;
         }
 
         if ($n instanceof GenericTypeNode) {
@@ -1680,8 +1740,58 @@ final class TemplateManager
         if ($n instanceof ArrayShapeNode) {
             $items = [];
             foreach ($n->items as $item) {
+                $keyName = $item->keyName;
+
+                if ($keyName instanceof ConstFetchNode && $keyName->className !== '') {
+                    $className = $keyName->className;
+                    $constName = $keyName->name;
+                    $lowerClassName = strtolower($className);
+
+                    if ($lowerClassName === 'self' || $lowerClassName === 'static' || $lowerClassName === '$this') {
+                        $resolvedClass = $ref->getName();
+                    } elseif ($lowerClassName === 'parent') {
+                        $parent = $ref->getParentClass();
+                        $resolvedClass = $parent !== false ? $parent->getName() : 'parent';
+                    } else {
+                        $resolvedClass = SpecialTypeResolver::resolveFqcn($className, $ref);
+                    }
+
+                    $resolvedKeyNode = SpecialTypeResolver::resolveConstantKeyValue($resolvedClass, $constName);
+                    $keyName = $resolvedKeyNode ?? new ConstFetchNode($resolvedClass, $constName);
+                } elseif ($keyName instanceof IdentifierTypeNode && str_contains($keyName->name, '::')) {
+                    [$className, $constName] = explode('::', $keyName->name, 2);
+                    $lowerClassName = strtolower($className);
+
+                    if ($lowerClassName === 'self' || $lowerClassName === 'static' || $lowerClassName === '$this') {
+                        $resolvedClass = $ref->getName();
+                    } elseif ($lowerClassName === 'parent') {
+                        $parent = $ref->getParentClass();
+                        $resolvedClass = $parent !== false ? $parent->getName() : 'parent';
+                    } else {
+                        $resolvedClass = SpecialTypeResolver::resolveFqcn($className, $ref);
+                    }
+
+                    $resolvedKeyNode = SpecialTypeResolver::resolveConstantKeyValue($resolvedClass, $constName);
+                    $keyName = $resolvedKeyNode ?? new IdentifierTypeNode($resolvedClass . '::' . $constName);
+                } elseif ($keyName instanceof ConstExprStringNode && str_contains($keyName->value, '::')) {
+                    [$className, $constName] = explode('::', $keyName->value, 2);
+                    $lowerClassName = strtolower($className);
+
+                    if ($lowerClassName === 'self' || $lowerClassName === 'static' || $lowerClassName === '$this') {
+                        $resolvedClass = $ref->getName();
+                    } elseif ($lowerClassName === 'parent') {
+                        $parent = $ref->getParentClass();
+                        $resolvedClass = $parent !== false ? $parent->getName() : 'parent';
+                    } else {
+                        $resolvedClass = SpecialTypeResolver::resolveFqcn($className, $ref);
+                    }
+
+                    $resolvedKeyNode = SpecialTypeResolver::resolveConstantKeyValue($resolvedClass, $constName);
+                    $keyName = $resolvedKeyNode ?? new ConstExprStringNode($resolvedClass . '::' . $constName, $keyName->quoteType);
+                }
+
                 $items[] = new ArrayShapeItemNode(
-                    $item->keyName,
+                    $keyName,
                     $item->optional,
                     self::resolveTypeNodeAst($item->valueType, $ref)
                 );

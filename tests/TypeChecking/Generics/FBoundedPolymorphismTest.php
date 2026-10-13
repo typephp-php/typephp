@@ -205,7 +205,10 @@ describe('F-Bounded Polymorphism (@template T of Interface<T>)', function () {
             $impostor = new FBoundImpostor();
 
             expect(fn () => $impostor->copy())
-                ->toThrow(TypeError::class, 'Return value must be of type TypePHP\Tests\TypeChecking\Generics\FBoundDerived, TypePHP\Tests\TypeChecking\Generics\FBoundImpostor returned')
+                ->toThrow(
+                    TypeError::class,
+                    'Return value must be of type ' . FBoundDerived::class . ', ' . FBoundImpostor::class . '<' . FBoundDerived::class . '> returned'
+                )
             ;
         });
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Diagnostic;
 
+use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Util\Config;
 
 /**
@@ -75,6 +76,19 @@ final class TypeFormatter
 
         if (\is_bool($value)) {
             return $value ? 'bool (true)' : 'bool (false)';
+        }
+
+        if (\is_object($value)) {
+            $className = $value::class;
+            $bindings = TemplateManager::getBoundTemplatesForInstance($value);
+
+            if ($bindings !== []) {
+                $typeStrings = array_map(static fn ($node): string => (string) $node, array_values($bindings));
+
+                return $className . '<' . implode(', ', $typeStrings) . '>';
+            }
+
+            return get_debug_type($value);
         }
 
         return get_debug_type($value);

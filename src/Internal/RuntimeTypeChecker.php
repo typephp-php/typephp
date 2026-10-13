@@ -306,11 +306,11 @@ final class RuntimeTypeChecker
         );
 
         if ($err !== null) {
+            TemplateManager::popCallFrame($effectiveFunction);
+
             if (IgnoreManager::isCallerIgnored()) {
                 return null;
             }
-
-            TemplateManager::popCallFrame($effectiveFunction);
 
             $handled = ViolationCollector::handle($err, 'parameter', null, function: $effectiveFunction);
             if ($handled instanceof ErrorMessage) {
