@@ -7,6 +7,58 @@ namespace TypePHP\Tests\Fixtures\Php85;
 use TypePHP\Tests\Fixtures\Domain\Animal;
 
 /**
+ * Executes native PHP 8.5 clone-with operations so test files don't fail parsing on PHP <= 8.4.
+ */
+class NativeCloneWithRunner
+{
+    public static function clone(object $object, ?array $properties = null): object
+    {
+        if ($properties !== null) {
+            return clone($object, $properties);
+        }
+
+        return clone $object;
+    }
+}
+
+class CloneWithModelFixture
+{
+    /**
+     * @var positive-int
+     */
+    public int $score = 10;
+
+    /**
+     * @var non-empty-string
+     */
+    public string $name = 'Alice';
+}
+
+final readonly class CloneWithReadonlyOrder
+{
+    /**
+     * @var positive-int
+     */
+    public int $id;
+
+    /**
+     * @var non-empty-string
+     */
+    public string $sku;
+
+    public function __construct(int $id, string $sku)
+    {
+        $this->id = $id;
+        $this->sku = $sku;
+    }
+
+    public function withId(int $id): self
+    {
+        return clone($this, ['id' => $id]);
+    }
+}
+
+/**
  * @template T of Animal
  */
 class BoundedGenericBoxFixture

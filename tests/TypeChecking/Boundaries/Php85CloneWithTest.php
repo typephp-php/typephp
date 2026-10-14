@@ -8,50 +8,17 @@ if (PHP_VERSION_ID < 80500) {
     return;
 }
 
+require_once __DIR__ . '/../../Fixtures/Php85/CloneWithFunctionalFixtures.php';
+
 use TypePHP\Exception\TypeError;
 use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\RuntimeTypeChecker;
 use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Generics\GenericBox;
+use TypePHP\Tests\Fixtures\Php85\CloneWithModelFixture;
+use TypePHP\Tests\Fixtures\Php85\CloneWithReadonlyOrder;
 use TypePHP\TypePHP;
-
-class CloneWithModelFixture
-{
-    /**
-     * @var positive-int
-     */
-    public int $score = 10;
-
-    /**
-     * @var non-empty-string
-     */
-    public string $name = 'Alice';
-}
-
-final readonly class CloneWithReadonlyOrder
-{
-    /**
-     * @var positive-int
-     */
-    public int $id;
-
-    /**
-     * @var non-empty-string
-     */
-    public string $sku;
-
-    public function __construct(int $id, string $sku)
-    {
-        $this->id = $id;
-        $this->sku = $sku;
-    }
-
-    public function withId(int $id): self
-    {
-        return clone($this, ['id' => $id]);
-    }
-}
 
 describe('PHP 8.5 "Clone With" Syntax Support (TDD)', function () {
     describe('1. AST Transformation (nikic/php-parser FuncCall interception)', function () {
@@ -168,10 +135,10 @@ PHP;
             $source = <<<'PHP'
 <?php
 
-$order = new \TypePHP\Tests\TypeChecking\Boundaries\CloneWithReadonlyOrder(42, 'SKU-VALID');
+$order = new \TypePHP\Tests\Fixtures\Php85\CloneWithReadonlyOrder(42, 'SKU-VALID');
 $validOrder = $order->withId(100);
 
-$user = new \TypePHP\Tests\TypeChecking\Boundaries\CloneWithModelFixture();
+$user = new \TypePHP\Tests\Fixtures\Php85\CloneWithModelFixture();
 $validUser = clone($user, ['score' => 50]);
 
 $badUser = clone($user, ['score' => -10]);
