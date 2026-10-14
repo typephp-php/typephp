@@ -123,20 +123,6 @@ final class StreamWrapper implements StreamWrapperInterface
     private static bool $forceTelemetry = false;
 
     /**
-     * Native PHP functions that read raw source code for viewing, highlighting, or tokenizing.
-     *
-     * @var array<string, true>
-     */
-    private const READ_ONLY_FUNCTIONS = [
-        'file_get_contents' => true,
-        'file' => true,
-        'readfile' => true,
-        'highlight_file' => true,
-        'show_source' => true,
-        'token_get_all' => true,
-    ];
-
-    /**
      * Returns a shared singleton instance of the PHP-Parser parser.
      */
     public static function getParser(): Parser
@@ -401,8 +387,7 @@ final class StreamWrapper implements StreamWrapperInterface
      * Opens a file stream using a multi-stage validation pipeline:
      * 1. Rejects non-include operations, non-read modes, and non-PHP files directly.
      * 2. Runs high-speed string prefix pre-filtering to bypass excluded vendor, cache, and storage paths.
-     * 3. Detects native source-viewing functions (error screen highlighters and tokenizers) to serve raw source code.
-     * 4. Executes a single unregister/register block for application files to load cached or memory-transformed bytecode.
+     * 3. Executes a single unregister/register block for application files to load cached or memory-transformed bytecode.
      */
     public function stream_open(string $path, string $mode, int $options, ?string &$openedPath): bool
     {
@@ -437,10 +422,6 @@ final class StreamWrapper implements StreamWrapperInterface
 
         $normalizedRaw = str_replace('\\', '/', $path);
         if (! PathMatcher::mayPathBeIncluded($normalizedRaw)) {
-            return $this->openDirectHandle($path, $mode, $options);
-        }
-
-        if (self::isReadOnlyCall()) {
             return $this->openDirectHandle($path, $mode, $options);
         }
 
@@ -506,20 +487,6 @@ final class StreamWrapper implements StreamWrapperInterface
         }
 
         return false;
-    }
-
-    /**
-     * Determines whether the stream is being opened by a native PHP source-viewing function
-     * (e.g. highlight_file, show_source, file_get_contents, token_get_all) by inspecting shallow backtrace frames.
-     */
-    private static function isReadOnlyCall(): bool
-    {
-        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 3);
-
-        $caller1 = strtolower($trace[1]['function'] ?? '');
-        $caller2 = strtolower($trace[2]['function'] ?? '');
-
-        return isset(self::READ_ONLY_FUNCTIONS[$caller1]) || isset(self::READ_ONLY_FUNCTIONS[$caller2]);
     }
 
     /**

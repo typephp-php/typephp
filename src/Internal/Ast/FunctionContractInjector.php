@@ -8,6 +8,7 @@ use PhpParser\Comment\Doc;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
+use TypePHP\Internal\Util\StubManager;
 
 /**
  * @internal Injects parameter checks, return checks, param-out checks, and generator interceptors into functions and methods.
@@ -28,7 +29,7 @@ final class FunctionContractInjector
     ];
 
     /**
-     * @param array{hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, hasTemplates?: bool}|null $classContext
+     * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
      */
     public static function inject(Node\Stmt\Function_|Node\Stmt\ClassMethod $node, ?array $classContext = null): void
     {
@@ -37,13 +38,14 @@ final class FunctionContractInjector
         }
 
         $isClassMethod = $node instanceof Node\Stmt\ClassMethod;
-        $doc = self::resolveDocComment($node);
+        $doc = self::resolveDocComment($node, $classContext);
         $docText = $doc !== null ? $doc->getText() : '';
 
         $hasInheritance = $classContext['hasInheritance'] ?? true;
         $hasRealInheritance = $classContext['hasRealInheritance'] ?? $hasInheritance;
         $hasPropertyWithDoc = $classContext['hasPropertyWithDoc'] ?? true;
         $isReadonlyClass = $classContext['isReadonly'] ?? false;
+        $isFinalClass = $classContext['isFinal'] ?? false;
         $hasClassTemplates = $classContext['hasTemplates'] ?? false;
 
         $methodName = $isClassMethod ? strtolower($node->name->toString()) : '';
@@ -72,10 +74,21 @@ final class FunctionContractInjector
             || str_contains($docText, '@phpstan-return')
             || str_contains($docText, '@psalm-return');
 
+        $hasMethodReturnStatements = self::hasReturnStatements($node);
+
         $hasReturn = ! $isMagicLifecycle
             && ! $isNativeNever
             && ! ($isNativeVoid && ! $hasReturnDoc)
-            && ($isMagicGet || $isMagicCall || self::hasReturnContracts($docText, $isClassMethod, $isPrivate));
+            && ($isMagicGet || $isMagicCall || self::hasReturnContracts(
+                $docText,
+                $isClassMethod,
+                $hasInheritance,
+                $isPrivate,
+                $isFinalClass,
+                $node->returnType !== null,
+                $hasMethodReturnStatements,
+                $classContext === null,
+            ));
 
         $byRefParams = [];
         foreach ($node->params as $p) {
@@ -104,7 +117,7 @@ final class FunctionContractInjector
             $isConstructor,
             $hasPropertyWithDoc,
             $classContext === null,
-            $node->attrGroups !== []
+            $node->attrGroups !== [],
         );
 
         if (! $hasParam && ! $hasReturn && ! $hasParamOut && ! $hasSelfOut) {
@@ -132,7 +145,7 @@ final class FunctionContractInjector
                     $hasReturn,
                     $hasParamOut ? $byRefParams : [],
                     $hasSelfOut,
-                    $node->byRef
+                    $node->byRef,
                 );
         }
 
@@ -160,8 +173,13 @@ final class FunctionContractInjector
         return $stmt;
     }
 
-    private static function resolveDocComment(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): ?Doc
-    {
+    /**
+     * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
+     */
+    private static function resolveDocComment(
+        Node\Stmt\Function_|Node\Stmt\ClassMethod $node,
+        ?array $classContext = null,
+    ): ?Doc {
         $doc = $node->getDocComment();
         if ($doc !== null) {
             return $doc;
@@ -172,6 +190,25 @@ final class FunctionContractInjector
                 $groupDoc = $group->getDocComment();
                 if ($groupDoc !== null) {
                     return $groupDoc;
+                }
+            }
+        }
+
+        $className = $classContext['name'] ?? null;
+        if ($node instanceof Node\Stmt\ClassMethod && $className !== null) {
+            $methodName = $node->name->toString();
+            if (StubManager::hasMethodStub($className, $methodName)) {
+                $stubText = StubManager::getMethodDoc($className, $methodName);
+                if ($stubText !== null) {
+                    return new Doc($stubText);
+                }
+            }
+        } elseif ($node instanceof Node\Stmt\Function_) {
+            $funcName = $node->name->toString();
+            if (StubManager::hasFunctionStub($funcName)) {
+                $stubText = StubManager::getFunctionDoc($funcName);
+                if ($stubText !== null) {
+                    return new Doc($stubText);
                 }
             }
         }
@@ -248,8 +285,17 @@ final class FunctionContractInjector
     private static function hasReturnContracts(
         string $docText,
         bool $isClassMethod,
-        bool $isPrivate
+        bool $hasInheritance,
+        bool $isPrivate,
+        bool $isFinalClass = false,
+        bool $hasNativeReturnType = false,
+        bool $hasReturnStatements = false,
+        bool $isDirectUnitTest = false,
     ): bool {
+        if ($isDirectUnitTest && $isClassMethod) {
+            return true;
+        }
+
         if ($isPrivate && $docText === '') {
             return false;
         }
@@ -275,7 +321,38 @@ final class FunctionContractInjector
             return true;
         }
 
-        return $isClassMethod && ! $isPrivate;
+        if (! $isClassMethod) {
+            return false;
+        }
+
+        if ($hasInheritance && ! $isPrivate) {
+            return true;
+        }
+
+        if ($isFinalClass) {
+            return false;
+        }
+
+        if (! $hasNativeReturnType && ! $hasReturnStatements) {
+            return false;
+        }
+
+        return ! $isPrivate;
+    }
+
+    private static function hasReturnStatements(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): bool
+    {
+        if ($node->stmts === null || $node->stmts === []) {
+            return false;
+        }
+
+        foreach ($node->stmts as $stmt) {
+            if ($stmt instanceof Node\Stmt\Return_ && $stmt->expr !== null) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static function resolveThisArg(bool $isClassMethod, Node\Stmt\Function_|Node\Stmt\ClassMethod $node): Node\Expr

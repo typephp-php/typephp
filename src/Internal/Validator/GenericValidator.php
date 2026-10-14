@@ -474,88 +474,15 @@ final class GenericValidator implements TypeValidatorInterface
             return null;
         }
 
-        if ($valueTypeNode instanceof IdentifierTypeNode && \in_array(strtolower($valueTypeNode->name), ['mixed', 't', 'tvalue', 'v', 'value', 'telement'], true)) {
-            return null;
-        }
-
-        $isComplexObjectGeneric = ($valueTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower($valueTypeNode->type->name)]));
-
-        if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
-            $sampleIndices = [0, $count - 1];
-            $samplesToTake = min(3, $count - 2);
-            for ($i = 0; $i < $samplesToTake; $i++) {
-                $sampleIndices[] = mt_rand(1, $count - 2);
-            }
-
-            foreach ($sampleIndices as $k) {
-                $v = $value[$k];
-                $err = $isComplexObjectGeneric
-                    ? $this->validateObjectGeneric($v, $valueTypeNode, '', $isSensitive)
-                    : $registry->validate($v, $valueTypeNode, '', $isSensitive);
-
-                if ($err !== null) {
-                    return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
-                }
-            }
-
-            return null;
-        }
-
-        if ($valueTypeNode instanceof IdentifierTypeNode) {
-            $elemName = $valueTypeNode->name;
-
-            if ($elemName === 'int') {
-                foreach ($value as $k => $v) {
-                    if (! \is_int($v)) {
-                        return ErrorFactory::createError($context . '[' . $k . '] must be of type int, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
-                    }
-                }
-
-                return null;
-            }
-
-            if ($elemName === 'string') {
-                foreach ($value as $k => $v) {
-                    if (! \is_string($v)) {
-                        return ErrorFactory::createError($context . '[' . $k . '] must be of type string, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
-                    }
-                }
-
-                return null;
-            }
-
-            if ($elemName === 'bool') {
-                foreach ($value as $k => $v) {
-                    if (! \is_bool($v)) {
-                        return ErrorFactory::createError($context . '[' . $k . '] must be of type bool, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
-                    }
-                }
-
-                return null;
-            }
-
-            if ($elemName === 'float') {
-                foreach ($value as $k => $v) {
-                    if (! \is_float($v) && ! \is_int($v)) {
-                        return ErrorFactory::createError($context . '[' . $k . '] must be of type float, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
-                    }
-                }
-
-                return null;
-            }
-        }
-
-        foreach ($value as $k => $v) {
-            $err = $isComplexObjectGeneric
-                ? $this->validateObjectGeneric($v, $valueTypeNode, '', $isSensitive)
-                : $registry->validate($v, $valueTypeNode, '', $isSensitive);
-
-            if ($err !== null) {
-                return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
-            }
-        }
-
-        return null;
+        return CollectionElementValidator::validateElements(
+            $value,
+            $valueTypeNode,
+            $context,
+            $registry,
+            isList: true,
+            isSensitive: $isSensitive,
+            count: $count,
+        );
     }
 
     private function validateArray(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
@@ -602,99 +529,17 @@ final class GenericValidator implements TypeValidatorInterface
         string $context,
         TypeValidatorRegistry $registry,
         bool $isSensitive,
-        int $count
+        int $count,
     ): ?ErrorMessage {
-        if ($valTypeNode instanceof IdentifierTypeNode && \in_array(strtolower($valTypeNode->name), ['mixed', 't', 'tvalue', 'v', 'value', 'telement'], true)) {
-            return null;
-        }
-
-        $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower($valTypeNode->type->name)]));
-
-        if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
-            $keys = array_keys($value);
-            $sampleKeys = [$keys[0], $keys[$count - 1]];
-            $samplesToTake = min(3, $count - 2);
-            for ($i = 0; $i < $samplesToTake; $i++) {
-                $sampleKeys[] = $keys[mt_rand(1, $count - 2)];
-            }
-
-            foreach ($sampleKeys as $k) {
-                $v = $value[$k];
-                $err = $isComplexObjectGeneric
-                    ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
-                    : $registry->validate($v, $valTypeNode, '', $isSensitive);
-
-                if ($err !== null) {
-                    return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
-                }
-            }
-
-            return null;
-        }
-
-        if ($valTypeNode instanceof IdentifierTypeNode) {
-            $elemName = $valTypeNode->name;
-
-            if ($elemName === 'int') {
-                foreach ($value as $k => $v) {
-                    if (! \is_int($v)) {
-                        $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
-
-                        return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type int, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
-                    }
-                }
-
-                return null;
-            }
-
-            if ($elemName === 'string') {
-                foreach ($value as $k => $v) {
-                    if (! \is_string($v)) {
-                        $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
-
-                        return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type string, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
-                    }
-                }
-
-                return null;
-            }
-
-            if ($elemName === 'bool') {
-                foreach ($value as $k => $v) {
-                    if (! \is_bool($v)) {
-                        $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
-
-                        return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type bool, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
-                    }
-                }
-
-                return null;
-            }
-
-            if ($elemName === 'float') {
-                foreach ($value as $k => $v) {
-                    if (! \is_float($v) && ! \is_int($v)) {
-                        $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
-
-                        return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type float, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
-                    }
-                }
-
-                return null;
-            }
-        }
-
-        foreach ($value as $k => $v) {
-            $err = $isComplexObjectGeneric
-                ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
-                : $registry->validate($v, $valTypeNode, '', $isSensitive);
-
-            if ($err !== null) {
-                return ErrorFactory::createError($context . '[' . $k . ']' . $err->getMessage());
-            }
-        }
-
-        return null;
+        return CollectionElementValidator::validateElements(
+            $value,
+            $valTypeNode,
+            $context,
+            $registry,
+            isList: false,
+            isSensitive: $isSensitive,
+            count: $count,
+        );
     }
 
     /**

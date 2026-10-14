@@ -6,13 +6,11 @@ namespace TypePHP\Internal\Validator;
 
 use Generator;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
-use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use Traversable;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
-use TypePHP\Internal\Util\Config;
 
 /**
  * Validates array and Traversable collection instances against ArrayTypeNode ASTs (Type[]).
@@ -28,85 +26,24 @@ final class ArrayValidator implements TypeValidatorInterface
             return ErrorFactory::createError($context . ' must be of type array, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
-        /** @var ArrayTypeNode $arrayNode */
-        $arrayNode = $node;
-
         if ($value instanceof Generator) {
             return null;
         }
 
+        /**
+         * @var ArrayTypeNode
+         */
+        $arrayNode = $node;
+
         if (\is_array($value)) {
-            $count = \count($value);
-            if ($count === 0) {
-                return null;
-            }
-
-            if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
-                return $this->validateArrayHybrid($value, $arrayNode, $context, $registry, $count);
-            }
-
-            if ($arrayNode->type instanceof IdentifierTypeNode) {
-                $elemName = $arrayNode->type->name;
-
-                if ($elemName === 'int') {
-                    foreach ($value as $k => $v) {
-                        if (! \is_int($v)) {
-                            $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
-
-                            return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type int, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
-                        }
-                    }
-
-                    return null;
-                }
-
-                if ($elemName === 'string') {
-                    foreach ($value as $k => $v) {
-                        if (! \is_string($v)) {
-                            $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
-
-                            return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type string, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
-                        }
-                    }
-
-                    return null;
-                }
-
-                if ($elemName === 'bool') {
-                    foreach ($value as $k => $v) {
-                        if (! \is_bool($v)) {
-                            $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
-
-                            return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type bool, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
-                        }
-                    }
-
-                    return null;
-                }
-
-                if ($elemName === 'float') {
-                    foreach ($value as $k => $v) {
-                        if (! \is_float($v) && ! \is_int($v)) {
-                            $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
-
-                            return ErrorFactory::createError($context . '[' . $keyStr . '] must be of type float, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
-                        }
-                    }
-
-                    return null;
-                }
-            }
-
-            foreach ($value as $k => $v) {
-                $err = $registry->validate($v, $arrayNode->type, '', $isSensitive);
-                if ($err !== null) {
-                    $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
-
-                    return ErrorFactory::createError($context . '[' . $keyStr . ']' . $err->getMessage());
-                }
-            }
-
-            return null;
+            return CollectionElementValidator::validateElements(
+                $value,
+                $arrayNode->type,
+                $context,
+                $registry,
+                isList: false,
+                isSensitive: $isSensitive,
+            );
         }
 
         foreach ($value as $k => $v) {
@@ -115,52 +52,6 @@ final class ArrayValidator implements TypeValidatorInterface
                 $keyStr = \is_string($k)
                     ? "'" . $k . "'"
                     : ((\is_scalar($k) || $k === null) ? (string) $k : get_debug_type($k));
-
-                return ErrorFactory::createError($context . '[' . $keyStr . ']' . $err->getMessage());
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * @param array<mixed> $value
-     */
-    private function validateArrayHybrid(
-        array $value,
-        ArrayTypeNode $arrayNode,
-        string $context,
-        TypeValidatorRegistry $registry,
-        int $count
-    ): ?ErrorMessage {
-        if (array_is_list($value)) {
-            $sampleIndices = [0, $count - 1];
-            $samplesToTake = min(3, $count - 2);
-            for ($i = 0; $i < $samplesToTake; $i++) {
-                $sampleIndices[] = mt_rand(1, $count - 2);
-            }
-
-            foreach ($sampleIndices as $idx) {
-                $err = $registry->validate($value[$idx], $arrayNode->type, '');
-                if ($err !== null) {
-                    return ErrorFactory::createError($context . '[' . $idx . ']' . $err->getMessage());
-                }
-            }
-
-            return null;
-        }
-
-        $keys = array_keys($value);
-        $sampleKeys = [$keys[0], $keys[$count - 1]];
-        $samplesToTake = min(3, $count - 2);
-        for ($i = 0; $i < $samplesToTake; $i++) {
-            $sampleKeys[] = $keys[mt_rand(1, $count - 2)];
-        }
-
-        foreach ($sampleKeys as $k) {
-            $err = $registry->validate($value[$k], $arrayNode->type, '');
-            if ($err !== null) {
-                $keyStr = \is_string($k) ? "'" . $k . "'" : (string) $k;
 
                 return ErrorFactory::createError($context . '[' . $keyStr . ']' . $err->getMessage());
             }

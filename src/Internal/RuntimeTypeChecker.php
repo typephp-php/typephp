@@ -644,6 +644,41 @@ final class RuntimeTypeChecker
     }
 
     /**
+     * PHP 8.5: Copies generic bindings and validates overridden properties on clone($obj, [...]).
+     *
+     * @param array<string, mixed>|null $overriddenProperties
+     */
+    public static function cloneWith(
+        mixed $cloned,
+        mixed $original = null,
+        ?array $overriddenProperties = null,
+        string $file = '',
+        ?int $line = null,
+    ): mixed {
+        $source = \is_object($original) ? $original : TemplateManager::$pendingCloneSource;
+        TemplateManager::$pendingCloneSource = null;
+
+        if (! \is_object($cloned) || ! \is_object($source)) {
+            return $cloned;
+        }
+
+        TemplateManager::copyInstanceBindings($source, $cloned);
+
+        if ($overriddenProperties !== null && $overriddenProperties !== [] && Config::isInlinePropertiesEnabled()) {
+            foreach ($overriddenProperties as $propName => $propValue) {
+                $res = self::checkProperty($propValue, $cloned, (string) $propName, $file);
+                if ($res instanceof ErrorMessage) {
+                    $typeError = new \TypePHP\Exception\TypeError($res->getMessage());
+
+                    throw ErrorFactory::prepareException($typeError, $line, $file !== '' ? $file : null);
+                }
+            }
+        }
+
+        return $cloned;
+    }
+
+    /**
      * Infers a TypeNode AST representation from a raw PHP value.
      */
     public static function inferTypeFromValue(mixed $value): TypeNode

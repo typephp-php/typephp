@@ -29,6 +29,15 @@ final class IdentifierValidator implements TypeValidatorInterface
         if ($name === 'string') {
             return \is_string($value) ? null : ErrorFactory::createError($context . ' must be of type string, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
+        if ($name === 'positive-int') {
+            return (\is_int($value) && $value > 0) ? null : ErrorFactory::createError($context . ' must be of type positive-int, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+        if ($name === 'non-empty-string') {
+            return (\is_string($value) && $value !== '') ? null : ErrorFactory::createError($context . ' must be of type non-empty-string, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+        if ($name === 'array-key') {
+            return (\is_int($value) || \is_string($value)) ? null : ErrorFactory::createError($context . ' must be of type array-key, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
         if ($name === 'bool') {
             return \is_bool($value) ? null : ErrorFactory::createError($context . ' must be of type bool, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }

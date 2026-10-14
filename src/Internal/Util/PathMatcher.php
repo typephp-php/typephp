@@ -47,13 +47,21 @@ final class PathMatcher
     private static ?string $cachedLibSrcDir = null;
 
     /**
-     * Resets compiled pattern, prefix, and directory caches.
+     * Cache for canonicalized paths.
+     *
+     * @var array<string, string>
+     */
+    private static array $canonicalPathCache = [];
+
+    /**
+     * Resets compiled pattern, prefix, directory, and canonical path caches.
      */
     public static function reset(): void
     {
         self::$compiledIncludesCache = [];
         self::$compiledExcludesCache = [];
         self::$includePrefixCache = [];
+        self::$canonicalPathCache = [];
         self::$cachedCacheDir = null;
         self::$cachedLibSrcDir = null;
         CacheManager::reset();
@@ -77,12 +85,16 @@ final class PathMatcher
      */
     public static function canonicalizePath(string $path): string
     {
-        $path = str_replace('\\', '/', $path);
-        if (! str_contains($path, '..') && ! str_contains($path, '/.')) {
-            return $path;
+        if (isset(self::$canonicalPathCache[$path])) {
+            return self::$canonicalPathCache[$path];
         }
 
-        $parts = explode('/', $path);
+        $normalized = str_replace('\\', '/', $path);
+        if (! str_contains($normalized, '..') && ! str_contains($normalized, '/.')) {
+            return self::$canonicalPathCache[$path] = $normalized;
+        }
+
+        $parts = explode('/', $normalized);
         $absolutes = [];
 
         foreach ($parts as $part) {
@@ -111,10 +123,10 @@ final class PathMatcher
         }
 
         if ($absolutes === ['']) {
-            return '/';
+            return self::$canonicalPathCache[$path] = '/';
         }
 
-        return implode('/', $absolutes);
+        return self::$canonicalPathCache[$path] = implode('/', $absolutes);
     }
 
     /**
