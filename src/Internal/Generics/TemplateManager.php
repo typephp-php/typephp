@@ -955,7 +955,7 @@ final class TemplateManager
                 $contextPrefix = $context !== '' ? (str_ends_with($context, ':') ? $context . ' ' : $context . ' ') : ' ';
 
                 return ErrorFactory::createError(
-                    $contextPrefix . "Generic type argument {$expectedTypeNode} does not satisfy upper bound {$templateTag->bound} of template {$templateTag->name} in {$className}"
+                    $contextPrefix . "Generic type argument {$expectedTypeNode} does not satisfy upper bound {$boundNode} of template {$templateTag->name} in {$className}"
                 );
             }
         }

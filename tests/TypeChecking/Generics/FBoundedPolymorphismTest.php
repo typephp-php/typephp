@@ -218,5 +218,15 @@ describe('F-Bounded Polymorphism (@template T of Interface<T>)', function () {
                 $base = new FBoundDerived();
             })->toThrow(TypeError::class);
         });
+
+        test('reports substituted bound in diagnostic message when generic argument fails F-bound', function () {
+            expect(function () {
+                /** @var FBoundSortedList<FBoundPlain> $list */
+                $list = new FBoundSortedList();
+            })->toThrow(
+                TypeError::class,
+                'Generic type argument ' . FBoundPlain::class . ' does not satisfy upper bound ' . FBoundComparable::class . '<' . FBoundPlain::class . '> of template T in ' . FBoundSortedList::class
+            );
+        });
     });
 });
