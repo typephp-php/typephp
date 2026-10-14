@@ -15,6 +15,7 @@ use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Util\Config;
+use TypePHP\Internal\Util\StubManager;
 
 /**
  * @internal AST Node Visitor that injects contract checks, scope tracking, property hook validation, and parameter/return wrappers into functions and methods.
@@ -66,6 +67,13 @@ final class ContractVisitor extends NodeVisitorAbstract
      */
     private array $thisAvailableStack = [];
 
+    /**
+     * Tracks whether the enclosing function or method returns by reference.
+     *
+     * @var list<bool>
+     */
+    private array $byRefStack = [];
+
     public function __construct()
     {
         $this->scopeManager = new ScopeManager();
@@ -79,6 +87,10 @@ final class ContractVisitor extends NodeVisitorAbstract
     public function enterNode(Node $node): ?array
     {
         $this->trackDeclarationEntry($node);
+
+        if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Expr\Closure) {
+            $this->byRefStack[] = $node->byRef;
+        }
 
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
             $this->scopeManager->pushScope(isIsolated: true);
@@ -135,6 +147,10 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         if ($node instanceof Node\Stmt\Return_) {
+            if ($node->expr !== null && $this->byRefStack !== [] && end($this->byRefStack)) {
+                $this->markWriteContext($node->expr);
+            }
+
             $this->handleReturn($node);
 
             return null;
@@ -173,6 +189,10 @@ final class ContractVisitor extends NodeVisitorAbstract
     {
         $this->trackDeclarationExit($node);
 
+        if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Expr\Closure) {
+            array_pop($this->byRefStack);
+        }
+
         if ($node instanceof Node\Expr\Clone_) {
             return $this->wrapClone($node);
         }
@@ -189,13 +209,6 @@ final class ContractVisitor extends NodeVisitorAbstract
                 return null;
             }
 
-            $replacement = $this->handleIncDec($node);
-            if ($replacement !== null) {
-                return $replacement;
-            }
-        }
-
-        if ($node instanceof Node\Expr\PreInc || $node instanceof Node\Expr\PostInc || $node instanceof Node\Expr\PreDec || $node instanceof Node\Expr\PostDec) {
             $replacement = $this->handleIncDec($node);
             if ($replacement !== null) {
                 return $replacement;
@@ -429,13 +442,23 @@ final class ContractVisitor extends NodeVisitorAbstract
         $hasRealInheritance = false;
         $hasPropertyWithDoc = false;
         $isReadonly = false;
+        $isFinal = false;
         $hasTemplates = false;
+
+        $doc = $node->getDocComment();
+        if ($doc === null && $typeName !== null && StubManager::hasClassStub($typeName)) {
+            $stubDocText = StubManager::getClassDoc($typeName);
+            if ($stubDocText !== null) {
+                $doc = new \PhpParser\Comment\Doc($stubDocText);
+            }
+        }
 
         if ($node instanceof Node\Stmt\Class_) {
             $hasExtends = $node->extends !== null;
             $hasImplements = $node->implements !== [];
             $hasTraits = false;
             $isReadonly = ($node->flags & Node\Stmt\Class_::MODIFIER_READONLY) !== 0;
+            $isFinal = ($node->flags & Node\Stmt\Class_::MODIFIER_FINAL) !== 0;
 
             foreach ($node->stmts as $stmt) {
                 if ($stmt instanceof Node\Stmt\TraitUse) {
@@ -453,7 +476,6 @@ final class ContractVisitor extends NodeVisitorAbstract
                 }
             }
 
-            $doc = $node->getDocComment();
             $hasTemplates = $doc !== null && (
                 str_contains($doc->getText(), '@template')
                 || str_contains($doc->getText(), '@phpstan-template')
@@ -473,7 +495,6 @@ final class ContractVisitor extends NodeVisitorAbstract
             $hasRealInheritance = $node->implements !== [];
             $hasInheritance = $hasRealInheritance;
         } else {
-            $doc = $node->getDocComment();
             $hasTemplates = $doc !== null && (
                 str_contains($doc->getText(), '@template')
                 || str_contains($doc->getText(), '@phpstan-template')
@@ -488,6 +509,7 @@ final class ContractVisitor extends NodeVisitorAbstract
             'hasRealInheritance' => $hasRealInheritance,
             'hasPropertyWithDoc' => $hasPropertyWithDoc,
             'isReadonly' => $isReadonly,
+            'isFinal' => $isFinal,
             'hasTemplates' => $hasTemplates,
         ];
     }
