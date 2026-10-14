@@ -26,12 +26,12 @@ use TypePHP\TypePHP;
 describe('Functional Type-Checking for PHP 8.5 "Clone With"', function () {
     describe('1. Generic Bound Preservation & Validation (@template T of Animal)', function () {
         test('preserves generic template T in WeakMap after wither method clone', function () {
-            $dog = new Dog();
+            $dog = new Dog('Rover');
             $box = new BoundedGenericBoxFixture($dog);
 
             expect(TypePHP::getGenericType($box))->toBe(Dog::class);
 
-            $newDog = new Dog();
+            $newDog = new Dog('Max');
             $clonedBox = $box->withItem($newDog);
 
             expect($clonedBox)->not()->toBe($box)
@@ -41,7 +41,7 @@ describe('Functional Type-Checking for PHP 8.5 "Clone With"', function () {
         });
 
         test('throws TypeError when wither method attempts to clone with incompatible type', function () {
-            $box = new BoundedGenericBoxFixture(new Dog());
+            $box = new BoundedGenericBoxFixture(new Dog('Rover'));
 
             expect(fn () => $box->withItem(new Car()))
                 ->toThrow(TypeError::class, 'must be of type ' . Dog::class)
@@ -49,12 +49,12 @@ describe('Functional Type-Checking for PHP 8.5 "Clone With"', function () {
         });
 
         test('validates external clone with on public generic property', function () {
-            $box = new BoundedGenericBoxFixture(new Dog());
+            $box = new BoundedGenericBoxFixture(new Dog('Rover'));
 
-            $validClone = clone($box, ['item' => new Dog()]);
+            $validClone = NativeCloneWithRunner::cloneWith($box, ['item' => new Dog('Buddy')]);
             expect(TypePHP::getGenericType($validClone))->toBe(Dog::class);
 
-            expect(fn () => clone($box, ['item' => new Car()]))
+            expect(fn () => NativeCloneWithRunner::cloneWith($box, ['item' => new Car()]))
                 ->toThrow(TypeError::class, 'must be of type ' . Dog::class)
             ;
         });
@@ -79,7 +79,7 @@ describe('Functional Type-Checking for PHP 8.5 "Clone With"', function () {
         test('throws TypeError when clone override violates generic value type V', function () {
             $map = new MultiTemplateMapFixture(['user_1' => 100]);
 
-            expect(fn () => NativeCloneWithRunner::clone($map, ['data' => ['user_1' => 'not_an_int']]))
+            expect(fn () => NativeCloneWithRunner::cloneWith($map, ['data' => ['user_1' => 'not_an_int']]))
                 ->toThrow(TypeError::class, "['user_1'] must be of type int")
             ;
         });
@@ -123,7 +123,7 @@ describe('Functional Type-Checking for PHP 8.5 "Clone With"', function () {
             $model = new MagicCloneWithFixture();
             expect($model->counter)->toBe(10);
 
-            $cloned = NativeCloneWithRunner::clone($model, ['counter' => 50]);
+            $cloned = NativeCloneWithRunner::cloneWith($model, ['counter' => 50]);
 
             expect($cloned->magicCloneExecuted)->toBeTrue()
                 ->and($cloned->counter)->toBe(50)
@@ -133,7 +133,7 @@ describe('Functional Type-Checking for PHP 8.5 "Clone With"', function () {
         test('validates final overridden state even when __clone() mutated the object first', function () {
             $model = new MagicCloneWithFixture();
 
-            expect(fn () => NativeCloneWithRunner::clone($model, ['counter' => -100]))
+            expect(fn () => NativeCloneWithRunner::cloneWith($model, ['counter' => -100]))
                 ->toThrow(TypeError::class, 'positive-int')
             ;
         });
@@ -143,10 +143,10 @@ describe('Functional Type-Checking for PHP 8.5 "Clone With"', function () {
         test('triggers set hook during property write and enforces contract', function () {
             $order = new HookedCloneWithFixture();
 
-            $cloned = NativeCloneWithRunner::clone($order, ['total' => 250]);
+            $cloned = NativeCloneWithRunner::cloneWith($order, ['total' => 250]);
             expect($cloned->total)->toBe(250);
 
-            expect(fn () => NativeCloneWithRunner::clone($order, ['total' => -50]))
+            expect(fn () => NativeCloneWithRunner::cloneWith($order, ['total' => -50]))
                 ->toThrow(TypeError::class, 'positive-int')
             ;
         });
@@ -156,7 +156,7 @@ describe('Functional Type-Checking for PHP 8.5 "Clone With"', function () {
         test('validates array shape properties on cloned instance', function () {
             $fixture = new ShapeCloneWithFixture();
 
-            $cloned = NativeCloneWithRunner::clone($fixture, [
+            $cloned = NativeCloneWithRunner::cloneWith($fixture, [
                 'session' => ['id' => 42, 'role' => 'admin'],
             ]);
 
@@ -166,7 +166,7 @@ describe('Functional Type-Checking for PHP 8.5 "Clone With"', function () {
         test('throws TypeError when array shape id violates positive-int', function () {
             $fixture = new ShapeCloneWithFixture();
 
-            expect(fn () => NativeCloneWithRunner::clone($fixture, ['session' => ['id' => -1, 'role' => 'user']]))
+            expect(fn () => NativeCloneWithRunner::cloneWith($fixture, ['session' => ['id' => -1, 'role' => 'user']]))
                 ->toThrow(TypeError::class, "['id'] must be of type positive-int")
             ;
         });
@@ -174,7 +174,7 @@ describe('Functional Type-Checking for PHP 8.5 "Clone With"', function () {
         test('throws TypeError when array shape role violates literal union', function () {
             $fixture = new ShapeCloneWithFixture();
 
-            expect(fn () => NativeCloneWithRunner::clone($fixture, ['session' => ['id' => 10, 'role' => 'superuser']]))
+            expect(fn () => NativeCloneWithRunner::cloneWith($fixture, ['session' => ['id' => 10, 'role' => 'superuser']]))
                 ->toThrow(TypeError::class, "['role'] must be of type ('admin' | 'user')")
             ;
         });
@@ -206,7 +206,7 @@ describe('Functional Type-Checking for PHP 8.5 "Clone With"', function () {
             Config::set(['on_violation' => 'report']);
 
             $user = new ShapeCloneWithFixture();
-            $cloned = NativeCloneWithRunner::clone($user, ['session' => ['id' => -999, 'role' => 'user']]);
+            $cloned = NativeCloneWithRunner::cloneWith($user, ['session' => ['id' => -999, 'role' => 'user']]);
 
             expect($cloned)->toBeInstanceOf(ShapeCloneWithFixture::class);
 

@@ -6,18 +6,14 @@ namespace TypePHP\Tests\Fixtures\Php85;
 
 use TypePHP\Tests\Fixtures\Domain\Animal;
 
-/**
- * Executes native PHP 8.5 clone-with operations so test files don't fail parsing on PHP <= 8.4.
- */
 class NativeCloneWithRunner
 {
-    public static function clone(object $object, ?array $properties = null): object
+    /**
+     * @param array<string, mixed> $properties
+     */
+    public static function cloneWith(object $object, array $properties): object
     {
-        if ($properties !== null) {
-            return clone($object, $properties);
-        }
-
-        return clone $object;
+        return clone($object, $properties);
     }
 }
 

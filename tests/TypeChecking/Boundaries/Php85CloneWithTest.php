@@ -62,6 +62,7 @@ PHP;
             $cloned->set(new Dog());
             expect($cloned->item)->toBeInstanceOf(Dog::class);
 
+
             expect(fn () => $cloned->set(new Car()))
                 ->toThrow(TypeError::class, Dog::class)
             ;
