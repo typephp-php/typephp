@@ -197,6 +197,13 @@ final class ContractVisitor extends NodeVisitorAbstract
             return $this->wrapClone($node);
         }
 
+        if ($node instanceof Node\Expr\FuncCall && $node->name instanceof Node\Name && strtolower($node->name->getLast()) === 'clone') {
+            $replacement = $this->wrapCloneFunction($node);
+            if ($replacement !== null) {
+                return $replacement;
+            }
+        }
+
         if ($node instanceof Node\Expr\AssignOp) {
             $replacement = $this->handleAssignOp($node);
             if ($replacement !== null) {
@@ -243,6 +250,46 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         return null;
+    }
+
+    private function wrapCloneFunction(Node\Expr\FuncCall $node): ?Node\Expr
+    {
+        if ($node->getAttribute('typephp_wrapped') === true) {
+            return null;
+        }
+
+        $firstArg = $node->args[0] ?? null;
+        if (! $firstArg instanceof Node\Arg) {
+            return null;
+        }
+
+        $node->setAttribute('typephp_wrapped', true);
+
+        $originalExpr = $firstArg->value;
+
+        $secondArg = $node->args[1] ?? null;
+        $propertiesExpr = $secondArg instanceof Node\Arg
+            ? $secondArg->value
+            : new Node\Expr\ConstFetch(new Node\Name('null'));
+
+        $node->args[0] = new Node\Arg(
+            new Node\Expr\FuncCall(
+                new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::prepareClone'),
+                [new Node\Arg($originalExpr)],
+            ),
+        );
+
+        return new Node\Expr\StaticCall(
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker'),
+            'cloneWith',
+            [
+                new Node\Arg($node),
+                new Node\Arg($originalExpr),
+                new Node\Arg($propertiesExpr),
+                new Node\Arg(new Node\Scalar\MagicConst\File()),
+                new Node\Arg(new Node\Scalar\LNumber($node->getStartLine())),
+            ],
+        );
     }
 
     private function markWriteContext(Node $node): void
