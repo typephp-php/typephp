@@ -74,8 +74,8 @@ final class SelfOutChecker
 
         if (\count($boundTemplates) > 0 || \count($allTemplates) > 0) {
             $selfOutNode = TemplateSubstitutor::substitute($selfOutNode, $boundTemplates, $allTemplates);
-            $selfOutNode = SpecialTypeResolver::resolve($selfOutNode, $effectiveFunction, $thisObj);
         }
+        $selfOutNode = SpecialTypeResolver::resolve($selfOutNode, $effectiveFunction, $thisObj);
 
         if (ConditionalChecker::containsConditional($selfOutNode)) {
             $selfOutNode = ConditionalChecker::resolve($selfOutNode, $vars, $boundTemplates, $registry, $effectiveFunction);

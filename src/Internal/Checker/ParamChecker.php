@@ -177,13 +177,14 @@ final class ParamChecker
         }
 
         $paramsUseGenerics = (bool) ($contract['paramsUseGenerics'] ?? true);
+        $paramsAreDynamic = (bool) ($contract['paramsAreDynamic'] ?? false);
         $methodTemplates = $contract['templates'];
         $classTemplates = $contract['classTemplates'] ?? [];
         $aliases = $contract['aliases'];
         $hasMethodTemplates = (\count($methodTemplates) > 0);
         $sensitiveParams = $contract['sensitiveParams'] ?? [];
 
-        if (! $paramsUseGenerics && ! $hasMethodTemplates && \count($aliases) === 0) {
+        if (! $paramsUseGenerics && ! $hasMethodTemplates && \count($aliases) === 0 && ! $paramsAreDynamic) {
             return self::validateSimpleParams($contract['types'], $vars, $effectiveFunction, $registry, $sensitiveParams);
         }
 
@@ -201,7 +202,7 @@ final class ParamChecker
             : [];
         $declaredTemplates = $allTemplates;
 
-        $baseTypes = self::resolveBaseTypes($contract['types'], $effectiveFunction, $thisObj, $aliases);
+        $baseTypes = self::resolveBaseTypes($contract['types'], $effectiveFunction, $thisObj, $aliases, $paramsAreDynamic);
 
         return self::validateAllParameters(
             $contract['types'],
@@ -326,18 +327,30 @@ final class ParamChecker
         array $types,
         string $effectiveFunction,
         ?object $thisObj,
-        array $aliases
+        array $aliases,
+        bool $paramsAreDynamic = false
     ): array {
         $baseTypes = [];
         foreach ($types as $paramName => $typeNode) {
-            if (! isset(self::$baseTypeCache[$effectiveFunction][$paramName])) {
-                if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
-                    $typeNode = $aliases[$typeNode->name];
-                }
-                $resolved = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+            $isParamDynamic = $paramsAreDynamic && (str_contains((string) $typeNode, 'static') || str_contains((string) $typeNode, '$this'));
+
+            if (! $isParamDynamic && isset(self::$baseTypeCache[$effectiveFunction][$paramName])) {
+                $baseTypes[$paramName] = self::$baseTypeCache[$effectiveFunction][$paramName];
+
+                continue;
+            }
+
+            if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
+                $typeNode = $aliases[$typeNode->name];
+            }
+
+            $resolved = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+
+            if (! $isParamDynamic) {
                 self::$baseTypeCache[$effectiveFunction][$paramName] = $resolved;
             }
-            $baseTypes[$paramName] = self::$baseTypeCache[$effectiveFunction][$paramName];
+
+            $baseTypes[$paramName] = $resolved;
         }
 
         return $baseTypes;
