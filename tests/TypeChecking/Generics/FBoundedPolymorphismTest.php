@@ -246,7 +246,7 @@ describe('F-Bounded Polymorphism (@template T of Interface<T>)', function () {
             expect(fn () => $impostor->copy())
                 ->toThrow(
                     TypeError::class,
-                    'Return value must be of type ' . FBoundDerived::class . ', ' . FBoundImpostor::class . '<' . FBoundDerived::class . '> returned'
+                    'Return value must be of type ' . FBoundDerived::class . ', ' . FBoundImpostor::class . ' returned'
                 )
             ;
         });
