@@ -1337,6 +1337,10 @@ final class ParamChecker
             return is_a($val, $boundName, allow_string: true);
         }
 
+        if ($boundNode instanceof GenericTypeNode) {
+            return TemplateManager::checkVariance(new IdentifierTypeNode($val), $boundNode, GenericTypeNode::VARIANCE_COVARIANT);
+        }
+
         if ($boundNode instanceof UnionTypeNode) {
             foreach ($boundNode->types as $unionType) {
                 if (self::checkClassStringSatisfiesBound($val, $unionType)) {
