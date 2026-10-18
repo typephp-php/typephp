@@ -395,6 +395,20 @@ final class TemplateManager
     private static array $pendingInstantiations = [];
 
     /**
+     * Stack tracking in-progress variance checks to prevent infinite recursion on self-referential/F-bound cycles.
+     *
+     * @var array<string, bool>
+     */
+    private static array $varianceCycleStack = [];
+
+    /**
+     * Cache for declared class template names directly on a class (excluding parent interfaces).
+     *
+     * @var array<string, list<string>>
+     */
+    private static array $declaredClassTemplateNamesCache = [];
+
+    /**
      * Resets all static generic template bindings, call stack frames, and method template caches.
      */
     public static function reset(): void
@@ -410,6 +424,8 @@ final class TemplateManager
         self::$isMethodTemplateCache = [];
         self::$isFBoundCache = [];
         self::$pendingInstantiations = [];
+        self::$varianceCycleStack = [];
+        self::$declaredClassTemplateNamesCache = [];
     }
 
     /**
@@ -465,6 +481,37 @@ final class TemplateManager
         if ($pending !== false && is_a($instance, $pending['targetClass'])) {
             self::bindInstance($instance, $pending['typeString'], $pending['file']);
         }
+    }
+
+    /**
+     * Returns template names explicitly declared on the class itself.
+     *
+     * @return list<string>
+     */
+    public static function getDeclaredClassTemplateNames(string $className): array
+    {
+        if (isset(self::$declaredClassTemplateNamesCache[$className])) {
+            return self::$declaredClassTemplateNamesCache[$className];
+        }
+
+        if (! class_exists($className, false) && ! class_exists($className) && ! interface_exists($className, false) && ! interface_exists($className) && ! trait_exists($className, false) && ! trait_exists($className) && ! enum_exists($className, false) && ! enum_exists($className)) {
+            return self::$declaredClassTemplateNamesCache[$className] = [];
+        }
+
+        try {
+            /** @var class-string<object> $className */
+            $ref = new \ReflectionClass($className);
+            $doc = StubManager::getClassDoc($className) ?? $ref->getDocComment();
+            if ($doc !== false && $doc !== null) {
+                $phpDocNode = DocblockExtractor::parseDocString($doc);
+                $templates = DocblockExtractor::extractTemplates($phpDocNode);
+
+                return self::$declaredClassTemplateNamesCache[$className] = array_keys($templates);
+            }
+        } catch (\Throwable $e) {
+        }
+
+        return self::$declaredClassTemplateNamesCache[$className] = [];
     }
 
     /**
@@ -1317,9 +1364,7 @@ final class TemplateManager
         }
 
         if ($existing instanceof IdentifierTypeNode && $expected instanceof GenericTypeNode) {
-            if ($variance === GenericTypeNode::VARIANCE_COVARIANT && self::isSubclass($existing->name, $expected->type->name)) {
-                return true;
-            }
+            return self::checkIdentifierAgainstGenericVariance($existing, $expected, $variance);
         }
 
         if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
@@ -1331,6 +1376,71 @@ final class TemplateManager
         }
 
         return false;
+    }
+
+    /**
+     * Verifies whether a concrete class identifier satisfies an expected generic type (e.g. F-bound Rogue <: Comparable<Rogue>).
+     */
+    private static function checkIdentifierAgainstGenericVariance(
+        IdentifierTypeNode $existing,
+        GenericTypeNode $expected,
+        string $variance,
+    ): bool {
+        if (! self::isSubclass($existing->name, $expected->type->name)) {
+            return false;
+        }
+
+        if ($variance !== GenericTypeNode::VARIANCE_COVARIANT) {
+            return false;
+        }
+
+        $cycleKey = $existing->name . '@' . (string) $expected;
+        if (isset(self::$varianceCycleStack[$cycleKey])) {
+            return true;
+        }
+        self::$varianceCycleStack[$cycleKey] = true;
+
+        try {
+            $classBindings = self::getClassInheritedBindings($existing->name);
+            if ($classBindings !== []) {
+                $parentTemplates = DocblockParser::parseClassTemplates($expected->type->name);
+                $parentTemplateNames = array_keys($parentTemplates);
+
+                $declaredVariances = [];
+                if (class_exists($expected->type->name, false) || class_exists($expected->type->name) || interface_exists($expected->type->name)) {
+                    try {
+                        $ref = new \ReflectionClass($expected->type->name);
+                        [, $classVariances] = self::collectHierarchyTemplatesAndVariances($ref);
+                        $declaredVariances = array_values($classVariances);
+                    } catch (\Throwable $e) {
+                    }
+                }
+
+                foreach ($parentTemplateNames as $idx => $tName) {
+                    if (isset($classBindings[$tName], $expected->genericTypes[$idx])) {
+                        $actualArg = $classBindings[$tName];
+                        $expectedArg = $expected->genericTypes[$idx];
+
+                        $useSiteVariance = $expected->variances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
+                        $declaredVariance = $declaredVariances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
+
+                        $innerVariance = match (true) {
+                            $useSiteVariance !== GenericTypeNode::VARIANCE_INVARIANT => $useSiteVariance,
+                            $declaredVariance === GenericTypeNode::VARIANCE_CONTRAVARIANT => GenericTypeNode::VARIANCE_CONTRAVARIANT,
+                            default => GenericTypeNode::VARIANCE_COVARIANT,
+                        };
+
+                        if (! self::checkVariance($actualArg, $expectedArg, $innerVariance)) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        } finally {
+            unset(self::$varianceCycleStack[$cycleKey]);
+        }
+
+        return true;
     }
 
     /**
@@ -1568,11 +1678,21 @@ final class TemplateManager
 
         if (\is_object($value)) {
             $className = $value::class;
+            $declaredTemplateNames = self::getDeclaredClassTemplateNames($className);
 
-            if (self::$instanceTemplateBindings !== null && isset(self::$instanceTemplateBindings[$value]) && \count(self::$instanceTemplateBindings[$value]) > 0) {
-                $genericTypes = array_values(self::$instanceTemplateBindings[$value]);
+            if ($declaredTemplateNames !== [] && self::$instanceTemplateBindings !== null && isset(self::$instanceTemplateBindings[$value])) {
+                $instanceBindings = self::$instanceTemplateBindings[$value];
+                $genericTypes = [];
 
-                return new GenericTypeNode(self::$classNodeCache[$className] ??= new IdentifierTypeNode($className), $genericTypes);
+                foreach ($declaredTemplateNames as $tName) {
+                    if (isset($instanceBindings[$tName])) {
+                        $genericTypes[] = $instanceBindings[$tName];
+                    }
+                }
+
+                if ($genericTypes !== []) {
+                    return new GenericTypeNode(self::$classNodeCache[$className] ??= new IdentifierTypeNode($className), $genericTypes);
+                }
             }
 
             return self::$classNodeCache[$className] ??= new IdentifierTypeNode($className);

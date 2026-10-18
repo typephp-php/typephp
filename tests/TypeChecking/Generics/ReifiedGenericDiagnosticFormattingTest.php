@@ -53,6 +53,107 @@ function acceptScalarUnionParam(mixed $val): void
 {
 }
 
+/**
+ * Generic interface with F-bound
+ *
+ * @template T of FBoundFormattingComparable<T>
+ */
+interface FBoundFormattingComparable
+{
+    public function compareTo(mixed $other): int;
+}
+
+/**
+ * Concrete class implementing generic interface with concrete type argument
+ *
+ * @implements FBoundFormattingComparable<FBoundFormattingMoney>
+ */
+class FBoundFormattingMoney implements FBoundFormattingComparable
+{
+    public function __construct(public int $amount = 100)
+    {
+    }
+
+    public function compareTo(mixed $other): int
+    {
+        return 0;
+    }
+}
+
+/**
+ * Non-generic class implementing generic interface with different type argument
+ *
+ * @implements FBoundFormattingComparable<FBoundFormattingMoney>
+ */
+class FBoundFormattingFakeMoney implements FBoundFormattingComparable
+{
+    public function __construct(public string $label = 'fake')
+    {
+    }
+
+    public function compareTo(mixed $other): int
+    {
+        return 0;
+    }
+}
+
+/**
+ * Function expecting F-bounded instances
+ *
+ * @template T of FBoundFormattingComparable<T>
+ *
+ * @param T $a
+ * @param T $b
+ *
+ * @return T
+ */
+function fBoundMaxOf(mixed $a, mixed $b): mixed
+{
+    return $a;
+}
+
+describe('Non-Generic Classes Implementing Generic Interfaces Diagnostic Formatting (TDD)', function () {
+    test('TypeFormatter::formatGivenValue does not format non-generic class as generic (FakeMoney<Money> bug)', function () {
+        $fakeMoney = new FBoundFormattingFakeMoney();
+
+        expect(TypeFormatter::formatGivenValue($fakeMoney))
+            ->toBe(FBoundFormattingFakeMoney::class)
+            ->and(TypeFormatter::formatGivenValue($fakeMoney))->not()->toContain('<')
+        ;
+    });
+
+    test('TemplateManager::inferTypeFromValue infers IdentifierTypeNode instead of GenericTypeNode for closed non-generic class', function () {
+        $fakeMoney = new FBoundFormattingFakeMoney();
+
+        $inferred = \TypePHP\Internal\Generics\TemplateManager::inferTypeFromValue($fakeMoney);
+
+        expect($inferred)->toBeInstanceOf(\PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode::class)
+            ->and((string) $inferred)->toBe(FBoundFormattingFakeMoney::class)
+        ;
+    });
+
+    test('end-to-end function error message reports non-generic class name without phantom generic arguments', function () {
+        $money = new FBoundFormattingMoney(100);
+        $fakeMoney = new FBoundFormattingFakeMoney('wrong');
+
+        expect(fn () => fBoundMaxOf($money, $fakeMoney))
+            ->toThrow(function (TypeError $e) {
+                expect($e->getMessage())->toContain(FBoundFormattingFakeMoney::class . ' given')
+                    ->and($e->getMessage())->not()->toContain(FBoundFormattingFakeMoney::class . '<')
+                ;
+            })
+        ;
+    });
+
+    test('still preserves and formats genuine generic classes with their type arguments (No regression)', function () {
+        $box = new DiagnosticInnerBox(new Dog());
+
+        expect(TypeFormatter::formatGivenValue($box))
+            ->toBe(DiagnosticInnerBox::class . '<' . Dog::class . '>')
+        ;
+    });
+});
+
 describe('Preserve Reified Nested Generics in TypeFormatter::formatGivenValue()', function () {
     beforeEach(function () {
         Config::reset();

@@ -47,6 +47,7 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
  *     hasSelfOutContract: bool,
  *     hasReturnContract: bool,
  *     paramsUseGenerics: bool,
+ *     paramsAreDynamic: bool,
  *     returnUsesGenerics: bool,
  *     returnUsesMethodTemplates: bool,
  *     returnIsThis: bool,
@@ -308,7 +309,8 @@ final class DocblockParser
         bool $paramsUseGenerics,
         bool $returnUsesGenerics,
         array $aliases,
-        array $methodTemplates
+        array $methodTemplates,
+        bool $paramsAreDynamic = false
     ): array {
         $allParamsUnconstrained = true;
         if (\count($types) > 0) {
@@ -328,6 +330,7 @@ final class DocblockParser
         }
 
         $isSimple = ! $paramsUseGenerics
+            && ! $paramsAreDynamic
             && ! $returnUsesGenerics
             && \count($aliases) === 0
             && \count($methodTemplates) === 0;
@@ -378,6 +381,7 @@ final class DocblockParser
                             'hasSelfOutContract' => false,
                             'hasReturnContract' => false,
                             'paramsUseGenerics' => false,
+                            'paramsAreDynamic' => false,
                             'returnUsesGenerics' => false,
                             'returnUsesMethodTemplates' => false,
                             'returnIsThis' => false,
@@ -402,6 +406,7 @@ final class DocblockParser
                         'hasSelfOutContract' => false,
                         'hasReturnContract' => false,
                         'paramsUseGenerics' => false,
+                        'paramsAreDynamic' => false,
                         'returnUsesGenerics' => false,
                         'returnUsesMethodTemplates' => false,
                         'returnIsThis' => false,
@@ -430,6 +435,7 @@ final class DocblockParser
                 'hasSelfOutContract' => false,
                 'hasReturnContract' => false,
                 'paramsUseGenerics' => false,
+                'paramsAreDynamic' => false,
                 'returnUsesGenerics' => false,
                 'returnUsesMethodTemplates' => false,
                 'returnIsThis' => false,
@@ -994,6 +1000,26 @@ final class DocblockParser
             }
         }
 
+        $paramsAreDynamic = false;
+        foreach ($types as $tNode) {
+            $tStr = (string) $tNode;
+            if (str_contains($tStr, 'static') || str_contains($tStr, '$this')) {
+                $paramsAreDynamic = true;
+
+                break;
+            }
+        }
+        if (! $paramsAreDynamic) {
+            foreach ($paramOuts as $tNode) {
+                $tStr = (string) $tNode;
+                if (str_contains($tStr, 'static') || str_contains($tStr, '$this')) {
+                    $paramsAreDynamic = true;
+
+                    break;
+                }
+            }
+        }
+
         $returnUsesMethodTemplates = false;
         if ($returnType !== null && \count($methodTemplates) > 0) {
             $returnUsesMethodTemplates = self::typeReferencesTemplate($returnType, $methodTemplates);
@@ -1019,7 +1045,8 @@ final class DocblockParser
             $paramsUseGenerics,
             $returnUsesGenerics,
             $aliases,
-            $methodTemplates
+            $methodTemplates,
+            $paramsAreDynamic
         );
 
         return [
@@ -1037,6 +1064,7 @@ final class DocblockParser
             'hasSelfOutContract' => $selfOut !== null,
             'hasReturnContract' => $returnType !== null,
             'paramsUseGenerics' => $paramsUseGenerics,
+            'paramsAreDynamic' => $paramsAreDynamic,
             'returnUsesGenerics' => $returnUsesGenerics,
             'returnUsesMethodTemplates' => $returnUsesMethodTemplates,
             'returnIsThis' => $returnIsThis,
@@ -1094,6 +1122,7 @@ final class DocblockParser
                 'hasSelfOutContract' => false,
                 'hasReturnContract' => false,
                 'paramsUseGenerics' => false,
+                'paramsAreDynamic' => false,
                 'returnUsesGenerics' => false,
                 'returnUsesMethodTemplates' => false,
                 'returnIsThis' => false,
@@ -1203,7 +1232,8 @@ final class DocblockParser
             $paramsUseGenerics,
             $returnUsesMethodTemplates,
             $aliases,
-            $templates
+            $templates,
+            false
         );
 
         return [
@@ -1221,6 +1251,7 @@ final class DocblockParser
             'hasSelfOutContract' => false,
             'hasReturnContract' => $returnType !== null,
             'paramsUseGenerics' => $paramsUseGenerics,
+            'paramsAreDynamic' => false,
             'returnUsesGenerics' => $returnUsesMethodTemplates,
             'returnUsesMethodTemplates' => $returnUsesMethodTemplates,
             'returnIsThis' => $returnIsThis,

@@ -138,6 +138,24 @@ final class FBoundImpostor extends FBoundBase
 {
 }
 
+/**
+ * Rogue class: Claims to implement FBoundComparable, but binds T to FBoundNum instead of itself!
+ * This violates the self-referential F-bound `@template T of FBoundComparable<T>`.
+ *
+ * @implements FBoundComparable<FBoundNum>
+ */
+final class FBoundRogue implements FBoundComparable
+{
+    public function __construct(public int $id = 1)
+    {
+    }
+
+    public function compareTo(mixed $other): int
+    {
+        return 0;
+    }
+}
+
 describe('F-Bounded Polymorphism (@template T of Interface<T>)', function () {
     describe('1. Function-Level F-Bounds (fMin)', function () {
         test('fMin accepts homogeneous matching types (Text, Text)', function () {
@@ -193,6 +211,27 @@ describe('F-Bounded Polymorphism (@template T of Interface<T>)', function () {
                 $list = new FBoundSortedList();
             })->toThrow(TypeError::class, 'does not satisfy upper bound');
         });
+
+        test('SortedList rejects class with mismatched F-bound type argument on pre-binding (Rogue implements Comparable<Num> not Comparable<Rogue>)', function () {
+            expect(function () {
+                /** @var FBoundSortedList<FBoundRogue> $list */
+                $list = new FBoundSortedList();
+            })->toThrow(
+                TypeError::class,
+                'does not satisfy upper bound'
+            );
+        });
+
+        test('SortedList rejects rogue class when added to pre-bound collection', function () {
+            expect(function () {
+                /** @var FBoundSortedList<FBoundRogue> $list */
+                $list = new FBoundSortedList();
+                $list->add(new FBoundRogue());
+            })->toThrow(
+                TypeError::class,
+                'does not satisfy upper bound'
+            );
+        });
     });
 
     describe('3. Self-Typed Hierarchy (Base<T of Base<T>>)', function () {
@@ -207,7 +246,7 @@ describe('F-Bounded Polymorphism (@template T of Interface<T>)', function () {
             expect(fn () => $impostor->copy())
                 ->toThrow(
                     TypeError::class,
-                    'Return value must be of type ' . FBoundDerived::class . ', ' . FBoundImpostor::class . '<' . FBoundDerived::class . '> returned'
+                    'Return value must be of type ' . FBoundDerived::class . ', ' . FBoundImpostor::class . ' returned'
                 )
             ;
         });

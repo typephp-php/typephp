@@ -80,12 +80,21 @@ final class TypeFormatter
 
         if (\is_object($value)) {
             $className = $value::class;
-            $bindings = TemplateManager::getBoundTemplatesForInstance($value);
+            $declaredTemplateNames = TemplateManager::getDeclaredClassTemplateNames($className);
 
-            if ($bindings !== []) {
-                $typeStrings = array_map(static fn ($node): string => (string) $node, array_values($bindings));
+            if ($declaredTemplateNames !== []) {
+                $bindings = TemplateManager::getBoundTemplatesForInstance($value);
 
-                return $className . '<' . implode(', ', $typeStrings) . '>';
+                $typeStrings = [];
+                foreach ($declaredTemplateNames as $tName) {
+                    if (isset($bindings[$tName])) {
+                        $typeStrings[] = (string) $bindings[$tName];
+                    }
+                }
+
+                if ($typeStrings !== []) {
+                    return $className . '<' . implode(', ', $typeStrings) . '>';
+                }
             }
 
             return get_debug_type($value);

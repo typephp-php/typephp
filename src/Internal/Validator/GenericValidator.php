@@ -152,10 +152,11 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         if (! isset(self::$enumKeyCache[$enumClass])) {
-            self::$enumKeyCache[$enumClass] = array_map(
-                static fn (\UnitEnum $case): string => $case->name,
-                $enumClass::cases()
-            );
+            $keys = [];
+            foreach ($enumClass::cases() as $case) {
+                $keys[] = $case->name;
+            }
+            self::$enumKeyCache[$enumClass] = $keys;
         }
 
         if (! \in_array($value, self::$enumKeyCache[$enumClass], strict: true)) {
@@ -240,10 +241,11 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         if (! isset(self::$enumValueCache[$enumClass])) {
-            self::$enumValueCache[$enumClass] = array_map(
-                static fn (\BackedEnum $case): string|int => $case->value,
-                $enumClass::cases()
-            );
+            $values = [];
+            foreach ($enumClass::cases() as $case) {
+                $values[] = $case->value;
+            }
+            self::$enumValueCache[$enumClass] = $values;
         }
 
         if (! \in_array($value, self::$enumValueCache[$enumClass], strict: true)) {

@@ -80,8 +80,8 @@ final class ParamOutChecker
 
         if (\count($boundTemplates) > 0 || \count($allTemplates) > 0) {
             $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $allTemplates);
-            $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
         }
+        $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
 
         $context = $effectiveFunction . '(): Argument &$' . $paramName . ' (param-out)';
 
