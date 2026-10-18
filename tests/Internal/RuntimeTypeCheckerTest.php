@@ -8,6 +8,7 @@ use TypePHP\Exception\TypeError;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\SelfOutChecker;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\RuntimeTypeChecker;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
@@ -16,6 +17,10 @@ use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Generics\Container;
 use TypePHP\Tests\Fixtures\Services\UserService;
 use TypePHP\Tests\Fixtures\Types\ConfiguredProperty;
+
+if (PHP_VERSION_ID >= 80500) {
+    require_once __DIR__ . '/../Fixtures/Php85/CloneWithFunctionalFixtures.php';
+}
 
 class StaticPropFixture
 {
@@ -558,5 +563,157 @@ PHP
         RuntimeTypeChecker::checkSelfOut('stdClass::none', new stdClass());
 
         expect(RuntimeTypeChecker::checkReturn('runtimeUnconstrainedReturn', 100))->toBe(100);
+    });
+
+    test('returns cloned value untouched when cloned or source is not an object', function () {
+        expect(RuntimeTypeChecker::cloneWith(123, new stdClass()))->toBe(123);
+        expect(RuntimeTypeChecker::cloneWith('string', null))->toBe('string');
+        expect(RuntimeTypeChecker::cloneWith(null, null))->toBeNull();
+
+        TemplateManager::$pendingCloneSource = null;
+        $obj = new stdClass();
+        expect(RuntimeTypeChecker::cloneWith($obj, null))->toBe($obj);
+        expect(RuntimeTypeChecker::cloneWith($obj, 456))->toBe($obj);
+    });
+
+    test('copies generic bindings using explicit original object argument', function () {
+        $original = new Container(new Dog());
+        TemplateManager::bindInstance($original, Container::class . '<' . Dog::class . '>');
+
+        $cloned = new Container(new Dog());
+        $result = RuntimeTypeChecker::cloneWith($cloned, $original);
+
+        expect($result)->toBe($cloned)
+            ->and(TypePHP\TypePHP::getGenericType($cloned))->toBe(Dog::class)
+        ;
+    });
+
+    test('falls back to TemplateManager::$pendingCloneSource and resets it to null', function () {
+        $original = new Container(new Dog());
+        TemplateManager::bindInstance($original, Container::class . '<' . Dog::class . '>');
+
+        TemplateManager::$pendingCloneSource = $original;
+
+        $cloned = new Container(new Dog());
+        $result = RuntimeTypeChecker::cloneWith($cloned, original: null);
+
+        expect($result)->toBe($cloned)
+            ->and(TypePHP\TypePHP::getGenericType($cloned))->toBe(Dog::class)
+            ->and(TemplateManager::$pendingCloneSource)->toBeNull()
+        ;
+    });
+
+    test('skips property validation when overriddenProperties is null or empty array', function () {
+        $obj = new stdClass();
+
+        expect(RuntimeTypeChecker::cloneWith($obj, $obj, null))->toBe($obj)
+            ->and(RuntimeTypeChecker::cloneWith($obj, $obj, []))->toBe($obj)
+        ;
+    });
+
+    test('validates valid property overrides on CloneWithModelFixture (PHP 8.5+)', function () {
+        if (PHP_VERSION_ID < 80500) {
+            expect(true)->toBeTrue();
+
+            return;
+        }
+
+        $model = new TypePHP\Tests\Fixtures\Php85\CloneWithModelFixture();
+        $cloned = clone $model;
+
+        $result = RuntimeTypeChecker::cloneWith(
+            $cloned,
+            $model,
+            ['score' => 50, 'name' => 'Bob'],
+            __FILE__,
+            100
+        );
+
+        expect($result)->toBe($cloned);
+    });
+
+    test('throws TypeError when overridden property violates positive-int on CloneWithModelFixture (PHP 8.5+)', function () {
+        if (PHP_VERSION_ID < 80500) {
+            expect(true)->toBeTrue();
+
+            return;
+        }
+
+        $model = new TypePHP\Tests\Fixtures\Php85\CloneWithModelFixture();
+        $cloned = clone $model;
+
+        expect(function () use ($cloned, $model) {
+            RuntimeTypeChecker::cloneWith(
+                $cloned,
+                $model,
+                ['score' => -25],
+                __FILE__,
+                42
+            );
+        })->toThrow(function (TypeError $e) {
+            expect($e->getMessage())->toContain('positive-int')
+                ->and($e->getFile())->toBe(__FILE__)
+                ->and($e->getLine())->toBe(42)
+            ;
+        });
+    });
+
+    test('throws TypeError when overridden property violates non-empty-string on CloneWithModelFixture (PHP 8.5+)', function () {
+        if (PHP_VERSION_ID < 80500) {
+            expect(true)->toBeTrue();
+
+            return;
+        }
+
+        $model = new TypePHP\Tests\Fixtures\Php85\CloneWithModelFixture();
+        $cloned = clone $model;
+
+        expect(function () use ($cloned, $model) {
+            RuntimeTypeChecker::cloneWith(
+                $cloned,
+                $model,
+                ['name' => ''],
+                __FILE__,
+                50
+            );
+        })->toThrow(TypeError::class, 'non-empty-string');
+    });
+
+    test('validates overridden properties on CloneWithReadonlyOrder (PHP 8.5+)', function () {
+        if (PHP_VERSION_ID < 80500) {
+            expect(true)->toBeTrue();
+
+            return;
+        }
+
+        $order = new TypePHP\Tests\Fixtures\Php85\CloneWithReadonlyOrder(100, 'SKU-ORIGINAL');
+        $cloned = clone $order;
+
+        expect(function () use ($cloned, $order) {
+            RuntimeTypeChecker::cloneWith(
+                $cloned,
+                $order,
+                ['id' => -999],
+                __FILE__,
+                60
+            );
+        })->toThrow(TypeError::class, 'positive-int');
+    });
+
+    test('skips overridden property validation when inline properties are disabled in config (PHP 8.5+)', function () {
+        if (PHP_VERSION_ID < 80500) {
+            expect(true)->toBeTrue();
+
+            return;
+        }
+
+        Config::set(['inline_vars' => ['properties' => false]]);
+
+        $model = new TypePHP\Tests\Fixtures\Php85\CloneWithModelFixture();
+        $cloned = clone $model;
+
+        $result = RuntimeTypeChecker::cloneWith($cloned, $model, ['score' => -50]);
+
+        expect($result)->toBe($cloned);
     });
 });
