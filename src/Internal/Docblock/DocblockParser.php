@@ -406,6 +406,7 @@ final class DocblockParser
                         'hasSelfOutContract' => false,
                         'hasReturnContract' => false,
                         'paramsUseGenerics' => false,
+                        'paramsAreDynamic' => false,
                         'returnUsesGenerics' => false,
                         'returnUsesMethodTemplates' => false,
                         'returnIsThis' => false,
@@ -434,6 +435,7 @@ final class DocblockParser
                 'hasSelfOutContract' => false,
                 'hasReturnContract' => false,
                 'paramsUseGenerics' => false,
+                'paramsAreDynamic' => false,
                 'returnUsesGenerics' => false,
                 'returnUsesMethodTemplates' => false,
                 'returnIsThis' => false,
@@ -1230,7 +1232,8 @@ final class DocblockParser
             $paramsUseGenerics,
             $returnUsesMethodTemplates,
             $aliases,
-            $templates
+            $templates,
+            false
         );
 
         return [
@@ -1248,6 +1251,7 @@ final class DocblockParser
             'hasSelfOutContract' => false,
             'hasReturnContract' => $returnType !== null,
             'paramsUseGenerics' => $paramsUseGenerics,
+            'paramsAreDynamic' => false,
             'returnUsesGenerics' => $returnUsesMethodTemplates,
             'returnUsesMethodTemplates' => $returnUsesMethodTemplates,
             'returnIsThis' => $returnIsThis,
