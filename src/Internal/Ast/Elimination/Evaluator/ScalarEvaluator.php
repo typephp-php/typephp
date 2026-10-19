@@ -7,10 +7,8 @@ namespace TypePHP\Internal\Ast\Elimination\Evaluator;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\BinaryOp\Concat;
 use PhpParser\Node\Expr\ConstFetch;
-use PhpParser\Node\Expr\UnaryMinus;
-use PhpParser\Node\Expr\UnaryPlus;
-use PhpParser\Node\Scalar\DNumber;
-use PhpParser\Node\Scalar\LNumber;
+use PhpParser\Node\Scalar\Encapsed;
+use PhpParser\Node\Scalar\EncapsedStringPart;
 use PhpParser\Node\Scalar\String_;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFalseNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFloatNode;
@@ -87,29 +85,25 @@ final class ScalarEvaluator
      * Determines whether an AST scalar expression satisfies the target type contract.
      *
      * Flow of logic:
-     * 1. Evaluates integers (handling LNumber, UnaryMinus, and UnaryPlus).
-     * 2. Evaluates floating-point numbers (DNumber).
-     * 3. Evaluates literal strings.
-     * 4. Evaluates string concatenations with guaranteed non-empty operands.
-     * 5. Evaluates language constants (true, false, null).
+     * 1. Evaluates arithmetic numbers and constant folding (30 + 15, 60 * 60, 0.1 + 0.2).
+     * 2. Evaluates literal strings.
+     * 3. Evaluates string concatenations and interpolations ("user_{$id}") with non-empty prefixes.
+     * 4. Evaluates language constants (true, false, null).
      */
     public static function satisfies(Expr $expr, TypeNode $typeNode): bool
     {
-        $intValue = self::extractIntegerValue($expr);
-        if ($intValue !== null) {
-            return self::satisfiesInteger($intValue, $typeNode);
-        }
-
-        $floatValue = self::extractFloatValue($expr);
-        if ($floatValue !== null) {
-            return self::satisfiesFloat($floatValue, $typeNode);
+        $number = ArithmeticEvaluator::evaluate($expr);
+        if ($number !== null) {
+            return is_int($number)
+                ? self::satisfiesInteger($number, $typeNode)
+                : self::satisfiesFloat($number, $typeNode);
         }
 
         if ($expr instanceof String_) {
             return self::satisfiesString($expr->value, $typeNode);
         }
 
-        if ($expr instanceof Concat && self::isGuaranteedNonEmptyString($expr)) {
+        if (($expr instanceof Concat || $expr instanceof Encapsed) && self::isGuaranteedNonEmptyString($expr)) {
             return self::isNonEmptyStringType($typeNode);
         }
 
@@ -129,9 +123,9 @@ final class ScalarEvaluator
     }
 
     /**
-     * Recursively verifies whether a string or concat expression is guaranteed
-     * to produce a non-empty string. If either operand in a concatenation tree
-     * has a static length >= 1, the resulting string can never be empty.
+     * Recursively verifies whether a string, concatenation, or interpolation is guaranteed
+     * to produce a non-empty string. If at least one static chunk has length >= 1, the result
+     * can never be empty regardless of dynamic sub-expressions.
      */
     public static function isGuaranteedNonEmptyString(Expr $expr): bool
     {
@@ -143,62 +137,36 @@ final class ScalarEvaluator
             return self::isGuaranteedNonEmptyString($expr->left) || self::isGuaranteedNonEmptyString($expr->right);
         }
 
+        if ($expr instanceof Encapsed) {
+            foreach ($expr->parts as $part) {
+                if ($part instanceof EncapsedStringPart && $part->value !== '') {
+                    return true;
+                }
+                if ($part instanceof String_ && $part->value !== '') {
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 
     /**
-     * Extracts an integer value from an expression, unwrapping unary sign operators.
-     */
-    private static function extractIntegerValue(Expr $expr): ?int
-    {
-        if ($expr instanceof LNumber) {
-            return $expr->value;
-        }
-
-        if ($expr instanceof UnaryMinus) {
-            $inner = self::extractIntegerValue($expr->expr);
-
-            return $inner !== null ? -$inner : null;
-        }
-
-        if ($expr instanceof UnaryPlus) {
-            return self::extractIntegerValue($expr->expr);
-        }
-
-        return null;
-    }
-
-    /**
-     * Extracts a floating-point value from an expression, unwrapping unary sign operators.
-     */
-    private static function extractFloatValue(Expr $expr): ?float
-    {
-        if ($expr instanceof DNumber) {
-            return $expr->value;
-        }
-
-        if ($expr instanceof UnaryMinus) {
-            $inner = self::extractFloatValue($expr->expr);
-
-            return $inner !== null ? -$inner : null;
-        }
-
-        if ($expr instanceof UnaryPlus) {
-            return self::extractFloatValue($expr->expr);
-        }
-
-        return null;
-    }
-
-    /**
      * Evaluates an integer against ConstTypeNode, GenericTypeNode ranges/bitmasks,
-     * and scalar identifier refinements (e.g. positive-int, non-zero-int).
+     * and scalar identifier refinements (including integer coercion to float types).
      */
     private static function satisfiesInteger(int $value, TypeNode $typeNode): bool
     {
         if ($typeNode instanceof ConstTypeNode) {
-            return $typeNode->constExpr instanceof ConstExprIntegerNode
-                && (int) $typeNode->constExpr->value === $value;
+            if ($typeNode->constExpr instanceof ConstExprIntegerNode) {
+                return (int) $typeNode->constExpr->value === $value;
+            }
+
+            if ($typeNode->constExpr instanceof ConstExprFloatNode) {
+                return abs($value - (float) $typeNode->constExpr->value) < ArithmeticEvaluator::FLOAT_EPSILON;
+            }
+
+            return false;
         }
 
         if ($typeNode instanceof GenericTypeNode) {
@@ -216,11 +184,12 @@ final class ScalarEvaluator
         if ($typeNode instanceof IdentifierTypeNode) {
             return match (strtolower($typeNode->name)) {
                 'int', 'integer', 'scalar', 'numeric', 'number', 'mixed' => true,
-                'positive-int' => $value > 0,
-                'negative-int' => $value < 0,
-                'non-positive-int' => $value <= 0,
-                'non-negative-int', 'unsigned-int' => $value >= 0,
-                'non-zero-int' => $value !== 0,
+                'float', 'double' => true,
+                'positive-int', 'positive-float' => $value > 0,
+                'negative-int', 'negative-float' => $value < 0,
+                'non-positive-int', 'non-positive-float' => $value <= 0,
+                'non-negative-int', 'non-negative-float', 'unsigned-int' => $value >= 0,
+                'non-zero-int', 'non-zero-float' => $value !== 0,
                 'truthy' => $value !== 0,
                 'falsy', 'falsey' => $value === 0,
                 'array-key' => true,
@@ -300,13 +269,13 @@ final class ScalarEvaluator
     }
 
     /**
-     * Evaluates a float against float literal constants and float refinements.
+     * Evaluates a float against float literal constants with epsilon tolerance and float refinements.
      */
     private static function satisfiesFloat(float $value, TypeNode $typeNode): bool
     {
         if ($typeNode instanceof ConstTypeNode) {
             return $typeNode->constExpr instanceof ConstExprFloatNode
-                && abs($value - (float) $typeNode->constExpr->value) < 1e-9;
+                && abs($value - (float) $typeNode->constExpr->value) < ArithmeticEvaluator::FLOAT_EPSILON;
         }
 
         if ($typeNode instanceof IdentifierTypeNode) {

@@ -6,6 +6,7 @@ namespace TypePHP\Internal\Ast\Elimination;
 
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\Array_;
+use PhpParser\Node\Expr\Ternary;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
@@ -49,14 +50,10 @@ final class StaticTypeEvaluator
      * 1. Returns false if `eliminate_statically_proven_checks` is disabled in configuration.
      * 2. Rejects IntersectionTypeNode unconditionally (deferred to runtime to avoid autoloader deadlocks).
      * 3. Rejects generic object templates to ensure runtime WeakMap registrations occur.
-     *    Permits scalar ranges (int<min, max>), bitmasks (int-mask, int-mask-of), value-of, and array containers.
-     * 4. Handles NullableTypeNode: satisfies immediately if expression is literal null,
-     *    otherwise checks whether expression satisfies the inner type.
-     * 5. Handles UnionTypeNode: satisfies if ANY member in the union is statically satisfied.
-     * 6. Delegates array expressions to ArrayLiteralEvaluator.
-     * 7. Delegates constants, enums, and bitmasks to ConstantAndEnumEvaluator.
-     * 8. Delegates object instantiations and identity returns to ObjectEvaluator.
-     * 9. Delegates nominal scalars and literals to ScalarEvaluator.
+     * 4. Evaluates Ternary expressions: if both `if` and `else` branches satisfy the contract,
+     *    the expression is satisfied regardless of runtime condition.
+     * 5. Handles NullableTypeNode and UnionTypeNode disjunctions.
+     * 6. Delegates array expressions, constants/enums, object instantiations, and arithmetic/scalars.
      */
     public static function satisfies(Expr $expr, TypeNode $typeNode, string $currentFile = ''): bool
     {
@@ -73,6 +70,11 @@ final class StaticTypeEvaluator
             if (! isset(self::PERMISSIBLE_GENERIC_CONTAINERS[$baseName])) {
                 return false;
             }
+        }
+
+        if ($expr instanceof Ternary && $expr->if !== null) {
+            return self::satisfies($expr->if, $typeNode, $currentFile)
+                && self::satisfies($expr->else, $typeNode, $currentFile);
         }
 
         if ($typeNode instanceof NullableTypeNode) {
