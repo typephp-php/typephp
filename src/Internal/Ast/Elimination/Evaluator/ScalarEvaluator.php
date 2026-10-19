@@ -94,7 +94,7 @@ final class ScalarEvaluator
     {
         $number = ArithmeticEvaluator::evaluate($expr);
         if ($number !== null) {
-            return is_int($number)
+            return \is_int($number)
                 ? self::satisfiesInteger($number, $typeNode)
                 : self::satisfiesFloat($number, $typeNode);
         }

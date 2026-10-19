@@ -53,7 +53,8 @@ describe('ArithmeticEvaluator, Ternary Confluence & Interpolation Unit Tests', f
 
             expect(ArithmeticEvaluator::evaluate($expr))->toBe(-15);
             expect(StaticTypeEvaluator::satisfies($expr, new IdentifierTypeNode('negative-int')))->toBeTrue()
-                ->and(StaticTypeEvaluator::satisfies($expr, new IdentifierTypeNode('positive-int')))->toBeFalse();
+                ->and(StaticTypeEvaluator::satisfies($expr, new IdentifierTypeNode('positive-int')))->toBeFalse()
+            ;
         });
 
         test('evaluates division and integer modulo', function () {
@@ -105,7 +106,8 @@ describe('ArithmeticEvaluator, Ternary Confluence & Interpolation Unit Tests', f
             ]);
 
             expect(StaticTypeEvaluator::satisfies($ternary, $union))->toBeTrue()
-                ->and(StaticTypeEvaluator::satisfies($ternary, new IdentifierTypeNode('non-empty-string')))->toBeTrue();
+                ->and(StaticTypeEvaluator::satisfies($ternary, new IdentifierTypeNode('non-empty-string')))->toBeTrue()
+            ;
         });
 
         test('rejects ternary when one branch violates the contract', function () {
@@ -142,7 +144,8 @@ describe('ArithmeticEvaluator, Ternary Confluence & Interpolation Unit Tests', f
             ]);
 
             expect(StaticTypeEvaluator::satisfies($interpolated, new IdentifierTypeNode('non-empty-string')))->toBeTrue()
-                ->and(StaticTypeEvaluator::satisfies($interpolated, new IdentifierTypeNode('string')))->toBeTrue();
+                ->and(StaticTypeEvaluator::satisfies($interpolated, new IdentifierTypeNode('string')))->toBeTrue()
+            ;
         });
 
         test('does not guarantee non-empty-string when all parts are variables or empty', function () {

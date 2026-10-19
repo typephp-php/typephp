@@ -1224,7 +1224,7 @@ final class SpecialTypeResolver
             $ref instanceof \ReflectionFunction => $ref->getNamespaceName(),
         };
 
-        $resolved = self::resolveNameFromImportsAndNamespace($name, [], $namespace);
+        $resolved = self::resolveNameFromImportsAndNamespace($name, [], $namespace, true);
 
         if (isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) && $resolved === $name && ! self::symbolExists($name)) {
             return self::$fqcnCache[$contextKey][$name] = $name;
@@ -1236,7 +1236,7 @@ final class SpecialTypeResolver
     /**
      * Resolves a short class name to its FQCN purely based on file context with 2D caching.
      */
-    public static function resolveFqcnForFile(string $name, string $file): string
+    public static function resolveFqcnForFile(string $name, string $file, bool $autoload = true): string
     {
         $file = str_replace('\\', '/', $file);
         $lower = strtolower($name);
@@ -1255,20 +1255,21 @@ final class SpecialTypeResolver
             return $name;
         }
 
-        if (isset(self::$fileFqcnCache[$file][$name])) {
-            return self::$fileFqcnCache[$file][$name];
+        $cacheKey = $autoload ? $name : ($name . ':no_auto');
+        if (isset(self::$fileFqcnCache[$file][$cacheKey])) {
+            return self::$fileFqcnCache[$file][$cacheKey];
         }
 
         $imports = self::getUseImportsFromFile($file);
         $namespace = self::getNamespaceFromFile($file);
 
-        $resolved = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace);
+        $resolved = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace, $autoload);
 
-        if (isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) && $resolved === $name && ! self::symbolExists($name)) {
-            return self::$fileFqcnCache[$file][$name] = $name;
+        if (isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) && $resolved === $name && ! self::symbolExists($name, $autoload)) {
+            return self::$fileFqcnCache[$file][$cacheKey] = $name;
         }
 
-        return self::$fileFqcnCache[$file][$name] = $resolved;
+        return self::$fileFqcnCache[$file][$cacheKey] = $resolved;
     }
 
     /**
@@ -1276,8 +1277,12 @@ final class SpecialTypeResolver
      *
      * @param array<string, string> $imports
      */
-    private static function resolveNameFromImportsAndNamespace(string $name, array $imports, string $namespace): string
-    {
+    private static function resolveNameFromImportsAndNamespace(
+        string $name,
+        array $imports,
+        string $namespace,
+        bool $autoload = true
+    ): string {
         if (isset($imports[$name])) {
             return $imports[$name];
         }
@@ -1285,33 +1290,33 @@ final class SpecialTypeResolver
         if (! str_contains($name, '\\')) {
             if ($namespace !== '') {
                 $namespacedClass = $namespace . '\\' . $name;
-                if (self::symbolExists($namespacedClass)) {
+                if (self::symbolExists($namespacedClass, $autoload)) {
                     return $namespacedClass;
                 }
             }
 
-            if (self::symbolExists($name)) {
+            if (self::symbolExists($name, $autoload)) {
                 return $name;
             }
 
             return $name;
         }
 
-        if (self::symbolExists($name)) {
+        if (self::symbolExists($name, $autoload)) {
             return $name;
         }
 
         [$firstPart, $subPart] = explode('\\', $name, 2);
         if (isset($imports[$firstPart])) {
             $candidate = $imports[$firstPart] . '\\' . $subPart;
-            if (self::symbolExists($candidate)) {
+            if (self::symbolExists($candidate, $autoload)) {
                 return $candidate;
             }
         }
 
         if ($namespace !== '') {
             $namespacedClass = $namespace . '\\' . $name;
-            if (self::symbolExists($namespacedClass)) {
+            if (self::symbolExists($namespacedClass, $autoload)) {
                 return $namespacedClass;
             }
         }
@@ -1320,15 +1325,24 @@ final class SpecialTypeResolver
     }
 
     /**
-     * Fast-checks in-memory symbol tables before invoking autoloader.
+     * Checks in-memory symbol tables before optionally invoking autoloader.
      */
-    private static function symbolExists(string $symbol): bool
+    private static function symbolExists(string $symbol, bool $autoload = true): bool
     {
-        return class_exists($symbol, false)
+        if (
+            class_exists($symbol, false)
             || interface_exists($symbol, false)
             || enum_exists($symbol, false)
             || trait_exists($symbol, false)
-            || class_exists($symbol)
+        ) {
+            return true;
+        }
+
+        if (! $autoload) {
+            return false;
+        }
+
+        return class_exists($symbol)
             || interface_exists($symbol)
             || enum_exists($symbol)
             || trait_exists($symbol);

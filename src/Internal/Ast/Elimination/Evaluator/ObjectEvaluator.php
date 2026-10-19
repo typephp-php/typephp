@@ -107,13 +107,21 @@ final class ObjectEvaluator
             return true;
         }
 
+        if (isset(self::RELATIVE_CLASS_KEYWORDS[$lowerTargetType])) {
+            return false;
+        }
+
         if (isset(self::RELATIVE_CLASS_KEYWORDS[$lowerNewClass])) {
             return false;
         }
 
+        if ($rawNewClass === $typeNode->name) {
+            return true;
+        }
+
         if ($currentFile !== '') {
-            $resolvedNewClass = SpecialTypeResolver::resolveFqcnForFile($rawNewClass, $currentFile);
-            $resolvedTypeClass = SpecialTypeResolver::resolveFqcnForFile($typeNode->name, $currentFile);
+            $resolvedNewClass = SpecialTypeResolver::resolveFqcnForFile($rawNewClass, $currentFile, false);
+            $resolvedTypeClass = SpecialTypeResolver::resolveFqcnForFile($typeNode->name, $currentFile, false);
 
             return $resolvedNewClass !== '' && $resolvedNewClass === $resolvedTypeClass;
         }

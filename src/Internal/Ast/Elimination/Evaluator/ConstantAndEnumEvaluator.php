@@ -74,8 +74,8 @@ final class ConstantAndEnumEvaluator
 
         if ($typeNode instanceof IdentifierTypeNode) {
             if ($currentFile !== '') {
-                $resolvedFetchClass = SpecialTypeResolver::resolveFqcnForFile($targetClassName, $currentFile);
-                $resolvedTypeClass = SpecialTypeResolver::resolveFqcnForFile($typeNode->name, $currentFile);
+                $resolvedFetchClass = SpecialTypeResolver::resolveFqcnForFile($targetClassName, $currentFile, false);
+                $resolvedTypeClass = SpecialTypeResolver::resolveFqcnForFile($typeNode->name, $currentFile, false);
 
                 return $resolvedFetchClass !== '' && $resolvedFetchClass === $resolvedTypeClass;
             }
@@ -131,8 +131,8 @@ final class ConstantAndEnumEvaluator
         $enumClassName = $fetch->var->class->toString();
 
         if ($currentFile !== '') {
-            $resolvedEnumClass = SpecialTypeResolver::resolveFqcnForFile($enumClassName, $currentFile);
-            $resolvedTargetClass = SpecialTypeResolver::resolveFqcnForFile($enumTarget->name, $currentFile);
+            $resolvedEnumClass = SpecialTypeResolver::resolveFqcnForFile($enumClassName, $currentFile, false);
+            $resolvedTargetClass = SpecialTypeResolver::resolveFqcnForFile($enumTarget->name, $currentFile, false);
 
             return $resolvedEnumClass !== '' && $resolvedEnumClass === $resolvedTargetClass;
         }
