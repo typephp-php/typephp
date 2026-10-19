@@ -7,7 +7,7 @@ namespace TypePHP\Internal\Cli;
 use TypePHP\Internal\Io\CacheManager;
 
 /**
- * @Command Clears the TypePHP cache.
+ * @internal Clears the TypePHP cache.
  */
 final class CacheClearCommand implements CommandInterface
 {

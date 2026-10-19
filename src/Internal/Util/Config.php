@@ -98,6 +98,8 @@ final class Config
 
     private static bool $inlineObjects = true;
 
+    private static bool $eliminateStaticallyProvenChecks = true;
+
     private static int $ignoreTraceDepth = 25;
 
     private static function getEnvValue(string $key): ?string
@@ -151,6 +153,20 @@ final class Config
         }
 
         return self::$enabled;
+    }
+
+    public static function isEliminateStaticallyProvenChecksEnabled(): bool
+    {
+        $env = self::getEnvValue('TYPEPHP_ELIMINATE_STATICALLY_PROVEN_CHECKS');
+        if ($env !== null && trim($env) !== '') {
+            return filter_var($env, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        if (self::$cachedConfig === null) {
+            self::get();
+        }
+
+        return self::$eliminateStaticallyProvenChecks;
     }
 
     public static function isAutoBootEnabled(): bool
@@ -586,6 +602,7 @@ final class Config
 
         $defaultConfig = [
             'enabled' => true,
+            'eliminate_statically_proven_checks' => true,
             'auto_boot' => true,
             'on_violation' => 'throw',
             'report_file' => null,
@@ -669,6 +686,9 @@ final class Config
                 ) {
                     if (! isset($userConfig['auto_boot']) && isset($data['extra']['typephp']['auto-boot'])) {
                         $userConfig['auto_boot'] = filter_var($data['extra']['typephp']['auto-boot'], FILTER_VALIDATE_BOOLEAN);
+                    }
+                    if (! isset($userConfig['eliminate_statically_proven_checks']) && isset($data['extra']['typephp']['eliminate-statically-proven-checks'])) {
+                        $userConfig['eliminate_statically_proven_checks'] = filter_var($data['extra']['typephp']['eliminate-statically-proven-checks'], FILTER_VALIDATE_BOOLEAN);
                     }
                     if (! isset($userConfig['on_violation']) && isset($data['extra']['typephp']['on-violation']) && \is_string($data['extra']['typephp']['on-violation'])) {
                         $userConfig['on_violation'] = $data['extra']['typephp']['on-violation'];
@@ -803,6 +823,7 @@ final class Config
         self::$resolvedConfigFile = null;
         self::$enabled = true;
         self::$autoBoot = true;
+        self::$eliminateStaticallyProvenChecks = true;
         self::$onViolation = 'throw';
         self::$reportFile = null;
         self::$failOnReport = false;
@@ -856,6 +877,7 @@ final class Config
     {
         self::$enabled = (bool) ($config['enabled'] ?? true);
         self::$autoBoot = (bool) ($config['auto_boot'] ?? true);
+        self::$eliminateStaticallyProvenChecks = (bool) ($config['eliminate_statically_proven_checks'] ?? true);
         self::$onViolation = \is_string($config['on_violation'] ?? null) && trim($config['on_violation']) !== ''
             ? strtolower(trim($config['on_violation']))
             : 'throw';

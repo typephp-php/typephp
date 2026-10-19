@@ -141,7 +141,7 @@ PHP;
 
             $fn = new Node\Stmt\Function_('getName', [
                 'stmts' => [
-                    new Node\Stmt\Return_(new Node\Scalar\String_('Alice')),
+                    new Node\Stmt\Return_(new Node\Expr\Variable('name')),
                 ],
             ], [
                 'comments' => [$doc],

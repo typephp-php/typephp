@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Cli;
 
+/**
+ * @internal
+ */
 final class ConfigInitCommand implements CommandInterface
 {
     public function execute(array $args, $outputStream = STDOUT, $errorStream = STDERR): int
@@ -52,6 +55,29 @@ return [
     |   before requiring 'vendor/autoload.php'.
     */
     'enabled' => true,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Eliminate Statically Proven Checks (Compile-Time Optimization)
+    |--------------------------------------------------------------------------
+    | When true (default), TypePHP analyzes AST expressions during file
+    | transformation and omits runtime assertions for code that is
+    | mathematically or logically proven to satisfy the DocBlock contract at
+    | compile time (e.g. literal returns, property defaults, empty arrays,
+    | constant wildcards, and exact non-generic object instantiations).
+    |
+    | Dynamic expressions, variables, and generic objects continue to be
+    | deferred to strict runtime checks.
+    |
+    | Set to false for deep debugging, tracing every single check in stack traces,
+    | or benchmarking unoptimized AST instrumentation.
+    |
+    | Can also be set via environment variable:
+    |   TYPEPHP_ELIMINATE_STATICALLY_PROVEN_CHECKS=false
+    | Can also be configured in root composer.json:
+    |   "extra": { "typephp": { "eliminate-statically-proven-checks": false } }
+    */
+    'eliminate_statically_proven_checks' => true,
 
     /*
     |--------------------------------------------------------------------------

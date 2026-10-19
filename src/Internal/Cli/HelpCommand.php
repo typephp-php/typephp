@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Cli;
 
+/**
+ * @internal
+ */
 final class HelpCommand implements CommandInterface
 {
     public function execute(array $args, $outputStream = STDOUT, $errorStream = STDERR): int

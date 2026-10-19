@@ -118,6 +118,14 @@ HTML;
     });
 
     describe('3. Constructor Synthesis Safety (ContractVisitor)', function () {
+        beforeEach(function () {
+            Config::set(['eliminate_statically_proven_checks' => false]);
+        });
+
+        afterEach(function () {
+            Config::reset();
+        });
+
         test('does NOT inject __construct when class extends a parent class', function () {
             $code = <<<'PHP'
 <?php
