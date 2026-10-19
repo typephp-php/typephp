@@ -46,9 +46,9 @@ final class EliminationSafetyPolicy
      *    WeakMap template bindings are preserved. Permits array containers (list<T>, array<K, V>)
      *    and scalar generics (int<min, max>, int-mask) which carry no object state.
      * 3. Authorizes standalone functions, closures, and arrow functions (zero inheritance risk).
-     * 4. For class methods, authorizes:
-     *    - Private methods (cannot override or be overridden).
-     *    - Classes with no inheritance (`hasRealInheritance === false`).
+     * 4. For class methods:
+     *    - Authorizes private methods (cannot override or be overridden).
+     *    - Authorizes classes with no inheritance (`hasRealInheritance === false`).
      * 5. Defers all other methods to runtime to prevent bypassing unanalyzed parent contracts.
      *
      * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
@@ -73,15 +73,13 @@ final class EliminationSafetyPolicy
             return true;
         }
 
-        if ($functionNode instanceof ClassMethod) {
-            if ($functionNode->isPrivate()) {
-                return true;
-            }
+        if ($functionNode->isPrivate()) {
+            return true;
+        }
 
-            $hasRealInheritance = $classContext['hasRealInheritance'] ?? true;
-            if (! $hasRealInheritance) {
-                return true;
-            }
+        $hasRealInheritance = $classContext['hasRealInheritance'] ?? true;
+        if (! $hasRealInheritance) {
+            return true;
         }
 
         return false;
