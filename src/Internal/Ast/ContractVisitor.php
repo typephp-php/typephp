@@ -11,6 +11,7 @@ use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
+use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Docblock\DocblockParser;
@@ -74,7 +75,7 @@ final class ContractVisitor extends NodeVisitorAbstract
      */
     private array $byRefStack = [];
 
-    public function __construct()
+    public function __construct(private string $currentFile = '')
     {
         $this->scopeManager = new ScopeManager();
     }
@@ -135,7 +136,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
             $classContext = $this->classStack !== [] ? end($this->classStack) : null;
-            FunctionContractInjector::inject($node, $classContext);
+            FunctionContractInjector::inject($node, $classContext, $this->currentFile);
 
             return null;
         }
@@ -358,25 +359,28 @@ final class ContractVisitor extends NodeVisitorAbstract
 
                 $doc = $stmt->getDocComment();
                 if ($doc !== null && str_contains($doc->getText(), '@var') && ! str_contains($doc->getText(), '@typephp-ignore')) {
-                    if ($classTemplates !== []) {
-                        $varTag = DocblockExtractor::extractVarTagFromDoc($doc->getText());
-                        if ($varTag !== null) {
-                            try {
-                                [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
-                                $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($varTag[0])));
-                                $propTypeNode = $typeParser->parse($tokens);
+                    $propTypeNode = null;
+                    $varTag = DocblockExtractor::extractVarTagFromDoc($doc->getText());
+                    if ($varTag !== null) {
+                        try {
+                            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+                            $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($varTag[0])));
+                            $propTypeNode = $typeParser->parse($tokens);
 
-                                if (DocblockParser::typeReferencesTemplate($propTypeNode, $classTemplates)) {
-                                    continue;
-                                }
-                            } catch (\Throwable) {
+                            if ($classTemplates !== [] && DocblockParser::typeReferencesTemplate($propTypeNode, $classTemplates)) {
+                                continue;
                             }
+                        } catch (\Throwable) {
                         }
                     }
 
                     foreach ($stmt->props as $p) {
                         $isExplicitNull = $p->default instanceof Node\Expr\ConstFetch && strtolower($p->default->name->toString()) === 'null';
                         if ($p->default !== null && ! $isExplicitNull) {
+                            if ($propTypeNode !== null && StaticTypeEvaluator::satisfies($p->default, $propTypeNode, $this->currentFile)) {
+                                continue;
+                            }
+
                             $defaultProps[] = [
                                 'name' => $p->name->toString(),
                                 'line' => $p->getStartLine(),
@@ -743,6 +747,23 @@ final class ContractVisitor extends NodeVisitorAbstract
                             ...$constructorArgs,
                         ]
                     );
+
+                    $node->expr = $this->wrapVariableCheck($expr, $typeString, $varName, $node->var->getStartLine());
+
+                    return;
+                }
+
+                if (! str_contains($typeString, '<')) {
+                    try {
+                        [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+                        $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($typeString)));
+                        $parsedType = $typeParser->parse($tokens);
+
+                        if (StaticTypeEvaluator::satisfies($expr, $parsedType, $this->currentFile)) {
+                            return;
+                        }
+                    } catch (\Throwable) {
+                    }
                 }
 
                 $node->expr = $this->wrapVariableCheck($expr, $typeString, $varName, $node->var->getStartLine());
@@ -762,7 +783,6 @@ final class ContractVisitor extends NodeVisitorAbstract
                 }
             }
 
-            // Fallback for direct single property access
             if ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
                 $node->expr = $this->wrapPropertyCheck($node->expr, $node->var->var, $node->var->name->toString(), $node->var->getStartLine());
             } elseif ($node->var instanceof Node\Expr\StaticPropertyFetch && $node->var->name instanceof Node\VarLikeIdentifier) {

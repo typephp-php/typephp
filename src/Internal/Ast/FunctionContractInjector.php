@@ -8,6 +8,10 @@ use PhpParser\Comment\Doc;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
+use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use TypePHP\Internal\Ast\Elimination\EliminationSafetyPolicy;
+use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
+use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Util\StubManager;
 
 /**
@@ -31,8 +35,11 @@ final class FunctionContractInjector
     /**
      * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
      */
-    public static function inject(Node\Stmt\Function_|Node\Stmt\ClassMethod $node, ?array $classContext = null): void
-    {
+    public static function inject(
+        Node\Stmt\Function_|Node\Stmt\ClassMethod $node,
+        ?array $classContext = null,
+        string $currentFile = ''
+    ): void {
         if ($node->stmts === null) {
             return;
         }
@@ -134,6 +141,18 @@ final class FunctionContractInjector
             $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg, $isReadonlyClass, $needsReturnVars);
         }
 
+        $returnTypeNode = null;
+        if ($doc !== null) {
+            try {
+                $phpDocNode = DocblockExtractor::parseDocString($doc->getText());
+                $returnTag = DocblockExtractor::getReturnTag($phpDocNode);
+                if ($returnTag !== null) {
+                    $returnTypeNode = $returnTag->type;
+                }
+            } catch (\Throwable) {
+            }
+        }
+
         if ($hasReturn || $hasParamOut || $hasSelfOut) {
             $node->stmts = self::isGenerator($node)
                 ? self::wrapGeneratorReturns($node->stmts, $thisArg)
@@ -146,6 +165,10 @@ final class FunctionContractInjector
                     $hasParamOut ? $byRefParams : [],
                     $hasSelfOut,
                     $node->byRef,
+                    $node,
+                    $classContext,
+                    $returnTypeNode,
+                    $currentFile
                 );
         }
 
@@ -892,6 +915,7 @@ final class FunctionContractInjector
     /**
      * @param array<Node\Stmt> $stmts
      * @param array<string> $byRefParams
+     * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
      *
      * @return array<Node\Stmt>
      */
@@ -903,12 +927,29 @@ final class FunctionContractInjector
         bool $hasReturn = true,
         array $byRefParams = [],
         bool $hasSelfOut = false,
-        bool $isByRefReturn = false
+        bool $isByRefReturn = false,
+        Node\Stmt\Function_|Node\Stmt\ClassMethod|null $functionNode = null,
+        ?array $classContext = null,
+        ?TypeNode $returnTypeNode = null,
+        string $currentFile = ''
     ): array {
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class ($thisArg, $isNativeVoid, $needsReturnVars, $hasReturn, $byRefParams, $hasSelfOut, $isByRefReturn) extends NodeVisitorAbstract {
+        $traverser->addVisitor(new class (
+            $thisArg,
+            $isNativeVoid,
+            $needsReturnVars,
+            $hasReturn,
+            $byRefParams,
+            $hasSelfOut,
+            $isByRefReturn,
+            $functionNode,
+            $classContext,
+            $returnTypeNode,
+            $currentFile
+        ) extends NodeVisitorAbstract {
             /**
              * @param array<string> $byRefParams
+             * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
              */
             public function __construct(
                 private Node\Expr $thisArg,
@@ -917,7 +958,11 @@ final class FunctionContractInjector
                 private bool $hasReturn,
                 private array $byRefParams,
                 private bool $hasSelfOut,
-                private bool $isByRefReturn
+                private bool $isByRefReturn,
+                private Node\Stmt\Function_|Node\Stmt\ClassMethod|null $functionNode,
+                private ?array $classContext,
+                private ?TypeNode $returnTypeNode,
+                private string $currentFile
             ) {
             }
 
@@ -950,6 +995,17 @@ final class FunctionContractInjector
                     }
 
                     $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
+
+                    if (
+                        ! $this->isByRefReturn
+                        && ! $this->isNativeVoid
+                        && $this->functionNode !== null
+                        && $this->returnTypeNode !== null
+                        && EliminationSafetyPolicy::isReturnEliminationSafe($this->functionNode, $this->classContext, $this->returnTypeNode)
+                        && StaticTypeEvaluator::satisfies($exprToWrap, $this->returnTypeNode, $this->currentFile)
+                    ) {
+                        return $exitStmts !== [] ? [...$exitStmts, $n] : null;
+                    }
 
                     if ($this->isNativeVoid) {
                         $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);

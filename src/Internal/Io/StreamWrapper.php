@@ -288,7 +288,7 @@ final class StreamWrapper implements StreamWrapperInterface
         $newStmts = $traverser1->traverse($nodesToTraverse);
 
         $traverser2 = new NodeTraverser();
-        $traverser2->addVisitor(new ContractVisitor());
+        $traverser2->addVisitor(new ContractVisitor($filePath));
         $newStmts = $traverser2->traverse($newStmts);
 
         $printer = self::getPrinter();
