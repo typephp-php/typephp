@@ -188,6 +188,103 @@ PHP;
         $transformed = StreamWrapper::transformSource($source, 'test_this_return.php');
 
         expect($transformed)->not()->toContain('RuntimeTypeChecker::checkReturn')
-            ->and($transformed)->toContain('return $this;');
+            ->and($transformed)->toContain('return $this;')
+        ;
+    });
+});
+
+describe('Immediate Predecessor Local Data-Flow Elimination ($x = <proven>; return $x;)', function () {
+    test('eliminates checkReturn when returned variable was immediately assigned a proven string literal', function () {
+        $source = <<<'PHP'
+<?php
+/** @return non-empty-string */
+function getPredecessorName(): string
+{
+    $name = 'Alice';
+    return $name;
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_flow_name.php');
+
+        expect($transformed)->not()->toContain('RuntimeTypeChecker::checkReturn')
+            ->and($transformed)->toContain('return $name;')
+        ;
+    });
+
+    test('eliminates checkReturn when returned variable was immediately assigned a proven list literal', function () {
+        $source = <<<'PHP'
+<?php
+class ResponseService
+{
+    /** @return list<positive-int> */
+    private function getIds(): array
+    {
+        $ids = [1, 2, 3];
+        return $ids;
+    }
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_flow_list.php');
+
+        expect($transformed)->not()->toContain('RuntimeTypeChecker::checkReturn')
+            ->and($transformed)->toContain('return $ids;')
+        ;
+    });
+
+    test('eliminates checkReturn inside an if-block when variable is immediately assigned and returned', function () {
+        $source = <<<'PHP'
+<?php
+/** @return non-empty-string */
+function getStatus(bool $flag): string
+{
+    if ($flag) {
+        $msg = 'active';
+        return $msg;
+    }
+    return 'fallback';
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_flow_if.php');
+
+        expect($transformed)->not()->toContain('RuntimeTypeChecker::checkReturn')
+            ->and($transformed)->toContain('return $msg;')
+            ->and($transformed)->toContain("return 'fallback';")
+        ;
+    });
+
+    test('retains checkReturn when immediately assigned variable violates the return contract', function () {
+        $source = <<<'PHP'
+<?php
+/** @return positive-int */
+function getBadCode(): int
+{
+    $code = -10;
+    return $code;
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_flow_bad.php');
+
+        expect($transformed)->toContain('RuntimeTypeChecker::checkReturn');
+    });
+
+    test('retains checkReturn when intervening statements exist between assignment and return', function () {
+        $source = <<<'PHP'
+<?php
+/** @return non-empty-string */
+function getWithInterveningCall(): string
+{
+    $val = 'hello';
+    someOtherFunction();
+    return $val;
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_flow_intervene.php');
+
+        expect($transformed)->toContain('RuntimeTypeChecker::checkReturn');
     });
 });

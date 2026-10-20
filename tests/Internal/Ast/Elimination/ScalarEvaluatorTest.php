@@ -160,7 +160,8 @@ describe('ScalarEvaluator Unit Tests', function () {
 
             expect(ScalarEvaluator::satisfies($nullNode, new IdentifierTypeNode('null')))->toBeTrue()
                 ->and(ScalarEvaluator::satisfies($nullNode, new IdentifierTypeNode('void')))->toBeTrue()
-                ->and(ScalarEvaluator::satisfies($nullNode, new IdentifierTypeNode('int')))->toBeFalse();
+                ->and(ScalarEvaluator::satisfies($nullNode, new IdentifierTypeNode('int')))->toBeFalse()
+            ;
         });
     });
 });

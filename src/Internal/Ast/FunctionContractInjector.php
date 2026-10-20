@@ -933,6 +933,8 @@ final class FunctionContractInjector
         ?TypeNode $returnTypeNode = null,
         string $currentFile = ''
     ): array {
+        self::tagPrecedingAssignments($stmts);
+
         $traverser = new NodeTraverser();
         $traverser->addVisitor(new class (
             $thisArg,
@@ -972,6 +974,25 @@ final class FunctionContractInjector
                     return NodeTraverser::DONT_TRAVERSE_CHILDREN;
                 }
 
+                if (
+                    $n instanceof Node\Stmt\If_
+                    || $n instanceof Node\Stmt\Else_
+                    || $n instanceof Node\Stmt\ElseIf_
+                    || $n instanceof Node\Stmt\While_
+                    || $n instanceof Node\Stmt\Do_
+                    || $n instanceof Node\Stmt\For_
+                    || $n instanceof Node\Stmt\Foreach_
+                    || $n instanceof Node\Stmt\TryCatch
+                    || $n instanceof Node\Stmt\Catch_
+                    || $n instanceof Node\Stmt\Finally_
+                    || $n instanceof Node\Stmt\Case_
+                    || $n instanceof Node\Stmt\Block
+                ) {
+                    FunctionContractInjector::tagPrecedingAssignments($n->stmts);
+                } elseif ($n instanceof Node\Stmt\Declare_ && $n->stmts !== null) {
+                    FunctionContractInjector::tagPrecedingAssignments($n->stmts);
+                }
+
                 if ($n instanceof Node\Stmt\Return_) {
                     if ($n->getAttribute('typephp_var_wrapped') === true) {
                         return null;
@@ -996,13 +1017,16 @@ final class FunctionContractInjector
 
                     $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
 
+                    $assignedExpr = $n->getAttribute('typephp_preceding_assign_expr');
+                    $candidateExpr = ($assignedExpr instanceof Node\Expr) ? $assignedExpr : $exprToWrap;
+
                     if (
                         ! $this->isByRefReturn
                         && ! $this->isNativeVoid
                         && $this->functionNode !== null
                         && $this->returnTypeNode !== null
                         && EliminationSafetyPolicy::isReturnEliminationSafe($this->functionNode, $this->classContext, $this->returnTypeNode)
-                        && StaticTypeEvaluator::satisfies($exprToWrap, $this->returnTypeNode, $this->currentFile)
+                        && StaticTypeEvaluator::satisfies($candidateExpr, $this->returnTypeNode, $this->currentFile)
                     ) {
                         return $exitStmts !== [] ? [...$exitStmts, $n] : null;
                     }
@@ -1076,5 +1100,29 @@ final class FunctionContractInjector
         }
 
         return $newStmts;
+    }
+
+    /**
+     * @param array<Node\Stmt> $stmts
+     */
+    public static function tagPrecedingAssignments(array $stmts): void
+    {
+        $count = \count($stmts);
+        for ($i = 1; $i < $count; $i++) {
+            $curr = $stmts[$i];
+            if (! ($curr instanceof Node\Stmt\Return_) || ! ($curr->expr instanceof Node\Expr\Variable) || ! \is_string($curr->expr->name)) {
+                continue;
+            }
+
+            $prev = $stmts[$i - 1];
+            if (
+                $prev instanceof Node\Stmt\Expression
+                && $prev->expr instanceof Node\Expr\Assign
+                && $prev->expr->var instanceof Node\Expr\Variable
+                && $prev->expr->var->name === $curr->expr->name
+            ) {
+                $curr->setAttribute('typephp_preceding_assign_expr', $prev->expr->expr);
+            }
+        }
     }
 }
