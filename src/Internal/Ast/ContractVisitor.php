@@ -753,17 +753,15 @@ final class ContractVisitor extends NodeVisitorAbstract
                     return;
                 }
 
-                if (! str_contains($typeString, '<')) {
-                    try {
-                        [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
-                        $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($typeString)));
-                        $parsedType = $typeParser->parse($tokens);
+                try {
+                    [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+                    $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($typeString)));
+                    $parsedType = $typeParser->parse($tokens);
 
-                        if (StaticTypeEvaluator::satisfies($expr, $parsedType, $this->currentFile)) {
-                            return;
-                        }
-                    } catch (\Throwable) {
+                    if (StaticTypeEvaluator::satisfies($expr, $parsedType, $this->currentFile)) {
+                        return;
                     }
+                } catch (\Throwable) {
                 }
 
                 $node->expr = $this->wrapVariableCheck($expr, $typeString, $varName, $node->var->getStartLine());
