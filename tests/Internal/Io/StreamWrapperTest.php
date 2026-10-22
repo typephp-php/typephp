@@ -474,8 +474,9 @@ PHP;
 
                 expect(\App\Test\sampleAction(42))->toBe('id_42');
 
-                expect(fn() => \App\Test\sampleAction(-5))
-                    ->toThrow(TypeError::class, 'positive-int');
+                expect(fn () => \App\Test\sampleAction(-5))
+                    ->toThrow(TypeError::class, 'positive-int')
+                ;
             } finally {
                 if (file_exists($testFile)) {
                     @unlink($testFile);
@@ -604,10 +605,10 @@ class ServiceFactory
 PHP;
             StreamWrapper::transformSource($source, 'VirtualServiceFactory.php');
 
-            $obj = (new class() {
+            $obj = (new class () {
                 public function create(): object
                 {
-                    return new class() {
+                    return new class () {
                         /** @use \TypePHP\Tests\Fixtures\Generics\GenericItemLoggerTrait<int> */
                         use TypePHP\Tests\Fixtures\Generics\GenericItemLoggerTrait;
                     };
