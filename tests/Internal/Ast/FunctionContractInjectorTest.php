@@ -130,7 +130,6 @@ PHP;
 
             FunctionContractInjector::inject($fn);
 
-            // Stmts: [0] => $_typephpArgs = ['id' => $id]; [1] => if ($combinedCondition) { ... }
             expect(\count($fn->stmts))->toBe(2);
         });
     });
@@ -229,6 +228,10 @@ PHP;
     });
 
     describe('Generator Return and Yield Wrapping', function () {
+        beforeEach(function () {
+            Config::set(['eliminate_statically_proven_checks' => false]);
+        });
+
         test('wraps yield expressions with checkYield and checkSend', function () {
             $doc = new Doc('/** @return Generator<string, positive-int> */');
 

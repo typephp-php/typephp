@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace TypePHP\Internal\Ast\Elimination\Evaluator;
 
 use PhpParser\Node\Expr\Array_;
+use PhpParser\Node\Expr\BinaryOp\Concat;
+use PhpParser\Node\Scalar\Encapsed;
 use PhpParser\Node\Scalar\LNumber;
 use PhpParser\Node\Scalar\String_;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
@@ -224,7 +226,7 @@ final class ArrayLiteralEvaluator
             } elseif ($item->key instanceof LNumber) {
                 $keyExpr = $item->key;
                 $currentIdx = max($currentIdx, $item->key->value + 1);
-            } elseif ($item->key instanceof String_) {
+            } elseif ($item->key instanceof String_ || $item->key instanceof Concat || $item->key instanceof Encapsed) {
                 $keyExpr = $item->key;
             } else {
                 return false;

@@ -77,6 +77,7 @@ final class ScalarEvaluator
     private const NON_EMPTY_STRING_COMPATIBLE_TYPES = [
         'string' => true,
         'non-empty-string' => true,
+        'array-key' => true,
         'scalar' => true,
         'mixed' => true,
     ];

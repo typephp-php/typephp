@@ -8,7 +8,9 @@ use PhpParser\Node\Expr\ArrowFunction;
 use PhpParser\Node\Expr\Closure;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Function_;
+use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 
 /**
@@ -35,6 +37,18 @@ final class EliminationSafetyPolicy
         'array' => true,
         'non-empty-array' => true,
         'iterable' => true,
+    ];
+
+    /**
+     * O(1) hash map of permissible generator return type containers.
+     *
+     * @var array<string, true>
+     */
+    private const PERMISSIBLE_GENERATOR_GENERICS = [
+        'generator' => true,
+        'iterable' => true,
+        'traversable' => true,
+        'iterator' => true,
     ];
 
     /**
@@ -71,6 +85,54 @@ final class EliminationSafetyPolicy
 
         if ($classContext === null || $functionNode instanceof Function_ || $functionNode instanceof Closure || $functionNode instanceof ArrowFunction) {
             return true;
+        }
+
+        if ($functionNode->isPrivate()) {
+            return true;
+        }
+
+        $hasRealInheritance = $classContext['hasRealInheritance'] ?? true;
+        if (! $hasRealInheritance) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Determines whether generator yield, send, and return checks can be safely eliminated under LSP rules.
+     *
+     * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
+     */
+    public static function isGeneratorEliminationSafe(
+        ClassMethod|Function_|Closure|ArrowFunction $functionNode,
+        ?array $classContext,
+        ?TypeNode $returnTypeNode
+    ): bool {
+        if ($returnTypeNode === null) {
+            return false;
+        }
+
+        if ($returnTypeNode instanceof GenericTypeNode) {
+            $baseName = strtolower(ltrim($returnTypeNode->type->name, '\\'));
+            if (! isset(self::PERMISSIBLE_GENERATOR_GENERICS[$baseName])) {
+                return false;
+            }
+        } elseif ($returnTypeNode instanceof IdentifierTypeNode) {
+            $baseName = strtolower(ltrim($returnTypeNode->name, '\\'));
+            if (! isset(self::PERMISSIBLE_GENERATOR_GENERICS[$baseName])) {
+                return false;
+            }
+        } elseif (! ($returnTypeNode instanceof ArrayTypeNode)) {
+            return false;
+        }
+
+        if ($classContext === null || $functionNode instanceof Function_ || $functionNode instanceof Closure || $functionNode instanceof ArrowFunction) {
+            return true;
+        }
+
+        if ($classContext['hasTemplates'] ?? false) {
+            return false;
         }
 
         if ($functionNode->isPrivate()) {

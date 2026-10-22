@@ -288,3 +288,134 @@ PHP;
         expect($transformed)->toContain('RuntimeTypeChecker::checkReturn');
     });
 });
+
+describe('Generator & Iterable Compile-Time Check Elimination', function () {
+    test('completely eliminates checkYield, checkSend, and checkGeneratorReturn on proven 2-arg Generator', function () {
+        $source = <<<'PHP'
+<?php
+/** @return Generator<string, positive-int> */
+function streamProvenConstants(): Generator
+{
+    yield 'first' => 10;
+    yield 'second' => 20;
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_gen_proven.php');
+
+        expect($transformed)->not()->toContain('RuntimeTypeChecker::checkYield')
+            ->and($transformed)->not()->toContain('RuntimeTypeChecker::checkSend')
+            ->and($transformed)->not()->toContain('RuntimeTypeChecker::checkGeneratorReturn')
+        ;
+    });
+
+    test('eliminates checkYield on string concatenation and interpolation for non-empty-string', function () {
+        $source = <<<'PHP'
+<?php
+/** @return Generator<non-empty-string, non-empty-string> */
+function streamUserLabels(int $id, string $suffix): Generator
+{
+    yield 'user_' . $id => "label_{$suffix}";
+    $computed = 'prefix_' . $suffix;
+    yield 'final' => $computed;
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_gen_concat.php');
+
+        expect($transformed)->not()->toContain('RuntimeTypeChecker::checkYield')
+            ->and($transformed)->not()->toContain('RuntimeTypeChecker::checkSend')
+            ->and($transformed)->not()->toContain('RuntimeTypeChecker::checkGeneratorReturn')
+        ;
+    });
+
+    test('eliminates checkSend and checkGeneratorReturn while retaining checkYield when yielded value is dynamic', function () {
+        $source = <<<'PHP'
+<?php
+/** @return Generator<string, positive-int> */
+function streamDynamicValue(int $dynamicVal): Generator
+{
+    yield 'item' => $dynamicVal;
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_gen_partial.php');
+
+        expect($transformed)->toContain('RuntimeTypeChecker::checkYield')
+            ->and($transformed)->not()->toContain('RuntimeTypeChecker::checkSend')
+            ->and($transformed)->not()->toContain('RuntimeTypeChecker::checkGeneratorReturn')
+        ;
+    });
+
+    test('eliminates checkYield while retaining checkSend when TSend is constrained and yielded literal is proven', function () {
+        $source = <<<'PHP'
+<?php
+/** @return Generator<string, positive-int, non-empty-string, void> */
+function streamInteractiveProven(): Generator
+{
+    $input = yield 'prompt' => 1;
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_gen_send_only.php');
+
+        expect($transformed)->not()->toContain('RuntimeTypeChecker::checkYield')
+            ->and($transformed)->toContain('RuntimeTypeChecker::checkSend')
+            ->and($transformed)->not()->toContain('RuntimeTypeChecker::checkGeneratorReturn')
+        ;
+    });
+
+    test('eliminates wrapIterable on yield from proven array literal and retains on unproven array', function () {
+        $provenSource = <<<'PHP'
+<?php
+/** @return Generator<string, non-empty-string> */
+function streamYieldFromProven(int $id): Generator
+{
+    yield from ['user_' . $id => 'role_' . $id];
+}
+PHP;
+
+        $transformedProven = StreamWrapper::transformSource($provenSource, 'test_yield_from_proven.php');
+        expect($transformedProven)->not()->toContain('RuntimeTypeChecker::wrapIterable');
+
+        $unprovenSource = <<<'PHP'
+<?php
+/** @return Generator<string, positive-int> */
+function streamYieldFromInvalid(): Generator
+{
+    yield from ['a' => 10, 'b' => -5];
+}
+PHP;
+
+        $transformedUnproven = StreamWrapper::transformSource($unprovenSource, 'test_yield_from_unproven.php');
+        expect($transformedUnproven)->toContain('RuntimeTypeChecker::wrapIterable');
+    });
+
+    test('eliminates checkGeneratorReturn on proven TReturn and retains when TReturn is violated', function () {
+        $provenReturn = <<<'PHP'
+<?php
+/** @return Generator<int, string, mixed, non-empty-string> */
+function genProvenReturn(string $tag): Generator
+{
+    yield 0 => 'step';
+    return 'done_' . $tag;
+}
+PHP;
+
+        $transformedProven = StreamWrapper::transformSource($provenReturn, 'test_gen_ret_proven.php');
+        expect($transformedProven)->not()->toContain('RuntimeTypeChecker::checkGeneratorReturn');
+
+        $invalidReturn = <<<'PHP'
+<?php
+/** @return Generator<int, string, mixed, positive-int> */
+function genInvalidReturn(): Generator
+{
+    yield 0 => 'step';
+    return -5;
+}
+PHP;
+
+        $transformedInvalid = StreamWrapper::transformSource($invalidReturn, 'test_gen_ret_invalid.php');
+        expect($transformedInvalid)->toContain('RuntimeTypeChecker::checkGeneratorReturn');
+    });
+});
