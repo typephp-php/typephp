@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Internal\Util;
 
 use TypePHP\Extension\ExtensionInterface;
+use TypePHP\Internal\Checker\MemberAssignChecker;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
 use TypePHP\Internal\Docblock\DocblockParser;
@@ -762,6 +763,7 @@ final class Config
 
         DocblockParser::reset();
         ParamChecker::reset();
+        MemberAssignChecker::reset();
         ReturnChecker::reset();
         FileFilter::reset();
         PathMatcher::reset();

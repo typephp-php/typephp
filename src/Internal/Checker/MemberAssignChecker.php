@@ -16,11 +16,20 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
 final class MemberAssignChecker
 {
     /**
-     * In-memory 2D cache for ReflectionProperty instances: [$className][$propName] => ReflectionProperty.
+     * In-memory 2D cache for ReflectionProperty instances:
+     * [$className][$propName] => ?ReflectionProperty (null = non-declared/dynamic property)
      *
-     * @var array<string, array<string, ReflectionProperty>>
+     * @var array<string, array<string, ?ReflectionProperty>>
      */
     private static array $refPropertyCache = [];
+
+    /**
+     * Resets the cached reflection property registry.
+     */
+    public static function reset(): void
+    {
+        self::$refPropertyCache = [];
+    }
 
     /**
      * Evaluates member mutation assignment against the declared type contract.
@@ -75,7 +84,7 @@ final class MemberAssignChecker
     }
 
     /**
-     * Evaluates dimension/member mutation assignment on an object or static class property.
+     * Evaluates dimension/member mutation assignment on an object or static property.
      *
      * @param list<array{0: 'dim'|'prop', 1: mixed}> $chain
      */
@@ -115,10 +124,9 @@ final class MemberAssignChecker
     private static function readPropertyValue(mixed $objectOrClass, string $className, string $propName): mixed
     {
         try {
-            if (property_exists($className, $propName)) {
-                /** @var class-string<object> $className */
-                $refProp = self::$refPropertyCache[$className][$propName] ??= new ReflectionProperty($className, $propName);
+            $refProp = self::getReflectionProperty($className, $propName);
 
+            if ($refProp !== null) {
                 if ($refProp->isStatic()) {
                     return $refProp->isInitialized() ? $refProp->getValue() : [];
                 }
@@ -134,5 +142,22 @@ final class MemberAssignChecker
         }
 
         return [];
+    }
+
+    /**
+     * Resolves and memoizes ReflectionProperty descriptors, caching both declared properties and dynamic misses.
+     */
+    private static function getReflectionProperty(string $className, string $propName): ?ReflectionProperty
+    {
+        if (isset(self::$refPropertyCache[$className]) && \array_key_exists($propName, self::$refPropertyCache[$className])) {
+            return self::$refPropertyCache[$className][$propName];
+        }
+
+        if (property_exists($className, $propName)) {
+            /** @var class-string<object> $className */
+            return self::$refPropertyCache[$className][$propName] = new ReflectionProperty($className, $propName);
+        }
+
+        return self::$refPropertyCache[$className][$propName] = null;
     }
 }
