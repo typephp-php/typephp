@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Internal\Ast;
 
 use PhpParser\Node;
+use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
@@ -121,6 +122,9 @@ final class ContractVisitor extends NodeVisitorAbstract
         } elseif ($node instanceof Node\Stmt\Unset_) {
             foreach ($node->vars as $v) {
                 $this->markWriteContext($v);
+                if ($v instanceof Node\Expr\Variable && \is_string($v->name)) {
+                    $this->scopeManager->unregisterVarType($v->name);
+                }
             }
         } elseif ($node instanceof Node\Expr\Isset_) {
             foreach ($node->vars as $v) {
@@ -173,11 +177,15 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $this->scopeManager->extractVarDocblock($doc->getText(), $node->valueVar);
             }
 
+            $this->handleForeachTypePropagation($node);
+
             return null;
         }
 
         if ($node instanceof Node\Expr\Assign) {
             $this->handleAssign($node);
+        } elseif ($node instanceof Node\Expr\AssignRef) {
+            $this->handleAssignRef($node);
         }
 
         return null;
@@ -185,8 +193,10 @@ final class ContractVisitor extends NodeVisitorAbstract
 
     /**
      * Pops the current lexical scope stack frame or replaces transformed expressions upon leaving a node.
+     *
+     * @return Node|array<Node>|null
      */
-    public function leaveNode(Node $node): ?Node
+    public function leaveNode(Node $node): Node|array|null
     {
         $this->trackDeclarationExit($node);
 
@@ -246,11 +256,89 @@ final class ContractVisitor extends NodeVisitorAbstract
             }
         }
 
+        if ($node instanceof Node\Stmt\Foreach_ && $node->byRef) {
+            $boundaryCheck = $this->createForeachBoundaryCheck($node);
+            if ($this->isScopeBoundary($node)) {
+                $this->scopeManager->popScope();
+            }
+
+            return $boundaryCheck !== null ? [$node, $boundaryCheck] : null;
+        }
+
         if ($this->isScopeBoundary($node)) {
             $this->scopeManager->popScope();
         }
 
         return null;
+    }
+
+    private function createForeachBoundaryCheck(Node\Stmt\Foreach_ $node): ?Node\Stmt\Expression
+    {
+        $targetVarExpr = null;
+        $varName = null;
+        $typeString = null;
+
+        if ($node->expr instanceof Node\Expr\Variable && \is_string($node->expr->name)) {
+            $varName = $node->expr->name;
+            $typeString = $this->scopeManager->getVarTypeFromScope($varName);
+            $targetVarExpr = $node->expr;
+        } elseif (($chainInfo = $this->extractMemberChain($node->expr)) !== null) {
+            $root = $chainInfo['root'];
+            if ($root instanceof Node\Expr\Variable && \is_string($root->name)) {
+                $varName = $root->name;
+                $typeString = $this->scopeManager->getVarTypeFromScope($varName);
+                $targetVarExpr = $root;
+            }
+        }
+
+        if ($targetVarExpr === null || $varName === null || $typeString === null) {
+            return null;
+        }
+
+        if (Config::isEliminateStaticallyProvenChecksEnabled() && self::isLoopBodyFreeOfOpaqueMutations($node)) {
+            return null;
+        }
+
+        $line = $node->getEndLine() > 0 ? $node->getEndLine() : $node->getStartLine();
+        $checkStmt = new Node\Stmt\Expression(
+            new Node\Expr\Assign(
+                $targetVarExpr,
+                $this->wrapVariableCheck($targetVarExpr, $typeString, $varName, $line)
+            )
+        );
+        $checkStmt->setAttribute('typephp_injected', true);
+
+        return $checkStmt;
+    }
+
+    private static function isLoopBodyFreeOfOpaqueMutations(Node\Stmt\Foreach_ $node): bool
+    {
+        $visitor = new class () extends NodeVisitorAbstract {
+            public bool $hasOpaqueCalls = false;
+
+            public function enterNode(Node $n): ?int
+            {
+                if ($n instanceof Node\Expr\Closure || $n instanceof Node\Expr\ArrowFunction) {
+                    $this->hasOpaqueCalls = true;
+
+                    return NodeTraverser::DONT_TRAVERSE_CHILDREN;
+                }
+
+                if ($n instanceof Node\Expr\CallLike || $n instanceof Node\Expr\AssignRef) {
+                    $this->hasOpaqueCalls = true;
+
+                    return NodeTraverser::STOP_TRAVERSAL;
+                }
+
+                return null;
+            }
+        };
+
+        $traverser = new NodeTraverser();
+        $traverser->addVisitor($visitor);
+        $traverser->traverse($node->stmts);
+
+        return ! $visitor->hasOpaqueCalls;
     }
 
     private function wrapCloneFunction(Node\Expr\FuncCall $node): ?Node\Expr
@@ -798,6 +886,113 @@ final class ContractVisitor extends NodeVisitorAbstract
                 : $node->var->class;
 
             $node->expr = $this->wrapPropertyCheck($node->expr, $classArg, $node->var->name->toString(), $node->var->getStartLine());
+        }
+    }
+
+    private function handleAssignRef(Node\Expr\AssignRef $node): void
+    {
+        if (! ($node->var instanceof Node\Expr\Variable) || ! \is_string($node->var->name)) {
+            return;
+        }
+
+        $aliasName = $node->var->name;
+        $deducedType = null;
+
+        if ($node->expr instanceof Node\Expr\Variable && \is_string($node->expr->name)) {
+            $deducedType = $this->scopeManager->getVarTypeFromScope($node->expr->name);
+        } elseif (($chainInfo = $this->extractMemberChain($node->expr)) !== null) {
+            $root = $chainInfo['root'];
+            $chain = $chainInfo['chain'];
+
+            if ($root instanceof Node\Expr\Variable && \is_string($root->name)) {
+                $currType = $this->scopeManager->getVarTypeFromScope($root->name);
+
+                if ($currType !== null) {
+                    $deducedType = $currType;
+                    foreach ($chain as $step) {
+                        if ($step[0] === 'dim') {
+                            $dimExpr = $step[1] instanceof Node\Expr ? $step[1] : null;
+                            $deducedType = TypeDeducer::deduceDimType($deducedType, $dimExpr);
+                            if ($deducedType === null) {
+                                break;
+                            }
+                        } elseif ($step[0] === 'prop' && \is_string($step[1])) {
+                            $deducedType = TypeDeducer::deducePropertyType($deducedType, $step[1]);
+                            if ($deducedType === null) {
+                                break;
+                            }
+                        } else {
+                            $deducedType = null;
+
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($deducedType !== null) {
+            $this->scopeManager->registerVarType($aliasName, $deducedType, overwrite: true);
+        } else {
+            $this->scopeManager->unregisterVarType($aliasName);
+        }
+    }
+
+    private function handleForeachTypePropagation(Node\Stmt\Foreach_ $node): void
+    {
+        $containerType = null;
+
+        if ($node->expr instanceof Node\Expr\Variable && \is_string($node->expr->name)) {
+            $containerType = $this->scopeManager->getVarTypeFromScope($node->expr->name);
+        } elseif (($chainInfo = $this->extractMemberChain($node->expr)) !== null) {
+            $root = $chainInfo['root'];
+            $chain = $chainInfo['chain'];
+
+            if ($root instanceof Node\Expr\Variable && \is_string($root->name)) {
+                $currType = $this->scopeManager->getVarTypeFromScope($root->name);
+                if ($currType !== null) {
+                    $containerType = $currType;
+                    foreach ($chain as $step) {
+                        if ($step[0] === 'dim') {
+                            $dimExpr = $step[1] instanceof Node\Expr ? $step[1] : null;
+                            $containerType = TypeDeducer::deduceDimType($containerType, $dimExpr);
+                            if ($containerType === null) {
+                                break;
+                            }
+                        } elseif ($step[0] === 'prop' && \is_string($step[1])) {
+                            $containerType = TypeDeducer::deducePropertyType($containerType, $step[1]);
+                            if ($containerType === null) {
+                                break;
+                            }
+                        } else {
+                            $containerType = null;
+
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($containerType === null) {
+            return;
+        }
+
+        $elementType = TypeDeducer::deduceElementType($containerType);
+
+        if ($elementType !== null) {
+            if ($node->valueVar instanceof Node\Expr\Variable && \is_string($node->valueVar->name)) {
+                $this->scopeManager->registerVarType($node->valueVar->name, $elementType, overwrite: false);
+            } elseif ($this->isDestructuring($node->valueVar) && str_contains($elementType, '{')) {
+                /** @var Node\Expr\List_|Node\Expr\Array_ $destructuringVar */
+                $destructuringVar = $node->valueVar;
+                $this->propagateShapeTypesToDestructuring($destructuringVar, $elementType);
+            }
+        }
+
+        if ($node->keyVar instanceof Node\Expr\Variable && \is_string($node->keyVar->name)) {
+            $keyType = TypeDeducer::deduceKeyType($containerType);
+            $this->scopeManager->registerVarType($node->keyVar->name, $keyType, overwrite: false);
         }
     }
 

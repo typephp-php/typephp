@@ -30,6 +30,14 @@ final class ScopeManager
     private int $depth = 0;
 
     /**
+     * Unregisters a variable from the current lexical scope frame (e.g. on unset).
+     */
+    public function unregisterVarType(string $varName): void
+    {
+        unset($this->scopeStack[$this->depth][$varName]);
+    }
+
+    /**
      * Programmatically registers a variable's type into the current scope frame.
      * Preserves explicit inline @var declarations in the current frame unless overwrite is true.
      */
