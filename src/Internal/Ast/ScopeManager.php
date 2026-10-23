@@ -13,9 +13,19 @@ use TypePHP\Internal\Docblock\DocblockExtractor;
 final class ScopeManager
 {
     /**
+     * In-memory stack of explicit @var type annotations.
+     *
      * @var list<array<string, string>>
      */
     private array $scopeStack = [[]];
+
+    /**
+     * In-memory stack of inferred variable types (e.g. from $var = new ClassName() or typed parameters).
+     * Kept separate from explicit @var contracts to avoid injecting unwanted assignment checks on standard variables.
+     *
+     * @var list<array<string, string>>
+     */
+    private array $inferredStack = [[]];
 
     /**
      * Tracks which scope frames are isolated boundaries (functions, methods, closures).
@@ -35,6 +45,7 @@ final class ScopeManager
     public function unregisterVarType(string $varName): void
     {
         unset($this->scopeStack[$this->depth][$varName]);
+        unset($this->inferredStack[$this->depth][$varName]);
     }
 
     /**
@@ -51,6 +62,22 @@ final class ScopeManager
     }
 
     /**
+     * Registers an inferred variable type in the current lexical scope frame.
+     */
+    public function registerInferredVarType(string $varName, string $typeString): void
+    {
+        $this->inferredStack[$this->depth][$varName] = $typeString;
+    }
+
+    /**
+     * Unregisters an inferred variable type from the current lexical scope frame (e.g. on reassignment).
+     */
+    public function unregisterInferredVarType(string $varName): void
+    {
+        unset($this->inferredStack[$this->depth][$varName]);
+    }
+
+    /**
      * Pushes a new lexical scope frame (O(1)).
      *
      * @param bool $isIsolated Whether this scope is a hard boundary (function, method, closure)
@@ -60,6 +87,7 @@ final class ScopeManager
     {
         $this->depth++;
         $this->scopeStack[] = $initialBindings;
+        $this->inferredStack[] = [];
         $this->isolatedStack[] = $isIsolated;
     }
 
@@ -70,6 +98,7 @@ final class ScopeManager
     {
         if ($this->depth > 0) {
             array_pop($this->scopeStack);
+            array_pop($this->inferredStack);
             array_pop($this->isolatedStack);
             $this->depth--;
         }
@@ -109,7 +138,7 @@ final class ScopeManager
     }
 
     /**
-     * Resolves a variable type by walking upward through the lexical scope chain,
+     * Resolves an explicit variable type by walking upward through the lexical scope chain,
      * stopping at isolated scope boundaries (functions, methods, closures).
      */
     public function getVarTypeFromScope(string $varName): ?string
@@ -117,6 +146,25 @@ final class ScopeManager
         for ($i = $this->depth; $i >= 0; $i--) {
             if (isset($this->scopeStack[$i][$varName])) {
                 return $this->scopeStack[$i][$varName];
+            }
+
+            if ($this->isolatedStack[$i]) {
+                break;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolves an inferred variable type by walking upward through the lexical scope chain,
+     * stopping at isolated scope boundaries.
+     */
+    public function getInferredVarType(string $varName): ?string
+    {
+        for ($i = $this->depth; $i >= 0; $i--) {
+            if (isset($this->inferredStack[$i][$varName])) {
+                return $this->inferredStack[$i][$varName];
             }
 
             if ($this->isolatedStack[$i]) {

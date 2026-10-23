@@ -94,4 +94,76 @@ DOC;
 
         expect($manager->getVarTypeFromScope('test'))->toBeNull();
     });
+
+    describe('Inferred Variable Type Stack (registerInferredVarType & getInferredVarType)', function () {
+        test('registers and resolves inferred variable types while keeping explicit getVarTypeFromScope null', function () {
+            $manager = new ScopeManager();
+            $manager->pushScope();
+
+            $manager->registerInferredVarType('box', 'App\Models\Box');
+
+            expect($manager->getInferredVarType('box'))->toBe('App\Models\Box')
+                ->and($manager->getVarTypeFromScope('box'))->toBeNull()
+            ;
+        });
+
+        test('resolves inferred variable types across nested scopes and restores on popScope', function () {
+            $manager = new ScopeManager();
+            $manager->pushScope();
+            $manager->registerInferredVarType('entity', 'App\Models\Order');
+
+            $manager->pushScope();
+            expect($manager->getInferredVarType('entity'))->toBe('App\Models\Order');
+
+            $manager->registerInferredVarType('entity', 'App\Models\Invoice');
+            expect($manager->getInferredVarType('entity'))->toBe('App\Models\Invoice');
+
+            $manager->popScope();
+            expect($manager->getInferredVarType('entity'))->toBe('App\Models\Order');
+
+            $manager->popScope();
+            expect($manager->getInferredVarType('entity'))->toBeNull();
+        });
+
+        test('unregisters inferred variable type on demand with unregisterInferredVarType', function () {
+            $manager = new ScopeManager();
+            $manager->pushScope();
+            $manager->registerInferredVarType('temp', 'App\TempClass');
+
+            expect($manager->getInferredVarType('temp'))->toBe('App\TempClass');
+
+            $manager->unregisterInferredVarType('temp');
+            expect($manager->getInferredVarType('temp'))->toBeNull();
+        });
+
+        test('unregisterVarType clears both explicit and inferred types (e.g. on unset)', function () {
+            $manager = new ScopeManager();
+            $manager->pushScope();
+            $manager->registerVarType('item', 'positive-int');
+            $manager->registerInferredVarType('item', 'App\ItemClass');
+
+            expect($manager->getVarTypeFromScope('item'))->toBe('positive-int')
+                ->and($manager->getInferredVarType('item'))->toBe('App\ItemClass')
+            ;
+
+            $manager->unregisterVarType('item');
+
+            expect($manager->getVarTypeFromScope('item'))->toBeNull()
+                ->and($manager->getInferredVarType('item'))->toBeNull()
+            ;
+        });
+
+        test('stops resolving inferred variable types at isolated scope boundaries', function () {
+            $manager = new ScopeManager();
+            $manager->pushScope();
+            $manager->registerInferredVarType('outerVar', 'App\Outer');
+
+            $manager->pushScope(isIsolated: true);
+
+            expect($manager->getInferredVarType('outerVar'))->toBeNull();
+
+            $manager->popScope();
+            expect($manager->getInferredVarType('outerVar'))->toBe('App\Outer');
+        });
+    });
 });

@@ -16,6 +16,7 @@ use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Docblock\DocblockParser;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\StubManager;
 
@@ -70,6 +71,11 @@ final class ContractVisitor extends NodeVisitorAbstract
     private array $thisAvailableStack = [];
 
     /**
+     * @var array<string, array<string, string>>
+     */
+    private array $localClassPropertyTypes = [];
+
+    /**
      * Tracks whether the enclosing function or method returns by reference.
      *
      * @var list<bool>
@@ -96,6 +102,17 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
             $this->scopeManager->pushScope(isIsolated: true);
+            foreach ($node->params as $param) {
+                if ($param->var instanceof Node\Expr\Variable && \is_string($param->var->name) && $param->type instanceof Node\Name) {
+                    $rawType = $param->type->toString();
+                    $pClass = $this->currentFile !== ''
+                        ? SpecialTypeResolver::resolveFqcnForFile($rawType, $this->currentFile, false)
+                        : $rawType;
+                    if ($pClass !== '') {
+                        $this->scopeManager->registerInferredVarType($param->var->name, $pClass);
+                    }
+                }
+            }
         } elseif ($node instanceof Node\Expr\Closure) {
             $capturedVars = [];
             foreach ($node->uses as $u) {
@@ -108,6 +125,17 @@ final class ContractVisitor extends NodeVisitorAbstract
                 }
             }
             $this->scopeManager->pushScope(isIsolated: true, initialBindings: $capturedVars);
+            foreach ($node->params as $param) {
+                if ($param->var instanceof Node\Expr\Variable && \is_string($param->var->name) && $param->type instanceof Node\Name) {
+                    $rawType = $param->type->toString();
+                    $pClass = $this->currentFile !== ''
+                        ? SpecialTypeResolver::resolveFqcnForFile($rawType, $this->currentFile, false)
+                        : $rawType;
+                    if ($pClass !== '') {
+                        $this->scopeManager->registerInferredVarType($param->var->name, $pClass);
+                    }
+                }
+            }
         } elseif ($this->isSoftScopeBoundary($node)) {
             $this->scopeManager->pushScope(isIsolated: false);
         }
@@ -577,6 +605,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     private function enterClassLike(Node\Stmt\Class_|Node\Stmt\Interface_|Node\Stmt\Trait_|Node\Stmt\Enum_ $node): void
     {
         $typeName = $this->resolveQualifiedName($node->name);
+        $shortName = $node->name !== null ? $node->name->toString() : null;
         $hasInheritance = true;
         $hasRealInheritance = false;
         $hasPropertyWithDoc = false;
@@ -639,6 +668,41 @@ final class ContractVisitor extends NodeVisitorAbstract
                 || str_contains($doc->getText(), '@phpstan-template')
                 || str_contains($doc->getText(), '@psalm-template')
             );
+        }
+
+        if ($typeName !== null && ($node instanceof Node\Stmt\Class_ || $node instanceof Node\Stmt\Trait_)) {
+            foreach ($node->stmts as $stmt) {
+                if ($stmt instanceof Node\Stmt\Property) {
+                    $pDoc = $stmt->getDocComment();
+                    if ($pDoc !== null && str_contains($pDoc->getText(), '@var')) {
+                        $varTag = DocblockExtractor::extractVarTagFromDoc($pDoc->getText());
+                        if ($varTag !== null) {
+                            foreach ($stmt->props as $p) {
+                                $propName = $p->name->toString();
+                                $this->localClassPropertyTypes[$typeName][$propName] = $varTag[0];
+                                if ($shortName !== null) {
+                                    $this->localClassPropertyTypes[$shortName][$propName] = $varTag[0];
+                                }
+                            }
+                        }
+                    }
+                } elseif ($stmt instanceof Node\Stmt\ClassMethod && strtolower($stmt->name->toString()) === '__construct') {
+                    foreach ($stmt->params as $p) {
+                        if ($p->isPromoted() && $p->var instanceof Node\Expr\Variable && \is_string($p->var->name)) {
+                            $doc = $p->getDocComment();
+                            if ($doc !== null) {
+                                $pType = DocblockExtractor::extractTypeFromPropertyDoc($doc->getText(), $p->var->name);
+                                if ($pType !== null) {
+                                    $this->localClassPropertyTypes[$typeName][$p->var->name] = (string) $pType;
+                                    if ($shortName !== null) {
+                                        $this->localClassPropertyTypes[$shortName][$p->var->name] = (string) $pType;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         $this->classStack[] = [
@@ -811,6 +875,29 @@ final class ContractVisitor extends NodeVisitorAbstract
     {
         if ($node->var instanceof Node\Expr\Variable && \is_string($node->var->name)) {
             $varName = $node->var->name;
+
+            if ($node->expr instanceof Node\Expr\New_ && $node->expr->class instanceof Node\Name) {
+                $rawClass = $node->expr->class->toString();
+                $lower = strtolower($rawClass);
+                if (($lower === 'self' || $lower === 'static') && $this->classStack !== []) {
+                    $classInfo = end($this->classStack);
+                    $resolvedClass = $classInfo['name'] ?? null;
+                } else {
+                    $resolvedClass = $this->currentFile !== ''
+                        ? SpecialTypeResolver::resolveFqcnForFile($rawClass, $this->currentFile, false)
+                        : $rawClass;
+                    if ($resolvedClass === $rawClass && $this->currentNamespace !== '' && ! str_contains($rawClass, '\\')) {
+                        $resolvedClass = $this->currentNamespace . '\\' . $rawClass;
+                    }
+                }
+
+                if ($resolvedClass !== null && $resolvedClass !== '') {
+                    $this->scopeManager->registerInferredVarType($varName, $resolvedClass);
+                }
+            } elseif (! ($node->expr instanceof Node\Expr\AssignRef)) {
+                $this->scopeManager->unregisterInferredVarType($varName);
+            }
+
             $typeString = $this->scopeManager->getVarTypeFromScope($varName);
 
             if ($typeString !== null) {
@@ -911,39 +998,72 @@ final class ContractVisitor extends NodeVisitorAbstract
         $deducedType = null;
 
         if ($node->expr instanceof Node\Expr\Variable && \is_string($node->expr->name)) {
-            $deducedType = $this->scopeManager->getVarTypeFromScope($node->expr->name);
+            $deducedType = $this->scopeManager->getVarTypeFromScope($node->expr->name)
+                ?? $this->scopeManager->getInferredVarType($node->expr->name);
         } elseif (($chainInfo = $this->extractMemberChain($node->expr)) !== null) {
             $root = $chainInfo['root'];
             $chain = $chainInfo['chain'];
+            $currType = null;
 
             if ($root instanceof Node\Expr\Variable && \is_string($root->name)) {
-                $currType = $this->scopeManager->getVarTypeFromScope($root->name);
+                if ($root->name === 'this' && $this->classStack !== []) {
+                    $classInfo = end($this->classStack);
+                    $currType = $classInfo['name'] ?? null;
+                } else {
+                    $currType = $this->scopeManager->getVarTypeFromScope($root->name)
+                        ?? $this->scopeManager->getInferredVarType($root->name);
+                }
+            } elseif ($root instanceof Node\Name) {
+                $rawClass = $root->toString();
+                $lowerClass = strtolower($rawClass);
+                if (($lowerClass === 'self' || $lowerClass === 'static') && $this->classStack !== []) {
+                    $classInfo = end($this->classStack);
+                    $currType = $classInfo['name'] ?? null;
+                } else {
+                    $currType = $this->currentFile !== ''
+                        ? SpecialTypeResolver::resolveFqcnForFile($rawClass, $this->currentFile, false)
+                        : $rawClass;
+                    if ($currType === $rawClass && $this->currentNamespace !== '' && ! str_contains($rawClass, '\\')) {
+                        $currType = $this->currentNamespace . '\\' . $rawClass;
+                    }
+                }
+            }
 
-                if ($currType !== null) {
-                    $deducedType = $currType;
-                    foreach ($chain as $step) {
-                        if ($step[0] === 'dim') {
-                            $dimExpr = $step[1] instanceof Node\Expr ? $step[1] : null;
-                            $deducedType = TypeDeducer::deduceDimType($deducedType, $dimExpr);
-                            if ($deducedType === null) {
-                                break;
-                            }
-                        } elseif ($step[0] === 'prop' && \is_string($step[1])) {
-                            $deducedType = TypeDeducer::deducePropertyType($deducedType, $step[1]);
-                            if ($deducedType === null) {
-                                break;
-                            }
-                        } else {
-                            $deducedType = null;
+            if (\is_string($currType) && $currType !== '') {
+                $deducedType = $currType;
+                foreach ($chain as $step) {
+                    if (! \is_string($deducedType) || $deducedType === '') {
+                        $deducedType = null;
 
+                        break;
+                    }
+
+                    if ($step[0] === 'dim') {
+                        $dimExpr = $step[1] instanceof Node\Expr ? $step[1] : null;
+                        $deducedType = TypeDeducer::deduceDimType($deducedType, $dimExpr);
+                        if ($deducedType === null) {
                             break;
                         }
+                    } elseif ($step[0] === 'prop' && \is_string($step[1])) {
+                        $propName = $step[1];
+                        if (isset($this->localClassPropertyTypes[$deducedType][$propName])) {
+                            $deducedType = $this->localClassPropertyTypes[$deducedType][$propName];
+                        } else {
+                            $deducedType = TypeDeducer::deducePropertyType($deducedType, $propName);
+                        }
+                        if ($deducedType === null) {
+                            break;
+                        }
+                    } else {
+                        $deducedType = null;
+
+                        break;
                     }
                 }
             }
         }
 
-        if ($deducedType !== null) {
+        if (\is_string($deducedType) && $deducedType !== '') {
             $this->scopeManager->registerVarType($aliasName, $deducedType, overwrite: true);
         } else {
             $this->scopeManager->unregisterVarType($aliasName);
@@ -1172,7 +1292,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     /**
      * Unpacks any nested chain of ArrayDimFetch and PropertyFetch down to its root expression.
      *
-     * @return array{root: Node\Expr, chain: list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}>}|null
+     * @return array{root: Node\Expr|Node\Name, chain: list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}>}|null
      */
     private function extractMemberChain(Node\Expr $target): ?array
     {
@@ -1191,6 +1311,11 @@ final class ContractVisitor extends NodeVisitorAbstract
                     return null;
                 }
             }
+        }
+
+        if ($curr instanceof Node\Expr\StaticPropertyFetch && $curr->name instanceof Node\VarLikeIdentifier) {
+            array_unshift($chain, ['prop', $curr->name->toString()]);
+            $curr = $curr->class;
         }
 
         if ($chain === []) {

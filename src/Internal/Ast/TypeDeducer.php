@@ -199,7 +199,11 @@ final class TypeDeducer
 
         if ($typeNode instanceof IdentifierTypeNode) {
             $className = $typeNode->name;
-            if (class_exists($className, false) || class_exists($className)) {
+            if (
+                class_exists($className, false) || class_exists($className)
+                || interface_exists($className, false) || interface_exists($className)
+                || trait_exists($className, false) || trait_exists($className)
+            ) {
                 $propType = DocblockParser::parseProperty($className, $propName);
                 if ($propType !== null) {
                     return (string) $propType;
