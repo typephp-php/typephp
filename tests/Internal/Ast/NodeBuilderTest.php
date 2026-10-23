@@ -63,4 +63,24 @@ describe('NodeBuilder Unit Tests', function () {
 
         expect($callWithCaller->args)->toHaveCount(8);
     });
+
+    test('createPropertyMemberAssignCheckCall creates FuncCall node for RuntimeTypeChecker::checkPropertyMemberAssign', function () {
+        $obj = new Node\Expr\Variable('box');
+        $chain = new Node\Expr\Array_([
+            new Node\Expr\ArrayItem(
+                new Node\Expr\Array_([
+                    new Node\Expr\ArrayItem(new Node\Scalar\String_('dim')),
+                    new Node\Expr\ArrayItem(new Node\Expr\ConstFetch(new Node\Name('null'))),
+                ])
+            ),
+        ]);
+        $val = new Node\Scalar\LNumber(42);
+
+        $call = NodeBuilder::createPropertyMemberAssignCheckCall($obj, 'numbers', $chain, $val);
+
+        expect($call)->toBeInstanceOf(Node\Expr\FuncCall::class)
+            ->and($call->name->toString())->toBe('\TypePHP\Internal\RuntimeTypeChecker::checkPropertyMemberAssign')
+            ->and($call->args)->toHaveCount(5)
+        ;
+    });
 });

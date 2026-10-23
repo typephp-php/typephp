@@ -869,6 +869,18 @@ final class ContractVisitor extends NodeVisitorAbstract
                 }
             }
 
+            if (($propDimInfo = $this->extractPropertyDimChain($node->var)) !== null) {
+                $node->expr = $this->wrapPropertyMemberAssignCheck(
+                    $node->expr,
+                    $propDimInfo['targetExpr'],
+                    $propDimInfo['propName'],
+                    $propDimInfo['chain'],
+                    $node->var->getStartLine()
+                );
+
+                return;
+            }
+
             if ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
                 $node->expr = $this->wrapPropertyCheck($node->expr, $node->var->var, $node->var->name->toString(), $node->var->getStartLine());
             } elseif ($node->var instanceof Node\Expr\StaticPropertyFetch && $node->var->name instanceof Node\VarLikeIdentifier) {
@@ -1031,6 +1043,19 @@ final class ContractVisitor extends NodeVisitorAbstract
                 }
             }
 
+            if (($propDimInfo = $this->extractPropertyDimChain($node->var)) !== null) {
+                return new Node\Expr\Assign(
+                    $node->var,
+                    $this->wrapPropertyMemberAssignCheck(
+                        $binaryExpr,
+                        $propDimInfo['targetExpr'],
+                        $propDimInfo['propName'],
+                        $propDimInfo['chain'],
+                        $node->var->getStartLine()
+                    )
+                );
+            }
+
             if ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
                 return new Node\Expr\Assign(
                     $node->var,
@@ -1095,6 +1120,19 @@ final class ContractVisitor extends NodeVisitorAbstract
                         $this->wrapMemberAssignCheck($binaryExpr, $root, $chain, $typeString, $varName, $node->var->getStartLine())
                     );
                 }
+            }
+
+            if (($propDimInfo = $this->extractPropertyDimChain($node->var)) !== null) {
+                return new Node\Expr\Assign(
+                    $node->var,
+                    $this->wrapPropertyMemberAssignCheck(
+                        $binaryExpr,
+                        $propDimInfo['targetExpr'],
+                        $propDimInfo['propName'],
+                        $propDimInfo['chain'],
+                        $node->var->getStartLine()
+                    )
+                );
             }
 
             if ($node->var instanceof Node\Expr\PropertyFetch && $node->var->name instanceof Node\Identifier) {
@@ -1170,6 +1208,10 @@ final class ContractVisitor extends NodeVisitorAbstract
      */
     private function shouldHandleMemberAssignCheck(string $typeString, array $chain): bool
     {
+        if (($chain[0][0] ?? null) === 'prop') {
+            return str_contains($typeString, '{');
+        }
+
         foreach ($chain as $step) {
             if ($step[0] === 'dim') {
                 return true;
@@ -1177,6 +1219,85 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         return str_contains($typeString, '{');
+    }
+
+    /**
+     * Unpacks array dimension fetches rooted at an instance or static property.
+     *
+     * @return array{targetExpr: Node\Expr, propName: string, chain: list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}>}|null
+     */
+    private function extractPropertyDimChain(Node\Expr $target): ?array
+    {
+        if (! ($target instanceof Node\Expr\ArrayDimFetch)) {
+            return null;
+        }
+
+        $curr = $target;
+        $chain = [];
+
+        while ($curr instanceof Node\Expr\ArrayDimFetch) {
+            array_unshift($chain, ['dim', $curr->dim]);
+            $curr = $curr->var;
+        }
+
+        if ($curr instanceof Node\Expr\PropertyFetch && $curr->name instanceof Node\Identifier) {
+            return [
+                'targetExpr' => $curr->var,
+                'propName' => $curr->name->toString(),
+                'chain' => $chain,
+            ];
+        }
+
+        if ($curr instanceof Node\Expr\StaticPropertyFetch && $curr->name instanceof Node\VarLikeIdentifier) {
+            $classArg = $curr->class instanceof Node\Name
+                ? new Node\Expr\ClassConstFetch($curr->class, 'class')
+                : $curr->class;
+
+            return [
+                'targetExpr' => $classArg,
+                'propName' => $curr->name->toString(),
+                'chain' => $chain,
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * @param list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}> $chain
+     */
+    private function wrapPropertyMemberAssignCheck(
+        Node\Expr $valueExpr,
+        Node\Expr $targetExpr,
+        string $propName,
+        array $chain,
+        int $line
+    ): Node\Expr\Ternary {
+        $chainItems = [];
+        foreach ($chain as $step) {
+            $kind = new Node\Scalar\String_($step[0]);
+            if ($step[0] === 'dim') {
+                $dimExpr = $step[1] instanceof Node\Expr ? $step[1] : new Node\Expr\ConstFetch(new Node\Name('null'));
+            } elseif (\is_string($step[1])) {
+                $dimExpr = new Node\Scalar\String_($step[1]);
+            } elseif ($step[1] instanceof Node\Expr) {
+                $dimExpr = $step[1];
+            } else {
+                $dimExpr = new Node\Scalar\String_('');
+            }
+
+            $chainItems[] = new Node\ArrayItem(
+                new Node\Expr\Array_([
+                    new Node\ArrayItem($kind),
+                    new Node\ArrayItem($dimExpr),
+                ])
+            );
+        }
+
+        $chainAst = new Node\Expr\Array_($chainItems);
+        $checkCall = NodeBuilder::createPropertyMemberAssignCheckCall($targetExpr, $propName, $chainAst, $valueExpr);
+
+        return NodeBuilder::createTernaryThrowExpr($checkCall, $line);
     }
 
     /**
