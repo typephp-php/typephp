@@ -169,5 +169,36 @@ describe('Tooling Annotation Priorities (@phpstan-* and @psalm-*)', function () 
                 ->and(handleCovariantProducer($producer))->toBeInstanceOf(Dog::class)
             ;
         });
+
+        test('merges bound and variance when @phpstan-template T of Bound and @phpstan-template-covariant T are split across tags', function () {
+            $producerClass = new class (new Dog()) {
+                /**
+                 * @template T
+                 *
+                 * @phpstan-template T of Animal
+                 *
+                 * @phpstan-template-covariant T
+                 */
+                public function __construct(public mixed $item)
+                {
+                }
+            };
+
+            $doc = <<<'DOC'
+/**
+ * @template T
+ * @phpstan-template T of \TypePHP\Tests\Fixtures\Domain\Animal
+ * @phpstan-template-covariant T
+ */
+DOC;
+            $node = \TypePHP\Internal\Docblock\DocblockExtractor::parseDocString($doc);
+            $templates = \TypePHP\Internal\Docblock\DocblockExtractor::extractTemplates($node);
+            $variances = \TypePHP\Internal\Docblock\DocblockExtractor::extractTemplateVariances($node);
+
+            expect($templates)->toHaveKey('T')
+                ->and((string) $templates['T']->bound)->toBe('\TypePHP\Tests\Fixtures\Domain\Animal')
+                ->and($variances['T'])->toBe('covariant')
+            ;
+        });
     });
 });

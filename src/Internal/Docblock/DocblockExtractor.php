@@ -370,6 +370,7 @@ final class DocblockExtractor
 
     /**
      * Extracts all @template tags in declaration order with priority: @phpstan-template-* > @psalm-template-* > @template-*.
+     * Merges bounds and defaults when variance and bounds are split across multiple tags for the same template.
      *
      * @return array<string, TemplateTagValueNode>
      */
@@ -384,10 +385,34 @@ final class DocblockExtractor
                 continue;
             }
 
-            $tName = $tagNode->value->name;
-            if (! isset($priorities[$tName]) || $priority >= $priorities[$tName]) {
-                $templates[$tName] = $tagNode->value;
+            $newTag = $tagNode->value;
+            $tName = $newTag->name;
+
+            if (! isset($templates[$tName])) {
+                $templates[$tName] = $newTag;
                 $priorities[$tName] = $priority;
+
+                continue;
+            }
+
+            $existingTag = $templates[$tName];
+            $existingPriority = $priorities[$tName];
+
+            if ($priority >= $existingPriority) {
+                $templates[$tName] = new TemplateTagValueNode(
+                    $tName,
+                    $newTag->bound ?? $existingTag->bound,
+                    $newTag->description !== '' ? $newTag->description : $existingTag->description,
+                    $newTag->default ?? $existingTag->default
+                );
+                $priorities[$tName] = $priority;
+            } else {
+                $templates[$tName] = new TemplateTagValueNode(
+                    $tName,
+                    $existingTag->bound ?? $newTag->bound,
+                    $existingTag->description !== '' ? $existingTag->description : $newTag->description,
+                    $existingTag->default ?? $newTag->default
+                );
             }
         }
 
