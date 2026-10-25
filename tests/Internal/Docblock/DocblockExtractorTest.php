@@ -429,6 +429,48 @@ DOC;
             ;
         });
 
+        test('preserves exact declaration order when mixing @template-covariant, @template-contravariant, and @template', function () {
+            $doc = <<<'DOC'
+/**
+ * @template-covariant K of array-key
+ * @template V
+ * @template-contravariant TIn
+ */
+DOC;
+            $node = DocblockExtractor::parseDocString($doc);
+            $templates = DocblockExtractor::extractTemplates($node);
+            $variances = DocblockExtractor::extractTemplateVariances($node);
+
+            expect(array_keys($templates))->toBe(['K', 'V', 'TIn'])
+                ->and($variances)->toBe([
+                    'K' => 'covariant',
+                    'V' => 'invariant',
+                    'TIn' => 'contravariant',
+                ])
+            ;
+        });
+
+        test('preserves declaration order when @phpstan-template refines a template declared earlier', function () {
+            $doc = <<<'DOC'
+/**
+ * @template-covariant K
+ * @template V
+ * @phpstan-template K of array-key
+ */
+DOC;
+            $node = DocblockExtractor::parseDocString($doc);
+            $templates = DocblockExtractor::extractTemplates($node);
+            $variances = DocblockExtractor::extractTemplateVariances($node);
+
+            expect(array_keys($templates))->toBe(['K', 'V'])
+                ->and((string) $templates['K']->bound)->toBe('array-key')
+                ->and($variances)->toBe([
+                    'K' => 'covariant',
+                    'V' => 'invariant',
+                ])
+            ;
+        });
+
         test('extracts declared template variances with @phpstan-template-covariant priority', function () {
             $doc = <<<'DOC'
 /**

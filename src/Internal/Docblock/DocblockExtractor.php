@@ -44,6 +44,18 @@ final class DocblockExtractor
 
     private static ?Lexer $lexer = null;
 
+    private const TEMPLATE_TAG_PRIORITIES = [
+        '@template' => 1,
+        '@template-covariant' => 1,
+        '@template-contravariant' => 1,
+        '@psalm-template' => 2,
+        '@psalm-template-covariant' => 2,
+        '@psalm-template-contravariant' => 2,
+        '@phpstan-template' => 3,
+        '@phpstan-template-covariant' => 3,
+        '@phpstan-template-contravariant' => 3,
+    ];
+
     /**
      * Resets the parsed docblock cache. Useful for test isolation.
      */
@@ -357,27 +369,25 @@ final class DocblockExtractor
     }
 
     /**
-     * Extracts all @template tags with priority: @phpstan-template-* > @psalm-template-* > @template-*.
+     * Extracts all @template tags in declaration order with priority: @phpstan-template-* > @psalm-template-* > @template-*.
      *
      * @return array<string, TemplateTagValueNode>
      */
     public static function extractTemplates(PhpDocNode $node): array
     {
         $templates = [];
+        $priorities = [];
 
-        $priorityGroups = [
-            ['@template', '@template-covariant', '@template-contravariant'],
-            ['@psalm-template', '@psalm-template-covariant', '@psalm-template-contravariant'],
-            ['@phpstan-template', '@phpstan-template-covariant', '@phpstan-template-contravariant'],
-        ];
+        foreach ($node->getTags() as $tagNode) {
+            $priority = self::TEMPLATE_TAG_PRIORITIES[$tagNode->name] ?? null;
+            if ($priority === null || ! ($tagNode->value instanceof TemplateTagValueNode)) {
+                continue;
+            }
 
-        foreach ($priorityGroups as $tagNames) {
-            foreach ($tagNames as $tagName) {
-                foreach ($node->getTagsByName($tagName) as $tagNode) {
-                    if ($tagNode->value instanceof TemplateTagValueNode) {
-                        $templates[$tagNode->value->name] = $tagNode->value;
-                    }
-                }
+            $tName = $tagNode->value->name;
+            if (! isset($priorities[$tName]) || $priority >= $priorities[$tName]) {
+                $templates[$tName] = $tagNode->value;
+                $priorities[$tName] = $priority;
             }
         }
 
@@ -385,36 +395,38 @@ final class DocblockExtractor
     }
 
     /**
-     * Extracts declared template variances ('covariant', 'contravariant', or 'invariant') per template name.
+     * Extracts declared template variances ('covariant', 'contravariant', or 'invariant') per template name in declaration order.
      *
      * @return array<string, string>
      */
     public static function extractTemplateVariances(PhpDocNode $node): array
     {
         $variances = [];
+        $priorities = [];
 
-        $priorityGroups = [
-            ['@template', '@template-covariant', '@template-contravariant'],
-            ['@psalm-template', '@psalm-template-covariant', '@psalm-template-contravariant'],
-            ['@phpstan-template', '@phpstan-template-covariant', '@phpstan-template-contravariant'],
-        ];
+        foreach ($node->getTags() as $tagNode) {
+            $priority = self::TEMPLATE_TAG_PRIORITIES[$tagNode->name] ?? null;
+            if ($priority === null || ! ($tagNode->value instanceof TemplateTagValueNode)) {
+                continue;
+            }
 
-        foreach ($priorityGroups as $tagNames) {
-            foreach ($tagNames as $tagName) {
-                foreach ($node->getTagsByName($tagName) as $tagNode) {
-                    if ($tagNode->value instanceof TemplateTagValueNode) {
-                        $tName = $tagNode->value->name;
-                        $lowerTag = strtolower($tagNode->name);
+            $tName = $tagNode->value->name;
+            $lowerTag = strtolower($tagNode->name);
 
-                        if (str_contains($lowerTag, 'covariant')) {
-                            $variances[$tName] = 'covariant';
-                        } elseif (str_contains($lowerTag, 'contravariant')) {
-                            $variances[$tName] = 'contravariant';
-                        } else {
-                            $variances[$tName] = 'invariant';
-                        }
-                    }
+            $variance = match (true) {
+                str_contains($lowerTag, 'covariant') => 'covariant',
+                str_contains($lowerTag, 'contravariant') => 'contravariant',
+                default => 'invariant',
+            };
+
+            if (! isset($priorities[$tName])) {
+                $variances[$tName] = $variance;
+                $priorities[$tName] = $priority;
+            } elseif ($priority >= $priorities[$tName]) {
+                if ($variance !== 'invariant' || $variances[$tName] === 'invariant') {
+                    $variances[$tName] = $variance;
                 }
+                $priorities[$tName] = $priority;
             }
         }
 

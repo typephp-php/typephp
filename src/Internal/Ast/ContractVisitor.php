@@ -413,35 +413,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         $defaultProps = [];
         $hasConstructor = false;
-
-        $classTemplates = [];
-        $nodeDoc = $node->getDocComment();
-        if ($nodeDoc !== null && (str_contains($nodeDoc->getText(), '@template') || str_contains($nodeDoc->getText(), '@phpstan-template') || str_contains($nodeDoc->getText(), '@psalm-template'))) {
-            try {
-                $phpDocNode = DocblockExtractor::parseDocString($nodeDoc->getText());
-                $classTemplates = DocblockExtractor::extractTemplates($phpDocNode);
-            } catch (\Throwable) {
-            }
-        }
-
-        if ($node->name !== null) {
-            $className = $this->resolveQualifiedName($node->name);
-            if ($className !== null) {
-                try {
-                    $loadedTemplates = DocblockParser::parseClassTemplates($className);
-                    $classTemplates = [...$classTemplates, ...$loadedTemplates];
-                } catch (\Throwable) {
-                }
-            }
-        }
-
-        if ($node->extends !== null) {
-            try {
-                $parentTemplates = DocblockParser::parseClassTemplates($node->extends->toString());
-                $classTemplates = [...$classTemplates, ...$parentTemplates];
-            } catch (\Throwable) {
-            }
-        }
+        $classTemplates = null;
 
         foreach ($node->stmts as $stmt) {
             if ($stmt instanceof Node\Stmt\ClassMethod && strtolower($stmt->name->toString()) === '__construct') {
@@ -453,6 +425,22 @@ final class ContractVisitor extends NodeVisitorAbstract
 
                 $doc = $stmt->getDocComment();
                 if ($doc !== null && str_contains($doc->getText(), '@var') && ! str_contains($doc->getText(), '@typephp-ignore')) {
+                    $hasNonNullDefault = false;
+                    foreach ($stmt->props as $p) {
+                        $isExplicitNull = $p->default instanceof Node\Expr\ConstFetch && strtolower($p->default->name->toString()) === 'null';
+                        if ($p->default !== null && ! $isExplicitNull) {
+                            $hasNonNullDefault = true;
+
+                            break;
+                        }
+                    }
+
+                    if (! $hasNonNullDefault) {
+                        continue;
+                    }
+
+                    $classTemplates ??= $this->resolveClassTemplatesForDefaults($node);
+
                     $propTypeNode = null;
                     $varTag = DocblockExtractor::extractVarTagFromDoc($doc->getText());
                     if ($varTag !== null) {
@@ -534,6 +522,45 @@ final class ContractVisitor extends NodeVisitorAbstract
                 }
             }
         }
+    }
+
+    /**
+     * @return array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode>
+     */
+    private function resolveClassTemplatesForDefaults(Node\Stmt\Class_ $node): array
+    {
+        $classTemplates = [];
+        $nodeDoc = $node->getDocComment();
+        if ($nodeDoc !== null && (str_contains($nodeDoc->getText(), '@template') || str_contains($nodeDoc->getText(), '@phpstan-template') || str_contains($nodeDoc->getText(), '@psalm-template'))) {
+            try {
+                $phpDocNode = DocblockExtractor::parseDocString($nodeDoc->getText());
+                $classTemplates = DocblockExtractor::extractTemplates($phpDocNode);
+            } catch (\Throwable) {
+            }
+        }
+
+        if ($node->name !== null) {
+            $className = $this->resolveQualifiedName($node->name);
+            if ($className !== null && class_exists($className, false)) {
+                try {
+                    $loadedTemplates = DocblockParser::parseClassTemplates($className);
+                    $classTemplates = [...$classTemplates, ...$loadedTemplates];
+                } catch (\Throwable) {
+                }
+            }
+        }
+
+        if ($node->extends !== null) {
+            $parentClass = $this->resolveClassNameFromNode($node->extends) ?? $node->extends->toString();
+
+            try {
+                $parentTemplates = DocblockParser::parseClassTemplates($parentClass);
+                $classTemplates = [...$classTemplates, ...$parentTemplates];
+            } catch (\Throwable) {
+            }
+        }
+
+        return $classTemplates;
     }
 
     private function trackDeclarationEntry(Node $node): void

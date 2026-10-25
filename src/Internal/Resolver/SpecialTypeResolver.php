@@ -1469,7 +1469,7 @@ final class SpecialTypeResolver
                     continue;
                 }
 
-                if ($token->id === T_USE && $classStack !== []) {
+                if ($token->id === T_USE) {
                     $isClosureUse = false;
                     for ($j = $i + 1; $j < $count; $j++) {
                         if ($tokens[$j]->id === T_WHITESPACE || $tokens[$j]->id === T_COMMENT) {
@@ -1482,7 +1482,11 @@ final class SpecialTypeResolver
                         break;
                     }
 
-                    if (! $isClosureUse) {
+                    if ($isClosureUse) {
+                        continue;
+                    }
+
+                    if ($classStack !== []) {
                         for ($k = $i - 1; $k >= 0; $k--) {
                             if ($tokens[$k]->id === T_DOC_COMMENT) {
                                 $top = end($classStack);
@@ -1498,12 +1502,10 @@ final class SpecialTypeResolver
                                 break;
                             }
                         }
+
+                        continue;
                     }
 
-                    continue;
-                }
-
-                if ($token->id === T_USE && $classStack === []) {
                     $useStatement = '';
                     for ($j = $i + 1; $j < $count; $j++) {
                         if ($tokens[$j]->text === ';') {
