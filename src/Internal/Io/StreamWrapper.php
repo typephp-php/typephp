@@ -918,7 +918,13 @@ final class StreamWrapper implements StreamWrapperInterface
             return false;
         }
 
-        $transformed = self::transformSource($source, $resolvedPath);
+        self::register();
+
+        try {
+            $transformed = self::transformSource($source, $resolvedPath);
+        } finally {
+            self::unregister();
+        }
 
         $memHandle = fopen('php://memory', 'r+');
         if ($memHandle !== false) {
@@ -947,7 +953,15 @@ final class StreamWrapper implements StreamWrapperInterface
                 if ($source === false) {
                     return false;
                 }
-                $transformed = self::transformSource($source, $resolvedPath);
+
+                self::register();
+
+                try {
+                    $transformed = self::transformSource($source, $resolvedPath);
+                } finally {
+                    self::unregister();
+                }
+
                 if (! CacheManager::writeCachedFileSafely($cachedFile, $transformed)) {
                     return $this->openMemoryStream($resolvedPath);
                 }
