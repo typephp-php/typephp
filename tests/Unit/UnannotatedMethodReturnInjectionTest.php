@@ -32,6 +32,28 @@ PHP;
             ;
         });
 
+        test('does NOT inject checkReturn into non-final standalone class method with no docblock and existing return', function () {
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+class Dog
+{
+    public function bark()
+    {
+        return 'Arff';
+    }
+}
+PHP;
+
+            $transformed = StreamWrapper::transformSource($source, 'DogWithReturn.php');
+
+            expect($transformed)->not()->toContain('RuntimeTypeChecker::checkReturn')
+                ->and($transformed)->toContain("return 'Arff';")
+            ;
+        });
+
         test('does NOT inject checkReturn into final standalone class method with no docblock and existing return', function () {
             $source = <<<'PHP'
 <?php

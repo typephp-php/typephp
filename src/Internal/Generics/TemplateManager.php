@@ -682,6 +682,8 @@ final class TemplateManager
 
     public static function hasInstanceBindings(object $instance): bool
     {
+        self::ensureInstanceInherited($instance);
+
         return self::$instanceTemplateBindings !== null && isset(self::$instanceTemplateBindings[$instance]);
     }
 
@@ -1730,7 +1732,11 @@ final class TemplateManager
     private static function ensureInstanceInherited(object $instance): void
     {
         if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$instance])) {
-            self::resolveInheritedTemplates($instance, $instance::class);
+            if (self::$pendingCloneSource !== null && is_a($instance, self::$pendingCloneSource::class)) {
+                self::copyInstanceBindings(self::$pendingCloneSource, $instance);
+            } else {
+                self::resolveInheritedTemplates($instance, $instance::class);
+            }
         }
     }
 

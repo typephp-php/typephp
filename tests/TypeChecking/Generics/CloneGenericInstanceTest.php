@@ -8,7 +8,40 @@ use TypePHP\Tests\Fixtures\Domain\Dog;
 use TypePHP\Tests\Fixtures\Generics\GenericBox;
 use TypePHP\Tests\Fixtures\Generics\GenericBoxWithMagicClone;
 
+/**
+ * @template T
+ */
+class SmartBoxWithInvalidCloneFixture
+{
+    /**
+     * @var T|null
+     */
+    public mixed $item = null;
+
+    /**
+     * @param T $item
+     */
+    public function set(mixed $item): void
+    {
+        $this->item = $item;
+    }
+
+    public function __clone(): void
+    {
+        $this->set(new Car());
+    }
+}
+
 describe('Clone Keyword & Generic Prebinding Preservation', function () {
+    test('enforces generic template contract inside __clone() method execution (TDD Reproduction)', function () {
+        /** @var SmartBoxWithInvalidCloneFixture<Dog> $box */
+        $box = new SmartBoxWithInvalidCloneFixture();
+
+        expect(fn () => clone $box)
+            ->toThrow(TypeError::class, 'must be of type ' . Dog::class)
+        ;
+    });
+
     test('preserves generic template bindings when a standard object is cloned', function () {
         /** @var GenericBox<Dog> $dogBox */
         $dogBox = new GenericBox();
@@ -43,19 +76,15 @@ describe('Clone Keyword & Generic Prebinding Preservation', function () {
         $dog1 = new Dog();
         $box1->set($dog1);
 
-        // Clone $box1 into $box2
         $box2 = clone $box1;
 
-        // Mutate $box2's item to a new Dog instance
         $dog2 = new Dog();
         $box2->set($dog2);
 
-        // Verify WeakMap and property state isolation
         expect($box2->item)->toBe($dog2)
-            ->and($box1->item)->toBe($dog1) // $box1's item remains unchanged!
+            ->and($box1->item)->toBe($dog1)
         ;
 
-        //  Both $box1 and $box2 independently enforce T = Dog and reject Car!
         expect(fn () => $box1->set(new Car()))
             ->toThrow(TypeError::class, 'template T = TypePHP\Tests\Fixtures\Domain\Dog')
         ;
