@@ -303,20 +303,8 @@ final class StreamWrapper implements StreamWrapperInterface
             $transformed = preg_replace(
                 '/[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\//',
                 ' /*__TYPEPHP_INJECTED_START__*/',
-                $transformed
-            ) ?? $transformed;
-            $drift = substr_count($transformed, "\n") - $originalLineCount;
-        }
-
-        if ($drift > 0 && str_contains($transformed, '/*__TYPEPHP_SINGLE_LINE_EMPTY__*/')) {
-            $transformed = preg_replace_callback(
-                '/[ \t]*\r?\n[ \t]*\{[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_SINGLE_LINE_EMPTY__\*\/(.*?)\r?\n[ \t]*\}/s',
-                function (array $m) use (&$drift): string {
-                    $drift -= 2;
-
-                    return ' { ' . $m[1] . ' }';
-                },
-                $transformed
+                $transformed,
+                $drift
             ) ?? $transformed;
             $drift = substr_count($transformed, "\n") - $originalLineCount;
         }
@@ -326,7 +314,7 @@ final class StreamWrapper implements StreamWrapperInterface
             $transformed .= str_repeat($nl, abs($drift));
         }
 
-        return str_replace(['/*__TYPEPHP_SINGLE_LINE_EMPTY__*/', '/*__TYPEPHP_INJECTED_START__*/', '/*__TYPEPHP_INJECTED_END__*/'], '', $transformed);
+        return str_replace(['/*__TYPEPHP_INJECTED_START__*/', '/*__TYPEPHP_INJECTED_END__*/'], '', $transformed);
     }
 
     /**

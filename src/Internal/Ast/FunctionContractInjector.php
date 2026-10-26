@@ -132,14 +132,6 @@ final class FunctionContractInjector
             return;
         }
 
-        $wasEmptyBody = ($node->stmts === []);
-        $headerEndLine = match (true) {
-            $node->returnType !== null => $node->returnType->getEndLine(),
-            $node->params !== [] => end($node->params)->getEndLine(),
-            default => $node->name->getEndLine(),
-        };
-        $isSingleLineEmptyBody = $wasEmptyBody && $headerEndLine > 0 && $node->getEndLine() === $headerEndLine;
-
         $thisArg = self::resolveThisArg($isClassMethod, $node);
         $needsReturnVars = ($hasParam && ($paramCount > 0) && (
             $hasInheritance || str_contains($docText, ' is ') || ($hasReturnDoc && str_contains($docText, '$'))
@@ -192,10 +184,6 @@ final class FunctionContractInjector
         }
 
         $node->stmts = [...$injectedStmts, ...$node->stmts];
-
-        if ($isSingleLineEmptyBody && $node->stmts !== []) {
-            $node->stmts[0]->setAttribute('typephp_single_line_empty_body', true);
-        }
     }
 
     public static function buildSelfOutCheckStmt(Node\Expr $thisArg, bool $needsReturnVars = false): Node\Stmt\Expression
