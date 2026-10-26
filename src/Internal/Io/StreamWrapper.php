@@ -298,71 +298,27 @@ final class StreamWrapper implements StreamWrapperInterface
 
         $transformedLineCount = substr_count($transformed, "\n");
         $drift = $transformedLineCount - $originalLineCount;
-        $count0 = 0;
-        $count0b = 0;
-        $countEmpty = 0;
-        $countEmptyFallback = 0;
-        $count1 = 0;
-        $count2 = 0;
-        $count3 = 0;
-
-        if ($drift > 0) {
-            $transformed = preg_replace(
-                '/[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_SINGLE_LINE_EMPTY__\*\/\/\*__TYPEPHP_INJECTED_START__\*\//',
-                ' /*__TYPEPHP_SINGLE_LINE_EMPTY__*//*__TYPEPHP_INJECTED_START__*/',
-                $transformed,
-                $drift,
-                $count0
-            ) ?? $transformed;
-            $drift -= $count0;
-        }
 
         if ($drift > 0) {
             $transformed = preg_replace(
                 '/[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\//',
                 ' /*__TYPEPHP_INJECTED_START__*/',
-                $transformed,
-                $drift,
-                $count0b
+                $transformed
             ) ?? $transformed;
-            $drift -= $count0b;
+            $drift = substr_count($transformed, "\n") - $originalLineCount;
         }
 
-        if ($drift >= 2 && str_contains($transformed, '/*__TYPEPHP_SINGLE_LINE_EMPTY__*/')) {
-            $transformed = preg_replace(
-                '/[ \t]*\r?\n[ \t]*\{[ \t]*\/\*__TYPEPHP_SINGLE_LINE_EMPTY__\*\/((?:\/\*__TYPEPHP_INJECTED_START__\*\/.*?\/\*__TYPEPHP_INJECTED_END__\*\/[ \t]*)+)\r?\n[ \t]*\}/',
-                ' { $1}',
-                $transformed,
-                intdiv($drift, 2),
-                $countEmpty
+        if ($drift > 0 && str_contains($transformed, '/*__TYPEPHP_SINGLE_LINE_EMPTY__*/')) {
+            $transformed = preg_replace_callback(
+                '/[ \t]*\r?\n[ \t]*\{[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_SINGLE_LINE_EMPTY__\*\/(.*?)\r?\n[ \t]*\}/s',
+                function (array $m) use (&$drift): string {
+                    $drift -= 2;
+
+                    return ' { ' . $m[1] . ' }';
+                },
+                $transformed
             ) ?? $transformed;
-            $drift -= ($countEmpty * 2);
-        }
-
-        if ($drift >= 2) {
-            $transformed = preg_replace(
-                '/[ \t]*\r?\n[ \t]*\{((?:[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\/.*?\/\*__TYPEPHP_INJECTED_END__\*\/)+)[ \t]*\r?\n[ \t]*\}/',
-                ' {$1 }',
-                $transformed,
-                intdiv($drift, 2),
-                $countEmptyFallback
-            ) ?? $transformed;
-            $drift -= ($countEmptyFallback * 2);
-        }
-
-        if ($drift > 0) {
-            $transformed = preg_replace('/[ \t]*\r?\n[ \t]*\{[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\//', ' { /*__TYPEPHP_INJECTED_START__*/', $transformed, $drift, $count1) ?? $transformed;
-            $drift -= $count1;
-        }
-
-        if ($drift > 0) {
-            $transformed = preg_replace('/\/\*__TYPEPHP_INJECTED_END__\*\/[ \t]*\r?\n[ \t]*\}/', '/*__TYPEPHP_INJECTED_END__*/ }', $transformed, $drift, $count2) ?? $transformed;
-            $drift -= $count2;
-        }
-
-        if ($drift > 0) {
-            $transformed = preg_replace('/\/\*__TYPEPHP_INJECTED_END__\*\/[ \t]*\r?\n[ \t]*/', '/*__TYPEPHP_INJECTED_END__*/ ', $transformed, $drift, $count3) ?? $transformed;
-            $drift -= $count3;
+            $drift = substr_count($transformed, "\n") - $originalLineCount;
         }
 
         if ($drift < 0) {
@@ -472,7 +428,7 @@ final class StreamWrapper implements StreamWrapperInterface
         if (isset(self::$realpathCache[$path])) {
             $resolvedPath = self::$realpathCache[$path];
         } else {
-            $resolvedPath = self::silent(static fn() => realpath($path));
+            $resolvedPath = self::silent(static fn () => realpath($path));
             if ($resolvedPath !== false) {
                 self::$realpathCache[$path] = $resolvedPath;
             }
@@ -486,7 +442,7 @@ final class StreamWrapper implements StreamWrapperInterface
             $target = ($resolvedPath !== false) ? $resolvedPath : $path;
             /** @var resource|false $handle */
             $handle = self::silent(
-                fn() => ($this->context !== null)
+                fn () => ($this->context !== null)
                     ? fopen($target, $mode, false, $this->context)
                     : fopen($target, $mode)
             );
@@ -542,7 +498,7 @@ final class StreamWrapper implements StreamWrapperInterface
         self::unregister();
         /** @var resource|false $handle */
         $handle = self::silent(
-            fn() => ($this->context !== null)
+            fn () => ($this->context !== null)
                 ? fopen($targetFile, $mode, $useIncludePath, $this->context)
                 : fopen($targetFile, $mode, $useIncludePath)
         );
@@ -711,7 +667,7 @@ final class StreamWrapper implements StreamWrapperInterface
 
         self::unregister();
         /** @var array<int|string, int>|false $result */
-        $result = self::silent(static fn() => $isLink ? @lstat($path) : @stat($path));
+        $result = self::silent(static fn () => $isLink ? @lstat($path) : @stat($path));
         self::register();
 
         if ($result !== false) {
@@ -750,11 +706,11 @@ final class StreamWrapper implements StreamWrapperInterface
             $valueArray = \is_array($value) ? $value : [];
             $time = $valueArray[0] ?? time();
             $atime = $valueArray[1] ?? $time;
-            $result = (bool) self::silent(fn() => @touch($path, (int) $time, (int) $atime));
+            $result = (bool) self::silent(fn () => @touch($path, (int) $time, (int) $atime));
         } elseif ($option === STREAM_META_ACCESS) {
             /** @var int $mode */
             $mode = \is_int($value) ? $value : 0777;
-            $result = (bool) self::silent(fn() => @chmod($path, $mode));
+            $result = (bool) self::silent(fn () => @chmod($path, $mode));
         }
         self::register();
 
@@ -766,7 +722,7 @@ final class StreamWrapper implements StreamWrapperInterface
         self::unregister();
         /** @var resource|false $dh */
         $dh = self::silent(
-            fn() => ($this->context !== null)
+            fn () => ($this->context !== null)
                 ? @opendir($path, $this->context)
                 : @opendir($path)
         );
@@ -903,7 +859,7 @@ final class StreamWrapper implements StreamWrapperInterface
      */
     private static function silent(callable $callback): mixed
     {
-        set_error_handler(static fn() => true);
+        set_error_handler(static fn () => true);
 
         try {
             return $callback();

@@ -633,7 +633,7 @@ PHP;
         expect($transEnd)->toBe($origEnd);
     });
 
-    test('STRESS TEST 3: Mixed multi-line parameters with trailing {}) followed by methods with DocBlocks', function () {
+    test('STRESS TEST 3: Constructor and methods with DocBlocks preserve exact line numbers', function () {
         $source = <<<'PHP'
 <?php
 
@@ -646,11 +646,9 @@ class MultiParamClass
      * @param non-empty-string $b
      * @param list<int> $c
      */
-    public function __construct(
-        public int $a,
-        public string $b,
-        public array $c = []
-    ) {}
+    public function __construct(public int $a, public string $b, public array $c = [])
+    {
+    }
 
     /**
      * @param positive-int $multiplier
@@ -672,14 +670,119 @@ PHP;
 
         expect(\count($transLines))->toBe(\count($origLines));
 
-        $origCompute = array_search('public function compute(int $multiplier): int', array_map('trim', $origLines), true);
-        $transCompute = array_search('public function compute(int $multiplier): int', array_map('trim', $transLines), true);
+        $landmarks = [
+            'public function __construct(public int $a, public string $b, public array $c = [])',
+            'public function compute(int $multiplier): int',
+            '$this->a * $multiplier',
+            '$endOfConstructorTest = true;',
+        ];
 
-        expect($transCompute)->toBe($origCompute);
+        $findLineIndex = static function (string $needle, array $lines): int {
+            foreach ($lines as $idx => $line) {
+                if (str_contains($line, $needle)) {
+                    return $idx;
+                }
+            }
 
-        $origEnd = array_search('$endOfConstructorTest = true;', array_map('trim', $origLines), true);
-        $transEnd = array_search('$endOfConstructorTest = true;', array_map('trim', $transLines), true);
+            return -1;
+        };
 
-        expect($transEnd)->toBe($origEnd);
+        foreach ($landmarks as $landmark) {
+            $origLine = $findLineIndex($landmark, $origLines);
+            $transLine = $findLineIndex($landmark, $transLines);
+
+            expect($transLine)
+                ->toBeGreaterThan(-1, "Landmark not found in transformed source: '{$landmark}'")
+                ->toBe($origLine, "Line drift detected on landmark: '{$landmark}'")
+            ;
+        }
+    });
+
+    test('STRESS TEST 4: Preserves exact line numbers when method contains inline @var, assignment, mutation, and return', function () {
+        $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+class MultiParamClassWithVar
+{
+    /**
+     * @param positive-int $a
+     * @param non-empty-string $b
+     * @param list<int> $c
+     */
+    public function __construct(public int $a, public string $b, public array $c = [])
+    {
+    }
+
+    /**
+     * @param positive-int $multiplier
+     * @return positive-int
+     */
+    public function compute(int $multiplier): int
+    {
+        /** @var positive-int $intermediate */
+        $intermediate = $this->a * $multiplier;
+        $intermediate += 10;
+
+        return $intermediate;
+    }
+}
+
+$endOfMultiStatementTest = true;
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_method_with_var_and_return.php');
+
+        $origLines = explode("\n", str_replace("\r\n", "\n", $source));
+        $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
+
+        expect(\count($transLines))->toBe(\count($origLines));
+
+        $findLineIndex = static function (string $needle, array $lines): int {
+            foreach ($lines as $idx => $line) {
+                if (str_contains($line, $needle)) {
+                    return $idx;
+                }
+            }
+
+            return -1;
+        };
+
+        $landmarks = [
+            'class MultiParamClassWithVar',
+            'public function __construct(public int $a, public string $b, public array $c = [])',
+            'public function compute(int $multiplier): int',
+            '/** @var positive-int $intermediate */',
+            '$this->a * $multiplier',
+            '$endOfMultiStatementTest = true;',
+        ];
+
+        foreach ($landmarks as $landmark) {
+            $origLine = $findLineIndex($landmark, $origLines);
+            $transLine = $findLineIndex($landmark, $transLines);
+
+            expect($transLine)
+                ->toBeGreaterThan(-1, "Landmark not found in transformed source: '{$landmark}'")
+                ->toBe($origLine, "Line drift detected on landmark: '{$landmark}'")
+            ;
+        }
+
+        $origVarAssignLine = $findLineIndex('$this->a * $multiplier', $origLines);
+        $transVarAssignLine = $findLineIndex('$this->a * $multiplier', $transLines);
+        expect($transVarAssignLine)->toBe($origVarAssignLine, 'Line drift detected on variable assignment')
+            ->and($transLines[$transVarAssignLine])->toContain('RuntimeTypeChecker::checkVariable')
+        ;
+        $origMutationLine = $findLineIndex('$intermediate += 10;', $origLines);
+        $transMutationLine = $findLineIndex('$intermediate + 10', $transLines);
+        expect($transMutationLine)->toBe($origMutationLine, 'Line drift detected on compound assignment mutation')
+            ->and($transLines[$transMutationLine])->toContain('RuntimeTypeChecker::checkVariable')
+        ;
+
+        $origReturnLine = $findLineIndex('return $intermediate;', $origLines);
+        $transReturnLine = $findLineIndex('RuntimeTypeChecker::checkReturn', $transLines);
+        expect($transReturnLine)->toBe($origReturnLine, 'Line drift detected on return statement check')
+            ->and($transLines[$transReturnLine])->toContain('$intermediate')
+        ;
     });
 });
