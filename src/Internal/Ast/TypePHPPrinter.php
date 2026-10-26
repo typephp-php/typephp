@@ -28,7 +28,12 @@ final class TypePHPPrinter extends Standard
         $output = parent::p($node, $precedence, $lhsPrecedence, $parentFormatPreserved);
 
         if ($node instanceof Node\Stmt && $node->getAttribute('typephp_injected') === true) {
-            return $this->formatInjectedStatement($output);
+            $formatted = $this->formatInjectedStatement($output);
+            if ($node->getAttribute('typephp_single_line_empty_body') === true) {
+                return '/*__TYPEPHP_SINGLE_LINE_EMPTY__*/' . $formatted;
+            }
+
+            return $formatted;
         }
 
         return $output;
