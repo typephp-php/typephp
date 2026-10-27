@@ -67,6 +67,14 @@ final class GenericValidator implements TypeValidatorInterface
      */
     private static array $maskOfCache = [];
 
+    public static function reset(): void
+    {
+        self::$constantCache = [];
+        self::$enumKeyCache = [];
+        self::$enumValueCache = [];
+        self::$maskOfCache = [];
+    }
+
     /**
      * Validates a value against a GenericTypeNode AST.
      */
@@ -87,6 +95,22 @@ final class GenericValidator implements TypeValidatorInterface
             'int-mask-of' => $this->validateIntMaskOf($value, $genericNode, $context, $isSensitive),
             default => $this->validateObjectGeneric($value, $genericNode, $context, $isSensitive),
         };
+    }
+
+    /**
+     * Extracts an integer flag from an int literal or an int BackedEnum case.
+     */
+    private static function extractIntFlag(mixed $val): ?int
+    {
+        if (\is_int($val)) {
+            return $val;
+        }
+
+        if ($val instanceof \BackedEnum && \is_int($val->value)) {
+            return $val->value;
+        }
+
+        return null;
     }
 
     private function validateKeyOf(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
@@ -311,16 +335,18 @@ final class GenericValidator implements TypeValidatorInterface
                     $allowedMask |= (int) $expr->value;
                 } elseif ($expr instanceof ConstFetchNode) {
                     $constVal = $this->resolveConstantValue($expr->className, $expr->name);
-                    if (\is_int($constVal)) {
-                        $allowedMask |= $constVal;
+                    $intVal = self::extractIntFlag($constVal);
+                    if ($intVal !== null) {
+                        $allowedMask |= $intVal;
                     }
                 }
             } elseif ($typeNode instanceof IdentifierTypeNode) {
                 $target = $this->extractConstantTarget($typeNode);
                 if ($target !== null) {
                     $constVal = $this->resolveConstantValue($target[0], $target[1]);
-                    if (\is_int($constVal)) {
-                        $allowedMask |= $constVal;
+                    $intVal = self::extractIntFlag($constVal);
+                    if ($intVal !== null) {
+                        $allowedMask |= $intVal;
                     }
                 }
             }
@@ -346,7 +372,13 @@ final class GenericValidator implements TypeValidatorInterface
         if ($targetType instanceof UnionTypeNode) {
             [$allowedMask, $foundFlags] = $this->computeMaskOfUnion($targetType);
         } else {
-            $target = $this->extractConstantTarget($targetType);
+            $target = null;
+            if ($targetType instanceof IdentifierTypeNode && ClassNameValidator::isValid($targetType->name) && enum_exists($targetType->name)) {
+                $target = [$targetType->name, '*'];
+            } else {
+                $target = $this->extractConstantTarget($targetType);
+            }
+
             if ($target !== null && $target[1] !== '') {
                 [$allowedMask, $foundFlags] = $this->resolveMaskOfPattern($target[0], $target[1]);
             }
@@ -375,8 +407,9 @@ final class GenericValidator implements TypeValidatorInterface
                     $foundFlags = true;
                 } elseif ($expr instanceof ConstFetchNode) {
                     $val = $this->resolveConstantValue($expr->className, $expr->name);
-                    if (\is_int($val)) {
-                        $allowedMask |= $val;
+                    $intVal = self::extractIntFlag($val);
+                    if ($intVal !== null) {
+                        $allowedMask |= $intVal;
                         $foundFlags = true;
                     }
                 }
@@ -384,8 +417,9 @@ final class GenericValidator implements TypeValidatorInterface
                 $target = $this->extractConstantTarget($unionMember);
                 if ($target !== null) {
                     $val = $this->resolveConstantValue($target[0], $target[1]);
-                    if (\is_int($val)) {
-                        $allowedMask |= $val;
+                    $intVal = self::extractIntFlag($val);
+                    if ($intVal !== null) {
+                        $allowedMask |= $intVal;
                         $foundFlags = true;
                     }
                 }
@@ -410,26 +444,30 @@ final class GenericValidator implements TypeValidatorInterface
         $foundFlags = false;
 
         if ($className !== '') {
-            if (class_exists($className) || interface_exists($className)) {
+            if (class_exists($className) || interface_exists($className) || enum_exists($className)) {
+                /** @var class-string<object> $className */
                 $refClass = new \ReflectionClass($className);
 
                 if (str_contains($pattern, '*')) {
                     $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
                     foreach ($refClass->getConstants() as $cName => $cValue) {
-                        if (\is_int($cValue) && preg_match($regex, $cName) === 1) {
-                            $allowedMask |= $cValue;
+                        $intVal = self::extractIntFlag($cValue);
+                        if ($intVal !== null && preg_match($regex, $cName) === 1) {
+                            $allowedMask |= $intVal;
                             $foundFlags = true;
                         }
                     }
                 } else {
                     $cValue = $this->resolveConstantValue($className, $pattern);
-                    if (\is_int($cValue)) {
-                        $allowedMask |= $cValue;
+                    $intVal = self::extractIntFlag($cValue);
+                    if ($intVal !== null) {
+                        $allowedMask |= $intVal;
                         $foundFlags = true;
                     } elseif (\is_array($cValue)) {
                         foreach ($cValue as $item) {
-                            if (\is_int($item)) {
-                                $allowedMask |= $item;
+                            $itemVal = self::extractIntFlag($item);
+                            if ($itemVal !== null) {
+                                $allowedMask |= $itemVal;
                                 $foundFlags = true;
                             }
                         }
@@ -447,8 +485,9 @@ final class GenericValidator implements TypeValidatorInterface
                 }
             } else {
                 $cValue = $this->resolveConstantValue('', $pattern);
-                if (\is_int($cValue)) {
-                    $allowedMask |= $cValue;
+                $intVal = self::extractIntFlag($cValue);
+                if ($intVal !== null) {
+                    $allowedMask |= $intVal;
                     $foundFlags = true;
                 }
             }
@@ -781,10 +820,6 @@ final class GenericValidator implements TypeValidatorInterface
         return RuntimeTypeChecker::bindInstanceFromNode($value, $node, $context);
     }
 
-    // =========================================================================
-    // SHARED UTILITIES
-    // =========================================================================
-
     /**
      * Extracts constant class name and constant name from ConstTypeNode or IdentifierTypeNode.
      *
@@ -840,7 +875,8 @@ final class GenericValidator implements TypeValidatorInterface
         if (! \array_key_exists($cacheKey, self::$constantCache)) {
             $constValue = false;
             if ($fqcn !== '') {
-                if (class_exists($fqcn) || interface_exists($fqcn)) {
+                if (class_exists($fqcn) || interface_exists($fqcn) || enum_exists($fqcn)) {
+                    /** @var class-string<object> $fqcn */
                     $refClass = new \ReflectionClass($fqcn);
                     if ($refClass->hasConstant($constName)) {
                         $constValue = $refClass->getConstant($constName);

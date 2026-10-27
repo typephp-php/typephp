@@ -51,6 +51,7 @@ final class TypeValidatorRegistry
 
     public static function reset(): void
     {
+        GenericValidator::reset();
     }
 
     public function __construct()
