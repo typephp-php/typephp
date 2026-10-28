@@ -193,9 +193,7 @@ final class CallableWrapper
 
         if (! $hasAnyRef) {
             return function (...$args) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
-                $effectiveTypeNode = $typeNode->templateTypes !== []
-                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
-                    : $typeNode;
+                $effectiveTypeNode = self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName);
 
                 self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
@@ -211,9 +209,7 @@ final class CallableWrapper
 
         if ($isVariadicRef) {
             return function (&...$args) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
-                $effectiveTypeNode = $typeNode->templateTypes !== []
-                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
-                    : $typeNode;
+                $effectiveTypeNode = self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName);
 
                 self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
@@ -232,9 +228,7 @@ final class CallableWrapper
         if ($refPattern === [true]) {
             return function (mixed &$a = null) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
                 $args = [&$a];
-                $effectiveTypeNode = $typeNode->templateTypes !== []
-                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
-                    : $typeNode;
+                $effectiveTypeNode = self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName);
 
                 self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
@@ -253,9 +247,7 @@ final class CallableWrapper
         if ($refPattern === [true, false]) {
             return function (mixed &$a = null, mixed $b = null) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
                 $args = [&$a, $b];
-                $effectiveTypeNode = $typeNode->templateTypes !== []
-                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
-                    : $typeNode;
+                $effectiveTypeNode = self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName);
 
                 self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
@@ -274,9 +266,7 @@ final class CallableWrapper
         if ($refPattern === [false, true]) {
             return function (mixed $a = null, mixed &$b = null) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
                 $args = [$a, &$b];
-                $effectiveTypeNode = $typeNode->templateTypes !== []
-                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
-                    : $typeNode;
+                $effectiveTypeNode = self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName);
 
                 self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
@@ -295,9 +285,7 @@ final class CallableWrapper
         if ($refPattern === [true, true]) {
             return function (mixed &$a = null, mixed &$b = null) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
                 $args = [&$a, &$b];
-                $effectiveTypeNode = $typeNode->templateTypes !== []
-                    ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
-                    : $typeNode;
+                $effectiveTypeNode = self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName);
 
                 self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
@@ -314,9 +302,7 @@ final class CallableWrapper
         }
 
         return function (&...$args) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
-            $effectiveTypeNode = $typeNode->templateTypes !== []
-                ? self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName)
-                : $typeNode;
+            $effectiveTypeNode = self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName);
 
             self::validateCallbackArguments($effectiveTypeNode, $args, $prefix, $registry, $callable);
 
@@ -421,21 +407,18 @@ final class CallableWrapper
         }
 
         if ($callable instanceof Closure) {
-            try {
-                $ref = new ReflectionFunction($callable);
-                if ($ref->hasReturnType()) {
-                    $retType = $ref->getReturnType();
-                    if ($retType instanceof \ReflectionNamedType && $retType->getName() !== 'mixed') {
-                        $retName = $retType->getName();
-                        if ($typeNode->returnType instanceof IdentifierTypeNode && isset($localTemplates[$typeNode->returnType->name])) {
-                            $rName = $typeNode->returnType->name;
-                            if (! isset($boundLocal[$rName])) {
-                                $boundLocal[$rName] = new IdentifierTypeNode($retName);
-                            }
+            $ref = new ReflectionFunction($callable);
+            if ($ref->hasReturnType()) {
+                $retType = $ref->getReturnType();
+                if ($retType instanceof \ReflectionNamedType && $retType->getName() !== 'mixed') {
+                    $retName = $retType->getName();
+                    if ($typeNode->returnType instanceof IdentifierTypeNode && isset($localTemplates[$typeNode->returnType->name])) {
+                        $rName = $typeNode->returnType->name;
+                        if (! isset($boundLocal[$rName])) {
+                            $boundLocal[$rName] = new IdentifierTypeNode($retName);
                         }
                     }
                 }
-            } catch (\Throwable) {
             }
         }
 
@@ -491,12 +474,9 @@ final class CallableWrapper
                 if ($function !== '') {
                     $boundToValidate = SpecialTypeResolver::resolve($tTag->bound, $function);
                 } elseif ($callable instanceof Closure) {
-                    try {
-                        $cFile = (new ReflectionFunction($callable))->getFileName();
-                        if ($cFile !== false && $cFile !== '') {
-                            $boundToValidate = SpecialTypeResolver::resolveForFile($tTag->bound, $cFile);
-                        }
-                    } catch (\Throwable) {
+                    $cFile = (new ReflectionFunction($callable))->getFileName();
+                    if ($cFile !== false && $cFile !== '') {
+                        $boundToValidate = SpecialTypeResolver::resolveForFile($tTag->bound, $cFile);
                     }
                 }
 

@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Cli;
 
+/**
+ * @internal
+ */
 final class CommandRunner
 {
     private const KNOWN_COMMANDS = [

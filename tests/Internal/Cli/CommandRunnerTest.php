@@ -315,24 +315,66 @@ describe('CommandRunner Unit Tests', function () {
     });
 
     test('routes cache:clear command successfully', function () {
-        $stream = fopen('php://memory', 'r+');
-        $exitCode = CommandRunner::run(['cache:clear'], $stream, $stream);
+        $tempCacheDir = sys_get_temp_dir() . '/typephp_cli_cache_clear_' . uniqid();
+        Config::set(['cache_dir' => $tempCacheDir]);
 
-        expect($exitCode)->toBe(0);
+        try {
+            $stream = fopen('php://memory', 'r+');
+            $exitCode = CommandRunner::run(['cache:clear'], $stream, $stream);
+
+            expect($exitCode)->toBe(0);
+        } finally {
+            Config::reset();
+            if (is_dir($tempCacheDir)) {
+                @rmdir($tempCacheDir);
+            }
+        }
     });
 
     test('routes cache:warm command successfully', function () {
-        $stream = fopen('php://memory', 'r+');
-        $exitCode = CommandRunner::run(['cache:warm'], $stream, $stream);
+        $tempCacheDir = sys_get_temp_dir() . '/typephp_cli_cache_warm_' . uniqid();
+        Config::set(['cache_dir' => $tempCacheDir]);
 
-        expect($exitCode)->toBe(0);
+        try {
+            $stream = fopen('php://memory', 'r+');
+            $exitCode = CommandRunner::run(['cache:warm'], $stream, $stream);
+
+            expect($exitCode)->toBe(0);
+        } finally {
+            Config::reset();
+            $files = glob($tempCacheDir . '/*');
+            if ($files !== false) {
+                foreach ($files as $f) {
+                    @unlink($f);
+                }
+            }
+            if (is_dir($tempCacheDir)) {
+                @rmdir($tempCacheDir);
+            }
+        }
     });
 
     test('routes cache:rebuild command successfully', function () {
-        $stream = fopen('php://memory', 'r+');
-        $exitCode = CommandRunner::run(['cache:rebuild'], $stream, $stream);
+        $tempCacheDir = sys_get_temp_dir() . '/typephp_cli_cache_rebuild_' . uniqid();
+        Config::set(['cache_dir' => $tempCacheDir]);
 
-        expect($exitCode)->toBe(0);
+        try {
+            $stream = fopen('php://memory', 'r+');
+            $exitCode = CommandRunner::run(['cache:rebuild'], $stream, $stream);
+
+            expect($exitCode)->toBe(0);
+        } finally {
+            Config::reset();
+            $files = glob($tempCacheDir . '/*');
+            if ($files !== false) {
+                foreach ($files as $f) {
+                    @unlink($f);
+                }
+            }
+            if (is_dir($tempCacheDir)) {
+                @rmdir($tempCacheDir);
+            }
+        }
     });
 
     test('returns exit code 1 and detects unknown command for typo like helps', function () {

@@ -502,7 +502,7 @@ final class TemplateManager
             /** @var class-string<object> $className */
             $ref = new \ReflectionClass($className);
             $doc = StubManager::getClassDoc($className) ?? $ref->getDocComment();
-            if ($doc !== false && $doc !== null) {
+            if ($doc !== false) {
                 $phpDocNode = DocblockExtractor::parseDocString($doc);
                 $templates = DocblockExtractor::extractTemplates($phpDocNode);
 
@@ -682,6 +682,8 @@ final class TemplateManager
 
     public static function hasInstanceBindings(object $instance): bool
     {
+        self::ensureInstanceInherited($instance);
+
         return self::$instanceTemplateBindings !== null && isset(self::$instanceTemplateBindings[$instance]);
     }
 
@@ -715,7 +717,7 @@ final class TemplateManager
             $ref = new \ReflectionClass($instance);
             $classDoc = $stubDoc ?? $ref->getDocComment();
 
-            if ($classDoc !== false && $classDoc !== null) {
+            if ($classDoc !== false) {
                 $classPhpDocNode = DocblockExtractor::parseDocString($classDoc);
 
                 return DocblockExtractor::extractTemplateVariances($classPhpDocNode);
@@ -1187,7 +1189,7 @@ final class TemplateManager
             $parentRef = new \ReflectionClass($parentName);
             $parentDoc = $stubDoc ?? $parentRef->getDocComment();
 
-            if ($parentDoc === false || $parentDoc === null) {
+            if ($parentDoc === false) {
                 return;
             }
 
@@ -1251,7 +1253,7 @@ final class TemplateManager
 
         $stubDoc = StubManager::getClassDoc($hierClass->getName());
         $classDoc = $stubDoc ?? $hierClass->getDocComment();
-        if ($classDoc !== false && $classDoc !== null) {
+        if ($classDoc !== false) {
             $docs[] = $classDoc;
         }
 
@@ -1730,7 +1732,11 @@ final class TemplateManager
     private static function ensureInstanceInherited(object $instance): void
     {
         if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$instance])) {
-            self::resolveInheritedTemplates($instance, $instance::class);
+            if (self::$pendingCloneSource !== null && is_a($instance, self::$pendingCloneSource::class)) {
+                self::copyInstanceBindings(self::$pendingCloneSource, $instance);
+            } else {
+                self::resolveInheritedTemplates($instance, $instance::class);
+            }
         }
     }
 

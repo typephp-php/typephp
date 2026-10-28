@@ -8,6 +8,7 @@ use TypePHP\Internal\Checker\MemberAssignChecker;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
+use TypePHP\Tests\Fixtures\Types\ConfiguredProperty;
 
 describe('MemberAssignChecker Unit Tests', function () {
     beforeEach(function () {
@@ -249,6 +250,50 @@ describe('MemberAssignChecker Unit Tests', function () {
         );
         expect($invalid)->toBeInstanceOf(ErrorMessage::class)
             ->and($invalid->getMessage())->toContain('->user->id')
+        ;
+    });
+
+    test('checkProperty validates object property dimension assignments and preserves state on failure', function () {
+        $fixture = new ConfiguredProperty();
+        $fixture->numbers = [1, 2, 3];
+
+        $validAppend = MemberAssignChecker::checkProperty(
+            $fixture,
+            'numbers',
+            [['dim', null]],
+            4,
+            __FILE__,
+            $this->registry
+        );
+        expect($validAppend)->toBe(4)
+            ->and($fixture->numbers)->toBe([1, 2, 3])
+        ;
+
+        $invalidAppend = MemberAssignChecker::checkProperty(
+            $fixture,
+            'numbers',
+            [['dim', null]],
+            'not_an_int',
+            __FILE__,
+            $this->registry
+        );
+        expect($invalidAppend)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalidAppend->getMessage())->toContain('numbers[3] must be of type int')
+            ->and($fixture->numbers)->toBe([1, 2, 3])
+        ;
+    });
+
+    test('checkProperty returns value untouched when target is non-object/non-string or inline properties are disabled', function () {
+        expect(MemberAssignChecker::checkProperty(123, 'numbers', [['dim', null]], 'val', __FILE__, $this->registry))
+            ->toBe('val')
+        ;
+
+        Config::set(['inline_vars' => ['properties' => false]]);
+        $fixture = new ConfiguredProperty();
+        $fixture->numbers = [1, 2];
+
+        expect(MemberAssignChecker::checkProperty($fixture, 'numbers', [['dim', null]], 'invalid', __FILE__, $this->registry))
+            ->toBe('invalid')
         ;
     });
 });

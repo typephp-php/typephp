@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Tests\Internal\Ast;
 
 use TypePHP\Internal\Io\StreamWrapper;
+use TypePHP\Internal\Util\Config;
 
 describe('Unannotated Method Return Check Injection (TDD)', function () {
     describe('1. Standalone Classes Without Inheritance (Zero Injections)', function () {
@@ -28,6 +29,28 @@ PHP;
                 ->and($transformed)->not()->toContain('RuntimeTypeChecker::setupScope')
                 ->and($transformed)->not()->toContain('$__typephpRet')
                 ->and($transformed)->not()->toContain('return')
+            ;
+        });
+
+        test('does NOT inject checkReturn into non-final standalone class method with no docblock and existing return', function () {
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+class Dog
+{
+    public function bark()
+    {
+        return 'Arff';
+    }
+}
+PHP;
+
+            $transformed = StreamWrapper::transformSource($source, 'DogWithReturn.php');
+
+            expect($transformed)->not()->toContain('RuntimeTypeChecker::checkReturn')
+                ->and($transformed)->toContain("return 'Arff';")
             ;
         });
 
@@ -123,6 +146,14 @@ PHP;
     });
 
     describe('2. Standalone Classes With Explicit Return Contracts (Must Inject)', function () {
+        beforeEach(function () {
+            Config::set(['eliminate_statically_proven_checks' => false]);
+        });
+
+        afterEach(function () {
+            Config::reset();
+        });
+
         test('injects checkReturn when standalone method explicitly declares @return docblock', function () {
             $source = <<<'PHP'
 <?php

@@ -48,6 +48,8 @@ PHP;
         });
 
         test('wraps yield expressions in generator functions', function () {
+            Config::set(['eliminate_statically_proven_checks' => false]);
+
             $genSource = <<<'PHP'
 <?php
 

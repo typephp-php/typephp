@@ -8,6 +8,11 @@ use PhpParser\Comment\Doc;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
+use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use TypePHP\Internal\Ast\Elimination\EliminationSafetyPolicy;
+use TypePHP\Internal\Ast\Elimination\Evaluator\GeneratorEvaluator;
+use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
+use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Util\StubManager;
 
 /**
@@ -31,8 +36,11 @@ final class FunctionContractInjector
     /**
      * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
      */
-    public static function inject(Node\Stmt\Function_|Node\Stmt\ClassMethod $node, ?array $classContext = null): void
-    {
+    public static function inject(
+        Node\Stmt\Function_|Node\Stmt\ClassMethod $node,
+        ?array $classContext = null,
+        string $currentFile = ''
+    ): void {
         if ($node->stmts === null) {
             return;
         }
@@ -134,9 +142,31 @@ final class FunctionContractInjector
             $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg, $isReadonlyClass, $needsReturnVars);
         }
 
+        $returnTypeNode = null;
+        $hasMethodTemplates = false;
+        if ($doc !== null) {
+            try {
+                $phpDocNode = DocblockExtractor::parseDocString($doc->getText());
+                $returnTag = DocblockExtractor::getReturnTag($phpDocNode);
+                if ($returnTag !== null) {
+                    $returnTypeNode = $returnTag->type;
+                }
+                $hasMethodTemplates = DocblockExtractor::extractTemplates($phpDocNode) !== [];
+            } catch (\Throwable) {
+            }
+        }
+
         if ($hasReturn || $hasParamOut || $hasSelfOut) {
             $node->stmts = self::isGenerator($node)
-                ? self::wrapGeneratorReturns($node->stmts, $thisArg)
+                ? self::wrapGeneratorReturns(
+                    $node->stmts,
+                    $thisArg,
+                    $node,
+                    $classContext,
+                    $returnTypeNode,
+                    $currentFile,
+                    $hasMethodTemplates
+                )
                 : self::wrapNonGeneratorReturns(
                     $node->stmts,
                     $thisArg,
@@ -146,6 +176,10 @@ final class FunctionContractInjector
                     $hasParamOut ? $byRefParams : [],
                     $hasSelfOut,
                     $node->byRef,
+                    $node,
+                    $classContext,
+                    $returnTypeNode,
+                    $currentFile
                 );
         }
 
@@ -333,7 +367,7 @@ final class FunctionContractInjector
             return false;
         }
 
-        if (! $hasNativeReturnType && ! $hasReturnStatements) {
+        if (! $hasNativeReturnType) {
             return false;
         }
 
@@ -754,26 +788,36 @@ final class FunctionContractInjector
         );
     }
 
-    public static function buildWrappedYieldNode(Node\Expr\Yield_ $n, Node\Expr $thisArg): Node\Expr\Ternary
-    {
-        $checkYieldCall = new Node\Expr\FuncCall(
-            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkYield'),
-            [
-                new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                new Node\Arg($n->key ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
-                new Node\Arg($n->value ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
-                new Node\Arg($thisArg),
-            ]
-        );
+    public static function buildWrappedYieldNode(
+        Node\Expr\Yield_ $n,
+        Node\Expr $thisArg,
+        bool $wrapYield = true,
+        bool $wrapSend = true
+    ): Node\Expr {
+        if ($wrapYield) {
+            $checkYieldCall = new Node\Expr\FuncCall(
+                new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkYield'),
+                [
+                    new Node\Arg(new Node\Scalar\MagicConst\Method()),
+                    new Node\Arg($n->key ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
+                    new Node\Arg($n->value ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
+                    new Node\Arg($thisArg),
+                ]
+            );
 
-        $n->value = new Node\Expr\Ternary(
-            new Node\Expr\Instanceof_(
-                new Node\Expr\Assign(new Node\Expr\Variable('__typephpYld'), $checkYieldCall),
-                new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
-            ),
-            self::buildTypeErrorThrowExpr(new Node\Expr\Variable('__typephpYld'), $n->getStartLine()),
-            new Node\Expr\Variable('__typephpYld')
-        );
+            $n->value = new Node\Expr\Ternary(
+                new Node\Expr\Instanceof_(
+                    new Node\Expr\Assign(new Node\Expr\Variable('__typephpYld'), $checkYieldCall),
+                    new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
+                ),
+                self::buildTypeErrorThrowExpr(new Node\Expr\Variable('__typephpYld'), $n->getStartLine()),
+                new Node\Expr\Variable('__typephpYld')
+            );
+        }
+
+        if (! $wrapSend) {
+            return $n;
+        }
 
         $checkSendCall = new Node\Expr\FuncCall(
             new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkSend'),
@@ -796,15 +840,42 @@ final class FunctionContractInjector
 
     /**
      * @param array<Node\Stmt> $stmts
+     * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
      *
      * @return array<Node\Stmt>
      */
-    private static function wrapGeneratorReturns(array $stmts, Node\Expr $thisArg): array
-    {
+    private static function wrapGeneratorReturns(
+        array $stmts,
+        Node\Expr $thisArg,
+        Node\Stmt\Function_|Node\Stmt\ClassMethod|null $functionNode = null,
+        ?array $classContext = null,
+        ?TypeNode $returnTypeNode = null,
+        string $currentFile = '',
+        bool $hasMethodTemplates = false
+    ): array {
+        $canEliminate = $functionNode !== null
+            && ! $hasMethodTemplates
+            && ! ($classContext['hasTemplates'] ?? false)
+            && EliminationSafetyPolicy::isGeneratorEliminationSafe($functionNode, $classContext, $returnTypeNode);
+
+        $genContract = ($canEliminate && $returnTypeNode !== null)
+            ? GeneratorEvaluator::extractContract($returnTypeNode)
+            : null;
+
+        if ($genContract !== null) {
+            self::tagPrecedingAssignments($stmts);
+        }
+
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class ($thisArg) extends NodeVisitorAbstract {
-            public function __construct(private Node\Expr $thisArg)
-            {
+        $traverser->addVisitor(new class ($thisArg, $genContract, $currentFile) extends NodeVisitorAbstract {
+            /**
+             * @param array{key: ?TypeNode, value: ?TypeNode, send: ?TypeNode, return: ?TypeNode}|null $genContract
+             */
+            public function __construct(
+                private Node\Expr $thisArg,
+                private ?array $genContract,
+                private string $currentFile
+            ) {
             }
 
             public function enterNode(Node $n): int|Node|null
@@ -813,13 +884,53 @@ final class FunctionContractInjector
                     return NodeTraverser::DONT_TRAVERSE_CHILDREN;
                 }
 
+                if ($this->genContract !== null) {
+                    if (
+                        $n instanceof Node\Stmt\If_
+                        || $n instanceof Node\Stmt\Else_
+                        || $n instanceof Node\Stmt\ElseIf_
+                        || $n instanceof Node\Stmt\While_
+                        || $n instanceof Node\Stmt\Do_
+                        || $n instanceof Node\Stmt\For_
+                        || $n instanceof Node\Stmt\Foreach_
+                        || $n instanceof Node\Stmt\TryCatch
+                        || $n instanceof Node\Stmt\Catch_
+                        || $n instanceof Node\Stmt\Finally_
+                        || $n instanceof Node\Stmt\Case_
+                        || $n instanceof Node\Stmt\Block
+                    ) {
+                        FunctionContractInjector::tagPrecedingAssignments($n->stmts);
+                    } elseif ($n instanceof Node\Stmt\Declare_ && $n->stmts !== null) {
+                        FunctionContractInjector::tagPrecedingAssignments($n->stmts);
+                    }
+                }
+
                 if ($n instanceof Node\Expr\Yield_) {
                     if ($n->getAttribute('typephp_wrapped') === true) {
                         return null;
                     }
                     $n->setAttribute('typephp_wrapped', true);
 
-                    return FunctionContractInjector::buildWrappedYieldNode($n, $this->thisArg);
+                    $assignedExpr = $n->getAttribute('typephp_preceding_assign_expr');
+                    $precedingValueExpr = ($assignedExpr instanceof Node\Expr) ? $assignedExpr : null;
+
+                    $wrapYield = $this->genContract === null
+                        || ! GeneratorEvaluator::canEliminateYield(
+                            $n,
+                            $this->genContract['key'],
+                            $this->genContract['value'],
+                            $this->currentFile,
+                            $precedingValueExpr
+                        );
+
+                    $wrapSend = $this->genContract === null
+                        || ! GeneratorEvaluator::canEliminateSend($this->genContract['send']);
+
+                    if (! $wrapYield && ! $wrapSend) {
+                        return null;
+                    }
+
+                    return FunctionContractInjector::buildWrappedYieldNode($n, $this->thisArg, $wrapYield, $wrapSend);
                 }
 
                 if ($n instanceof Node\Expr\YieldFrom) {
@@ -827,6 +938,19 @@ final class FunctionContractInjector
                         return null;
                     }
                     $n->setAttribute('typephp_wrapped', true);
+
+                    if (
+                        $this->genContract !== null
+                        && GeneratorEvaluator::canEliminateYieldFrom(
+                            $n,
+                            $this->genContract['key'],
+                            $this->genContract['value'],
+                            $this->currentFile
+                        )
+                    ) {
+                        return null;
+                    }
+
                     $n->expr = new Node\Expr\FuncCall(
                         new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::wrapIterable'),
                         [
@@ -845,6 +969,20 @@ final class FunctionContractInjector
                     $n->setAttribute('typephp_generator_return_wrapped', true);
 
                     $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
+                    $assignedExpr = $n->getAttribute('typephp_preceding_assign_expr');
+                    $candidateExpr = ($assignedExpr instanceof Node\Expr) ? $assignedExpr : $exprToWrap;
+
+                    if (
+                        $this->genContract !== null
+                        && GeneratorEvaluator::canEliminateGeneratorReturn(
+                            $candidateExpr,
+                            $this->genContract['return'],
+                            $this->currentFile
+                        )
+                    ) {
+                        return $n;
+                    }
+
                     $checkCall = new Node\Expr\FuncCall(
                         new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkGeneratorReturn'),
                         [
@@ -868,22 +1006,27 @@ final class FunctionContractInjector
 
         $lastStmt = end($newStmts);
         if (! $lastStmt instanceof Node\Stmt\Return_ && ! ($lastStmt instanceof Node\Stmt\Expression && $lastStmt->expr instanceof Node\Expr\Throw_)) {
-            $checkCall = new Node\Expr\FuncCall(
-                new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkGeneratorReturn'),
-                [
-                    new Node\Arg(new Node\Scalar\MagicConst\Method()),
-                    new Node\Arg(new Node\Expr\ConstFetch(new Node\Name('null'))),
-                    new Node\Arg($thisArg),
-                ]
-            );
+            if (
+                $genContract === null
+                || ! GeneratorEvaluator::canEliminateGeneratorReturn(null, $genContract['return'], $currentFile)
+            ) {
+                $checkCall = new Node\Expr\FuncCall(
+                    new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkGeneratorReturn'),
+                    [
+                        new Node\Arg(new Node\Scalar\MagicConst\Method()),
+                        new Node\Arg(new Node\Expr\ConstFetch(new Node\Name('null'))),
+                        new Node\Arg($thisArg),
+                    ]
+                );
 
-            $fallbackLine = $lastStmt instanceof Node\Stmt ? $lastStmt->getStartLine() : null;
-            $ternaryExpr = self::buildTernaryReturnExpr($checkCall, $fallbackLine);
+                $fallbackLine = $lastStmt instanceof Node\Stmt ? $lastStmt->getStartLine() : null;
+                $ternaryExpr = self::buildTernaryReturnExpr($checkCall, $fallbackLine);
 
-            $retStmt = new Node\Stmt\Return_($ternaryExpr);
-            $retStmt->setAttribute('typephp_injected', true);
-            $retStmt->setAttribute('typephp_generator_return_wrapped', true);
-            $newStmts[] = $retStmt;
+                $retStmt = new Node\Stmt\Return_($ternaryExpr);
+                $retStmt->setAttribute('typephp_injected', true);
+                $retStmt->setAttribute('typephp_generator_return_wrapped', true);
+                $newStmts[] = $retStmt;
+            }
         }
 
         return $newStmts;
@@ -892,6 +1035,7 @@ final class FunctionContractInjector
     /**
      * @param array<Node\Stmt> $stmts
      * @param array<string> $byRefParams
+     * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
      *
      * @return array<Node\Stmt>
      */
@@ -903,12 +1047,31 @@ final class FunctionContractInjector
         bool $hasReturn = true,
         array $byRefParams = [],
         bool $hasSelfOut = false,
-        bool $isByRefReturn = false
+        bool $isByRefReturn = false,
+        Node\Stmt\Function_|Node\Stmt\ClassMethod|null $functionNode = null,
+        ?array $classContext = null,
+        ?TypeNode $returnTypeNode = null,
+        string $currentFile = ''
     ): array {
+        self::tagPrecedingAssignments($stmts);
+
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class ($thisArg, $isNativeVoid, $needsReturnVars, $hasReturn, $byRefParams, $hasSelfOut, $isByRefReturn) extends NodeVisitorAbstract {
+        $traverser->addVisitor(new class (
+            $thisArg,
+            $isNativeVoid,
+            $needsReturnVars,
+            $hasReturn,
+            $byRefParams,
+            $hasSelfOut,
+            $isByRefReturn,
+            $functionNode,
+            $classContext,
+            $returnTypeNode,
+            $currentFile
+        ) extends NodeVisitorAbstract {
             /**
              * @param array<string> $byRefParams
+             * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
              */
             public function __construct(
                 private Node\Expr $thisArg,
@@ -917,7 +1080,11 @@ final class FunctionContractInjector
                 private bool $hasReturn,
                 private array $byRefParams,
                 private bool $hasSelfOut,
-                private bool $isByRefReturn
+                private bool $isByRefReturn,
+                private Node\Stmt\Function_|Node\Stmt\ClassMethod|null $functionNode,
+                private ?array $classContext,
+                private ?TypeNode $returnTypeNode,
+                private string $currentFile
             ) {
             }
 
@@ -925,6 +1092,25 @@ final class FunctionContractInjector
             {
                 if ($n instanceof Node\Expr\Closure || $n instanceof Node\Expr\ArrowFunction || $n instanceof Node\Stmt\Function_ || $n instanceof Node\Stmt\ClassMethod) {
                     return NodeTraverser::DONT_TRAVERSE_CHILDREN;
+                }
+
+                if (
+                    $n instanceof Node\Stmt\If_
+                    || $n instanceof Node\Stmt\Else_
+                    || $n instanceof Node\Stmt\ElseIf_
+                    || $n instanceof Node\Stmt\While_
+                    || $n instanceof Node\Stmt\Do_
+                    || $n instanceof Node\Stmt\For_
+                    || $n instanceof Node\Stmt\Foreach_
+                    || $n instanceof Node\Stmt\TryCatch
+                    || $n instanceof Node\Stmt\Catch_
+                    || $n instanceof Node\Stmt\Finally_
+                    || $n instanceof Node\Stmt\Case_
+                    || $n instanceof Node\Stmt\Block
+                ) {
+                    FunctionContractInjector::tagPrecedingAssignments($n->stmts);
+                } elseif ($n instanceof Node\Stmt\Declare_ && $n->stmts !== null) {
+                    FunctionContractInjector::tagPrecedingAssignments($n->stmts);
                 }
 
                 if ($n instanceof Node\Stmt\Return_) {
@@ -950,6 +1136,20 @@ final class FunctionContractInjector
                     }
 
                     $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
+
+                    $assignedExpr = $n->getAttribute('typephp_preceding_assign_expr');
+                    $candidateExpr = ($assignedExpr instanceof Node\Expr) ? $assignedExpr : $exprToWrap;
+
+                    if (
+                        ! $this->isByRefReturn
+                        && ! $this->isNativeVoid
+                        && $this->functionNode !== null
+                        && $this->returnTypeNode !== null
+                        && EliminationSafetyPolicy::isReturnEliminationSafe($this->functionNode, $this->classContext, $this->returnTypeNode)
+                        && StaticTypeEvaluator::satisfies($candidateExpr, $this->returnTypeNode, $this->currentFile)
+                    ) {
+                        return $exitStmts !== [] ? [...$exitStmts, $n] : null;
+                    }
 
                     if ($this->isNativeVoid) {
                         $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
@@ -1020,5 +1220,44 @@ final class FunctionContractInjector
         }
 
         return $newStmts;
+    }
+
+    /**
+     * @param array<Node\Stmt> $stmts
+     */
+    public static function tagPrecedingAssignments(array $stmts): void
+    {
+        $count = \count($stmts);
+        for ($i = 1; $i < $count; $i++) {
+            $curr = $stmts[$i];
+            $prev = $stmts[$i - 1];
+
+            if (
+                ! ($prev instanceof Node\Stmt\Expression)
+                || ! ($prev->expr instanceof Node\Expr\Assign)
+                || ! ($prev->expr->var instanceof Node\Expr\Variable)
+                || ! \is_string($prev->expr->var->name)
+            ) {
+                continue;
+            }
+
+            $assignedVarName = $prev->expr->var->name;
+
+            if (
+                $curr instanceof Node\Stmt\Return_
+                && $curr->expr instanceof Node\Expr\Variable
+                && $curr->expr->name === $assignedVarName
+            ) {
+                $curr->setAttribute('typephp_preceding_assign_expr', $prev->expr->expr);
+            } elseif (
+                $curr instanceof Node\Stmt\Expression
+                && $curr->expr instanceof Node\Expr\Yield_
+                && $curr->expr->value instanceof Node\Expr\Variable
+                && $curr->expr->value->name === $assignedVarName
+                && ($curr->expr->key === null || ! ($curr->expr->key instanceof Node\Expr\Assign))
+            ) {
+                $curr->expr->setAttribute('typephp_preceding_assign_expr', $prev->expr->expr);
+            }
+        }
     }
 }

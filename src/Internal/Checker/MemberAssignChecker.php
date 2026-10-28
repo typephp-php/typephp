@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Checker;
 
+use ReflectionProperty;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\StructureMutator;
@@ -14,6 +15,22 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
  */
 final class MemberAssignChecker
 {
+    /**
+     * In-memory 2D cache for ReflectionProperty instances:
+     * [$className][$propName] => ?ReflectionProperty (null = non-declared/dynamic property)
+     *
+     * @var array<string, array<string, ?ReflectionProperty>>
+     */
+    private static array $refPropertyCache = [];
+
+    /**
+     * Resets the cached reflection property registry.
+     */
+    public static function reset(): void
+    {
+        self::$refPropertyCache = [];
+    }
+
     /**
      * Evaluates member mutation assignment against the declared type contract.
      *
@@ -64,5 +81,83 @@ final class MemberAssignChecker
         }
 
         return $value;
+    }
+
+    /**
+     * Evaluates dimension/member mutation assignment on an object or static property.
+     *
+     * @param list<array{0: 'dim'|'prop', 1: mixed}> $chain
+     */
+    public static function checkProperty(
+        mixed $objectOrClass,
+        string $propName,
+        array $chain,
+        mixed $value,
+        string $file,
+        TypeValidatorRegistry $registry
+    ): mixed {
+        if (! \is_object($objectOrClass) && ! \is_string($objectOrClass)) {
+            return $value;
+        }
+
+        $className = \is_string($objectOrClass) ? $objectOrClass : $objectOrClass::class;
+
+        if (isset(InlineChecker::$nullPropertyCache[$className][$propName]) || ! Config::isInlinePropertiesEnabled()) {
+            return $value;
+        }
+
+        $currentVal = self::readPropertyValue($objectOrClass, $className, $propName);
+        $copy = StructureMutator::mutateCopy($currentVal, $chain, $value);
+
+        $res = InlineChecker::checkProperty($copy, $objectOrClass, $propName, $file, $registry);
+
+        if ($res instanceof ErrorMessage) {
+            return $res;
+        }
+
+        return $value;
+    }
+
+    /**
+     * Safely reads the current value of an instance or static property across all visibilities.
+     */
+    private static function readPropertyValue(mixed $objectOrClass, string $className, string $propName): mixed
+    {
+        try {
+            $refProp = self::getReflectionProperty($className, $propName);
+
+            if ($refProp !== null) {
+                if ($refProp->isStatic()) {
+                    return $refProp->isInitialized() ? $refProp->getValue() : [];
+                }
+
+                if (\is_object($objectOrClass)) {
+                    return $refProp->isInitialized($objectOrClass) ? $refProp->getValue($objectOrClass) : [];
+                }
+            } elseif (\is_object($objectOrClass)) {
+                // @phpstan-ignore property.dynamicName
+                return $objectOrClass->$propName ?? [];
+            }
+        } catch (\Throwable) {
+        }
+
+        return [];
+    }
+
+    /**
+     * Resolves and memoizes ReflectionProperty descriptors, caching both declared properties and dynamic misses.
+     */
+    private static function getReflectionProperty(string $className, string $propName): ?ReflectionProperty
+    {
+        if (isset(self::$refPropertyCache[$className]) && \array_key_exists($propName, self::$refPropertyCache[$className])) {
+            return self::$refPropertyCache[$className][$propName];
+        }
+
+        if (property_exists($className, $propName)) {
+            /** @var class-string<object> $className */
+            return self::$refPropertyCache[$className][$propName] = new ReflectionProperty($className, $propName);
+        }
+
+        return self::$refPropertyCache[$className][$propName] = null;
     }
 }

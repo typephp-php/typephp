@@ -288,7 +288,7 @@ final class StreamWrapper implements StreamWrapperInterface
         $newStmts = $traverser1->traverse($nodesToTraverse);
 
         $traverser2 = new NodeTraverser();
-        $traverser2->addVisitor(new ContractVisitor());
+        $traverser2->addVisitor(new ContractVisitor($filePath));
         $newStmts = $traverser2->traverse($newStmts);
 
         $printer = self::getPrinter();
@@ -298,29 +298,15 @@ final class StreamWrapper implements StreamWrapperInterface
 
         $transformedLineCount = substr_count($transformed, "\n");
         $drift = $transformedLineCount - $originalLineCount;
-        $count0 = 0;
-        $count1 = 0;
-        $count2 = 0;
-        $count3 = 0;
 
         if ($drift > 0) {
-            $transformed = preg_replace('/[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\//', ' /*__TYPEPHP_INJECTED_START__*/', $transformed, $drift, $count0) ?? $transformed;
-            $drift -= $count0;
-        }
-
-        if ($drift > 0) {
-            $transformed = preg_replace('/[ \t]*\r?\n[ \t]*\{[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\//', ' { /*__TYPEPHP_INJECTED_START__*/', $transformed, $drift, $count1) ?? $transformed;
-            $drift -= $count1;
-        }
-
-        if ($drift > 0) {
-            $transformed = preg_replace('/\/\*__TYPEPHP_INJECTED_END__\*\/[ \t]*\r?\n[ \t]*\}/', '/*__TYPEPHP_INJECTED_END__*/ }', $transformed, $drift, $count2) ?? $transformed;
-            $drift -= $count2;
-        }
-
-        if ($drift > 0) {
-            $transformed = preg_replace('/\/\*__TYPEPHP_INJECTED_END__\*\/[ \t]*\r?\n[ \t]*/', '/*__TYPEPHP_INJECTED_END__*/ ', $transformed, $drift, $count3) ?? $transformed;
-            $drift -= $count3;
+            $transformed = preg_replace(
+                '/[ \t]*\r?\n[ \t]*\/\*__TYPEPHP_INJECTED_START__\*\//',
+                ' /*__TYPEPHP_INJECTED_START__*/',
+                $transformed,
+                $drift
+            ) ?? $transformed;
+            $drift = substr_count($transformed, "\n") - $originalLineCount;
         }
 
         if ($drift < 0) {
@@ -918,7 +904,13 @@ final class StreamWrapper implements StreamWrapperInterface
             return false;
         }
 
-        $transformed = self::transformSource($source, $resolvedPath);
+        self::register();
+
+        try {
+            $transformed = self::transformSource($source, $resolvedPath);
+        } finally {
+            self::unregister();
+        }
 
         $memHandle = fopen('php://memory', 'r+');
         if ($memHandle !== false) {
@@ -947,7 +939,15 @@ final class StreamWrapper implements StreamWrapperInterface
                 if ($source === false) {
                     return false;
                 }
-                $transformed = self::transformSource($source, $resolvedPath);
+
+                self::register();
+
+                try {
+                    $transformed = self::transformSource($source, $resolvedPath);
+                } finally {
+                    self::unregister();
+                }
+
                 if (! CacheManager::writeCachedFileSafely($cachedFile, $transformed)) {
                     return $this->openMemoryStream($resolvedPath);
                 }

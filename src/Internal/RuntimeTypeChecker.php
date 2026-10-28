@@ -68,6 +68,48 @@ final class RuntimeTypeChecker
     }
 
     /**
+     * Evaluates member/dimension mutation assignments on an object or static property
+     * ($obj->prop[$key] = $val or Class::$prop[$key] = $val) atomically before writing.
+     *
+     * @param list<array{0: 'dim'|'prop', 1: mixed}> $chain
+     */
+    public static function checkPropertyMemberAssign(
+        mixed $objectOrClass,
+        string $propName,
+        array $chain,
+        mixed $value,
+        string $file
+    ): mixed {
+        $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
+        if ($className !== '' && isset(InlineChecker::$nullPropertyCache[$className][$propName])) {
+            return $value;
+        }
+
+        if (! Config::isEnabled() || ! Config::isInlinePropertiesEnabled()) {
+            return $value;
+        }
+
+        $res = MemberAssignChecker::checkProperty(
+            $objectOrClass,
+            $propName,
+            $chain,
+            $value,
+            $file,
+            self::getRegistry()
+        );
+
+        if ($res instanceof ErrorMessage) {
+            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName)) {
+                return $value;
+            }
+
+            return ViolationCollector::handle($res, 'property', $value, $file, null, $className . '::$' . $propName, '$' . $propName);
+        }
+
+        return $res;
+    }
+
+    /**
      * Evaluates member mutation assignments ($arr[$key] = $val or $obj->prop = $val)
      * against the root variable's type contract atomically before writing.
      *

@@ -14,6 +14,11 @@ describe('ContractVisitor AST Transformation Unit Tests', function () {
     beforeEach(function () {
         $this->parser = (new ParserFactory())->createForNewestSupportedVersion();
         $this->printer = new TypePHPPrinter();
+        Config::set(['eliminate_statically_proven_checks' => false]);
+    });
+
+    afterEach(function () {
+        Config::reset();
     });
 
     test('skips constructor default check for properties with a get hook', function () {

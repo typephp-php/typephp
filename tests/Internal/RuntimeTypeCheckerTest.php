@@ -716,4 +716,40 @@ PHP
 
         expect($result)->toBe($cloned);
     });
+
+    test('checkPropertyMemberAssign validates property dimension assignments and respects disabled switch and ignore tags', function () {
+        $fixture = new ConfiguredProperty();
+        $fixture->numbers = [10, 20];
+
+        $valid = RuntimeTypeChecker::checkPropertyMemberAssign(
+            $fixture,
+            'numbers',
+            [['dim', null]],
+            30,
+            __FILE__
+        );
+        expect($valid)->toBe(30);
+
+        $invalid = RuntimeTypeChecker::checkPropertyMemberAssign(
+            $fixture,
+            'numbers',
+            [['dim', null]],
+            'wrong',
+            __FILE__
+        );
+        expect($invalid)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalid->getMessage())->toContain('numbers[2] must be of type int')
+            ->and($fixture->numbers)->toBe([10, 20])
+        ;
+
+        $ignored = RuntimeCheckerIgnoredCaller::run(
+            fn () => RuntimeTypeChecker::checkPropertyMemberAssign($fixture, 'numbers', [['dim', null]], 'wrong', __FILE__)
+        );
+        expect($ignored)->toBe('wrong');
+
+        Config::set(['enabled' => false]);
+        expect(RuntimeTypeChecker::checkPropertyMemberAssign($fixture, 'numbers', [['dim', null]], 'wrong', __FILE__))
+            ->toBe('wrong')
+        ;
+    });
 });

@@ -351,7 +351,7 @@ describe('Violation Reporting & Audit Mode (on_violation => report)', function (
             expect($dogs->count())->toBe(1);
 
             $violations = TypePHP::getViolations();
-            expect($violations)->toHaveCount(1)
+            expect($violations)->toHaveCount(2)
                 ->and($violations[0]->kind)->toBe('parameter')
                 ->and($violations[0]->expected)->toContain(Dog::class)
                 ->and($violations[0]->count)->toBe(1)

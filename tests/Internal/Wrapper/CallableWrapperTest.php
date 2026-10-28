@@ -5,9 +5,21 @@ declare(strict_types=1);
 namespace TypePHP\Tests\Internal\Wrapper;
 
 use Closure;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
+use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ObjectShapeItemNode;
+use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use ReflectionClass;
 use TypeError;
 use TypePHP\Internal\Docblock\DocblockParser;
@@ -15,6 +27,10 @@ use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Internal\Wrapper\CallableWrapper;
+use TypePHP\Tests\Fixtures\Domain\Animal;
+use TypePHP\Tests\Fixtures\Domain\Car;
+use TypePHP\Tests\Fixtures\Domain\Cat;
+use TypePHP\Tests\Fixtures\Domain\Dog;
 
 /**
  * @phpstan-type FormatterAlias callable(positive-int): non-empty-string
@@ -675,5 +691,462 @@ PHP;
             expect(CallableWrapper::isCallable('not_callable_123'))->toBeFalse();
             expect(CallableWrapper::isCallable(123))->toBeFalse();
         });
+    });
+
+    describe('CallableWrapper Deep Coverage & Edge Cases', function () {
+        test('specialized callable cache hit on repeated generic invocation', function () {
+            $registry = new TypeValidatorRegistry();
+            $typeNode = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [new CallableTypeParameterNode(new IdentifierTypeNode('T'), false, false, 'val', false)],
+                new IdentifierTypeNode('T'),
+                [new TemplateTagValueNode('T', null, '')]
+            );
+
+            $wrapped = CallableWrapper::wrapTypeNode(
+                $typeNode,
+                fn ($x) => $x,
+                'TestCache',
+                $registry,
+                'App\\Service::run',
+                'cb'
+            );
+
+            expect($wrapped(42))->toBe(42);
+            expect($wrapped(99))->toBe(99);
+        });
+
+        test('resolveEffectiveCallableTypeNode handles built-in template tag names gracefully', function () {
+            $registry = new TypeValidatorRegistry();
+            $typeNode = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [new CallableTypeParameterNode(new IdentifierTypeNode('int'), false, false, 'val', false)],
+                new IdentifierTypeNode('int'),
+                [new TemplateTagValueNode('int', null, '')]
+            );
+
+            $wrapped = CallableWrapper::wrapTypeNode($typeNode, fn ($x) => $x, 'TestBuiltin', $registry);
+            expect($wrapped(10))->toBe(10);
+        });
+
+        test('variadic parameter with local template infers and validates all items', function () {
+            $registry = new TypeValidatorRegistry();
+            $typeNode = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [new CallableTypeParameterNode(new IdentifierTypeNode('T'), false, true, 'items', false)],
+                new IdentifierTypeNode('void'),
+                [new TemplateTagValueNode('T', null, '')]
+            );
+
+            $wrapped = CallableWrapper::wrapTypeNode($typeNode, fn (...$items) => null, 'TestVarLocal', $registry);
+            $wrapped(10, 20, 30);
+            expect(true)->toBeTrue();
+        });
+
+        test('infers local template from closure native return type declaration', function () {
+            $registry = new TypeValidatorRegistry();
+            $typeNode = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [],
+                new IdentifierTypeNode('T'),
+                [new TemplateTagValueNode('T', null, '')]
+            );
+
+            $closure = fn (): int => 42;
+            $wrapped = CallableWrapper::wrapTypeNode($typeNode, $closure, 'TestClosureRet', $registry);
+            expect($wrapped())->toBe(42);
+        });
+
+        test('resolves bounded local template when function is empty string using closure file reflection', function () {
+            $registry = new TypeValidatorRegistry();
+            $typeNode = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [new CallableTypeParameterNode(new IdentifierTypeNode('T'), false, false, 'pet', false)],
+                new IdentifierTypeNode('T'),
+                [new TemplateTagValueNode('T', new IdentifierTypeNode(Animal::class), '')]
+            );
+
+            $closure = fn (Animal $a): Animal => $a;
+            $wrapped = CallableWrapper::wrapTypeNode($typeNode, $closure, 'TestBoundedClosure', $registry, '');
+
+            $dog = new Dog();
+            expect($wrapped($dog))->toBe($dog);
+
+            expect(fn () => $wrapped(new Car()))
+                ->toThrow(TypeError::class, Animal::class)
+            ;
+        });
+
+        test('unifies local template types across multiple parameters into a union (unifyLocalTypes)', function () {
+            $registry = new TypeValidatorRegistry();
+            $typeNode = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [
+                    new CallableTypeParameterNode(new IdentifierTypeNode('T'), false, false, 'a', false),
+                    new CallableTypeParameterNode(new IdentifierTypeNode('T'), false, false, 'b', false),
+                ],
+                new IdentifierTypeNode('void'),
+                [new TemplateTagValueNode('T', new IdentifierTypeNode(Animal::class), '')]
+            );
+
+            $fn = fn ($a, $b) => null;
+            $wrapped = CallableWrapper::wrapTypeNode($typeNode, $fn, 'TestUnify', $registry, 'App\\Test::fn');
+
+            $dog = new Dog();
+            $cat = new Cat();
+
+            $wrapped($dog, $cat);
+            expect(true)->toBeTrue();
+
+            $wrapped($dog, $dog);
+            expect(true)->toBeTrue();
+        });
+
+        test('unifies local template when existing type is already a union', function () {
+            $registry = new TypeValidatorRegistry();
+            $typeNode = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [
+                    new CallableTypeParameterNode(new IdentifierTypeNode('T'), false, false, 'a', false),
+                    new CallableTypeParameterNode(new IdentifierTypeNode('T'), false, false, 'b', false),
+                    new CallableTypeParameterNode(new IdentifierTypeNode('T'), false, false, 'c', false),
+                ],
+                new IdentifierTypeNode('void'),
+                [new TemplateTagValueNode('T', new IdentifierTypeNode('object'), '')]
+            );
+
+            $fn = fn ($a, $b, $c) => null;
+            $wrapped = CallableWrapper::wrapTypeNode($typeNode, $fn, 'TestUnifyUnion', $registry, 'App\\Test::fn');
+
+            $wrapped(new Dog(), new Cat(), new Car());
+            expect(true)->toBeTrue();
+        });
+
+        test('infers local template from ArrayTypeNode, GenericTypeNode, and ArrayShapeNode', function () {
+            $registry = new TypeValidatorRegistry();
+
+            $arrayTypeNode = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [new CallableTypeParameterNode(new ArrayTypeNode(new IdentifierTypeNode('T')), false, false, 'items', false)],
+                new IdentifierTypeNode('T'),
+                [new TemplateTagValueNode('T', null, '')]
+            );
+            $wrappedArr = CallableWrapper::wrapTypeNode($arrayTypeNode, fn (array $items) => $items[0], 'TestArr', $registry);
+            expect($wrappedArr([10, 20]))->toBe(10);
+
+            $listTypeNode = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [new CallableTypeParameterNode(new GenericTypeNode(new IdentifierTypeNode('list'), [new IdentifierTypeNode('T')]), false, false, 'items', false)],
+                new IdentifierTypeNode('T'),
+                [new TemplateTagValueNode('T', null, '')]
+            );
+            $wrappedList = CallableWrapper::wrapTypeNode($listTypeNode, fn (array $items) => $items[0], 'TestList', $registry);
+            expect($wrappedList(['alpha', 'beta']))->toBe('alpha');
+
+            $mapTypeNode = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [new CallableTypeParameterNode(new GenericTypeNode(new IdentifierTypeNode('array'), [new IdentifierTypeNode('string'), new IdentifierTypeNode('T')]), false, false, 'map', false)],
+                new IdentifierTypeNode('T'),
+                [new TemplateTagValueNode('T', null, '')]
+            );
+            $wrappedMap = CallableWrapper::wrapTypeNode($mapTypeNode, fn (array $map) => reset($map), 'TestMap', $registry);
+            expect($wrappedMap(['key' => 123]))->toBe(123);
+
+            $shapeTypeNode = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [
+                    new CallableTypeParameterNode(
+                        ArrayShapeNode::createSealed([
+                            new ArrayShapeItemNode(new ConstExprStringNode('data', ConstExprStringNode::SINGLE_QUOTED), false, new IdentifierTypeNode('T')),
+                            new ArrayShapeItemNode(new ConstExprIntegerNode('0'), false, new IdentifierTypeNode('T')),
+                        ]),
+                        false,
+                        false,
+                        'payload',
+                        false
+                    ),
+                ],
+                new IdentifierTypeNode('T'),
+                [new TemplateTagValueNode('T', null, '')]
+            );
+            $wrappedShape = CallableWrapper::wrapTypeNode($shapeTypeNode, fn (array $p) => $p['data'], 'TestShape', $registry);
+            expect($wrappedShape(['data' => 99, 0 => 99]))->toBe(99);
+
+            $objShapeTypeNode = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [
+                    new CallableTypeParameterNode(
+                        new ObjectShapeNode([
+                            new ObjectShapeItemNode(new IdentifierTypeNode('data'), false, new IdentifierTypeNode('T')),
+                        ]),
+                        false,
+                        false,
+                        'obj',
+                        false
+                    ),
+                ],
+                new IdentifierTypeNode('T'),
+                [new TemplateTagValueNode('T', null, '')]
+            );
+            $wrappedObjShape = CallableWrapper::wrapTypeNode($objShapeTypeNode, fn ($o) => $o->data, 'TestObjShape', $registry);
+            expect($wrappedObjShape((object)['data' => 'hello']))->toBe('hello');
+        });
+
+        test('wraps callable return value when callable returns another callable', function () {
+            $registry = new TypeValidatorRegistry();
+            $innerCallableType = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [new CallableTypeParameterNode(new IdentifierTypeNode('positive-int'), false, false, 'num', false)],
+                new IdentifierTypeNode('string'),
+                []
+            );
+
+            $outerCallableType = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [],
+                $innerCallableType,
+                []
+            );
+
+            $factory = fn (): callable => fn (int $x): string => "x_{$x}";
+
+            $wrappedOuter = CallableWrapper::wrapTypeNode($outerCallableType, $factory, 'TestOuter', $registry);
+            $wrappedInner = $wrappedOuter();
+
+            expect($wrappedInner(42))->toBe('x_42');
+            expect(fn () => $wrappedInner(-1))->toThrow(TypeError::class, 'positive-int');
+        });
+    });
+
+    test('catches native TypeError in standard non-ref dispatcher', function () {
+        $registry = new TypeValidatorRegistry();
+        $typeNode = new CallableTypeNode(new IdentifierTypeNode('callable'), [], new IdentifierTypeNode('void'), []);
+        $throwing = fn () => throw new TypeError('Native non-ref error');
+
+        $wrapped = CallableWrapper::wrapTypeNode($typeNode, $throwing, 'TestThrowNonRef', $registry);
+
+        expect(fn () => $wrapped())->toThrow(TypeError::class, 'Native non-ref error');
+    });
+
+    test('executes successful non-throwing mutation in [true, false] mixed dispatcher', function () {
+        $registry = new TypeValidatorRegistry();
+        $typeNode = new CallableTypeNode(
+            new IdentifierTypeNode('callable'),
+            [
+                new CallableTypeParameterNode(new IdentifierTypeNode('positive-int'), true, false, 'a', false),
+                new CallableTypeParameterNode(new IdentifierTypeNode('string'), false, false, 'b', false),
+            ],
+            new IdentifierTypeNode('string'),
+            []
+        );
+
+        $mutator = function (int &$a, string $b): string {
+            $a += 10;
+
+            return "{$b}_{$a}";
+        };
+
+        $wrapped = CallableWrapper::wrapTypeNode($typeNode, $mutator, 'TestSuccessTrueFalse', $registry);
+        $val = 5;
+        $result = $wrapped($val, 'score');
+
+        expect($val)->toBe(15)
+            ->and($result)->toBe('score_15')
+        ;
+    });
+
+    test('executes successful non-throwing mutation in [false, true] mixed dispatcher', function () {
+        $registry = new TypeValidatorRegistry();
+        $typeNode = new CallableTypeNode(
+            new IdentifierTypeNode('callable'),
+            [
+                new CallableTypeParameterNode(new IdentifierTypeNode('string'), false, false, 'a', false),
+                new CallableTypeParameterNode(new IdentifierTypeNode('positive-int'), true, false, 'b', false),
+            ],
+            new IdentifierTypeNode('string'),
+            []
+        );
+
+        $mutator = function (string $a, int &$b): string {
+            $b += 20;
+
+            return "{$a}_{$b}";
+        };
+
+        $wrapped = CallableWrapper::wrapTypeNode($typeNode, $mutator, 'TestSuccessFalseTrue', $registry);
+        $val = 10;
+        $result = $wrapped('total', $val);
+
+        expect($val)->toBe(30)
+            ->and($result)->toBe('total_30')
+        ;
+    });
+
+    test('returns early when passing null to nullable local template parameter ?T', function () {
+        $registry = new TypeValidatorRegistry();
+        $typeNode = new CallableTypeNode(
+            new IdentifierTypeNode('callable'),
+            [new CallableTypeParameterNode(new NullableTypeNode(new IdentifierTypeNode('T')), false, false, 'item', false)],
+            new IdentifierTypeNode('void'),
+            [new TemplateTagValueNode('T', null, '')]
+        );
+
+        $fn = fn ($x) => null;
+        $wrapped = CallableWrapper::wrapTypeNode($typeNode, $fn, 'TestNullParam', $registry);
+
+        $wrapped(null);
+        expect(true)->toBeTrue();
+    });
+
+    test('unifyLocalTypes handles identical types and UnionTypeNode for second type', function () {
+        $refMethod = new \ReflectionMethod(CallableWrapper::class, 'unifyLocalTypes');
+
+        $intNode1 = new IdentifierTypeNode('int');
+        $intNode2 = new IdentifierTypeNode('int');
+        $resSame = $refMethod->invoke(null, $intNode1, $intNode2);
+        expect((string) $resSame)->toBe('int');
+
+        $unionNode2 = new UnionTypeNode([new IdentifierTypeNode('string'), new IdentifierTypeNode('bool')]);
+        $resUnion = $refMethod->invoke(null, $intNode1, $unionNode2);
+        expect((string) $resUnion)->toBe('(int | string | bool)');
+    });
+
+    test('bypasses local template bound error when callback is executed in vendor context', function () {
+        $registry = new TypeValidatorRegistry();
+
+        $tempBase = sys_get_temp_dir() . '/typephp_vendor_bound_bypass_' . uniqid();
+        $vendorDir = $tempBase . '/vendor/acme/bound_runner';
+        mkdir($vendorDir, 0777, true);
+        $vendorFile = $vendorDir . '/VendorBoundCaller.php';
+
+        file_put_contents(
+            $vendorFile,
+            <<<'PHP'
+<?php
+namespace Acme\VendorBoundRunner;
+
+class VendorBoundCaller
+{
+    public static function createBoundedClosure(): \Closure
+    {
+        return function (object $item) { return $item; };
+    }
+}
+PHP
+        );
+
+        require_once $vendorFile;
+
+        try {
+            $typeNode = new CallableTypeNode(
+                new IdentifierTypeNode('callable'),
+                [new CallableTypeParameterNode(new IdentifierTypeNode('T'), false, false, 'pet', false)],
+                new IdentifierTypeNode('T'),
+                [new TemplateTagValueNode('T', new IdentifierTypeNode(Animal::class), '')]
+            );
+
+            $vendorClosure = \Acme\VendorBoundRunner\VendorBoundCaller::createBoundedClosure();
+            $wrapped = CallableWrapper::wrapTypeNode($typeNode, $vendorClosure, 'TestVendorBound', $registry);
+
+            $car = new Car();
+            $res = $wrapped($car);
+            expect($res)->toBe($car);
+        } finally {
+            @unlink($vendorFile);
+            @rmdir($vendorDir);
+            @rmdir($tempBase . '/vendor/acme');
+            @rmdir($tempBase . '/vendor');
+            @rmdir($tempBase);
+            CallerBoundaryResolver::reset();
+        }
+    });
+
+    test('infers local template when argument is passed by name', function () {
+        $registry = new TypeValidatorRegistry();
+        $typeNode = new CallableTypeNode(
+            new IdentifierTypeNode('callable'),
+            [new CallableTypeParameterNode(new IdentifierTypeNode('T'), false, false, 'customParam', false)],
+            new IdentifierTypeNode('T'),
+            [new TemplateTagValueNode('T', null, '')]
+        );
+
+        $wrapped = CallableWrapper::wrapTypeNode(
+            $typeNode,
+            fn ($customParam) => $customParam,
+            'TestNamedLocal',
+            $registry
+        );
+
+        $result = $wrapped(customParam: 100);
+        expect($result)->toBe(100);
+    });
+
+    test('infers local template when non-null value is passed to nullable parameter ?T', function () {
+        $registry = new TypeValidatorRegistry();
+        $typeNode = new CallableTypeNode(
+            new IdentifierTypeNode('callable'),
+            [new CallableTypeParameterNode(new NullableTypeNode(new IdentifierTypeNode('T')), false, false, 'item', false)],
+            new IdentifierTypeNode('T'),
+            [new TemplateTagValueNode('T', null, '')]
+        );
+
+        $fn = fn ($x) => $x;
+        $wrapped = CallableWrapper::wrapTypeNode($typeNode, $fn, 'TestNonNullParam', $registry);
+
+        $result = $wrapped(42);
+        expect($result)->toBe(42);
+    });
+
+    test('unifies local template when function name is empty string', function () {
+        $registry = new TypeValidatorRegistry();
+        $typeNode = new CallableTypeNode(
+            new IdentifierTypeNode('callable'),
+            [
+                new CallableTypeParameterNode(new IdentifierTypeNode('T'), false, false, 'a', false),
+                new CallableTypeParameterNode(new IdentifierTypeNode('T'), false, false, 'b', false),
+            ],
+            new IdentifierTypeNode('void'),
+            [new TemplateTagValueNode('T', new IdentifierTypeNode(Animal::class), '')]
+        );
+
+        $fn = fn ($a, $b) => null;
+
+        $wrapped = CallableWrapper::wrapTypeNode($typeNode, $fn, 'TestUnifyEmptyFunc', $registry, '');
+
+        $wrapped(new Dog(), new Cat());
+        expect(true)->toBeTrue();
+    });
+
+    test('infers local template from ArrayShapeNode with identifier, const fetch, and auto-indexed keys', function () {
+        $registry = new TypeValidatorRegistry();
+        $shapeTypeNode = new CallableTypeNode(
+            new IdentifierTypeNode('callable'),
+            [
+                new CallableTypeParameterNode(
+                    ArrayShapeNode::createSealed([
+                        new ArrayShapeItemNode(new IdentifierTypeNode('alpha'), false, new IdentifierTypeNode('T')),
+                        new ArrayShapeItemNode(new ConstFetchNode('self', 'BETA'), false, new IdentifierTypeNode('T')),
+                        new ArrayShapeItemNode(null, false, new IdentifierTypeNode('T')),
+                    ]),
+                    false,
+                    false,
+                    'payload',
+                    false
+                ),
+            ],
+            new IdentifierTypeNode('T'),
+            [new TemplateTagValueNode('T', null, '')]
+        );
+
+        $fn = fn (array $p) => $p['alpha'];
+        $wrapped = CallableWrapper::wrapTypeNode($shapeTypeNode, $fn, 'TestShapeKeys', $registry);
+
+        $result = $wrapped([
+            'alpha' => 10,
+            'self::BETA' => 10,
+            0 => 10,
+        ]);
+
+        expect($result)->toBe(10);
     });
 });

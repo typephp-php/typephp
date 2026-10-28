@@ -17,6 +17,17 @@ use PhpParser\PrettyPrinterAbstract;
 final class TypePHPPrinter extends Standard
 {
     /**
+     * Enables native format-preserving insertion into empty method and function statement lists.
+     */
+    protected function initializeEmptyListInsertionMap(): void
+    {
+        parent::initializeEmptyListInsertionMap();
+
+        $this->emptyListInsertionMap[Node\Stmt\ClassMethod::class . '->stmts'] = ['{', ' ', ' '];
+        $this->emptyListInsertionMap[Node\Stmt\Function_::class . '->stmts'] = ['{', ' ', ' '];
+    }
+
+    /**
      * Overrides base node printing to intercept injected statements and squash their formatting.
      */
     protected function p(

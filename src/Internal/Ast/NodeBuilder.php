@@ -122,4 +122,22 @@ final class NodeBuilder
             new Node\Expr\Variable('__typephpVal')
         );
     }
+
+    public static function createPropertyMemberAssignCheckCall(
+        Node\Expr $objectOrClassExpr,
+        string $propertyName,
+        Node\Expr $chainExpr,
+        Node\Expr $valueExpr
+    ): Node\Expr\FuncCall {
+        return new Node\Expr\FuncCall(
+            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkPropertyMemberAssign'),
+            [
+                new Node\Arg($objectOrClassExpr),
+                new Node\Arg(new Node\Scalar\String_($propertyName)),
+                new Node\Arg($chainExpr),
+                new Node\Arg($valueExpr),
+                new Node\Arg(new Node\Scalar\MagicConst\File()),
+            ]
+        );
+    }
 }

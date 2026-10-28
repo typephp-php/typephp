@@ -373,6 +373,41 @@ PHP;
             ;
         });
 
+        test('ignores top-level closure use clauses outside classes without corrupting file imports', function () {
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests;
+
+use App\Domain\Animal;
+use App\Domain\Dog;
+
+$source = new Dog();
+
+$runner = function () use ($source) {
+    /** @var Animal $target */
+    $target = $source;
+
+    return $target;
+};
+PHP;
+
+            $virtualFile = 'VirtualTopLevelClosureUse.php';
+            SpecialTypeResolver::parseFileMetadata($virtualFile, $source);
+
+            $imports = SpecialTypeResolver::getUseImportsFromFile($virtualFile);
+
+            expect($imports)->toBe([
+                'Animal' => 'App\Domain\Animal',
+                'Dog' => 'App\Domain\Dog',
+            ])
+                ->and($imports['Animal'])->not()->toContain('($source)')
+                ->and($imports)->not()->toHaveKey('source')
+            ;
+        });
+
         test('ignores use statements in docblock code examples and comments', function () {
             $source = <<<'PHP'
 <?php

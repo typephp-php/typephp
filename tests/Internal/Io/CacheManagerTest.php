@@ -15,20 +15,30 @@ describe('CacheManager Unit Tests', function () {
     });
 
     test('clears cached files from directory and returns count', function () {
-        $dir = CacheManager::getCacheDir();
+        $tempCacheDir = sys_get_temp_dir() . '/typephp_unit_cache_' . uniqid();
+        Config::set(['cache_dir' => $tempCacheDir]);
 
-        if (! is_dir($dir)) {
-            mkdir($dir, 0777, true);
+        try {
+            $dir = CacheManager::getCacheDir();
+
+            if (! is_dir($dir)) {
+                mkdir($dir, 0777, true);
+            }
+
+            $testFile = $dir . '/test_cache_unit.php';
+            file_put_contents($testFile, '<?php // test');
+
+            $count = CacheManager::clear();
+
+            expect($count)->toBeGreaterThanOrEqual(1)
+                ->and(file_exists($testFile))->toBeFalse()
+            ;
+        } finally {
+            Config::reset();
+            if (is_dir($tempCacheDir)) {
+                @rmdir($tempCacheDir);
+            }
         }
-
-        $testFile = $dir . '/test_cache_unit.php';
-        file_put_contents($testFile, '<?php // test');
-
-        $count = CacheManager::clear();
-
-        expect($count)->toBeGreaterThanOrEqual(1)
-            ->and(file_exists($testFile))->toBeFalse()
-        ;
     });
 
     test('bypasses filemtime when cache_check_mtime is disabled', function () {

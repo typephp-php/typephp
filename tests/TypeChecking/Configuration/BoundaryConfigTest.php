@@ -110,7 +110,7 @@ describe('Function Boundary Config Toggles (params & returns)', function () {
     test('skips template parameter validation when params config is set to false even if pre-bound', function () {
         Config::set([
             'params' => false,
-            'inline_vars' => ['generics' => true],
+            'inline_vars' => ['generics' => true,  'properties' => false],
         ]);
 
         /** @var GenericCollection<Dog> $dogs */
