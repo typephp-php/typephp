@@ -21,13 +21,13 @@ TypePHP is a transparent, pure-PHP runtime type checker. You don't have to refac
 
 Run in **Strict Mode** to throw immediate `TypeError` exceptions, or switch to **Audit Report Mode** to collect all runtime type violations across your test suites and legacy codebases into structured JSON reports without interrupting execution.
 
-**[Read the full TypePHP documentation »](https://typephp-php.github.io/docs/)** | **[Try it online in the Playground »](https://typephp-php.github.io/docs/playground.html)**
+**[Read the full TypePHP documentation »](https://typephp.dev/)** | **[Try it online in the Playground »](https://typephp.dev/playground)**
 
 ---
 
 ## Try It Online
 
-You can test TypePHP directly in your browser without installing anything locally via the **[Interactive WebAssembly Playground](https://typephp-php.github.io/docs/playground.html)**:
+You can test TypePHP directly in your browser without installing anything locally via the **[Interactive WebAssembly Playground](https://typephp.dev/playground)**:
 
 ---
 
@@ -262,26 +262,37 @@ Supports parallel test runners (**ParaTest**, **Pest Parallel**) with automatic 
 
 ## Documentation
 
-All the documentation lives on the **[typephp-php.github.io/docs website](https://typephp-php.github.io/docs/)**:
+All the documentation lives on the **[typephp.dev](https://typephp.dev/)** website:
 
-* [Interactive Playground](https://typephp-php.github.io/docs/playground)
-* [Getting Started & Installation Guide](https://typephp-php.github.io/docs/getting-started/installation)
-* [Quick Start Guide](https://typephp-php.github.io/docs/getting-started/quick-start)
-* [Configuration Guide](https://typephp-php.github.io/docs/getting-started/configuration)
-* [Audit Reporting & CI/CD Gates](https://typephp-php.github.io/docs/getting-started/audit-reporting)
-* [CLI Commands Reference](https://typephp-php.github.io/docs/getting-started/cli-commands)
-* [Runtime Generics (Flagship)](https://typephp-php.github.io/docs/generics/basics-and-bounds)
-* [Enforcement Boundaries: Function Contracts](https://typephp-php.github.io/docs/core-concepts/function-contracts)
-* [Supported Types: Arrays & Shapes](https://typephp-php.github.io/docs/supported-types/arrays-and-shapes)
-* [Architecture: How It Works](https://typephp-php.github.io/docs/advanced/how-it-works)
-* [Official Blog & Announcements](https://typephp-php.github.io/docs/blog/)
-* [Troubleshooting & FAQ](https://typephp-php.github.io/docs/troubleshooting)
+* [Interactive Playground](https://typephp.dev/playground)
+* [Getting Started & Installation Guide](https://typephp.dev/docs/getting-started/installation)
+* [Quick Start Guide](https://typephp.dev/docs/getting-started/quick-start)
+* [Configuration Guide](https://typephp.dev/docs/getting-started/configuration)
+* [Audit Reporting & CI/CD Gates](https://typephp.dev/docs/getting-started/audit-reporting)
+* [CLI Commands Reference](https://typephp.dev/docs/getting-started/cli-commands)
+* [Runtime Generics (Flagship)](https://typephp.dev/docs/generics/basics-and-bounds)
+* [Enforcement Boundaries: Function Contracts](https://typephp.dev/docs/core-concepts/function-contracts)
+* [Supported Types: Arrays & Shapes](https://typephp.dev/docs/supported-types/arrays-and-shapes)
+* [Architecture: How It Works](https://typephp.dev/docs/advanced/how-it-works)
+* [Official Blog & Announcements](https://typephp.dev/blog/)
+* [Troubleshooting & FAQ](https://typephp.dev/docs/troubleshooting)
+
+---
+
+## Credits & Special Thanks
+
+TypePHP stands on the shoulders of giants. It simply would not exist without two foundational cornerstones of the PHP ecosystem:
+
+* **[PHPStan](https://phpstan.org/) & [`phpstan/phpdoc-parser`](https://github.com/phpstan/phpdoc-parser)** (created by [Ondřej Mirtes](https://github.com/ondrejmirtes) and contributors):
+  A massive and sincere debt of gratitude is owed to the PHPStan team. Beyond establishing the modern type standard in PHP, `phpstan/phpdoc-parser` is the parsing powerhouse behind TypePHP. It enables TypePHP to tokenize, parse, and evaluate complex type theory—including reified generics (`@template`), conditional types, intersection/union types, DNF, array shapes, and variance—directly at runtime.
+* **[`nikic/php-parser`](https://github.com/nikic/PHP-Parser)** (created by [Nikita Popov](https://github.com/nikic)):
+  The gold standard for PHP abstract syntax tree (AST) parsing and code manipulation. It powers TypePHP's transparent stream wrapper interception, format-preserving AST transformations, and zero line-drift instrumentation.
 
 ---
 
 ## Inspiration
 
-TypePHP is conceptually inspired by Python's [Beartype](https://github.com/beartype/beartype), bringing transparent runtime type enforcement for type annotations to the PHP ecosystem without any decorators or attributes.
+TypePHP is conceptually inspired by Python's [Beartype](https://github.com/beartype/beartype) and [Typeguard](https://github.com/agronholm/typeguard), bringing transparent runtime type enforcement for type annotations to the PHP ecosystem without decorators or attributes.
 
 ---
 
