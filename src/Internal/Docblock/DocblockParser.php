@@ -1106,7 +1106,7 @@ final class DocblockParser
             }
         }
 
-        if ($doc === false || $doc === null || self::shouldIgnoreDoc($doc)) {
+        if ($doc === false || self::shouldIgnoreDoc($doc)) {
             return [
                 'types' => [],
                 'paramOuts' => [],
@@ -1576,7 +1576,7 @@ final class DocblockParser
                 $stubDoc = StubManager::getPropertyDoc($className, $paramName);
                 $propDoc = $stubDoc ?? $propertyRef->getDocComment();
 
-                if ($propDoc !== false && $propDoc !== null) {
+                if ($propDoc !== false) {
                     $propType = DocblockExtractor::extractTypeFromPropertyDoc($propDoc, $paramName);
                     if ($propType !== null) {
                         $substitutedProp = self::substituteAliases($propType, $aliases);

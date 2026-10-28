@@ -62,7 +62,7 @@ final class CallerBoundaryResolver
             try {
                 $ref = new ReflectionFunction($callable);
                 $file = $ref->getFileName();
-                if ($file !== false && $file !== null) {
+                if ($file !== false) {
                     $normalized = PathMatcher::normalizePath($file);
 
                     return PathMatcher::isVendorPath($normalized);

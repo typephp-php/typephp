@@ -1040,7 +1040,7 @@ final class ParamChecker
                     try {
                         $targetRef = new \ReflectionClass($targetClassFqcn);
                         $targetDoc = StubManager::getClassDoc($targetClassFqcn) ?? $targetRef->getDocComment();
-                        if ($targetDoc !== false && $targetDoc !== null) {
+                        if ($targetDoc !== false) {
                             $targetPhpDocNode = DocblockExtractor::parseDocString($targetDoc);
                             $targetTemplateNames = array_keys(DocblockExtractor::extractTemplates($targetPhpDocNode));
                         }

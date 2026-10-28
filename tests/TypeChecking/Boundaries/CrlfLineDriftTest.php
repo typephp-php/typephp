@@ -21,7 +21,7 @@ describe('CRLF (\r\n) Windows Line-Drift Stress Test', function () {
             . " */\r\n"
             . "function formatUserData(int \$id, string \$name): string\r\n"
             . "{\r\n"
-            . "    return \"user_{\$id}_{\$name}\";\r\n"
+            . "    return \$name;\r\n"
             . "}\r\n"
             . "\r\n"
             . "formatUserData(-5, 'Alice');\r\n";
@@ -31,19 +31,15 @@ describe('CRLF (\r\n) Windows Line-Drift Stress Test', function () {
         $origLines = explode("\n", str_replace("\r\n", "\n", $source));
         $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
 
-        // 1. Total line counts must be 100% identical
         expect(\count($transLines))->toBe(\count($origLines));
 
-        // 2. Call site line must be on the exact same line index
         $origCallLine = array_search("formatUserData(-5, 'Alice');", array_map('trim', $origLines), true);
         $transCallLine = array_search("formatUserData(-5, 'Alice');", array_map('trim', $transLines), true);
 
         expect($transCallLine)->toBe($origCallLine)
-            ->and($origCallLine)->toBe(14) // Line index 14 (Line 15 in file)
+            ->and($origCallLine)->toBe(14)
         ;
-
-        // 3. Return statement must remain on the exact same line index (Line 11)
-        $origReturnLine = array_search('return "user_{$id}_{$name}";', array_map('trim', $origLines), true);
+        $origReturnLine = array_search('return $name;', array_map('trim', $origLines), true);
         expect($origReturnLine)->toBe(11)
             ->and($transLines[11])->toContain('RuntimeTypeChecker::checkReturn')
         ;

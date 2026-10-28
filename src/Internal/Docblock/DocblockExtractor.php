@@ -627,7 +627,7 @@ final class DocblockExtractor
                 $ref = new \ReflectionClass($fqcn);
                 $doc = $stubDoc ?? $ref->getDocComment();
 
-                if ($doc === false || $doc === null) {
+                if ($doc === false) {
                     return null;
                 }
 
