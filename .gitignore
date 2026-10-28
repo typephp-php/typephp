@@ -8,3 +8,4 @@ benchmark.php
 .php-cs-fixer.cache
 /app
 /coverage-report
+/coverage
