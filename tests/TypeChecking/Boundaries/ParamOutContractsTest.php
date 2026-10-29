@@ -204,7 +204,9 @@ function tddPsalmOverridesStandardParamOut(mixed &$code): void
 
 class Issue1SingleLineParamOutA
 {
-    /** @param int $x  @param-out int $x */
+    /**
+     * @param int $x @param-out int $x
+     */
     public function run(&$x): void
     {
         $x = 'not an int';
@@ -213,7 +215,9 @@ class Issue1SingleLineParamOutA
 
 class Issue1SingleLineAmpersandB
 {
-    /** @param int &$x  @param-out int &$x */
+    /**
+     * @param int &$x @param-out int &$x
+     */
     public function run(&$x): void
     {
         $x = 'bad';
@@ -222,7 +226,9 @@ class Issue1SingleLineAmpersandB
 
 class Issue1SingleLineWithReturnC
 {
-    /** @param int $x  @param-out int $x  @return int */
+    /**
+     * @param int $x @param-out int $x  @return int
+     */
     public function run(&$x): int
     {
         $x = 'bad';
@@ -233,7 +239,9 @@ class Issue1SingleLineWithReturnC
 
 class Issue1SingleLinePhpstanD
 {
-    /** @param int $x  @phpstan-param-out int $x */
+    /**
+     * @param int $x @phpstan-param-out int $x
+     */
     public function run(&$x): void
     {
         $x = 'bad';
@@ -244,6 +252,7 @@ class Issue1MultiLineAmpersandE
 {
     /**
      * @param int &$x
+     *
      * @param-out int &$x
      */
     public function run(&$x): void
@@ -264,8 +273,9 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
         test('throws TypeError when function mutates by-ref parameter to invalid value', function () {
             $val = 'initial_string';
 
-            expect(fn() => tddParamOutBasic($val, makeInvalid: true))
-                ->toThrow(TypeError::class, 'Argument &$value (param-out) must be of type positive-int, negative int (-50) given');
+            expect(fn () => tddParamOutBasic($val, makeInvalid: true))
+                ->toThrow(TypeError::class, 'Argument &$value (param-out) must be of type positive-int, negative int (-50) given')
+            ;
         });
     });
 
@@ -276,22 +286,25 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
             tddPsalmParamOutStandalone($token, makeInvalid: false);
             expect($token)->toBe('tok_valid_123');
 
-            expect(fn() => tddPsalmParamOutStandalone($token, makeInvalid: true))
-                ->toThrow(TypeError::class, 'Argument &$token (param-out) must be of type non-empty-string');
+            expect(fn () => tddPsalmParamOutStandalone($token, makeInvalid: true))
+                ->toThrow(TypeError::class, 'Argument &$token (param-out) must be of type non-empty-string')
+            ;
         });
 
         test('prioritizes @psalm-param-out over @param-out when @phpstan-param-out is absent', function () {
             $code = 'init';
 
-            expect(fn() => tddPsalmOverridesStandardParamOut($code))
-                ->toThrow(TypeError::class, 'Argument &$code (param-out) must be of type non-empty-string');
+            expect(fn () => tddPsalmOverridesStandardParamOut($code))
+                ->toThrow(TypeError::class, 'Argument &$code (param-out) must be of type non-empty-string')
+            ;
         });
 
         test('prioritizes @phpstan-param-out over both @psalm-param-out and @param-out', function () {
             $id = 0;
 
-            expect(fn() => tddTriplePriorityParamOut($id))
-                ->toThrow(TypeError::class, 'Argument &$id (param-out) must be of type positive-int, negative int (-5) given');
+            expect(fn () => tddTriplePriorityParamOut($id))
+                ->toThrow(TypeError::class, 'Argument &$id (param-out) must be of type positive-int, negative int (-5) given')
+            ;
         });
     });
 
@@ -304,8 +317,9 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
                 ->and($status)->toBe('active')
             ;
 
-            expect(fn() => tddParamOutWithReturn($status, makeInvalid: true))
-                ->toThrow(TypeError::class, "Argument &\$status (param-out) must be of type ('active' | 'pending')");
+            expect(fn () => tddParamOutWithReturn($status, makeInvalid: true))
+                ->toThrow(TypeError::class, "Argument &\$status (param-out) must be of type ('active' | 'pending')")
+            ;
         });
     });
 
@@ -320,8 +334,9 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
             ]);
 
             $badPayload = [];
-            expect(fn() => tddParamOutArrayShape($badPayload, makeInvalid: true))
-                ->toThrow(TypeError::class, "Argument &\$payload (param-out)['id'] must be of type positive-int");
+            expect(fn () => tddParamOutArrayShape($badPayload, makeInvalid: true))
+                ->toThrow(TypeError::class, "Argument &\$payload (param-out)['id'] must be of type positive-int")
+            ;
         });
     });
 
@@ -333,11 +348,13 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
             tddMultipleParamOut($id, $name, invalidId: false, invalidName: false);
             expect($id)->toBe(100)->and($name)->toBe('Alice');
 
-            expect(fn() => tddMultipleParamOut($id, $name, invalidId: true, invalidName: false))
-                ->toThrow(TypeError::class, 'Argument &$id (param-out) must be of type positive-int');
+            expect(fn () => tddMultipleParamOut($id, $name, invalidId: true, invalidName: false))
+                ->toThrow(TypeError::class, 'Argument &$id (param-out) must be of type positive-int')
+            ;
 
-            expect(fn() => tddMultipleParamOut($id, $name, invalidId: false, invalidName: true))
-                ->toThrow(TypeError::class, 'Argument &$name (param-out) must be of type non-empty-string');
+            expect(fn () => tddMultipleParamOut($id, $name, invalidId: false, invalidName: true))
+                ->toThrow(TypeError::class, 'Argument &$name (param-out) must be of type non-empty-string')
+            ;
         });
     });
 
@@ -349,8 +366,9 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
             tddGenericParamOut($dog, $result, passCar: false);
             expect($result)->toBe($dog);
 
-            expect(fn() => tddGenericParamOut($dog, $result, passCar: true))
-                ->toThrow(TypeError::class, Dog::class);
+            expect(fn () => tddGenericParamOut($dog, $result, passCar: true))
+                ->toThrow(TypeError::class, Dog::class)
+            ;
         });
     });
 
@@ -362,8 +380,9 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
             $service->mutate($num, invalid: false);
             expect($num)->toBe(999);
 
-            expect(fn() => $service->mutate($num, invalid: true))
-                ->toThrow(TypeError::class, 'Argument &$data (param-out) must be of type positive-int');
+            expect(fn () => $service->mutate($num, invalid: true))
+                ->toThrow(TypeError::class, 'Argument &$data (param-out) must be of type positive-int')
+            ;
         });
     });
 
@@ -380,11 +399,13 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
         test('rejects values violating all union members in @param-out', function () {
             $val = null;
 
-            expect(fn() => tddParamOutUnion($val, -5))
-                ->toThrow(TypeError::class, 'Argument &$val (param-out) must be of type (positive-int | non-empty-string)');
+            expect(fn () => tddParamOutUnion($val, -5))
+                ->toThrow(TypeError::class, 'Argument &$val (param-out) must be of type (positive-int | non-empty-string)')
+            ;
 
-            expect(fn() => tddParamOutUnion($val, ''))
-                ->toThrow(TypeError::class, 'Argument &$val (param-out) must be of type (positive-int | non-empty-string)');
+            expect(fn () => tddParamOutUnion($val, ''))
+                ->toThrow(TypeError::class, 'Argument &$val (param-out) must be of type (positive-int | non-empty-string)')
+            ;
         });
 
         test('diagnoses exact failing branch in discriminated union shape @param-out', function () {
@@ -396,11 +417,13 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
             tddParamOutDiscriminatedUnion($payload, ['type' => 'B', 'code' => 'TOKEN']);
             expect($payload)->toBe(['type' => 'B', 'code' => 'TOKEN']);
 
-            expect(fn() => tddParamOutDiscriminatedUnion($payload, ['type' => 'A', 'id' => -10]))
-                ->toThrow(TypeError::class, "Argument &\$payload (param-out)['id'] must be of type positive-int");
+            expect(fn () => tddParamOutDiscriminatedUnion($payload, ['type' => 'A', 'id' => -10]))
+                ->toThrow(TypeError::class, "Argument &\$payload (param-out)['id'] must be of type positive-int")
+            ;
 
-            expect(fn() => tddParamOutDiscriminatedUnion($payload, ['type' => 'B', 'code' => '']))
-                ->toThrow(TypeError::class, "Argument &\$payload (param-out)['code'] must be of type non-empty-string");
+            expect(fn () => tddParamOutDiscriminatedUnion($payload, ['type' => 'B', 'code' => '']))
+                ->toThrow(TypeError::class, "Argument &\$payload (param-out)['code'] must be of type non-empty-string")
+            ;
         });
     });
 
@@ -417,8 +440,9 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
             $collection = null;
             $onlyCountable = new CountableOnly();
 
-            expect(fn() => tddParamOutIntersection($collection, $onlyCountable))
-                ->toThrow(TypeError::class, 'Argument &$collection (param-out) must be of type (Countable & ArrayAccess)');
+            expect(fn () => tddParamOutIntersection($collection, $onlyCountable))
+                ->toThrow(TypeError::class, 'Argument &$collection (param-out) must be of type (Countable & ArrayAccess)')
+            ;
         });
 
         test('merges and validates composed array shapes in @param-out (ShapeA & ShapeB)', function () {
@@ -427,13 +451,16 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
             tddParamOutShapeComposition($data, ['id' => 10, 'name' => 'Alice']);
             expect($data)->toBe(['id' => 10, 'name' => 'Alice']);
 
-            expect(fn() => tddParamOutShapeComposition($data, ['id' => -1, 'name' => 'Alice']))
-                ->toThrow(TypeError::class, "Argument &\$data (param-out)['id'] must be of type positive-int");
-            expect(fn() => tddParamOutShapeComposition($data, ['id' => 10, 'name' => '']))
-                ->toThrow(TypeError::class, "Argument &\$data (param-out)['name'] must be of type non-empty-string");
+            expect(fn () => tddParamOutShapeComposition($data, ['id' => -1, 'name' => 'Alice']))
+                ->toThrow(TypeError::class, "Argument &\$data (param-out)['id'] must be of type positive-int")
+            ;
+            expect(fn () => tddParamOutShapeComposition($data, ['id' => 10, 'name' => '']))
+                ->toThrow(TypeError::class, "Argument &\$data (param-out)['name'] must be of type non-empty-string")
+            ;
 
-            expect(fn() => tddParamOutShapeComposition($data, ['id' => 10, 'name' => 'Alice', 'extra' => true]))
-                ->toThrow(TypeError::class, "Argument &\$data (param-out) contains unsealed unexpected key 'extra'");
+            expect(fn () => tddParamOutShapeComposition($data, ['id' => 10, 'name' => 'Alice', 'extra' => true]))
+                ->toThrow(TypeError::class, "Argument &\$data (param-out) contains unsealed unexpected key 'extra'")
+            ;
         });
     });
 
@@ -442,39 +469,43 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
             $a = new Issue1SingleLineParamOutA();
             $v = 1;
 
-            expect(fn() => $a->run($v))
-                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int');
+            expect(fn () => $a->run($v))
+                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int')
+            ;
         });
 
         test('Class B: single-line @param and @param-out with &$x ampersand throws TypeError', function () {
             $b = new Issue1SingleLineAmpersandB();
             $v = 1;
 
-            expect(fn() => $b->run($v))
-                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int');
+            expect(fn () => $b->run($v))
+                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int')
+            ;
         });
 
         test('Class C: single-line @param, @param-out, and @return throws TypeError', function () {
             $c = new Issue1SingleLineWithReturnC();
             $v = 1;
 
-            expect(fn() => $c->run($v))
-                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int');
+            expect(fn () => $c->run($v))
+                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int')
+            ;
         });
 
         test('Class D: single-line @param and @phpstan-param-out throws TypeError', function () {
             $d = new Issue1SingleLinePhpstanD();
             $v = 1;
 
-            expect(fn() => $d->run($v))
-                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int');
+            expect(fn () => $d->run($v))
+                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int')
+            ;
         });
 
         test('Class E: multi-line @param-out with &$x ampersand throws TypeError', function () {
             $e = new Issue1MultiLineAmpersandE();
             $v = 1;
 
-            expect(fn() => $e->run($v))
+            expect(fn () => $e->run($v))
                 ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int');
         });
     });

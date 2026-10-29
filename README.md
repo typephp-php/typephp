@@ -284,7 +284,7 @@ All the documentation lives on the **[typephp.dev](https://typephp.dev/)** websi
 TypePHP stands on the shoulders of giants. It simply would not exist without two foundational cornerstones of the PHP ecosystem:
 
 * **[PHPStan](https://phpstan.org/) & [`phpstan/phpdoc-parser`](https://github.com/phpstan/phpdoc-parser)** (created by [Ondřej Mirtes](https://github.com/ondrejmirtes) and contributors):
-  A massive and sincere debt of gratitude is owed to the PHPStan team. Beyond establishing the modern type standard in PHP, `phpstan/phpdoc-parser` is the parsing powerhouse behind TypePHP. It enables TypePHP to tokenize, parse, and evaluate complex type theory—including reified generics (`@template`), conditional types, intersection/union types, DNF, array shapes, and variance—directly at runtime.
+  A massive and sincere debt of gratitude is owed to the PHPStan team. Beyond establishing the modern type standard in PHP, `phpstan/phpdoc-parser` is the parsing powerhouse behind TypePHP. It enables TypePHP to tokenize, parse, and evaluate complex type theory and including reified generics (`@template`), conditional types, intersection/union types, DNF, array shapes, and variance—directly at runtime.
 * **[`nikic/php-parser`](https://github.com/nikic/PHP-Parser)** (created by [Nikita Popov](https://github.com/nikic)):
   The gold standard for PHP abstract syntax tree (AST) parsing and code manipulation. It powers TypePHP's transparent stream wrapper interception, format-preserving AST transformations, and zero line-drift instrumentation.
 
