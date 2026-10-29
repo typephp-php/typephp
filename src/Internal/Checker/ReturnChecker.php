@@ -256,7 +256,7 @@ final class ReturnChecker
             if ($typeNode instanceof IdentifierTypeNode) {
                 $baseName = strtolower(ltrim($typeNode->name, '\\'));
             } elseif ($typeNode instanceof GenericTypeNode) {
-                $baseName = strtolower(ltrim($typeNode->type->name, '\\'));
+                $baseName = strtolower(ltrim((string) $typeNode->type, '\\'));
             }
 
             if (isset(self::GENERIC_ITERABLES[$baseName])) {
@@ -375,7 +375,7 @@ final class ReturnChecker
                 if ($resolvedType instanceof IdentifierTypeNode) {
                     $baseName = strtolower(ltrim($resolvedType->name, '\\'));
                 } elseif ($resolvedType instanceof GenericTypeNode) {
-                    $baseName = strtolower(ltrim($resolvedType->type->name, '\\'));
+                    $baseName = strtolower(ltrim((string) $resolvedType->type, '\\'));
                 }
 
                 if (isset(self::GENERIC_ITERABLES[$baseName])) {
@@ -458,7 +458,7 @@ final class ReturnChecker
             if ($resolvedType instanceof IdentifierTypeNode) {
                 $baseName = strtolower(ltrim($resolvedType->name, '\\'));
             } elseif ($resolvedType instanceof GenericTypeNode) {
-                $baseName = strtolower(ltrim($resolvedType->type->name, '\\'));
+                $baseName = strtolower(ltrim((string) $resolvedType->type, '\\'));
             }
 
             if (isset(self::GENERIC_ITERABLES[$baseName])) {

@@ -867,7 +867,7 @@ final class TemplateManager
      */
     public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false): ?ErrorMessage
     {
-        $className = $typeNode->type->name;
+        $className = (string) $typeNode->type;
         if (isset(self::CONTEXT_SELF_REFERENCES[strtolower($className)])) {
             $className = $instance::class;
         }
@@ -1172,7 +1172,7 @@ final class TemplateManager
         string $actualClassName,
         array &$bindings
     ): void {
-        $parentName = SpecialTypeResolver::resolveFqcn($genericTypeNode->type->name, $hierClass);
+        $parentName = SpecialTypeResolver::resolveFqcn((string) $genericTypeNode->type, $hierClass);
         $isHierarchyMember = is_a($actualClassName, $parentName, true) || trait_exists($parentName);
 
         if (! ClassNameValidator::isValid($parentName) || ! $isHierarchyMember) {
@@ -1340,7 +1340,7 @@ final class TemplateManager
                 return $lowerExpected === 'array' || $lowerExpected === 'iterable';
             }
 
-            if ($existing instanceof GenericTypeNode && isset($allowedSubtypes[strtolower($existing->type->name)])) {
+            if ($existing instanceof GenericTypeNode && isset($allowedSubtypes[strtolower((string) $existing->type)])) {
                 return true;
             }
         }
@@ -1388,7 +1388,7 @@ final class TemplateManager
         GenericTypeNode $expected,
         string $variance,
     ): bool {
-        if (! self::isSubclass($existing->name, $expected->type->name)) {
+        if (! self::isSubclass($existing->name, (string) $expected->type)) {
             return false;
         }
 
@@ -1405,13 +1405,13 @@ final class TemplateManager
         try {
             $classBindings = self::getClassInheritedBindings($existing->name);
             if ($classBindings !== []) {
-                $parentTemplates = DocblockParser::parseClassTemplates($expected->type->name);
+                $parentTemplates = DocblockParser::parseClassTemplates((string) $expected->type);
                 $parentTemplateNames = array_keys($parentTemplates);
 
                 $declaredVariances = [];
-                if (class_exists($expected->type->name, false) || class_exists($expected->type->name) || interface_exists($expected->type->name)) {
+                if (class_exists((string) $expected->type, false) || class_exists((string) $expected->type) || interface_exists((string) $expected->type)) {
                     try {
-                        $ref = new \ReflectionClass($expected->type->name);
+                        $ref = new \ReflectionClass((string) $expected->type);
                         [, $classVariances] = self::collectHierarchyTemplatesAndVariances($ref);
                         $declaredVariances = array_values($classVariances);
                     } catch (\Throwable $e) {
@@ -1565,15 +1565,15 @@ final class TemplateManager
 
     private static function checkNestedGenericVariance(GenericTypeNode $existing, GenericTypeNode $expected): bool
     {
-        $expectedClassName = $expected->type->name;
+        $expectedClassName = (string) $expected->type;
         $lowerExpected = strtolower($expectedClassName);
 
         if (isset(self::COLLECTION_SUBTYPES[$lowerExpected])) {
-            $lowerExisting = strtolower($existing->type->name);
+            $lowerExisting = strtolower((string) $existing->type);
             if (! isset(self::COLLECTION_SUBTYPES[$lowerExpected][$lowerExisting])) {
                 return false;
             }
-        } elseif (! is_a($existing->type->name, $expectedClassName, true)) {
+        } elseif (! is_a((string) $existing->type, $expectedClassName, true)) {
             return false;
         }
 
@@ -1821,11 +1821,11 @@ final class TemplateManager
         }
 
         if ($n instanceof GenericTypeNode) {
-            $lower = strtolower($n->type->name);
+            $lower = strtolower((string) $n->type);
             $baseName = match ($lower) {
                 'self', 'static', '$this' => $ref->getName(),
                 'parent' => ($parent = $ref->getParentClass()) !== false ? $parent->getName() : 'parent',
-                default => SpecialTypeResolver::resolveFqcn($n->type->name, $ref),
+                default => SpecialTypeResolver::resolveFqcn((string) $n->type, $ref),
             };
 
             $base = new IdentifierTypeNode($baseName);

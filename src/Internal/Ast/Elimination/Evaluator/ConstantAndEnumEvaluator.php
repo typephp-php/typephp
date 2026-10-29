@@ -83,7 +83,7 @@ final class ConstantAndEnumEvaluator
             return $targetClassName === $typeNode->name;
         }
 
-        if ($typeNode instanceof GenericTypeNode && strtolower($typeNode->type->name) === 'int-mask-of') {
+        if ($typeNode instanceof GenericTypeNode && strtolower((string) $typeNode->type) === 'int-mask-of') {
             $inner = $typeNode->genericTypes[0] ?? null;
             if ($inner instanceof ConstTypeNode && $inner->constExpr instanceof ConstFetchNode) {
                 return self::matchesWildcard($constName, $inner->constExpr->name);
@@ -98,7 +98,7 @@ final class ConstantAndEnumEvaluator
      */
     private static function satisfiesBitwiseOr(BitwiseOr $expr, TypeNode $typeNode, string $currentFile): bool
     {
-        if (! ($typeNode instanceof GenericTypeNode) || strtolower($typeNode->type->name) !== 'int-mask-of') {
+        if (! ($typeNode instanceof GenericTypeNode) || strtolower((string) $typeNode->type) !== 'int-mask-of') {
             return false;
         }
 
@@ -119,7 +119,7 @@ final class ConstantAndEnumEvaluator
             return false;
         }
 
-        if (! ($typeNode instanceof GenericTypeNode) || strtolower($typeNode->type->name) !== 'value-of') {
+        if (! ($typeNode instanceof GenericTypeNode) || strtolower((string) $typeNode->type) !== 'value-of') {
             return false;
         }
 

@@ -120,7 +120,7 @@ final class CallableWrapper
         if (\is_array($callable) && $typeNode !== null) {
             $innerCallableTypeNode = null;
 
-            if ($typeNode instanceof GenericTypeNode && \in_array(strtolower($typeNode->type->name), ['list', 'array', 'iterable'], strict: true)) {
+            if ($typeNode instanceof GenericTypeNode && \in_array(strtolower((string) $typeNode->type), ['list', 'array', 'iterable'], strict: true)) {
                 $innerCallableTypeNode = $typeNode->genericTypes[1] ?? $typeNode->genericTypes[0] ?? null;
             } elseif ($typeNode instanceof ArrayTypeNode) {
                 $innerCallableTypeNode = $typeNode->type;
@@ -159,7 +159,7 @@ final class CallableWrapper
             return $callable;
         }
 
-        $identifierName = strtolower(ltrim($typeNode->identifier->name, '\\'));
+        $identifierName = strtolower(ltrim((string) $typeNode->identifier, '\\'));
         self::enforceClosureConstraints($identifierName, $callable, $prefix);
 
         /** @var callable $callable */
@@ -522,7 +522,7 @@ final class CallableWrapper
         }
 
         if ($typeNode instanceof GenericTypeNode) {
-            $baseName = strtolower($typeNode->type->name);
+            $baseName = strtolower((string) $typeNode->type);
             if (\in_array($baseName, ['list', 'array', 'iterable'], true) && \is_array($value)) {
                 $innerType = $typeNode->genericTypes[1] ?? $typeNode->genericTypes[0] ?? null;
                 if ($innerType !== null) {

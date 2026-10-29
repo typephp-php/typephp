@@ -77,7 +77,7 @@ final class EliminationSafetyPolicy
         }
 
         if ($returnTypeNode instanceof GenericTypeNode) {
-            $baseName = strtolower($returnTypeNode->type->name);
+            $baseName = strtolower((string) $returnTypeNode->type);
             if (! isset(self::PERMISSIBLE_NON_OBJECT_GENERICS[$baseName])) {
                 return false;
             }
@@ -114,7 +114,7 @@ final class EliminationSafetyPolicy
         }
 
         if ($returnTypeNode instanceof GenericTypeNode) {
-            $baseName = strtolower(ltrim($returnTypeNode->type->name, '\\'));
+            $baseName = strtolower(ltrim((string) $returnTypeNode->type, '\\'));
             if (! isset(self::PERMISSIBLE_GENERATOR_GENERICS[$baseName])) {
                 return false;
             }

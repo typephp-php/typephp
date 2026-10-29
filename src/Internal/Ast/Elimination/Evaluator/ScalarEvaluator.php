@@ -171,7 +171,7 @@ final class ScalarEvaluator
         }
 
         if ($typeNode instanceof GenericTypeNode) {
-            $base = strtolower($typeNode->type->name);
+            $base = strtolower((string) $typeNode->type);
 
             if ($base === 'int' || $base === 'integer') {
                 return self::satisfiesIntRange($value, $typeNode);

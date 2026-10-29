@@ -21,7 +21,7 @@ final class CallableValidator implements TypeValidatorInterface
     public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         /** @var CallableTypeNode $node */
-        $identifierName = strtolower(ltrim($node->identifier->name, '\\'));
+        $identifierName = strtolower(ltrim((string) $node->identifier, '\\'));
 
         if (str_contains($identifierName, 'closure')) {
             if (! ($value instanceof Closure)) {

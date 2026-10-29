@@ -185,7 +185,7 @@ final class InlineChecker
             $context = ($varName === 'return') ? 'Return value' : "Variable \$$varName";
 
             if ($typeNode instanceof GenericTypeNode) {
-                $baseName = strtolower($typeNode->type->name);
+                $baseName = strtolower((string) $typeNode->type);
                 $isCollection = isset(self::ARRAY_TYPES[$baseName]);
 
                 if (! $isCollection) {
@@ -256,7 +256,7 @@ final class InlineChecker
             $keyStr = \is_string($key) ? $key : (\is_int($key) ? (string) $key : '');
 
             if ($typeNode instanceof GenericTypeNode) {
-                $base = strtolower($typeNode->type->name);
+                $base = strtolower((string) $typeNode->type);
 
                 if ($base === 'list' || $base === 'non-empty-list') {
                     if ($key !== null && ! \is_int($key)) {
@@ -346,7 +346,7 @@ final class InlineChecker
     private static function wrapCollectionCallables(TypeNode $typeNode, array $value, string $context, TypeValidatorRegistry $registry): array
     {
         $innerCallable = null;
-        if ($typeNode instanceof GenericTypeNode && \in_array(strtolower($typeNode->type->name), ['list', 'array', 'iterable'], true)) {
+        if ($typeNode instanceof GenericTypeNode && \in_array(strtolower((string) $typeNode->type), ['list', 'array', 'iterable'], true)) {
             $innerCallable = $typeNode->genericTypes[1] ?? $typeNode->genericTypes[0] ?? null;
         } elseif ($typeNode instanceof ArrayTypeNode) {
             $innerCallable = $typeNode->type;
@@ -971,7 +971,7 @@ final class InlineChecker
         }
 
         if ($node instanceof GenericTypeNode) {
-            $lower = strtolower($node->type->name);
+            $lower = strtolower((string) $node->type);
             if (isset(self::ARRAY_TYPES[$lower])) {
                 return $checkArrays;
             }

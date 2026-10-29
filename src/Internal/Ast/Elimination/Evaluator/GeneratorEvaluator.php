@@ -70,7 +70,7 @@ final class GeneratorEvaluator
         }
 
         if ($returnTypeNode instanceof GenericTypeNode) {
-            $base = strtolower(ltrim($returnTypeNode->type->name, '\\'));
+            $base = strtolower(ltrim((string) $returnTypeNode->type, '\\'));
             if (! isset(self::GENERATOR_ROOT_TYPES[$base])) {
                 return null;
             }

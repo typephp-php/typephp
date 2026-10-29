@@ -102,7 +102,7 @@ final class ArrayLiteralEvaluator
         }
 
         if ($typeNode instanceof GenericTypeNode) {
-            return isset(self::EMPTY_ARRAY_ALLOWED_GENERICS[strtolower($typeNode->type->name)]);
+            return isset(self::EMPTY_ARRAY_ALLOWED_GENERICS[strtolower((string) $typeNode->type)]);
         }
 
         if ($typeNode instanceof ArrayShapeNode) {
@@ -141,7 +141,7 @@ final class ArrayLiteralEvaluator
      */
     private static function satisfiesGenericArray(Array_ $arrayExpr, GenericTypeNode $node, string $currentFile): bool
     {
-        $base = strtolower($node->type->name);
+        $base = strtolower((string) $node->type);
         $genericCount = \count($node->genericTypes);
 
         if ($base === 'list' && $genericCount >= 1) {

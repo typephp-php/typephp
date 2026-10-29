@@ -54,7 +54,7 @@ final class TypeDeducer
         }
 
         if ($typeNode instanceof GenericTypeNode) {
-            $base = strtolower($typeNode->type->name);
+            $base = strtolower((string) $typeNode->type);
             $count = \count($typeNode->genericTypes);
 
             if (\in_array($base, ['list', 'non-empty-list'], true) && $count >= 1) {
@@ -101,7 +101,7 @@ final class TypeDeducer
         }
 
         if ($typeNode instanceof GenericTypeNode) {
-            $base = strtolower($typeNode->type->name);
+            $base = strtolower((string) $typeNode->type);
             $count = \count($typeNode->genericTypes);
 
             if (\in_array($base, ['list', 'non-empty-list'], true)) {
