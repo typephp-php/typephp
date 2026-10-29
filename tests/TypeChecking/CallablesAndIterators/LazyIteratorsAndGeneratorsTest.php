@@ -133,6 +133,14 @@ function testTraversableReturnContract(array $data): Traversable
     return new ArrayIterator($data);
 }
 
+/**
+ * @param Traversable<string, positive-int> $items
+ */
+function testCustomMethodOnTraversableParam(Traversable $items): string
+{
+    return $items->getCustomMetadata();
+}
+
 describe('Lazy Generator Parameter Contracts (@param Generator<K, V>)', function () {
     test('iterates valid generator yielding string keys and positive-int values', function () {
         $validGen = function (): Generator {
@@ -220,6 +228,7 @@ describe('Multi-Level IteratorAggregate Unwrapping & Method Forwarding', functio
 
         expect(testTraversableParamContract($nestedService))->toBe(['item1' => 10, 'item2' => 20]);
         expect(testCountableTraversableParam($nestedService))->toBe(2);
+        expect(testCustomMethodOnTraversableParam($nestedService))->toBe('custom_metadata_string');
     });
 });
 

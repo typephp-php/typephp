@@ -79,4 +79,13 @@ describe('IteratorProxy Unit Tests', function () {
             ->and($proxy->offsetExists('z'))->toBeFalse()
         ;
     });
+
+    test('forwards custom method calls and count() to outer IteratorAggregate before inner Iterator', function () {
+        $aggregate = new \TypePHP\Tests\Fixtures\Services\NestedAggregateService(['alpha' => 10, 'beta' => 20]);
+        $proxy = new IteratorProxy($aggregate, fn () => null);
+
+        expect($proxy->getCustomMetadata())->toBe('custom_metadata_string')
+            ->and($proxy->count())->toBe(2)
+        ;
+    });
 });

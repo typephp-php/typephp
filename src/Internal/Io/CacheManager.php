@@ -15,7 +15,7 @@ final class CacheManager
     /**
      * Cache version prefix string. Bump this whenever AST printer/transformation rules change.
      */
-    public const VERSION_PREFIX = 'v0.12.0_';
+    public const VERSION_PREFIX = 'v0.12.1_';
 
     /**
      * Cached absolute cache directory path.
