@@ -36,6 +36,28 @@ final class DocblockNormalizer
             return $doc;
         }
 
+        if (substr_count($doc, '@') > 1) {
+            $doc = preg_replace_callback(
+                '/(?:\/\*\*|^\s*\*)\s*@[a-zA-Z0-9_-]+[^\r\n]*/m',
+                static function (array $matches): string {
+                    return preg_replace(
+                        '/([^\r\n*\/ \t])[ \t]+(@(?:phpstan-|psalm-|template-)?(?:param-out|param|return|var|template(?:-covariant|-contravariant)?|self-out|this-out|type|import-type|extends|implements|use|property(?:-read|-write)?|method)\b)/',
+                        "$1\n * $2",
+                        $matches[0]
+                    ) ?? $matches[0];
+                },
+                $doc
+            ) ?? $doc;
+        }
+
+        if (str_contains($doc, 'param-out') && str_contains($doc, '&')) {
+            $doc = preg_replace(
+                '/(@(?:phpstan-|psalm-)?param-out\s+[^\r\n]+?)\s*&\s*(\$[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)(?=\s|$|\*\/)/',
+                '$1 $2',
+                $doc
+            ) ?? $doc;
+        }
+
         if (str_contains($doc, '-type') && str_contains($doc, '=')) {
             $doc = preg_replace('/(@(?:phpstan|psalm)-type\s+[a-zA-Z0-9_\x80-\xff]+)\s*=\s*/', '$1 ', $doc) ?? $doc;
         }

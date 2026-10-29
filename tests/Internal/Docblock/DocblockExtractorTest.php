@@ -615,4 +615,60 @@ DOC;
             ;
         });
     });
+
+    test('extracts @param-out tag when variable includes by-reference ampersand (&$x)', function () {
+        $doc = <<<'DOC'
+/**
+ * @param int &$x
+ * @param-out positive-int &$x
+ */
+DOC;
+        $node = DocblockExtractor::parseDocString($doc);
+        $tags = DocblockExtractor::getParamOutTags($node);
+
+        expect($tags)->toHaveKey('x')
+            ->and((string) $tags['x']->type)->toBe('positive-int')
+        ;
+    });
+
+    test('extracts @phpstan-param-out and @psalm-param-out tags with by-reference ampersand (&$x)', function () {
+        $doc = <<<'DOC'
+/**
+ * @psalm-param-out int &$a
+ * @phpstan-param-out non-empty-string &$b
+ */
+DOC;
+        $node = DocblockExtractor::parseDocString($doc);
+        $tags = DocblockExtractor::getParamOutTags($node);
+
+        expect($tags)->toHaveKey('a')
+            ->and((string) $tags['a']->type)->toBe('int')
+            ->and($tags)->toHaveKey('b')
+            ->and((string) $tags['b']->type)->toBe('non-empty-string')
+        ;
+    });
+
+    test('extracts @param-out when multiple tags are written on a single-line docblock', function () {
+        $doc1 = '/** @param int $x  @param-out positive-int $x */';
+        $tags1 = DocblockExtractor::getParamOutTags(DocblockExtractor::parseDocString($doc1));
+        expect($tags1)->toHaveKey('x')
+            ->and((string) $tags1['x']->type)->toBe('positive-int')
+        ;
+
+        $doc2 = '/** @param int &$x  @param-out positive-int &$x */';
+        $tags2 = DocblockExtractor::getParamOutTags(DocblockExtractor::parseDocString($doc2));
+        expect($tags2)->toHaveKey('x')
+            ->and((string) $tags2['x']->type)->toBe('positive-int')
+        ;
+
+        $doc3 = '/** @param int $x  @param-out positive-int $x  @return int */';
+        $parsed3 = DocblockExtractor::parseDocString($doc3);
+        $tags3 = DocblockExtractor::getParamOutTags($parsed3);
+        $return3 = DocblockExtractor::getReturnTag($parsed3);
+        expect($tags3)->toHaveKey('x')
+            ->and((string) $tags3['x']->type)->toBe('positive-int')
+            ->and($return3)->not()->toBeNull()
+            ->and((string) $return3->type)->toBe('int')
+        ;
+    });
 });
