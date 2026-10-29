@@ -306,6 +306,57 @@ function issue2StandaloneGenericWithParamOut(mixed &$slot): mixed
     return 'string returned for T=int';
 }
 
+class Issue4GeneratorParamOutService
+{
+    /**
+     * Mutates &$x to invalid type before yield (Bug3B reproduction)
+     *
+     * @param int &$x
+     *
+     * @param-out int &$x
+     *
+     * @return Generator<int, int, void, void>
+     */
+    public function runInvalidBeforeYield(mixed &$x): Generator
+    {
+        $x = 'not an int';
+        yield 1;
+
+        return;
+    }
+
+    /**
+     * Mutates &$x to invalid type after yield, before return/fallthrough
+     *
+     * @param int &$x
+     *
+     * @param-out positive-int &$x
+     *
+     * @return Generator<int, int>
+     */
+    public function runInvalidAfterYield(mixed &$x): Generator
+    {
+        yield 1;
+        $x = -50;
+    }
+
+    /**
+     * Valid mutation across generator execution
+     *
+     * @param int &$x
+     *
+     * @param-out positive-int &$x
+     *
+     * @return Generator<int, int>
+     */
+    public function runValid(mixed &$x): Generator
+    {
+        $x = 10;
+        yield 1;
+        $x = 42;
+    }
+}
+
 describe('@param-out & @phpstan-param-out Contracts', function () {
     describe('1. Basic Scalar @param-out', function () {
         test('accepts valid post-condition mutation on by-ref parameter', function () {
@@ -580,7 +631,52 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
             $second = 100;
 
             expect(fn () => $service->syncBoth($first, $second))
-                ->toThrow(TypeError::class, 'Argument &$second (param-out) must be of type int');
+                ->toThrow(TypeError::class, 'Argument &$second (param-out) must be of type int')
+            ;
+        });
+    });
+
+    describe('12. Reproductions: Generators with @param-out', function () {
+        test('throws TypeError when generator mutates by-ref param to invalid type before yield during foreach', function () {
+            $service = new Issue4GeneratorParamOutService();
+            $x = 1;
+
+            expect(function () use ($service, &$x) {
+                foreach ($service->runInvalidBeforeYield($x) as $_) {
+                }
+            })->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int');
+        });
+
+        test('throws TypeError at yield suspension boundary even if caller only calls current()', function () {
+            $service = new Issue4GeneratorParamOutService();
+            $x = 1;
+
+            $gen = $service->runInvalidBeforeYield($x);
+
+            expect(fn () => $gen->current())
+                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int')
+            ;
+        });
+
+        test('throws TypeError when generator mutates by-ref param to invalid type after yield before finishing', function () {
+            $service = new Issue4GeneratorParamOutService();
+            $x = 1;
+
+            expect(function () use ($service, &$x) {
+                foreach ($service->runInvalidAfterYield($x) as $_) {
+                }
+            })->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type positive-int');
+        });
+
+        test('accepts valid @param-out mutations in generator across yields and completion', function () {
+            $service = new Issue4GeneratorParamOutService();
+            $x = 1;
+
+            $items = iterator_to_array($service->runValid($x));
+
+            expect($items)->toBe([1])
+                ->and($x)->toBe(42)
+            ;
         });
     });
 });
