@@ -39,6 +39,17 @@ final class GeneratorEvaluator
     ];
 
     /**
+     * O(1) hash map of unconstrained TSend type identifiers.
+     *
+     * @var array<string, true>
+     */
+    private const UNCONSTRAINED_SEND_TYPES = [
+        'mixed' => true,
+        'void' => true,
+        'null' => true,
+    ];
+
+    /**
      * Extracts the [key, value, send, return] TypeNode contract from a generator's return TypeNode.
      * Returns null if the return type is an unexpanded type alias or non-generator type.
      *
@@ -150,7 +161,7 @@ final class GeneratorEvaluator
 
     /**
      * Determines whether `RuntimeTypeChecker::checkSend()` can be statically eliminated.
-     * True when `TSend` is omitted (< 3 template arguments) or explicitly `mixed`.
+     * True when `TSend` is omitted (< 3 template arguments) or explicitly `mixed`, `void`, or `null`.
      */
     public static function canEliminateSend(?TypeNode $sendType): bool
     {
@@ -158,7 +169,7 @@ final class GeneratorEvaluator
             return false;
         }
 
-        return $sendType === null || self::isMixedType($sendType);
+        return $sendType === null || self::isUnconstrainedSendType($sendType);
     }
 
     /**
@@ -214,6 +225,15 @@ final class GeneratorEvaluator
         $effectiveExpr = $returnExpr ?? new ConstFetch(new Name('null'));
 
         return StaticTypeEvaluator::satisfies($effectiveExpr, $returnType, $currentFile);
+    }
+
+    /**
+     * Checks if a TSend TypeNode is `mixed`, `void`, or `null`.
+     */
+    private static function isUnconstrainedSendType(TypeNode $typeNode): bool
+    {
+        return $typeNode instanceof IdentifierTypeNode
+            && isset(self::UNCONSTRAINED_SEND_TYPES[strtolower($typeNode->name)]);
     }
 
     /**

@@ -240,4 +240,15 @@ describe('GeneratorEvaluator & EliminationSafetyPolicy Unit Tests', function () 
             expect(EliminationSafetyPolicy::isGeneratorEliminationSafe($inheritedMethod, ['hasRealInheritance' => true], $genType))->toBeFalse();
         });
     });
+
+    describe('canEliminateSend()', function () {
+        test('eliminates checkSend when TSend is null, mixed, or void, and retains when constrained', function () {
+            expect(GeneratorEvaluator::canEliminateSend(null))->toBeTrue()
+                ->and(GeneratorEvaluator::canEliminateSend(new IdentifierTypeNode('mixed')))->toBeTrue()
+                ->and(GeneratorEvaluator::canEliminateSend(new IdentifierTypeNode('void')))->toBeTrue()
+                ->and(GeneratorEvaluator::canEliminateSend(new IdentifierTypeNode('null')))->toBeTrue()
+                ->and(GeneratorEvaluator::canEliminateSend(new IdentifierTypeNode('positive-int')))->toBeFalse()
+            ;
+        });
+    });
 });

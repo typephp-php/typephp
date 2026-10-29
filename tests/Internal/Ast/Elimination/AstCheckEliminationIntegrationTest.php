@@ -418,4 +418,28 @@ PHP;
         $transformedInvalid = StreamWrapper::transformSource($invalidReturn, 'test_gen_ret_invalid.php');
         expect($transformedInvalid)->toContain('RuntimeTypeChecker::checkGeneratorReturn');
     });
+
+    test('completely eliminates checkYield, checkSend, and checkGeneratorReturn on proven 4-arg Generator with void TSend', function () {
+        $source = <<<'PHP'
+<?php
+/** @return Generator<int, positive-int, void, string> */
+function counterStream(): Generator
+{
+    yield 0 => 10;
+    yield 1 => 20;
+
+    return 'done';
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_gen_void_send.php');
+
+        expect($transformed)->not()->toContain('RuntimeTypeChecker::checkYield')
+            ->and($transformed)->not()->toContain('RuntimeTypeChecker::checkSend')
+            ->and($transformed)->not()->toContain('RuntimeTypeChecker::checkGeneratorReturn')
+            ->and($transformed)->toContain('yield 0 => 10;')
+            ->and($transformed)->toContain('yield 1 => 20;')
+            ->and($transformed)->toContain("return 'done';")
+        ;
+    });
 });
