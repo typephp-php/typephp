@@ -24,7 +24,7 @@ final class IteratorProxy implements OuterIterator, Countable
      * @param \Closure(mixed, mixed): void $typeCheckCallback
      */
     public function __construct(
-        Traversable $iterable,
+        private Traversable $iterable,
         private \Closure $typeCheckCallback
     ) {
         $this->inner = self::resolveIterator($iterable);
@@ -47,6 +47,10 @@ final class IteratorProxy implements OuterIterator, Countable
 
     public function rewind(): void
     {
+        if ($this->iterable instanceof IteratorAggregate && $this->inner instanceof \Generator) {
+            $this->inner = self::resolveIterator($this->iterable);
+        }
+
         $this->inner->rewind();
     }
 
@@ -81,6 +85,10 @@ final class IteratorProxy implements OuterIterator, Countable
 
     public function count(): int
     {
+        if ($this->iterable instanceof Countable) {
+            return $this->iterable->count();
+        }
+
         if ($this->inner instanceof Countable) {
             return $this->inner->count();
         }
@@ -93,7 +101,17 @@ final class IteratorProxy implements OuterIterator, Countable
      */
     public function __call(string $method, array $args): mixed
     {
+        if (method_exists($this->iterable, $method)) {
+            // @phpstan-ignore method.dynamicName
+            return $this->iterable->$method(...$args);
+        }
+
+        if ($this->inner !== $this->iterable && method_exists($this->inner, $method)) {
+            // @phpstan-ignore method.dynamicName
+            return $this->inner->$method(...$args);
+        }
+
         // @phpstan-ignore method.dynamicName
-        return $this->inner->$method(...$args);
+        return $this->iterable->$method(...$args);
     }
 }

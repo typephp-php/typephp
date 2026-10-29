@@ -588,7 +588,7 @@ final class DocblockExtractor
                 $localName = $importTag->importedAs ?? $importTag->importedAlias;
 
                 if (! isset($aliases[$localName])) {
-                    $fqcnSource = SpecialTypeResolver::resolveFqcn($importTag->importedFrom->name, $ref);
+                    $fqcnSource = SpecialTypeResolver::resolveFqcn((string) $importTag->importedFrom, $ref);
                     $resolvedType = self::resolveImportedTypeAlias($fqcnSource, $importTag->importedAlias);
                     if ($resolvedType !== null) {
                         $aliases[$localName] = $resolvedType;
@@ -651,7 +651,7 @@ final class DocblockExtractor
                         $importTag = $tag->value;
                         $localName = $importTag->importedAs ?? $importTag->importedAlias;
                         if ($localName === $importedAlias) {
-                            $fqcn = SpecialTypeResolver::resolveFqcn($importTag->importedFrom->name, $ref);
+                            $fqcn = SpecialTypeResolver::resolveFqcn((string) $importTag->importedFrom, $ref);
                             $importedAlias = $importTag->importedAlias;
                             $nextFound = true;
 

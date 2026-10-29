@@ -202,6 +202,161 @@ function tddPsalmOverridesStandardParamOut(mixed &$code): void
     $code = ''; // Fails @psalm-param-out (non-empty-string)
 }
 
+class Issue1SingleLineParamOutA
+{
+    /**
+     * @param int $x @param-out int $x
+     */
+    public function run(&$x): void
+    {
+        $x = 'not an int';
+    }
+}
+
+class Issue1SingleLineAmpersandB
+{
+    /**
+     * @param int &$x @param-out int &$x
+     */
+    public function run(&$x): void
+    {
+        $x = 'bad';
+    }
+}
+
+class Issue1SingleLineWithReturnC
+{
+    /**
+     * @param int $x @param-out int $x  @return int
+     */
+    public function run(&$x): int
+    {
+        $x = 'bad';
+
+        return 1;
+    }
+}
+
+class Issue1SingleLinePhpstanD
+{
+    /**
+     * @param int $x @phpstan-param-out int $x
+     */
+    public function run(&$x): void
+    {
+        $x = 'bad';
+    }
+}
+
+class Issue1MultiLineAmpersandE
+{
+    /**
+     * @param int &$x
+     *
+     * @param-out int &$x
+     */
+    public function run(&$x): void
+    {
+        $x = 'not an int';
+    }
+}
+
+class Issue2GenericMethodWithParamOut
+{
+    /**
+     * @template T
+     *
+     * @param T &$slot
+     *
+     * @param-out T &$slot
+     *
+     * @return T
+     */
+    public function run(mixed &$slot): mixed
+    {
+        return 'string returned for T=int';
+    }
+
+    /**
+     * @template T
+     *
+     * @param T &$first
+     * @param mixed &$second
+     *
+     * @param-out T &$first
+     * @param-out T &$second
+     */
+    public function syncBoth(mixed &$first, mixed &$second): void
+    {
+        $second = 'wrong type for T=int';
+    }
+}
+
+/**
+ * @template T
+ *
+ * @param T &$slot
+ *
+ * @param-out T &$slot
+ *
+ * @return T
+ */
+function issue2StandaloneGenericWithParamOut(mixed &$slot): mixed
+{
+    return 'string returned for T=int';
+}
+
+class Issue4GeneratorParamOutService
+{
+    /**
+     * Mutates &$x to invalid type before yield (Bug3B reproduction)
+     *
+     * @param int &$x
+     *
+     * @param-out int &$x
+     *
+     * @return Generator<int, int, void, void>
+     */
+    public function runInvalidBeforeYield(mixed &$x): Generator
+    {
+        $x = 'not an int';
+        yield 1;
+
+        return;
+    }
+
+    /**
+     * Mutates &$x to invalid type after yield, before return/fallthrough
+     *
+     * @param int &$x
+     *
+     * @param-out positive-int &$x
+     *
+     * @return Generator<int, int>
+     */
+    public function runInvalidAfterYield(mixed &$x): Generator
+    {
+        yield 1;
+        $x = -50;
+    }
+
+    /**
+     * Valid mutation across generator execution
+     *
+     * @param int &$x
+     *
+     * @param-out positive-int &$x
+     *
+     * @return Generator<int, int>
+     */
+    public function runValid(mixed &$x): Generator
+    {
+        $x = 10;
+        yield 1;
+        $x = 42;
+    }
+}
+
 describe('@param-out & @phpstan-param-out Contracts', function () {
     describe('1. Basic Scalar @param-out', function () {
         test('accepts valid post-condition mutation on by-ref parameter', function () {
@@ -401,6 +556,126 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
 
             expect(fn () => tddParamOutShapeComposition($data, ['id' => 10, 'name' => 'Alice', 'extra' => true]))
                 ->toThrow(TypeError::class, "Argument &\$data (param-out) contains unsealed unexpected key 'extra'")
+            ;
+        });
+    });
+
+    describe('10. Reproductions: Single-Line Multi-Tag & Ampersand (&$x) Syntax Variants', function () {
+        test('Class A: single-line @param and @param-out without ampersand throws TypeError', function () {
+            $a = new Issue1SingleLineParamOutA();
+            $v = 1;
+
+            expect(fn () => $a->run($v))
+                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int')
+            ;
+        });
+
+        test('Class B: single-line @param and @param-out with &$x ampersand throws TypeError', function () {
+            $b = new Issue1SingleLineAmpersandB();
+            $v = 1;
+
+            expect(fn () => $b->run($v))
+                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int')
+            ;
+        });
+
+        test('Class C: single-line @param, @param-out, and @return throws TypeError', function () {
+            $c = new Issue1SingleLineWithReturnC();
+            $v = 1;
+
+            expect(fn () => $c->run($v))
+                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int')
+            ;
+        });
+
+        test('Class D: single-line @param and @phpstan-param-out throws TypeError', function () {
+            $d = new Issue1SingleLinePhpstanD();
+            $v = 1;
+
+            expect(fn () => $d->run($v))
+                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int')
+            ;
+        });
+
+        test('Class E: multi-line @param-out with &$x ampersand throws TypeError', function () {
+            $e = new Issue1MultiLineAmpersandE();
+            $v = 1;
+
+            expect(fn () => $e->run($v))
+                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int')
+            ;
+        });
+    });
+
+    describe('11. ScopeCleaner Preservation Across @param-out and @return', function () {
+        test('enforces generic @return T after @param-out check passes on class method', function () {
+            $service = new Issue2GenericMethodWithParamOut();
+            $v = 42;
+
+            expect(fn () => $service->run($v))
+                ->toThrow(TypeError::class, 'Return value must be of type int')
+            ;
+        });
+
+        test('enforces generic @return T after @param-out check passes on standalone function', function () {
+            $v = 42;
+
+            expect(fn () => issue2StandaloneGenericWithParamOut($v))
+                ->toThrow(TypeError::class, 'Return value must be of type int')
+            ;
+        });
+
+        test('preserves generic template T across multiple sequential @param-out checks in the same method', function () {
+            $service = new Issue2GenericMethodWithParamOut();
+            $first = 42;
+            $second = 100;
+
+            expect(fn () => $service->syncBoth($first, $second))
+                ->toThrow(TypeError::class, 'Argument &$second (param-out) must be of type int')
+            ;
+        });
+    });
+
+    describe('12. Reproductions: Generators with @param-out', function () {
+        test('throws TypeError when generator mutates by-ref param to invalid type before yield during foreach', function () {
+            $service = new Issue4GeneratorParamOutService();
+            $x = 1;
+
+            expect(function () use ($service, &$x) {
+                foreach ($service->runInvalidBeforeYield($x) as $_) {
+                }
+            })->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int');
+        });
+
+        test('throws TypeError at yield suspension boundary even if caller only calls current()', function () {
+            $service = new Issue4GeneratorParamOutService();
+            $x = 1;
+
+            $gen = $service->runInvalidBeforeYield($x);
+
+            expect(fn () => $gen->current())
+                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int')
+            ;
+        });
+
+        test('throws TypeError when generator mutates by-ref param to invalid type after yield before finishing', function () {
+            $service = new Issue4GeneratorParamOutService();
+            $x = 1;
+
+            expect(function () use ($service, &$x) {
+                foreach ($service->runInvalidAfterYield($x) as $_) {
+                }
+            })->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type positive-int');
+        });
+
+        test('accepts valid @param-out mutations in generator across yields and completion', function () {
+            $service = new Issue4GeneratorParamOutService();
+            $x = 1;
+
+            $items = iterator_to_array($service->runValid($x));
+
+            expect($items)->toBe([1])
+                ->and($x)->toBe(42)
             ;
         });
     });

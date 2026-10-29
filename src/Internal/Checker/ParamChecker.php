@@ -583,8 +583,8 @@ final class ParamChecker
                 $closureParams = $refClosure->getParameters();
 
                 foreach ($cTypeNode->parameters as $idx => $pNode) {
-                    if ($pNode->type instanceof IdentifierTypeNode && isset($templates[$pNode->type->name]) && isset($closureParams[$idx])) {
-                        $tName = $pNode->type->name;
+                    if ($pNode->type instanceof IdentifierTypeNode && isset($templates[(string) $pNode->type]) && isset($closureParams[$idx])) {
+                        $tName = (string) $pNode->type;
                         $isClassLevel = ! TemplateManager::isMethodTemplate($effectiveFunction, $tName) && isset($classTemplates[$tName]);
                         $targetObj = $isClassLevel ? $thisObj : null;
 
@@ -822,7 +822,7 @@ final class ParamChecker
         }
 
         if ($typeNode instanceof GenericTypeNode) {
-            $baseType = strtolower($typeNode->type->name);
+            $baseType = strtolower((string) $typeNode->type);
             if (isset(self::ITERABLE_TYPES[$baseType]) && \is_array($value)) {
                 self::inferArrayTemplatesFromAllElements($typeNode, $value, $effectiveFunction, $thisObj, $templates);
             } elseif (\is_object($value)) {
@@ -856,7 +856,7 @@ final class ParamChecker
         }
 
         if ($typeNode instanceof GenericTypeNode) {
-            $baseType = strtolower($typeNode->type->name);
+            $baseType = strtolower((string) $typeNode->type);
             if (! isset(self::ITERABLE_TYPES[$baseType])) {
                 return;
             }
@@ -1021,7 +1021,7 @@ final class ParamChecker
         }
 
         if ($typeNode instanceof GenericTypeNode && \is_object($value)) {
-            $baseName = strtolower($typeNode->type->name);
+            $baseName = strtolower((string) $typeNode->type);
             if (isset(self::COLLECTION_TYPES[$baseName])) {
                 return;
             }
@@ -1031,7 +1031,7 @@ final class ParamChecker
                 return;
             }
 
-            $targetClassFqcn = SpecialTypeResolver::resolveFqcn($typeNode->type->name, new \ReflectionClass($value));
+            $targetClassFqcn = SpecialTypeResolver::resolveFqcn((string) $typeNode->type, new \ReflectionClass($value));
             $targetTemplateNames = self::$classDeclaredTemplateNamesCache[$targetClassFqcn] ?? null;
 
             if ($targetTemplateNames === null) {
@@ -1089,7 +1089,7 @@ final class ParamChecker
             if ($typeNode instanceof ArrayTypeNode) {
                 $innerType = $typeNode->type;
             } elseif ($typeNode instanceof GenericTypeNode) {
-                $baseName = strtolower($typeNode->type->name);
+                $baseName = strtolower((string) $typeNode->type);
                 if (isset(self::COLLECTION_TYPES[$baseName])) {
                     $innerType = $typeNode->genericTypes[1] ?? $typeNode->genericTypes[0] ?? null;
                 }
@@ -1276,7 +1276,7 @@ final class ParamChecker
     {
         return isset($typeNode->genericTypes[0])
             && $typeNode->genericTypes[0] instanceof IdentifierTypeNode
-            && strtolower($typeNode->type->name) === 'class-string'
+            && strtolower((string) $typeNode->type) === 'class-string'
             && isset($templates[$typeNode->genericTypes[0]->name]);
     }
 
@@ -1386,12 +1386,12 @@ final class ParamChecker
             return $typeNode->name;
         }
 
-        if ($typeNode instanceof NullableTypeNode && $typeNode->type instanceof IdentifierTypeNode && isset($templates[$typeNode->type->name])) {
-            return $typeNode->type->name;
+        if ($typeNode instanceof NullableTypeNode && $typeNode->type instanceof IdentifierTypeNode && isset($templates[(string) $typeNode->type])) {
+            return (string) $typeNode->type;
         }
 
-        if ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof IdentifierTypeNode && isset($templates[$typeNode->type->name])) {
-            return $typeNode->type->name;
+        if ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof IdentifierTypeNode && isset($templates[(string) $typeNode->type])) {
+            return (string) $typeNode->type;
         }
 
         if ($typeNode instanceof UnionTypeNode && \count($typeNode->types) === 2) {

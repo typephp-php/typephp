@@ -752,4 +752,14 @@ PHP
             ->toBe('wrong')
         ;
     });
+
+    test('checkStaticProperty does not mark property as checked when validation fails and throws', function () {
+        expect(fn () => RuntimeTypeChecker::checkStaticProperty(StaticPropFixture::class, 'badCount', -5, __FILE__, 1))
+            ->toThrow(TypeError::class, 'positive-int')
+        ;
+
+        expect(fn () => RuntimeTypeChecker::checkStaticProperty(StaticPropFixture::class, 'badCount', -5, __FILE__, 1))
+            ->toThrow(TypeError::class, 'positive-int')
+        ;
+    });
 });

@@ -62,7 +62,7 @@ final class IterableWrapper
         if ($typeNode instanceof IdentifierTypeNode) {
             $baseName = strtolower(ltrim($typeNode->name, '\\'));
         } elseif ($typeNode instanceof GenericTypeNode) {
-            $baseName = strtolower(ltrim($typeNode->type->name, '\\'));
+            $baseName = strtolower(ltrim((string) $typeNode->type, '\\'));
         }
 
         $standardIterables = ['iterable', 'traversable', 'iterator', 'generator'];

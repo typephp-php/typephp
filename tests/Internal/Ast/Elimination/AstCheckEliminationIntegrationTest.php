@@ -418,4 +418,47 @@ PHP;
         $transformedInvalid = StreamWrapper::transformSource($invalidReturn, 'test_gen_ret_invalid.php');
         expect($transformedInvalid)->toContain('RuntimeTypeChecker::checkGeneratorReturn');
     });
+
+    test('completely eliminates checkYield, checkSend, and checkGeneratorReturn on proven 4-arg Generator with mixed TSend', function () {
+        $source = <<<'PHP'
+<?php
+/** @return Generator<int, positive-int, mixed, string> */
+function counterStreamMixed(): Generator
+{
+    yield 0 => 10;
+    yield 1 => 20;
+
+    return 'done';
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_gen_mixed_send.php');
+
+        expect($transformed)->not()->toContain('RuntimeTypeChecker::checkYield')
+            ->and($transformed)->not()->toContain('RuntimeTypeChecker::checkSend')
+            ->and($transformed)->not()->toContain('RuntimeTypeChecker::checkGeneratorReturn')
+            ->and($transformed)->toContain('yield 0 => 10;')
+            ->and($transformed)->toContain('yield 1 => 20;')
+            ->and($transformed)->toContain("return 'done';")
+        ;
+    });
+
+    test('retains checkSend on 4-arg Generator when TSend is void to strictly police sent values', function () {
+        $source = <<<'PHP'
+<?php
+/** @return Generator<int, positive-int, void, string> */
+function counterStreamVoid(): Generator
+{
+    yield 0 => 10;
+    return 'done';
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_gen_void_send.php');
+
+        expect($transformed)->not()->toContain('RuntimeTypeChecker::checkYield')
+            ->and($transformed)->toContain('RuntimeTypeChecker::checkSend')
+            ->and($transformed)->not()->toContain('RuntimeTypeChecker::checkGeneratorReturn')
+        ;
+    });
 });

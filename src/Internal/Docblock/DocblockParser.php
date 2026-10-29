@@ -200,7 +200,7 @@ final class DocblockParser
         }
 
         if ($node instanceof GenericTypeNode) {
-            if (isset($templateNames[$node->type->name])) {
+            if (isset($templateNames[(string) $node->type])) {
                 return true;
             }
             foreach ($node->genericTypes as $gt) {
@@ -1674,7 +1674,7 @@ final class DocblockParser
 
         if (
             ! ($type instanceof ArrayTypeNode)
-            && ! ($type instanceof GenericTypeNode && \in_array(strtolower($type->type->name), ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true))
+            && ! ($type instanceof GenericTypeNode && \in_array(strtolower((string) $type->type), ['array', 'list', 'iterable', 'traversable', 'non-empty-array', 'non-empty-list'], true))
         ) {
             return new ArrayTypeNode($type);
         }

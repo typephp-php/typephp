@@ -739,7 +739,7 @@ final class SpecialTypeResolver
 
         $resolvedParameters = [];
         foreach ($node->parameters as $param) {
-            $paramType = ($param->type instanceof IdentifierTypeNode && isset($localTemplates[$param->type->name]))
+            $paramType = ($param->type instanceof IdentifierTypeNode && isset($localTemplates[(string) $param->type]))
                 ? $param->type
                 : self::resolve($param->type, $context, $thisObj);
 
@@ -893,7 +893,7 @@ final class SpecialTypeResolver
 
         $resolvedParameters = [];
         foreach ($node->parameters as $param) {
-            $paramType = ($param->type instanceof IdentifierTypeNode && isset($localTemplates[$param->type->name]))
+            $paramType = ($param->type instanceof IdentifierTypeNode && isset($localTemplates[(string) $param->type]))
                 ? clone $param->type
                 : self::resolveForFile($param->type, $file);
 

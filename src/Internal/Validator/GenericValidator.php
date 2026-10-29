@@ -82,7 +82,7 @@ final class GenericValidator implements TypeValidatorInterface
     {
         /** @var GenericTypeNode $genericNode */
         $genericNode = $node;
-        $baseType = strtolower($genericNode->type->name);
+        $baseType = strtolower((string) $genericNode->type);
 
         return match ($baseType) {
             'int', 'integer' => $this->validateIntRange($value, $genericNode, $context, $isSensitive),
@@ -120,7 +120,7 @@ final class GenericValidator implements TypeValidatorInterface
             return null;
         }
 
-        if ($targetType instanceof GenericTypeNode && strtolower($targetType->type->name) === 'value-of') {
+        if ($targetType instanceof GenericTypeNode && strtolower((string) $targetType->type) === 'value-of') {
             return $this->validateKeyOfNestedValueOf($value, $targetType, $context, $isSensitive);
         }
 
@@ -498,7 +498,7 @@ final class GenericValidator implements TypeValidatorInterface
 
     private function validateList(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
-        $baseType = strtolower($node->type->name);
+        $baseType = strtolower((string) $node->type);
 
         if (! \is_array($value) || (\count($value) > 0 && ! array_is_list($value))) {
             return ErrorFactory::createError($context . ' must be a list, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
@@ -528,10 +528,10 @@ final class GenericValidator implements TypeValidatorInterface
 
     private function validateArray(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
-        $baseType = strtolower($node->type->name);
+        $baseType = strtolower((string) $node->type);
 
         if (! \is_array($value) && ! ($value instanceof \Traversable)) {
-            return ErrorFactory::createError($context . ' must be of type ' . $node->type->name . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+            return ErrorFactory::createError($context . ' must be of type ' . (string) $node->type . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         if (! \is_array($value)) {
@@ -602,7 +602,7 @@ final class GenericValidator implements TypeValidatorInterface
             return null;
         }
 
-        $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower($valTypeNode->type->name)]));
+        $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower((string) $valTypeNode->type)]));
 
         if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
             $keys = array_keys($value);
@@ -805,16 +805,16 @@ final class GenericValidator implements TypeValidatorInterface
 
     private function validateObjectGeneric(mixed $value, GenericTypeNode $node, string $context, bool $isSensitive = false): ?ErrorMessage
     {
-        if (! ClassNameValidator::isValid($node->type->name)) {
+        if (! ClassNameValidator::isValid((string) $node->type)) {
             return null;
         }
 
         if (! \is_object($value)) {
-            return ErrorFactory::createError($context . ' must be an object of type ' . $node->type->name . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+            return ErrorFactory::createError($context . ' must be an object of type ' . (string) $node->type . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
-        if (! is_a($value, $node->type->name)) {
-            return ErrorFactory::createError($context . ' must be an instance of ' . $node->type->name . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        if (! is_a($value, (string) $node->type)) {
+            return ErrorFactory::createError($context . ' must be an instance of ' . (string) $node->type . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         return RuntimeTypeChecker::bindInstanceFromNode($value, $node, $context);

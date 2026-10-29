@@ -271,6 +271,38 @@ PHP;
                 ->and($yieldFrom->expr)->toBeInstanceOf(Node\Expr\FuncCall::class)
             ;
         });
+
+        test('injects checkParamOut into generator methods with by-ref @param-out parameters', function () {
+            $doc = new Doc("/**\n * @param int &\$x\n * @param-out int &\$x\n * @return \\Generator<int, int, void, void>\n */");
+
+            $method = new Node\Stmt\ClassMethod('run', [
+                'params' => [
+                    new Node\Param(
+                        var: new Node\Expr\Variable('x'),
+                        byRef: true
+                    ),
+                ],
+                'stmts' => [
+                    new Node\Stmt\Expression(
+                        new Node\Expr\Assign(
+                            new Node\Expr\Variable('x'),
+                            new Node\Scalar\String_('not an int')
+                        )
+                    ),
+                    new Node\Stmt\Expression(
+                        new Node\Expr\Yield_(new Node\Scalar\LNumber(1))
+                    ),
+                    new Node\Stmt\Return_(null),
+                ],
+            ], [
+                'comments' => [$doc],
+            ]);
+
+            FunctionContractInjector::inject($method);
+
+            $printed = (new TypePHP\Internal\Ast\TypePHPPrinter())->prettyPrint($method->stmts ?? []);
+            expect($printed)->toContain('RuntimeTypeChecker::checkParamOut');
+        });
     });
 
     describe('Static vs Instance Methods & Lifecycles', function () {

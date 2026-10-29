@@ -66,7 +66,7 @@ final class StaticTypeEvaluator
         }
 
         if ($typeNode instanceof GenericTypeNode) {
-            $baseName = strtolower($typeNode->type->name);
+            $baseName = strtolower((string) $typeNode->type);
             if (! isset(self::PERMISSIBLE_GENERIC_CONTAINERS[$baseName])) {
                 return false;
             }
