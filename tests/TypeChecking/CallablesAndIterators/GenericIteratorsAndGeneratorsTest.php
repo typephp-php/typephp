@@ -50,6 +50,19 @@ function testGeneratorWithInvalidVoidReturn(): Generator
     return 'not_void';
 }
 
+class D2GeneratorFixture
+{
+    /**
+     * @return Generator<int, int, void, void>
+     */
+    public function run(): Generator
+    {
+        yield 1;
+
+        return;
+    }
+}
+
 describe('Generic Iterables & Generators (@template T with iterable<T> and Generator<K, V>)', function () {
     describe('Generic Iterable Parameters (iterable<T>)', function () {
         test('collects items from iterable matching inferred template T = int', function () {
@@ -148,6 +161,22 @@ describe('Generic Iterables & Generators (@template T with iterable<T> and Gener
             expect(fn () => $gen->send('invalid'))
                 ->toThrow(TypeError::class, 'must be of type int')
             ;
+        });
+
+        test('strictly enforces TSend = void and throws TypeError when non-null value is sent into generator', function () {
+            $g = (new D2GeneratorFixture())->run();
+            $g->current();
+
+            expect(fn () => $g->send('not null'))
+                ->toThrow(TypeError::class, 'Generator sent value (TSend) must be of type void, string \'not null\' given')
+            ;
+        });
+
+        test('allows standard foreach iteration on generator with TSend = void', function () {
+            $g = (new D2GeneratorFixture())->run();
+            $items = iterator_to_array($g);
+
+            expect($items)->toBe([1]);
         });
     });
 

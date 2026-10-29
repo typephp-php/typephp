@@ -242,11 +242,11 @@ describe('GeneratorEvaluator & EliminationSafetyPolicy Unit Tests', function () 
     });
 
     describe('canEliminateSend()', function () {
-        test('eliminates checkSend when TSend is null, mixed, or void, and retains when constrained', function () {
+        test('eliminates checkSend only when TSend is null or mixed, and retains when constrained', function () {
             expect(GeneratorEvaluator::canEliminateSend(null))->toBeTrue()
                 ->and(GeneratorEvaluator::canEliminateSend(new IdentifierTypeNode('mixed')))->toBeTrue()
-                ->and(GeneratorEvaluator::canEliminateSend(new IdentifierTypeNode('void')))->toBeTrue()
-                ->and(GeneratorEvaluator::canEliminateSend(new IdentifierTypeNode('null')))->toBeTrue()
+                ->and(GeneratorEvaluator::canEliminateSend(new IdentifierTypeNode('void')))->toBeFalse()
+                ->and(GeneratorEvaluator::canEliminateSend(new IdentifierTypeNode('null')))->toBeFalse()
                 ->and(GeneratorEvaluator::canEliminateSend(new IdentifierTypeNode('positive-int')))->toBeFalse()
             ;
         });
