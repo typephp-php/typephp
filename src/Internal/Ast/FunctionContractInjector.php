@@ -485,7 +485,7 @@ final class FunctionContractInjector
             ]
         );
 
-        $throwStmt = self::buildTypeErrorThrowStmt(new Node\Expr\Variable('__typephpErr'));
+        $throwStmt = self::buildTypeErrorThrowStmt(new Node\Expr\Variable('__typephpScope'));
         $cacheKeyExpr = new Node\Scalar\MagicConst\Method();
 
         $noParamFetch = new Node\Expr\StaticPropertyFetch(
@@ -525,7 +525,7 @@ final class FunctionContractInjector
                 'stmts' => [
                     new Node\Stmt\If_(
                         new Node\Expr\Instanceof_(
-                            new Node\Expr\Assign(new Node\Expr\Variable('__typephpErr'), $checkCall),
+                            new Node\Expr\Assign(new Node\Expr\Variable('__typephpScope'), $checkCall),
                             new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
                         ),
                         ['stmts' => [$throwStmt]]

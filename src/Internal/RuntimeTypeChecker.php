@@ -192,15 +192,15 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        if ($className !== '') {
-            self::$checkedStaticProperties[$className][$propName] = true;
-        }
-
         $res = self::checkProperty($value, $objectOrClass, $propName, $file);
         if ($res instanceof ErrorMessage) {
             $typeError = new \TypePHP\Exception\TypeError($res->getMessage());
 
             throw ErrorFactory::prepareException($typeError, $line, $file !== '' ? $file : null);
+        }
+
+        if ($className !== '') {
+            self::$checkedStaticProperties[$className][$propName] = true;
         }
 
         return $value;

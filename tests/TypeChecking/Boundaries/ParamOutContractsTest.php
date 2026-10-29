@@ -261,6 +261,51 @@ class Issue1MultiLineAmpersandE
     }
 }
 
+class Issue2GenericMethodWithParamOut
+{
+    /**
+     * @template T
+     *
+     * @param T &$slot
+     *
+     * @param-out T &$slot
+     *
+     * @return T
+     */
+    public function run(mixed &$slot): mixed
+    {
+        return 'string returned for T=int';
+    }
+
+    /**
+     * @template T
+     *
+     * @param T &$first
+     * @param mixed &$second
+     *
+     * @param-out T &$first
+     * @param-out T &$second
+     */
+    public function syncBoth(mixed &$first, mixed &$second): void
+    {
+        $second = 'wrong type for T=int';
+    }
+}
+
+/**
+ * @template T
+ *
+ * @param T &$slot
+ *
+ * @param-out T &$slot
+ *
+ * @return T
+ */
+function issue2StandaloneGenericWithParamOut(mixed &$slot): mixed
+{
+    return 'string returned for T=int';
+}
+
 describe('@param-out & @phpstan-param-out Contracts', function () {
     describe('1. Basic Scalar @param-out', function () {
         test('accepts valid post-condition mutation on by-ref parameter', function () {
@@ -464,7 +509,7 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
         });
     });
 
-    describe('10. Issue 1 Reproductions: Single-Line Multi-Tag & Ampersand (&$x) Syntax Variants', function () {
+    describe('10. Reproductions: Single-Line Multi-Tag & Ampersand (&$x) Syntax Variants', function () {
         test('Class A: single-line @param and @param-out without ampersand throws TypeError', function () {
             $a = new Issue1SingleLineParamOutA();
             $v = 1;
@@ -506,7 +551,36 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
             $v = 1;
 
             expect(fn () => $e->run($v))
-                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int');
+                ->toThrow(TypeError::class, 'Argument &$x (param-out) must be of type int')
+            ;
+        });
+    });
+
+    describe('11. ScopeCleaner Preservation Across @param-out and @return', function () {
+        test('enforces generic @return T after @param-out check passes on class method', function () {
+            $service = new Issue2GenericMethodWithParamOut();
+            $v = 42;
+
+            expect(fn () => $service->run($v))
+                ->toThrow(TypeError::class, 'Return value must be of type int')
+            ;
+        });
+
+        test('enforces generic @return T after @param-out check passes on standalone function', function () {
+            $v = 42;
+
+            expect(fn () => issue2StandaloneGenericWithParamOut($v))
+                ->toThrow(TypeError::class, 'Return value must be of type int')
+            ;
+        });
+
+        test('preserves generic template T across multiple sequential @param-out checks in the same method', function () {
+            $service = new Issue2GenericMethodWithParamOut();
+            $first = 42;
+            $second = 100;
+
+            expect(fn () => $service->syncBoth($first, $second))
+                ->toThrow(TypeError::class, 'Argument &$second (param-out) must be of type int');
         });
     });
 });
