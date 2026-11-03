@@ -1,6 +1,6 @@
 {
     "name": "typephp/typephp",
-    "description": "Transparent Runtime type checker for PHP. Enforces PHPDoc annotations including generics, typed arrays, array shapes, and advanced types at runtime in development and production.",
+    "description": "Transparent Runtime type checker for PHP. Enforces PHPDoc annotations including generics, typed arrays, array shapes, and advanced types at runtime.",
     "type": "library",
     "license": "MIT",
     "keywords": [
