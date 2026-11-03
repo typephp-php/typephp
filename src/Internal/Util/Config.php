@@ -145,7 +145,7 @@ final class Config
             }
         }
 
-        if (\defined('TYPEPHP_DISABLE') && TYPEPHP_DISABLE) {
+        if (\defined('TYPEPHP_DISABLE') && (bool) TYPEPHP_DISABLE) {
             return false;
         }
 
