@@ -887,12 +887,33 @@ final class TemplateManager
             $templateList = array_values($templates);
             $normalizedTypeArgs = self::normalizeGenericArguments($typeNode->genericTypes, $templateList);
 
+            $candidateBindings = self::$instanceTemplateBindings[$instance] ?? [];
+            foreach ($templateList as $index => $templateTag) {
+                if (isset($normalizedTypeArgs[$index])) {
+                    $arg = $normalizedTypeArgs[$index];
+                    $isWildcardOrMixed = ($arg instanceof IdentifierTypeNode && ($arg->name === '*' || strtolower($arg->name) === 'mixed'));
+                    if (! $isWildcardOrMixed) {
+                        $candidateBindings[$templateTag->name] = $arg;
+                    }
+                }
+            }
+
             foreach ($templateList as $index => $templateTag) {
                 if (! isset($normalizedTypeArgs[$index])) {
                     continue;
                 }
 
-                $err = self::bindSingleTemplateArgument($instance, $className, $normalizedTypeArgs[$index], $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT, $templateTag, $classVariances, $context, $forceBind);
+                $err = self::bindSingleTemplateArgument(
+                    $instance,
+                    $className,
+                    $normalizedTypeArgs[$index],
+                    $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT,
+                    $templateTag,
+                    $classVariances,
+                    $context,
+                    $forceBind,
+                    $candidateBindings
+                );
                 if ($err !== null) {
                     return $err;
                 }
@@ -959,6 +980,7 @@ final class TemplateManager
 
     /**
      * @param array<string, string> $classVariances
+     * @param array<string, TypeNode> $candidateBindings
      */
     private static function bindSingleTemplateArgument(
         object $instance,
@@ -968,7 +990,8 @@ final class TemplateManager
         TemplateTagValueNode $templateTag,
         array $classVariances,
         string $context,
-        bool $forceBind
+        bool $forceBind,
+        array $candidateBindings = []
     ): ?ErrorMessage {
         if ($expectedTypeNode instanceof IdentifierTypeNode) {
             if (str_contains($expectedTypeNode->name, '::')) {
@@ -994,8 +1017,9 @@ final class TemplateManager
 
         if ($templateTag->bound !== null && ! $isWildcardOrMixed) {
             $boundNode = $templateTag->bound;
-            if (self::isFBounded($templateTag, $className)) {
-                $boundNode = TemplateSubstitutor::substitute($boundNode, [$templateTag->name => $expectedTypeNode]);
+            $allBindings = [...$candidateBindings, $templateTag->name => $expectedTypeNode];
+            if (self::isFBounded($templateTag, $className) || DocblockParser::typeReferencesTemplate($boundNode, $allBindings)) {
+                $boundNode = TemplateSubstitutor::substitute($boundNode, $allBindings);
             }
 
             $satisfiesBound = self::checkVariance($expectedTypeNode, $boundNode, GenericTypeNode::VARIANCE_COVARIANT);
@@ -1234,7 +1258,7 @@ final class TemplateManager
                         }
                     }
 
-                    $bindings[$templateName] = $resolved;
+                    $bindings[$templateName] ??= $resolved;
                 }
             }
         } catch (\Throwable $e) {
@@ -1423,13 +1447,24 @@ final class TemplateManager
                         $actualArg = $classBindings[$tName];
                         $expectedArg = $expected->genericTypes[$idx];
 
+                        if ($expectedArg instanceof IdentifierTypeNode) {
+                            $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($expectedArg->name);
+                            $isRealType = self::isRealTypeSymbol($expectedArg->name);
+                            if (! $isBuiltIn && ! $isRealType) {
+                                continue;
+                            }
+                        }
+
                         $useSiteVariance = $expected->variances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
                         $declaredVariance = $declaredVariances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
+                        $templateBound = $parentTemplates[$tName]->bound ?? null;
+                        $isExpectedUpperBound = $templateBound !== null && (string) $expectedArg === (string) $templateBound;
 
                         $innerVariance = match (true) {
                             $useSiteVariance !== GenericTypeNode::VARIANCE_INVARIANT => $useSiteVariance,
-                            $declaredVariance === GenericTypeNode::VARIANCE_CONTRAVARIANT => GenericTypeNode::VARIANCE_CONTRAVARIANT,
-                            default => GenericTypeNode::VARIANCE_COVARIANT,
+                            $declaredVariance !== GenericTypeNode::VARIANCE_INVARIANT => $declaredVariance,
+                            $isExpectedUpperBound => GenericTypeNode::VARIANCE_COVARIANT,
+                            default => GenericTypeNode::VARIANCE_INVARIANT,
                         };
 
                         if (! self::checkVariance($actualArg, $expectedArg, $innerVariance)) {
@@ -1588,6 +1623,14 @@ final class TemplateManager
         }
 
         foreach ($expected->genericTypes as $idx => $expectedInner) {
+            if ($expectedInner instanceof IdentifierTypeNode) {
+                $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($expectedInner->name);
+                $isRealType = self::isRealTypeSymbol($expectedInner->name);
+                if (! $isBuiltIn && ! $isRealType) {
+                    continue;
+                }
+            }
+
             $existingInner = $existing->genericTypes[$idx] ?? new IdentifierTypeNode('mixed');
             $useSiteVariance = $expected->variances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
             $declaredVariance = $declaredVariances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;

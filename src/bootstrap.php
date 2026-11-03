@@ -14,7 +14,7 @@ if (class_exists(TypePHP::class) && ! \defined('TYPEPHP_BOOTED')) {
         || (isset($_ENV['TYPEPHP_DISABLE']) && filter_var($_ENV['TYPEPHP_DISABLE'], FILTER_VALIDATE_BOOLEAN))
         || (isset($_SERVER['TYPEPHP_DISABLE']) && filter_var($_SERVER['TYPEPHP_DISABLE'], FILTER_VALIDATE_BOOLEAN))
     );
-    $isDisabledConst = \defined('TYPEPHP_DISABLE') && TYPEPHP_DISABLE;
+    $isDisabledConst = \defined('TYPEPHP_DISABLE') && (bool) TYPEPHP_DISABLE;
 
     $isTooling = false;
     $binary = '';
