@@ -205,6 +205,60 @@ class PartialDefaultMap
     }
 }
 
+/**
+ * Class with static methods and class-level template default
+ *
+ * @template T = int
+ */
+class DefaultStaticClassHolder
+{
+    /**
+     * @return T
+     */
+    public static function getDefault(): mixed
+    {
+        return 'not_an_int';
+    }
+
+    /**
+     * @param T $val
+     */
+    public static function checkDefaultParam(mixed $val): mixed
+    {
+        return $val;
+    }
+}
+
+/**
+ * Class with 0-arg method and typestate self-out
+ *
+ * @template T = int
+ */
+class DefaultTypestateZeroArgHolder
+{
+    /**
+     * @var T|null
+     */
+    public mixed $val = null;
+
+    /**
+     * 0-argument method with @self-out
+     *
+     * @self-out self<T|string>
+     */
+    public function enableString(): void
+    {
+    }
+
+    /**
+     * @param T $v
+     */
+    public function set(mixed $v): void
+    {
+        $this->val = $v;
+    }
+}
+
 describe('Default Template Annotations (@template T = DefaultType)', function () {
     describe('1. Standalone Function Default Templates', function () {
         test('uses default template type string when template T is unbound', function () {
@@ -443,13 +497,54 @@ describe('Default Template Annotations (@template T = DefaultType)', function ()
                 ->toThrow(TypeError::class, 'Argument &$out (param-out) must be of type positive-int')
             ;
 
-            // Overriding T = string by passing 'sample_str'
             testDefaultTemplateConditionalParamOut($out, 'hello', 'sample_str');
             expect($out)->toBe('hello');
 
             expect(fn () => testDefaultTemplateConditionalParamOut($out, '', 'sample_str'))
                 ->toThrow(TypeError::class, 'Argument &$out (param-out) must be of type non-empty-string')
             ;
+        });
+    });
+
+    describe('7. TemplateManager Consistency on Unannotated Instances & Static Classes', function () {
+        test('getBoundTemplates, isBound, and getBoundType return default T = int on unannotated instance with 0-arg method', function () {
+            $box = new DefaultIntBox();
+            $templates = ['T' => new PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode('T', null, '', new PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode('int'))];
+
+            $bound = \TypePHP\Internal\Generics\TemplateManager::getBoundTemplates(DefaultIntBox::class . '::computeOne', $box, $templates);
+            expect($bound)->toHaveKey('T')
+                ->and((string) $bound['T'])->toBe('int')
+            ;
+
+            expect(\TypePHP\Internal\Generics\TemplateManager::isBound(DefaultIntBox::class . '::computeOne', $box, 'T'))->toBeTrue()
+                ->and((string) \TypePHP\Internal\Generics\TemplateManager::getBoundType(DefaultIntBox::class . '::computeOne', $box, 'T'))->toBe('int')
+            ;
+        });
+
+        test('enforces default template T = int on static method parameters and return types', function () {
+            expect(fn () => DefaultStaticClassHolder::checkDefaultParam('wrong_type'))
+                ->toThrow(TypeError::class, 'must be of type int')
+            ;
+
+            expect(DefaultStaticClassHolder::checkDefaultParam(42))->toBe(42);
+
+            expect(fn () => DefaultStaticClassHolder::getDefault())
+                ->toThrow(TypeError::class, 'Return value must be of type int')
+            ;
+        });
+
+        test('preserves default T = int across 0-argument @self-out method call', function () {
+            $holder = new DefaultTypestateZeroArgHolder();
+
+            $holder->enableString();
+
+            expect(TypePHP::getGenericType($holder))->toBe('(int | string)');
+
+            $holder->set(42);
+            $holder->set('now_allowed_string');
+
+            expect(fn () => $holder->set(new stdClass()))
+                ->toThrow(TypeError::class, 'must be of type (int | string)');
         });
     });
 });

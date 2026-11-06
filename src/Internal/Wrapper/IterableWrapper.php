@@ -10,6 +10,7 @@ use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
+use TypePHP\Internal\Checker\ConditionalChecker;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
@@ -19,7 +20,6 @@ use TypePHP\Internal\Reporting\ViolationCollector;
 use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
-use TypePHP\Internal\Checker\ConditionalChecker;
 
 /**
  * Wraps Traversable objects and Generators to evaluate key and value type constraints lazily during iteration.

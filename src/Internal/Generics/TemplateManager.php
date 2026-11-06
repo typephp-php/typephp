@@ -628,6 +628,33 @@ final class TemplateManager
     }
 
     /**
+     * Retrieves static class-level bindings including declared template defaults.
+     *
+     * @param class-string<object> $className
+     *
+     * @return array<string, TypeNode>
+     */
+    public static function getClassStaticBindings(string $className): array
+    {
+        $bindings = self::getClassInheritedBindings($className);
+
+        try {
+            $ref = new \ReflectionClass($className);
+            [$hierarchyTemplates] = self::collectHierarchyTemplatesAndVariances($ref);
+
+            foreach ($hierarchyTemplates as $tName => $templateTag) {
+                if (! isset($bindings[$tName]) && $templateTag->default !== null && ! self::isUnspecializedDefault($templateTag)) {
+                    $bindings[$tName] = $templateTag->default;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore reflection errors
+        }
+
+        return $bindings;
+    }
+
+    /**
      * Retrieves currently bound template types for a function call or object instance / static class.
      *
      * @param array<string, TemplateTagValueNode> $templates
@@ -642,9 +669,10 @@ final class TemplateManager
         if ($thisObj !== null) {
             self::ensureInstanceInherited($thisObj);
 
-            if (isset(self::$instanceTemplateBindings[$thisObj])) {
-                $bindings = self::$instanceTemplateBindings[$thisObj];
-            }
+            $isCtor = str_ends_with(strtolower($function), '::__construct');
+            $bindings = $isCtor
+                ? (self::$instanceTemplateBindings[$thisObj] ?? [])
+                : self::getBoundTemplatesForInstance($thisObj);
 
             $methodTemplates = self::getMethodTemplates($function);
             if ($methodTemplates !== []) {
@@ -658,7 +686,7 @@ final class TemplateManager
                 : (str_contains($function, '::') ? explode('::', $function, 2)[0] : '');
 
             if ($className !== '' && (class_exists($className, false) || class_exists($className) || interface_exists($className) || trait_exists($className))) {
-                $classBindings = self::getClassInheritedBindings($className);
+                $classBindings = self::getClassStaticBindings($className);
                 $bindings = $classBindings;
 
                 $methodTemplates = self::getMethodTemplates($function);
@@ -797,7 +825,12 @@ final class TemplateManager
                 return false;
             }
 
-            return isset(self::$instanceTemplateBindings[$thisObj][$templateName]);
+            $isCtor = str_ends_with(strtolower($function), '::__construct');
+            $instanceBindings = $isCtor
+                ? (self::$instanceTemplateBindings[$thisObj] ?? [])
+                : self::getBoundTemplatesForInstance($thisObj);
+
+            return isset($instanceBindings[$templateName]);
         }
 
         $className = \is_string($thisOrClass) && $thisOrClass !== ''
@@ -809,7 +842,7 @@ final class TemplateManager
                 return false;
             }
 
-            $classBindings = self::getClassInheritedBindings($className);
+            $classBindings = self::getClassStaticBindings($className);
 
             return isset($classBindings[$templateName]);
         }
@@ -836,7 +869,12 @@ final class TemplateManager
                 return null;
             }
 
-            return self::$instanceTemplateBindings[$thisObj][$templateName] ?? null;
+            $isCtor = str_ends_with(strtolower($function), '::__construct');
+            $instanceBindings = $isCtor
+                ? (self::$instanceTemplateBindings[$thisObj] ?? [])
+                : self::getBoundTemplatesForInstance($thisObj);
+
+            return $instanceBindings[$templateName] ?? null;
         }
 
         $className = \is_string($thisOrClass) && $thisOrClass !== ''
@@ -848,7 +886,7 @@ final class TemplateManager
                 return null;
             }
 
-            $classBindings = self::getClassInheritedBindings($className);
+            $classBindings = self::getClassStaticBindings($className);
 
             return $classBindings[$templateName] ?? null;
         }
