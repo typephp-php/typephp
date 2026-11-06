@@ -410,9 +410,16 @@ final class RuntimeTypeChecker
 
     /**
      * Validates a by-reference parameter's post-condition (@param-out) upon exit.
+     *
+     * @param array<string, mixed>|null $vars
      */
-    public static function checkParamOut(string $function, string $paramName, mixed $value, object|string|null $thisOrClass = null): ?ErrorMessage
-    {
+    public static function checkParamOut(
+        string $function,
+        string $paramName,
+        mixed $value,
+        object|string|null $thisOrClass = null,
+        ?array $vars = []
+    ): ?ErrorMessage {
         if (! Config::isEnabled() || ! Config::isParamsOutEnabled()) {
             return null;
         }
@@ -424,7 +431,9 @@ final class RuntimeTypeChecker
             return null;
         }
 
-        $res = ParamOutChecker::checkParamOut($function, $paramName, $value, $thisOrClass, self::getRegistry(), $effectiveFunction);
+        $vars = $vars !== null ? $vars : [];
+
+        $res = ParamOutChecker::checkParamOut($function, $paramName, $value, $thisOrClass, self::getRegistry(), $effectiveFunction, $vars);
 
         if ($res instanceof ErrorMessage) {
             if (IgnoreManager::isCallerIgnored()) {

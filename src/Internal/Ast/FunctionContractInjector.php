@@ -115,7 +115,7 @@ final class FunctionContractInjector
         $hasSelfOut = $isClassMethod && ! $node->isStatic() && ($hasSelfOutDoc || ($hasClassTemplates && $hasRealInheritance));
 
         $hasParam = ($isMagicGet || $isMagicCall) || ($paramCount > 0 && (
-            str_contains($docText, ' is ') || (($hasReturnDoc || $hasSelfOutDoc) && str_contains($docText, '$'))
+            str_contains($docText, ' is ') || (($hasReturnDoc || $hasSelfOutDoc || $hasParamOutDoc) && str_contains($docText, '$'))
         )) || self::hasParamContracts(
             $docText,
             $isClassMethod,
@@ -406,7 +406,7 @@ final class FunctionContractInjector
 
     private static function isGenerator(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): bool
     {
-        $visitor = new class () extends NodeVisitorAbstract {
+        $visitor = new class() extends NodeVisitorAbstract {
             public bool $isGen = false;
 
             public function enterNode(Node $n): ?int
@@ -552,8 +552,15 @@ final class FunctionContractInjector
      *
      * @return array<Node\Stmt>
      */
-    public static function buildParamOutCheckStmts(array $byRefParamNames, Node\Expr $thisArg): array
-    {
+    public static function buildParamOutCheckStmts(
+        array $byRefParamNames,
+        Node\Expr $thisArg,
+        bool $needsReturnVars = false
+    ): array {
+        $varsArg = $needsReturnVars
+            ? new Node\Expr\Variable('_typephpArgs')
+            : new Node\Expr\Array_();
+
         $stmts = [];
         foreach ($byRefParamNames as $pName) {
             $checkCall = new Node\Expr\FuncCall(
@@ -563,6 +570,7 @@ final class FunctionContractInjector
                     new Node\Arg(new Node\Scalar\String_($pName)),
                     new Node\Arg(new Node\Expr\Variable($pName)),
                     new Node\Arg($thisArg),
+                    new Node\Arg($varsArg),
                 ]
             );
 
@@ -798,8 +806,13 @@ final class FunctionContractInjector
         array $byRefParamNames,
         Node\Expr $innerExpr,
         Node\Expr $thisArg,
-        ?int $line = null
+        ?int $line = null,
+        bool $needsReturnVars = false
     ): Node\Expr {
+        $varsArg = $needsReturnVars
+            ? new Node\Expr\Variable('_typephpArgs')
+            : new Node\Expr\Array_();
+
         $expr = $innerExpr;
         foreach (array_reverse($byRefParamNames) as $pName) {
             $checkCall = new Node\Expr\FuncCall(
@@ -809,6 +822,7 @@ final class FunctionContractInjector
                     new Node\Arg(new Node\Scalar\String_($pName)),
                     new Node\Arg(new Node\Expr\Variable($pName)),
                     new Node\Arg($thisArg),
+                    new Node\Arg($varsArg),
                 ]
             );
 
@@ -833,7 +847,8 @@ final class FunctionContractInjector
         Node\Expr $thisArg,
         bool $wrapYield = true,
         bool $wrapSend = true,
-        array $byRefParams = []
+        array $byRefParams = [],
+        bool $needsReturnVars = false
     ): Node\Expr {
         if ($wrapYield) {
             $checkYieldCall = new Node\Expr\FuncCall(
@@ -858,7 +873,7 @@ final class FunctionContractInjector
 
         if ($byRefParams !== []) {
             $valExpr = $n->value ?? new Node\Expr\ConstFetch(new Node\Name('null'));
-            $n->value = self::buildParamOutGuardExpr($byRefParams, $valExpr, $thisArg, $n->getStartLine());
+            $n->value = self::buildParamOutGuardExpr($byRefParams, $valExpr, $thisArg, $n->getStartLine(), $needsReturnVars);
         }
 
         if (! $wrapSend) {
@@ -917,7 +932,7 @@ final class FunctionContractInjector
         }
 
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class (
+        $traverser->addVisitor(new class(
             $thisArg,
             $genContract,
             $currentFile,
@@ -936,8 +951,7 @@ final class FunctionContractInjector
                 private bool $needsReturnVars,
                 private array $byRefParams,
                 private bool $hasSelfOut
-            ) {
-            }
+            ) {}
 
             public function enterNode(Node $n): int|Node|array|null
             {
@@ -991,7 +1005,14 @@ final class FunctionContractInjector
                         return null;
                     }
 
-                    return FunctionContractInjector::buildWrappedYieldNode($n, $this->thisArg, $wrapYield, $wrapSend, $this->byRefParams);
+                    return FunctionContractInjector::buildWrappedYieldNode(
+                        $n,
+                        $this->thisArg,
+                        $wrapYield,
+                        $wrapSend,
+                        $this->byRefParams,
+                        $this->needsReturnVars
+                    );
                 }
 
                 if ($n instanceof Node\Expr\YieldFrom) {
@@ -1025,7 +1046,8 @@ final class FunctionContractInjector
                             $this->byRefParams,
                             $n->expr,
                             $this->thisArg,
-                            $n->getStartLine()
+                            $n->getStartLine(),
+                            $this->needsReturnVars
                         );
                     }
 
@@ -1044,7 +1066,7 @@ final class FunctionContractInjector
                     }
 
                     $paramOutStmts = $this->byRefParams !== []
-                        ? FunctionContractInjector::buildParamOutCheckStmts($this->byRefParams, $this->thisArg)
+                        ? FunctionContractInjector::buildParamOutCheckStmts($this->byRefParams, $this->thisArg, $this->needsReturnVars)
                         : [];
 
                     if ($paramOutStmts !== []) {
@@ -1095,7 +1117,7 @@ final class FunctionContractInjector
             }
 
             $paramOutStmts = $byRefParams !== []
-                ? self::buildParamOutCheckStmts($byRefParams, $thisArg)
+                ? self::buildParamOutCheckStmts($byRefParams, $thisArg, $needsReturnVars)
                 : [];
 
             if ($paramOutStmts !== []) {
@@ -1156,7 +1178,7 @@ final class FunctionContractInjector
         self::tagPrecedingAssignments($stmts);
 
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class (
+        $traverser->addVisitor(new class(
             $thisArg,
             $isNativeVoid,
             $needsReturnVars,
@@ -1185,8 +1207,7 @@ final class FunctionContractInjector
                 private ?array $classContext,
                 private ?TypeNode $returnTypeNode,
                 private string $currentFile
-            ) {
-            }
+            ) {}
 
             public function enterNode(Node $n): int|array|null
             {
@@ -1224,7 +1245,7 @@ final class FunctionContractInjector
                     }
 
                     $paramOutStmts = $this->byRefParams !== []
-                        ? FunctionContractInjector::buildParamOutCheckStmts($this->byRefParams, $this->thisArg)
+                        ? FunctionContractInjector::buildParamOutCheckStmts($this->byRefParams, $this->thisArg, $this->needsReturnVars)
                         : [];
 
                     if ($paramOutStmts !== []) {
@@ -1286,7 +1307,7 @@ final class FunctionContractInjector
             }
 
             $paramOutStmts = $byRefParams !== []
-                ? self::buildParamOutCheckStmts($byRefParams, $thisArg)
+                ? self::buildParamOutCheckStmts($byRefParams, $thisArg, $needsReturnVars)
                 : [];
 
             if ($paramOutStmts !== []) {

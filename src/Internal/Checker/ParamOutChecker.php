@@ -29,13 +29,17 @@ final class ParamOutChecker
         self::$noParamOutContractCache = [];
     }
 
+    /**
+     * @param array<int|string, mixed> $vars
+     */
     public static function checkParamOut(
         string $function,
         string $paramName,
         mixed $value,
         object|string|null $thisOrClass,
         TypeValidatorRegistry $registry,
-        string $effectiveFunction = ''
+        string $effectiveFunction = '',
+        array $vars = []
     ): ?ErrorMessage {
         if (! Config::isParamsEnabled()) {
             return null;
@@ -66,7 +70,7 @@ final class ParamOutChecker
             return null;
         }
 
-        $paramOuts = $contract['paramOuts'] ?? [];
+        $paramOuts = $paramOuts = $contract['paramOuts'] ?? [];
 
         if (! isset($paramOuts[$paramName])) {
             return null;
@@ -79,7 +83,7 @@ final class ParamOutChecker
             : [];
 
         if (ConditionalChecker::containsConditional($typeNode)) {
-            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $effectiveFunction);
+            $typeNode = ConditionalChecker::resolve($typeNode, $vars, $boundTemplates, $registry, $effectiveFunction);
         }
 
         if (\count($boundTemplates) > 0 || \count($allTemplates) > 0) {
@@ -88,7 +92,7 @@ final class ParamOutChecker
         $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
 
         if (ConditionalChecker::containsConditional($typeNode)) {
-            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $effectiveFunction);
+            $typeNode = ConditionalChecker::resolve($typeNode, $vars, $boundTemplates, $registry, $effectiveFunction);
         }
 
         $context = $effectiveFunction . '(): Argument &$' . $paramName . ' (param-out)';
