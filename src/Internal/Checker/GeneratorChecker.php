@@ -57,7 +57,7 @@ final class GeneratorChecker
             return null;
         }
 
-        $types = self::resolveYieldAndSendTypes($function, $thisOrClass);
+        $types = self::resolveYieldAndSendTypes($function, $thisOrClass, $registry);
         if ($types === null) {
             return $sendValue;
         }
@@ -82,7 +82,7 @@ final class GeneratorChecker
         TypeValidatorRegistry $registry,
         object|string|null $thisOrClass = null
     ): mixed {
-        $types = self::resolveYieldAndSendTypes($function, $thisOrClass);
+        $types = self::resolveYieldAndSendTypes($function, $thisOrClass, $registry);
         if ($types === null) {
             return $value;
         }
@@ -115,7 +115,7 @@ final class GeneratorChecker
         TypeValidatorRegistry $registry,
         object|string|null $thisOrClass = null
     ): mixed {
-        $types = self::resolveYieldAndSendTypes($function, $thisOrClass);
+        $types = self::resolveYieldAndSendTypes($function, $thisOrClass, $registry);
         if ($types === null) {
             return $value;
         }
@@ -143,8 +143,11 @@ final class GeneratorChecker
      *
      * @return array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode}|null
      */
-    private static function resolveYieldAndSendTypes(string $function, object|string|null $thisOrClass): ?array
-    {
+    private static function resolveYieldAndSendTypes(
+        string $function,
+        object|string|null $thisOrClass,
+        ?TypeValidatorRegistry $registry = null
+    ): ?array {
         if (isset(self::$noContractCache[$function])) {
             return null;
         }
@@ -166,10 +169,11 @@ final class GeneratorChecker
         $aliases = $contract['aliases'] ?? [];
         $hasGenerics = \count($allTemplates) > 0;
         $hasAliases = \count($aliases) > 0;
+        $hasConditionals = ConditionalChecker::containsConditional($returnTypeNode);
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
 
         // Static / non-generic generator: cache permanently for this function
-        if (! $hasGenerics && ! $hasAliases && $thisObj === null) {
+        if (! $hasGenerics && ! $hasAliases && ! $hasConditionals && $thisObj === null) {
             $resolvedNode = SpecialTypeResolver::resolve($returnTypeNode, $function, null);
 
             return self::$staticYieldTypeCache[$function] = self::extractYieldTypes($resolvedNode);
@@ -180,7 +184,7 @@ final class GeneratorChecker
 
         $sig = null;
         $boundCount = \count($boundTemplates);
-        if ($boundCount > 0 && $boundCount <= 2 && ! $hasAliases && $thisObj === null) {
+        if ($boundCount > 0 && $boundCount <= 2 && ! $hasAliases && ! $hasConditionals && $thisObj === null) {
             if ($boundCount === 1) {
                 $first = reset($boundTemplates);
                 $sig = $first instanceof IdentifierTypeNode ? $first->name : (string) $first;
@@ -200,9 +204,17 @@ final class GeneratorChecker
             $returnTypeNode = $aliases[$returnTypeNode->name];
         }
 
+        if ($hasConditionals && $registry !== null) {
+            $returnTypeNode = ConditionalChecker::resolve($returnTypeNode, [], $boundTemplates, $registry, $function);
+        }
+
         if (\count($boundTemplates) > 0 || \count($allTemplates) > 0) {
             $returnTypeNode = TemplateSubstitutor::substitute($returnTypeNode, $boundTemplates, $allTemplates);
             $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
+        }
+
+        if (ConditionalChecker::containsConditional($returnTypeNode) && $registry !== null) {
+            $returnTypeNode = ConditionalChecker::resolve($returnTypeNode, [], $boundTemplates, $registry, $function);
         }
 
         $types = self::extractYieldTypes($returnTypeNode);

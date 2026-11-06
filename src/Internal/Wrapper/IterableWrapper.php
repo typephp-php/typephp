@@ -19,6 +19,7 @@ use TypePHP\Internal\Reporting\ViolationCollector;
 use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
+use TypePHP\Internal\Checker\ConditionalChecker;
 
 /**
  * Wraps Traversable objects and Generators to evaluate key and value type constraints lazily during iteration.
@@ -52,6 +53,19 @@ final class IterableWrapper
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+
+        if (ConditionalChecker::containsConditional($typeNode)) {
+            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $function);
+        }
+
+        if (\count($boundTemplates) > 0 || \count($templates) > 0) {
+            $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
+            $typeNode = SpecialTypeResolver::resolve($typeNode, $function, $thisObj);
+        }
+
+        if (ConditionalChecker::containsConditional($typeNode)) {
+            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $function);
+        }
 
         if (\count($boundTemplates) > 0 || \count($templates) > 0) {
             $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
