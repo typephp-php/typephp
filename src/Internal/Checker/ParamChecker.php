@@ -312,6 +312,10 @@ final class ParamChecker
                 $targetClass = \is_string($thisOrClass) && $thisOrClass !== '' ? $thisOrClass : $declaringClass;
                 TemplateManager::getClassInheritedBindings($targetClass);
             }
+
+            if ($thisObj !== null && ! str_ends_with(strtolower($effectiveFunction), '::__construct')) {
+                TemplateManager::applyClassTemplateDefaults($thisObj, $classTemplates);
+            }
         }
     }
 

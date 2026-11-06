@@ -696,11 +696,24 @@ final class TemplateManager
     {
         self::ensureInstanceInherited($instance);
 
-        if (self::$instanceTemplateBindings !== null && isset(self::$instanceTemplateBindings[$instance])) {
-            return self::$instanceTemplateBindings[$instance];
+        $bindings = (self::$instanceTemplateBindings !== null && isset(self::$instanceTemplateBindings[$instance]))
+            ? self::$instanceTemplateBindings[$instance]
+            : [];
+
+        try {
+            $ref = new \ReflectionClass($instance);
+            [$hierarchyTemplates] = self::collectHierarchyTemplatesAndVariances($ref);
+
+            foreach ($hierarchyTemplates as $tName => $templateTag) {
+                if (! isset($bindings[$tName]) && $templateTag->default !== null && ! self::isUnspecializedDefault($templateTag)) {
+                    $bindings[$tName] = $templateTag->default;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore reflection errors
         }
 
-        return [];
+        return $bindings;
     }
 
     /**
@@ -923,6 +936,56 @@ final class TemplateManager
         }
 
         return null;
+    }
+
+    /**
+     * Checks whether a template's default type is an unspecialized placeholder (e.g. mixed or repeating its own bound).
+     */
+    public static function isUnspecializedDefault(TemplateTagValueNode $templateTag): bool
+    {
+        if ($templateTag->default === null) {
+            return true;
+        }
+
+        if ($templateTag->default instanceof IdentifierTypeNode) {
+            if (strtolower($templateTag->default->name) === 'mixed') {
+                return true;
+            }
+        }
+
+        if ($templateTag->bound !== null && (string) $templateTag->default === (string) $templateTag->bound) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Binds declared default template types onto an instance for any template not yet bound.
+     *
+     * @param array<string, TemplateTagValueNode> $classTemplates
+     */
+    public static function applyClassTemplateDefaults(object $instance, array $classTemplates): void
+    {
+        if ($classTemplates === []) {
+            return;
+        }
+
+        self::ensureInstanceInherited($instance);
+        self::$instanceTemplateBindings ??= new WeakMap();
+        $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+        $changed = false;
+
+        foreach ($classTemplates as $tName => $templateTag) {
+            if (! isset($bindings[$tName]) && $templateTag->default !== null && ! self::isUnspecializedDefault($templateTag)) {
+                $bindings[$tName] = $templateTag->default;
+                $changed = true;
+            }
+        }
+
+        if ($changed) {
+            self::$instanceTemplateBindings[$instance] = $bindings;
+        }
     }
 
     /**
