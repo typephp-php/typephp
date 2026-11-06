@@ -78,10 +78,18 @@ final class ParamOutChecker
             ? TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates)
             : [];
 
+        if (ConditionalChecker::containsConditional($typeNode)) {
+            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $effectiveFunction);
+        }
+
         if (\count($boundTemplates) > 0 || \count($allTemplates) > 0) {
             $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $allTemplates);
         }
         $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+
+        if (ConditionalChecker::containsConditional($typeNode)) {
+            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $effectiveFunction);
+        }
 
         $context = $effectiveFunction . '(): Argument &$' . $paramName . ' (param-out)';
 
