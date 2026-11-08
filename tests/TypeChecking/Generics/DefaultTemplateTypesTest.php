@@ -544,7 +544,8 @@ describe('Default Template Annotations (@template T = DefaultType)', function ()
             $holder->set('now_allowed_string');
 
             expect(fn () => $holder->set(new stdClass()))
-                ->toThrow(TypeError::class, 'must be of type (int | string)');
+                ->toThrow(TypeError::class, 'must be of type (int | string)')
+            ;
         });
     });
 });

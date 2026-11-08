@@ -238,7 +238,9 @@ final class InlineChecker
         string $typeString,
         string $varName,
         string $file,
-        TypeValidatorRegistry $registry
+        TypeValidatorRegistry $registry,
+        ?string $caller = null,
+        mixed $thisOrClass = null
     ): ?ErrorMessage {
         if (\count($path) !== 1 || $path[0][0] !== 'dim') {
             return null;
@@ -246,10 +248,14 @@ final class InlineChecker
 
         try {
             $normalized = DocblockNormalizer::normalize($typeString);
-            [$typeNode] = self::parseTypeString($normalized);
+            [$typeNode, $needsContext] = self::parseTypeString($normalized);
 
             if ($file !== '') {
                 $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+            }
+
+            if ($needsContext && $caller !== null) {
+                $typeNode = self::resolveCallerContext($typeNode, $caller, $thisOrClass);
             }
 
             $key = $path[0][1];

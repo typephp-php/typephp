@@ -82,6 +82,11 @@ final class ContractVisitor extends NodeVisitorAbstract
      */
     private array $byRefStack = [];
 
+    /**
+     * @var array<string, list<string>>
+     */
+    private array $localClassTemplates = [];
+
     public function __construct(private string $currentFile = '')
     {
         $this->scopeManager = new ScopeManager();
@@ -616,13 +621,36 @@ final class ContractVisitor extends NodeVisitorAbstract
         $hasPropertyWithDoc = false;
         $isReadonly = false;
         $isFinal = false;
-        $hasTemplates = false;
 
         $doc = $node->getDocComment();
         if ($doc === null && $typeName !== null && StubManager::hasClassStub($typeName)) {
             $stubDocText = StubManager::getClassDoc($typeName);
             if ($stubDocText !== null) {
                 $doc = new \PhpParser\Comment\Doc($stubDocText);
+            }
+        }
+
+        $templates = [];
+        if ($doc !== null && (
+            str_contains($doc->getText(), '@template')
+            || str_contains($doc->getText(), '@phpstan-template')
+            || str_contains($doc->getText(), '@psalm-template')
+        )) {
+            try {
+                $phpDocNode = DocblockExtractor::parseDocString($doc->getText());
+                $templates = DocblockExtractor::extractTemplates($phpDocNode);
+            } catch (\Throwable) {
+            }
+        }
+        $hasTemplates = $templates !== [];
+
+        if ($hasTemplates) {
+            $templateNames = array_keys($templates);
+            if ($typeName !== null) {
+                $this->localClassTemplates[$typeName] = $templateNames;
+            }
+            if ($shortName !== null) {
+                $this->localClassTemplates[$shortName] = $templateNames;
             }
         }
 
@@ -639,8 +667,10 @@ final class ContractVisitor extends NodeVisitorAbstract
                 } elseif ($stmt instanceof Node\Stmt\Property && $stmt->getDocComment() !== null) {
                     $hasPropertyWithDoc = true;
                 } elseif ($stmt instanceof Node\Stmt\ClassMethod && strtolower($stmt->name->toString()) === '__construct') {
+                    $ctorDoc = $stmt->getDocComment();
+                    $hasParamInCtor = $ctorDoc !== null && str_contains($ctorDoc->getText(), '@param');
                     foreach ($stmt->params as $param) {
-                        if ($param->isPromoted() && $param->getDocComment() !== null) {
+                        if ($param->isPromoted() && ($param->getDocComment() !== null || $hasParamInCtor)) {
                             $hasPropertyWithDoc = true;
 
                             break;
@@ -649,11 +679,6 @@ final class ContractVisitor extends NodeVisitorAbstract
                 }
             }
 
-            $hasTemplates = $doc !== null && (
-                str_contains($doc->getText(), '@template')
-                || str_contains($doc->getText(), '@phpstan-template')
-                || str_contains($doc->getText(), '@psalm-template')
-            );
             $hasClassDoc = $doc !== null && (
                 $hasTemplates
                 || str_contains($doc->getText(), '@phpstan-')
@@ -667,12 +692,6 @@ final class ContractVisitor extends NodeVisitorAbstract
         } elseif ($node instanceof Node\Stmt\Enum_) {
             $hasRealInheritance = $node->implements !== [];
             $hasInheritance = $hasRealInheritance;
-        } else {
-            $hasTemplates = $doc !== null && (
-                str_contains($doc->getText(), '@template')
-                || str_contains($doc->getText(), '@phpstan-template')
-                || str_contains($doc->getText(), '@psalm-template')
-            );
         }
 
         if ($typeName !== null && ($node instanceof Node\Stmt\Class_ || $node instanceof Node\Stmt\Trait_)) {
@@ -692,16 +711,31 @@ final class ContractVisitor extends NodeVisitorAbstract
                         }
                     }
                 } elseif ($stmt instanceof Node\Stmt\ClassMethod && strtolower($stmt->name->toString()) === '__construct') {
+                    $methodDoc = $stmt->getDocComment();
+                    $methodParamTags = null;
+                    if ($methodDoc !== null && str_contains($methodDoc->getText(), '@param')) {
+                        try {
+                            $methodPhpDoc = DocblockExtractor::parseDocString($methodDoc->getText());
+                            $methodParamTags = DocblockExtractor::getParamTags($methodPhpDoc);
+                        } catch (\Throwable) {
+                        }
+                    }
+
                     foreach ($stmt->params as $p) {
                         if ($p->isPromoted() && $p->var instanceof Node\Expr\Variable && \is_string($p->var->name)) {
-                            $doc = $p->getDocComment();
-                            if ($doc !== null) {
-                                $pType = DocblockExtractor::extractTypeFromPropertyDoc($doc->getText(), $p->var->name);
-                                if ($pType !== null) {
-                                    $this->localClassPropertyTypes[$typeName][$p->var->name] = (string) $pType;
-                                    if ($shortName !== null) {
-                                        $this->localClassPropertyTypes[$shortName][$p->var->name] = (string) $pType;
-                                    }
+                            $paramName = $p->var->name;
+                            $pType = null;
+                            $paramDoc = $p->getDocComment();
+                            if ($paramDoc !== null) {
+                                $pType = DocblockExtractor::extractTypeFromPropertyDoc($paramDoc->getText(), $paramName);
+                            }
+                            if ($pType === null && $methodParamTags !== null && isset($methodParamTags[$paramName])) {
+                                $pType = $methodParamTags[$paramName]->type;
+                            }
+                            if ($pType !== null) {
+                                $this->localClassPropertyTypes[$typeName][$paramName] = (string) $pType;
+                                if ($shortName !== null) {
+                                    $this->localClassPropertyTypes[$shortName][$paramName] = (string) $pType;
                                 }
                             }
                         }
@@ -1136,7 +1170,13 @@ final class ContractVisitor extends NodeVisitorAbstract
                 if (isset($this->localClassPropertyTypes[$deducedType][$propName])) {
                     $deducedType = $this->localClassPropertyTypes[$deducedType][$propName];
                 } else {
-                    $deducedType = TypeDeducer::deducePropertyType($deducedType, $propName);
+                    $deducedType = TypeDeducer::deducePropertyType(
+                        $deducedType,
+                        $propName,
+                        $this->localClassPropertyTypes,
+                        $this->localClassTemplates,
+                        $this->currentFile
+                    );
                 }
                 if ($deducedType === null) {
                     return null;

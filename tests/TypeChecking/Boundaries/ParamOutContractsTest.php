@@ -764,7 +764,8 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
             expect($out)->toBe(50);
 
             expect(fn () => $service->mutateFlagBeforeExit(true, $out, 'wrong_branch'))
-                ->toThrow(TypeError::class, 'Argument &$out (param-out) must be of type positive-int');
+                ->toThrow(TypeError::class, 'Argument &$out (param-out) must be of type positive-int')
+            ;
         });
     });
 });

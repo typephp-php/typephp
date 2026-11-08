@@ -307,7 +307,8 @@ describe('Generic Iterables & Generators (@template T with iterable<T> and Gener
 
             $badStrIter = new ArrayIterator(['valid', '']);
             expect(fn () => testConditionalIterableParam($badStrIter, 'override'))
-                ->toThrow(TypeError::class, 'Iterator $stream value must be of type non-empty-string');
+                ->toThrow(TypeError::class, 'Iterator $stream value must be of type non-empty-string')
+            ;
         });
     });
 });
