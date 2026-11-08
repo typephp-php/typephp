@@ -22,7 +22,7 @@ class FixtureBadListConst
     /**
      * @var list<string>
      */
-    public const array Data = [
+    public const Data = [
         'user' => 'User',
         'product' => 'Product',
     ];
@@ -59,7 +59,7 @@ class FixtureValidListConst
     /**
      * @var list<string>
      */
-    public const array Data = [
+    public const Data = [
         'User',
         'Product',
     ];
@@ -97,7 +97,7 @@ class FixtureBadScalarConst
     /**
      * @var positive-int
      */
-    public const int RETRIES = -5;
+    public const RETRIES = -5;
 }
 PHP;
 
@@ -221,7 +221,7 @@ class ConfigWithDriftCheck
     /**
      * @var list<string>
      */
-    public const array Data = [
+    public const Data = [
         'user' => 'User',
     ];
 }
@@ -257,7 +257,7 @@ class ExactLineConfig
     /**
      * @var positive-int
      */
-    public const int FAILING_LINE = -99;
+    public const FAILING_LINE = -99;
 }
 PHP;
 
