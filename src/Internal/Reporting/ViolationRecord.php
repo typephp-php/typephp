@@ -26,7 +26,8 @@ final class ViolationRecord implements JsonSerializable
         public readonly int $count = 1,
         public readonly ?string $caller = null,
         public readonly ?string $declaredIn = null
-    ) {}
+    ) {
+    }
 
     /**
      * Computes a deterministic deduplication hash for this violation.

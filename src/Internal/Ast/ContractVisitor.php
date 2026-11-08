@@ -10,7 +10,9 @@ use PhpParser\NodeVisitorAbstract;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
 use TypePHP\Internal\Docblock\DocblockExtractor;
@@ -334,12 +336,19 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $typeNode = $typeParser->parse($tokens);
 
                 foreach ($stmt->consts as $const) {
+                    $constName = $const->name->toString();
+                    $fullTarget = $className . '::' . $constName;
+
+                    if ($const->value instanceof Node\Expr\Closure && $typeNode instanceof CallableTypeNode) {
+                        $this->instrumentConstantClosure($const->value, $typeNode, $fullTarget);
+
+                        continue;
+                    }
+
                     if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile)) {
                         continue;
                     }
 
-                    $constName = $const->name->toString();
-                    $fullTarget = $className . '::' . $constName;
                     $classConstFetch = new Node\Expr\ClassConstFetch(new Node\Name\FullyQualified($className), $constName);
 
                     $checkCall = NodeBuilder::createConstantCheckCall(
@@ -388,14 +397,20 @@ final class ContractVisitor extends NodeVisitorAbstract
             $typeNode = $typeParser->parse($tokens);
 
             foreach ($node->consts as $const) {
-                if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile)) {
-                    continue;
-                }
-
                 $constName = $const->name->toString();
                 $qualifiedConstName = $this->currentNamespace !== ''
                     ? $this->currentNamespace . '\\' . $constName
                     : $constName;
+
+                if ($const->value instanceof Node\Expr\Closure && $typeNode instanceof CallableTypeNode) {
+                    $this->instrumentConstantClosure($const->value, $typeNode, $qualifiedConstName);
+
+                    continue;
+                }
+
+                if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile)) {
+                    continue;
+                }
 
                 $constFetch = new Node\Expr\ConstFetch(new Node\Name\FullyQualified($qualifiedConstName));
 
@@ -414,6 +429,122 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         return $injectedStmts;
+    }
+
+    private function instrumentConstantClosure(
+        Node\Expr\Closure $closure,
+        CallableTypeNode $callableTypeNode,
+        string $caller
+    ): void {
+        $paramChecks = [];
+        $callableParams = $callableTypeNode->parameters;
+        $paramsByName = [];
+
+        foreach ($callableParams as $idx => $pNode) {
+            $pName = $pNode->parameterName !== null ? ltrim($pNode->parameterName, '$') : null;
+            if ($pName !== null) {
+                $paramsByName[$pName] = $pNode;
+            } elseif (isset($closure->params[$idx])) {
+                $closureParam = $closure->params[$idx];
+                if ($closureParam->var instanceof Node\Expr\Variable && \is_string($closureParam->var->name)) {
+                    $paramsByName[$closureParam->var->name] = $pNode;
+                }
+            }
+        }
+
+        foreach ($closure->params as $param) {
+            if ($param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
+                $pName = $param->var->name;
+                $pContract = $paramsByName[$pName] ?? null;
+
+                if ($pContract !== null) {
+                    $typeStr = (string) $pContract->type;
+                    if (strtolower(trim($typeStr)) === 'mixed') {
+                        continue;
+                    }
+
+                    $line = $param->getStartLine();
+                    $checkCall = NodeBuilder::createConstantClosureParamCheckCall(
+                        $caller,
+                        $pName,
+                        new Node\Expr\Variable($pName),
+                        $typeStr,
+                        $line
+                    );
+                    $checkStmt = new Node\Stmt\Expression(NodeBuilder::createTernaryThrowExpr($checkCall, $line));
+                    $checkStmt->setAttribute('typephp_injected', true);
+                    $paramChecks[] = $checkStmt;
+                }
+            }
+        }
+
+        if ($paramChecks !== []) {
+            $closure->stmts = [...$paramChecks, ...$closure->stmts];
+        }
+
+        $returnTypeNode = $callableTypeNode->returnType;
+        $returnTypeStr = (string) $returnTypeNode;
+        $isReturnUnconstrained = \in_array(strtolower(trim($returnTypeStr)), ['void', 'mixed'], true);
+
+        if (! $isReturnUnconstrained) {
+            $traverser = new NodeTraverser();
+            $traverser->addVisitor(new class (
+                $caller,
+                $returnTypeNode,
+                $returnTypeStr,
+                $this->currentFile
+            ) extends NodeVisitorAbstract {
+                public function __construct(
+                    private string $caller,
+                    private TypeNode $returnTypeNode,
+                    private string $returnTypeStr,
+                    private string $currentFile
+                ) {
+                }
+
+                public function enterNode(Node $n): int|Node|null
+                {
+                    if (
+                        $n instanceof Node\Expr\Closure
+                        || $n instanceof Node\Expr\ArrowFunction
+                        || $n instanceof Node\Stmt\Function_
+                        || $n instanceof Node\Stmt\ClassMethod
+                        || $n instanceof Node\Stmt\Class_
+                    ) {
+                        return NodeTraverser::DONT_TRAVERSE_CHILDREN;
+                    }
+
+                    if ($n instanceof Node\Stmt\Return_) {
+                        $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
+
+                        if (
+                            Config::isEliminateStaticallyProvenChecksEnabled()
+                            && StaticTypeEvaluator::satisfies($exprToWrap, $this->returnTypeNode, $this->currentFile)
+                        ) {
+                            return null;
+                        }
+
+                        $line = $n->getStartLine();
+                        $checkCall = NodeBuilder::createConstantClosureReturnCheckCall(
+                            $this->caller,
+                            $exprToWrap,
+                            $this->returnTypeStr,
+                            $line
+                        );
+
+                        $n->expr = FunctionContractInjector::buildTernaryReturnExpr($checkCall, $line);
+
+                        return $n;
+                    }
+
+                    return null;
+                }
+            });
+
+            /** @var array<Node\Stmt> $newStmts */
+            $newStmts = $traverser->traverse($closure->stmts);
+            $closure->stmts = $newStmts;
+        }
     }
 
     private function createForeachBoundaryCheck(Node\Stmt\Foreach_ $node): ?Node\Stmt\Expression
@@ -457,7 +588,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
     private static function isLoopBodyFreeOfOpaqueMutations(Node\Stmt\Foreach_ $node): bool
     {
-        $visitor = new class() extends NodeVisitorAbstract {
+        $visitor = new class () extends NodeVisitorAbstract {
             public bool $hasOpaqueCalls = false;
 
             public function enterNode(Node $n): ?int

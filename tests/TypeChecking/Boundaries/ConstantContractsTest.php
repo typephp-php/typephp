@@ -284,4 +284,281 @@ PHP;
             }
         });
     });
+
+    describe('4. Closures in Constants (PHP 8.5+)', function () {
+        test('throws TypeError when constant closure violates return contract', function () {
+            if (PHP_VERSION_ID < 80500) {
+                expect(true)->toBeTrue();
+
+                return;
+            }
+
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace TypePHP\Tests\TypeChecking\Boundaries;
+
+class ConfigConstClosureReturnViolation
+{
+    /**
+     * @var callable(): int
+     */
+    public const Callback = static function () {
+        return 'not_an_int';
+    };
+}
+
+$fn = ConfigConstClosureReturnViolation::Callback;
+$fn();
+PHP;
+
+            $tempDir = sys_get_temp_dir() . '/typephp_const_closure_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $filePath = $tempDir . '/ConfigConstClosureReturnViolation.php';
+            file_put_contents($filePath, $source);
+
+            try {
+                StreamWrapper::register();
+
+                expect(fn () => require $filePath)
+                    ->toThrow(TypeError::class, 'ConfigConstClosureReturnViolation::Callback(): Return value must be of type int, string \'not_an_int\' returned')
+                ;
+            } finally {
+                @unlink($filePath);
+                @rmdir($tempDir);
+            }
+        });
+
+        test('throws TypeError on direct execution of constant closure (Config::Callback)()', function () {
+            if (PHP_VERSION_ID < 80500) {
+                expect(true)->toBeTrue();
+
+                return;
+            }
+
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace TypePHP\Tests\TypeChecking\Boundaries;
+
+class ConfigConstClosureDirectCall
+{
+    /**
+     * @var callable(): int
+     */
+    public const Callback = static function () {
+        return 'not_an_int';
+    };
+}
+
+(ConfigConstClosureDirectCall::Callback)();
+PHP;
+
+            $tempDir = sys_get_temp_dir() . '/typephp_const_closure_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $filePath = $tempDir . '/ConfigConstClosureDirectCall.php';
+            file_put_contents($filePath, $source);
+
+            try {
+                StreamWrapper::register();
+
+                expect(fn () => require $filePath)
+                    ->toThrow(TypeError::class, 'ConfigConstClosureDirectCall::Callback(): Return value must be of type int')
+                ;
+            } finally {
+                @unlink($filePath);
+                @rmdir($tempDir);
+            }
+        });
+
+        test('throws TypeError when constant closure parameter violates contract', function () {
+            if (PHP_VERSION_ID < 80500) {
+                expect(true)->toBeTrue();
+
+                return;
+            }
+
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace TypePHP\Tests\TypeChecking\Boundaries;
+
+class ConfigConstClosureParamViolation
+{
+    /**
+     * @var callable(positive-int $id): string
+     */
+    public const Formatter = static function (int $id): string {
+        return "id_{$id}";
+    };
+}
+
+$fn = ConfigConstClosureParamViolation::Formatter;
+$fn(-5);
+PHP;
+
+            $tempDir = sys_get_temp_dir() . '/typephp_const_closure_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $filePath = $tempDir . '/ConfigConstClosureParamViolation.php';
+            file_put_contents($filePath, $source);
+
+            try {
+                StreamWrapper::register();
+
+                expect(fn () => require $filePath)
+                    ->toThrow(TypeError::class, 'ConfigConstClosureParamViolation::Formatter(): Argument $id must be of type positive-int, negative int (-5) given')
+                ;
+            } finally {
+                @unlink($filePath);
+                @rmdir($tempDir);
+            }
+        });
+
+        test('throws TypeError when global constant closure violates return contract', function () {
+            if (PHP_VERSION_ID < 80500) {
+                expect(true)->toBeTrue();
+
+                return;
+            }
+
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+/**
+ * @var callable(): int
+ */
+const GLOBAL_CONST_CLOSURE = static function () {
+    return 'invalid';
+};
+
+$fn = GLOBAL_CONST_CLOSURE;
+$fn();
+PHP;
+
+            $tempDir = sys_get_temp_dir() . '/typephp_const_closure_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $filePath = $tempDir . '/global_const_closure.php';
+            file_put_contents($filePath, $source);
+
+            try {
+                StreamWrapper::register();
+
+                expect(fn () => require $filePath)
+                    ->toThrow(TypeError::class, 'GLOBAL_CONST_CLOSURE(): Return value must be of type int')
+                ;
+            } finally {
+                @unlink($filePath);
+                @rmdir($tempDir);
+            }
+        });
+
+        test('accepts valid constant closure and executes cleanly', function () {
+            if (PHP_VERSION_ID < 80500) {
+                expect(true)->toBeTrue();
+
+                return;
+            }
+
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace TypePHP\Tests\TypeChecking\Boundaries;
+
+class ConfigConstClosureValid
+{
+    /**
+     * @var callable(positive-int): non-empty-string
+     */
+    public const Formatter = static function (int $id): string {
+        return "user_{$id}";
+    };
+}
+
+$fn = ConfigConstClosureValid::Formatter;
+return $fn(42);
+PHP;
+
+            $tempDir = sys_get_temp_dir() . '/typephp_const_closure_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $filePath = $tempDir . '/ConfigConstClosureValid.php';
+            file_put_contents($filePath, $source);
+
+            try {
+                StreamWrapper::register();
+
+                $result = require $filePath;
+                expect($result)->toBe('user_42');
+            } finally {
+                @unlink($filePath);
+                @rmdir($tempDir);
+            }
+        });
+
+        test('guarantees zero line-drift when instrumenting closures inside constants', function () {
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App;
+
+class ConfigClosureDriftTest
+{
+    /**
+     * @var callable(positive-int $code): int
+     */
+    public const Callback = static function (int $code) {
+        $multiplier = 2;
+        return $code * $multiplier;
+    };
+}
+
+$landmark = 'line_18_exact';
+PHP;
+
+            $transformed = StreamWrapper::transformSource($source, 'ConfigClosureDriftTest.php');
+
+            $origLines = explode("\n", str_replace("\r\n", "\n", $source));
+            $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
+
+            expect(\count($transLines))->toBe(\count($origLines));
+
+            $origIndex = array_search('$landmark = \'line_18_exact\';', array_map('trim', $origLines), true);
+            $transIndex = array_search('$landmark = \'line_18_exact\';', array_map('trim', $transLines), true);
+
+            expect($transIndex)->toBe($origIndex)
+                ->and($origIndex)->toBe(17)
+            ;
+        });
+
+        test('eliminates return check when closure return is statically proven valid', function () {
+            $source = <<<'PHP'
+<?php
+
+class StaticallyProvenClosureConst
+{
+    /**
+     * @var callable(): non-empty-string
+     */
+    public const Generator = static function () {
+        return 'proven_valid_string';
+    };
+}
+PHP;
+
+            $transformed = StreamWrapper::transformSource($source, 'StaticallyProvenClosureConst.php');
+
+            expect($transformed)->not()->toContain('RuntimeTypeChecker::checkReturn');
+        });
+    });
 });

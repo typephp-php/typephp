@@ -158,4 +158,42 @@ final class NodeBuilder
             ]
         );
     }
+
+    public static function createConstantClosureParamCheckCall(
+        string $caller,
+        string $paramName,
+        Node\Expr $paramVar,
+        string $typeString,
+        int $line
+    ): Node\Expr\FuncCall {
+        return new Node\Expr\FuncCall(
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkConstantClosureParam'),
+            [
+                new Node\Arg(new Node\Scalar\String_($caller)),
+                new Node\Arg(new Node\Scalar\String_($paramName)),
+                new Node\Arg($paramVar),
+                new Node\Arg(new Node\Scalar\String_($typeString)),
+                new Node\Arg(new Node\Scalar\MagicConst\File()),
+                new Node\Arg(new Node\Scalar\LNumber($line)),
+            ]
+        );
+    }
+
+    public static function createConstantClosureReturnCheckCall(
+        string $caller,
+        Node\Expr $valueExpr,
+        string $typeString,
+        int $line
+    ): Node\Expr\FuncCall {
+        return new Node\Expr\FuncCall(
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkConstantClosureReturn'),
+            [
+                new Node\Arg(new Node\Scalar\String_($caller)),
+                new Node\Arg($valueExpr),
+                new Node\Arg(new Node\Scalar\String_($typeString)),
+                new Node\Arg(new Node\Scalar\MagicConst\File()),
+                new Node\Arg(new Node\Scalar\LNumber($line)),
+            ]
+        );
+    }
 }

@@ -113,6 +113,87 @@ final class RuntimeTypeChecker
     }
 
     /**
+     * Validates an argument passed into a constant closure against its parameter contract.
+     */
+    public static function checkConstantClosureParam(
+        string $caller,
+        string $paramName,
+        mixed $value,
+        string $typeString,
+        string $file = '',
+        ?int $line = null
+    ): mixed {
+        if (! Config::isEnabled() || ! Config::isParamsEnabled()) {
+            return $value;
+        }
+
+        try {
+            $normalized = DocblockNormalizer::normalize($typeString);
+            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+            $tokens = new TokenIterator($lexer->tokenize($normalized));
+            $typeNode = $typeParser->parse($tokens);
+
+            if ($file !== '') {
+                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+            }
+
+            $context = "{$caller}(): Argument \${$paramName}";
+
+            $err = self::getRegistry()->validate($value, $typeNode, $context);
+            if ($err !== null) {
+                if (IgnoreManager::isCallerIgnored()) {
+                    return $value;
+                }
+
+                return ViolationCollector::handle($err, 'parameter', $value, $file, $line, $caller, '$' . $paramName);
+            }
+        } catch (\Throwable $e) {
+        }
+
+        return $value;
+    }
+
+    /**
+     * Validates a return value from a constant closure against its return type contract.
+     */
+    public static function checkConstantClosureReturn(
+        string $caller,
+        mixed $value,
+        string $typeString,
+        string $file = '',
+        ?int $line = null
+    ): mixed {
+        if (! Config::isEnabled() || ! Config::isReturnsEnabled()) {
+            return $value;
+        }
+
+        try {
+            $normalized = DocblockNormalizer::normalize($typeString);
+            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+            $tokens = new TokenIterator($lexer->tokenize($normalized));
+            $typeNode = $typeParser->parse($tokens);
+
+            if ($file !== '') {
+                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+            }
+
+            $context = "{$caller}(): Return value";
+
+            $err = self::getRegistry()->validate($value, $typeNode, $context);
+            if ($err !== null) {
+                if (IgnoreManager::isCallerIgnored()) {
+                    return $value;
+                }
+
+                return ViolationCollector::handle($err, 'return', $value, $file, $line, $caller, 'return');
+            }
+        } catch (\Throwable $e) {
+        }
+
+        return $value;
+    }
+
+    /**
      * Evaluates member/dimension mutation assignments on an object or static property
      * ($obj->prop[$key] = $val or Class::$prop[$key] = $val) atomically before writing.
      *
