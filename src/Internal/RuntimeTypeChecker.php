@@ -6,6 +6,7 @@ namespace TypePHP\Internal;
 
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Ast\ScopeCleaner;
 use TypePHP\Internal\Checker\GeneratorChecker;
 use TypePHP\Internal\Checker\InlineChecker;
@@ -16,10 +17,13 @@ use TypePHP\Internal\Checker\ReturnChecker;
 use TypePHP\Internal\Checker\SelfOutChecker;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Docblock\DocblockExtractor;
+use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Reporting\ViolationCollector;
 use TypePHP\Internal\Resolver\CallerBoundaryResolver;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\IgnoreManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
@@ -65,6 +69,47 @@ final class RuntimeTypeChecker
     public static function isEnabled(): bool
     {
         return Config::isEnabled();
+    }
+
+    /**
+     * Validates class-level and global constants against declared @var contracts upon declaration/load.
+     */
+    public static function checkConstant(
+        string $constantName,
+        mixed $value,
+        string $typeString,
+        string $file = '',
+        ?int $line = null
+    ): mixed {
+        if (! Config::isEnabled()) {
+            return $value;
+        }
+
+        try {
+            $normalized = DocblockNormalizer::normalize($typeString);
+            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+            $tokens = new TokenIterator($lexer->tokenize($normalized));
+            $typeNode = $typeParser->parse($tokens);
+
+            if ($file !== '') {
+                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+            }
+
+            $context = "Constant {$constantName}";
+
+            $err = self::getRegistry()->validate($value, $typeNode, $context);
+            if ($err !== null) {
+                if (IgnoreManager::isCallerIgnored()) {
+                    return $value;
+                }
+
+                return ViolationCollector::handle($err, 'constant', $value, $file, $line, $constantName);
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore unexpected parsing errors
+        }
+
+        return $value;
     }
 
     /**

@@ -12,7 +12,7 @@ use JsonSerializable;
 final class ViolationRecord implements JsonSerializable
 {
     /**
-     * @param 'parameter'|'return'|'property'|'variable'|'param-out'|'self-out'|'callback'|'yield'|'send' $kind
+     * @param 'parameter'|'return'|'property'|'variable'|'param-out'|'self-out'|'callback'|'yield'|'send'|'constant' $kind
      */
     public function __construct(
         public readonly string $file,
@@ -26,8 +26,7 @@ final class ViolationRecord implements JsonSerializable
         public readonly int $count = 1,
         public readonly ?string $caller = null,
         public readonly ?string $declaredIn = null
-    ) {
-    }
+    ) {}
 
     /**
      * Computes a deterministic deduplication hash for this violation.

@@ -213,6 +213,23 @@ final class ContractVisitor extends NodeVisitorAbstract
     {
         $this->trackDeclarationExit($node);
 
+        if ($node instanceof Node\Stmt\Class_ && $node->name !== null) {
+            $className = $this->resolveQualifiedName($node->name);
+            if ($className !== null) {
+                $constChecks = $this->collectUnprovenClassConstantChecks($node, $className);
+                if ($constChecks !== []) {
+                    return [$node, ...$constChecks];
+                }
+            }
+        }
+
+        if ($node instanceof Node\Stmt\Const_) {
+            $globalConstChecks = $this->collectUnprovenGlobalConstantChecks($node);
+            if ($globalConstChecks !== []) {
+                return [$node, ...$globalConstChecks];
+            }
+        }
+
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Expr\Closure) {
             array_pop($this->byRefStack);
         }
@@ -283,6 +300,122 @@ final class ContractVisitor extends NodeVisitorAbstract
         return null;
     }
 
+    /**
+     * @return list<Node\Stmt>
+     */
+    private function collectUnprovenClassConstantChecks(Node\Stmt\Class_ $node, string $className): array
+    {
+        $injectedStmts = [];
+
+        foreach ($node->stmts as $stmt) {
+            if (! ($stmt instanceof Node\Stmt\ClassConst)) {
+                continue;
+            }
+
+            $doc = $stmt->getDocComment();
+            if ($doc === null || ! str_contains($doc->getText(), '@var')) {
+                continue;
+            }
+
+            if (Config::isRespectIgnoreTagsEnabled() && str_contains($doc->getText(), '@typephp-ignore')) {
+                continue;
+            }
+
+            $varTag = DocblockExtractor::extractVarTagFromDoc($doc->getText());
+            if ($varTag === null) {
+                continue;
+            }
+
+            $typeString = $varTag[0];
+
+            try {
+                [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+                $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($typeString)));
+                $typeNode = $typeParser->parse($tokens);
+
+                foreach ($stmt->consts as $const) {
+                    if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile)) {
+                        continue;
+                    }
+
+                    $constName = $const->name->toString();
+                    $fullTarget = $className . '::' . $constName;
+                    $classConstFetch = new Node\Expr\ClassConstFetch(new Node\Name\FullyQualified($className), $constName);
+
+                    $checkCall = NodeBuilder::createConstantCheckCall(
+                        $fullTarget,
+                        $classConstFetch,
+                        $typeString,
+                        $const->getStartLine()
+                    );
+
+                    $checkStmt = new Node\Stmt\Expression(NodeBuilder::createTernaryThrowExpr($checkCall, $const->getStartLine()));
+                    $checkStmt->setAttribute('typephp_injected', true);
+                    $injectedStmts[] = $checkStmt;
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        return $injectedStmts;
+    }
+
+    /**
+     * @return list<Node\Stmt>
+     */
+    private function collectUnprovenGlobalConstantChecks(Node\Stmt\Const_ $node): array
+    {
+        $doc = $node->getDocComment();
+        if ($doc === null || ! str_contains($doc->getText(), '@var')) {
+            return [];
+        }
+
+        if (Config::isRespectIgnoreTagsEnabled() && str_contains($doc->getText(), '@typephp-ignore')) {
+            return [];
+        }
+
+        $varTag = DocblockExtractor::extractVarTagFromDoc($doc->getText());
+        if ($varTag === null) {
+            return [];
+        }
+
+        $typeString = $varTag[0];
+        $injectedStmts = [];
+
+        try {
+            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+            $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($typeString)));
+            $typeNode = $typeParser->parse($tokens);
+
+            foreach ($node->consts as $const) {
+                if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile)) {
+                    continue;
+                }
+
+                $constName = $const->name->toString();
+                $qualifiedConstName = $this->currentNamespace !== ''
+                    ? $this->currentNamespace . '\\' . $constName
+                    : $constName;
+
+                $constFetch = new Node\Expr\ConstFetch(new Node\Name\FullyQualified($qualifiedConstName));
+
+                $checkCall = NodeBuilder::createConstantCheckCall(
+                    $qualifiedConstName,
+                    $constFetch,
+                    $typeString,
+                    $const->getStartLine()
+                );
+
+                $checkStmt = new Node\Stmt\Expression(NodeBuilder::createTernaryThrowExpr($checkCall, $const->getStartLine()));
+                $checkStmt->setAttribute('typephp_injected', true);
+                $injectedStmts[] = $checkStmt;
+            }
+        } catch (\Throwable) {
+        }
+
+        return $injectedStmts;
+    }
+
     private function createForeachBoundaryCheck(Node\Stmt\Foreach_ $node): ?Node\Stmt\Expression
     {
         $targetVarExpr = null;
@@ -324,7 +457,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
     private static function isLoopBodyFreeOfOpaqueMutations(Node\Stmt\Foreach_ $node): bool
     {
-        $visitor = new class () extends NodeVisitorAbstract {
+        $visitor = new class() extends NodeVisitorAbstract {
             public bool $hasOpaqueCalls = false;
 
             public function enterNode(Node $n): ?int

@@ -83,4 +83,20 @@ describe('NodeBuilder Unit Tests', function () {
             ->and($call->args)->toHaveCount(5)
         ;
     });
+
+    test('createConstantCheckCall creates FuncCall node for RuntimeTypeChecker::checkConstant', function () {
+        $valExpr = new Node\Expr\ClassConstFetch(new Node\Name\FullyQualified('App\Config'), 'Data');
+
+        $call = NodeBuilder::createConstantCheckCall('App\Config::Data', $valExpr, 'list<string>', 12);
+
+        expect($call)->toBeInstanceOf(Node\Expr\FuncCall::class)
+            ->and($call->name->toString())->toBe('TypePHP\Internal\RuntimeTypeChecker::checkConstant')
+            ->and($call->args)->toHaveCount(5)
+            ->and($call->args[0]->value->value)->toBe('App\Config::Data')
+            ->and($call->args[1]->value)->toBe($valExpr)
+            ->and($call->args[2]->value->value)->toBe('list<string>')
+            ->and($call->args[3]->value)->toBeInstanceOf(Node\Scalar\MagicConst\File::class)
+            ->and($call->args[4]->value->value)->toBe(12)
+        ;
+    });
 });

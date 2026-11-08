@@ -69,9 +69,7 @@ class RuntimeCheckerIgnoredCaller
  *
  * @param-out positive-int $id
  */
-function runtimeTestParamOutFixture(mixed &$id): void
-{
-}
+function runtimeTestParamOutFixture(mixed &$id): void {}
 
 /**
  * Self-contained fixture: self-out state transitions
@@ -83,9 +81,7 @@ class RuntimeTestSessionFixture
     /**
      * @self-out self<'authenticated'>
      */
-    public function login(): void
-    {
-    }
+    public function login(): void {}
 }
 
 /**
@@ -101,9 +97,7 @@ function runtimeTestGeneratorFixture(): Generator
 /**
  * @param mixed $a
  */
-function runtimeUnconstrainedParams(mixed $a): void
-{
-}
+function runtimeUnconstrainedParams(mixed $a): void {}
 
 /**
  * @return mixed
@@ -144,14 +138,14 @@ describe('RuntimeTypeChecker Unit Tests', function () {
     test('withPendingGeneric pushes and pops instantiation context', function () {
         $instantiated = RuntimeTypeChecker::withPendingGeneric(
             Container::class . '<' . Dog::class . '>',
-            fn () => new Container(new Dog()),
+            fn() => new Container(new Dog()),
             __FILE__
         );
 
         expect($instantiated)->toBeInstanceOf(Container::class);
 
         Config::set(['enabled' => false]);
-        $bypass = RuntimeTypeChecker::withPendingGeneric('any', fn () => 123);
+        $bypass = RuntimeTypeChecker::withPendingGeneric('any', fn() => 123);
         expect($bypass)->toBe(123);
     });
 
@@ -163,9 +157,8 @@ describe('RuntimeTypeChecker Unit Tests', function () {
         $cached = RuntimeTypeChecker::checkStaticProperty(StaticPropFixture::class, 'count', 10, __FILE__, 1);
         expect($cached)->toBe(10);
 
-        expect(fn () => RuntimeTypeChecker::checkStaticProperty(StaticPropFixture::class, 'badCount', -5, __FILE__, 1))
-            ->toThrow(TypeError::class, 'positive-int')
-        ;
+        expect(fn() => RuntimeTypeChecker::checkStaticProperty(StaticPropFixture::class, 'badCount', -5, __FILE__, 1))
+            ->toThrow(TypeError::class, 'positive-int');
 
         Config::set(['enabled' => false]);
         expect(RuntimeTypeChecker::checkStaticProperty(StaticPropFixture::class, 'disabledCount', -50))->toBe(-50);
@@ -355,7 +348,7 @@ describe('RuntimeTypeChecker Unit Tests', function () {
     });
 
     test('wrapCallable and wrapIterable respect disabled switch', function () {
-        $cb = fn () => 1;
+        $cb = fn() => 1;
         expect(RuntimeTypeChecker::wrapCallable('nonExistent', 'arg', $cb))->toBe($cb);
 
         $iter = [1, 2, 3];
@@ -388,52 +381,52 @@ describe('RuntimeTypeChecker Unit Tests', function () {
         $badNode = new GenericTypeNode(new IdentifierTypeNode(Container::class), [new IdentifierTypeNode(Cat::class)]);
 
         $resNode = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::bindInstanceFromNode($dog, $badNode)
+            fn() => RuntimeTypeChecker::bindInstanceFromNode($dog, $badNode)
         );
         expect($resNode)->toBeNull();
 
         $resVar = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkVariable(-5, 'positive-int', 'val', __FILE__)
+            fn() => RuntimeTypeChecker::checkVariable(-5, 'positive-int', 'val', __FILE__)
         );
         expect($resVar)->toBe(-5);
 
         $fixture = new ConfiguredProperty();
         $resProp = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkProperty(['bad'], $fixture, 'numbers', __FILE__)
+            fn() => RuntimeTypeChecker::checkProperty(['bad'], $fixture, 'numbers', __FILE__)
         );
         expect($resProp)->toBe(['bad']);
 
         $resMember = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkMemberAssign(['count' => 5], [['dim', 'count']], 'not_an_int', 'array{count: int}', 'stats', __FILE__)
+            fn() => RuntimeTypeChecker::checkMemberAssign(['count' => 5], [['dim', 'count']], 'not_an_int', 'array{count: int}', 'stats', __FILE__)
         );
         expect($resMember)->toBe('not_an_int');
 
         $resParams = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkParams(UserService::class . '::find', ['id' => -1], new UserService())
+            fn() => RuntimeTypeChecker::checkParams(UserService::class . '::find', ['id' => -1], new UserService())
         );
         expect($resParams)->toBeNull();
 
         $resOut = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkParamOut('runtimeTestParamOutFixture', 'id', -50)
+            fn() => RuntimeTypeChecker::checkParamOut('runtimeTestParamOutFixture', 'id', -50)
         );
         expect($resOut)->toBeNull();
 
         RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkSelfOut(RuntimeTestSessionFixture::class . '::login', new RuntimeTestSessionFixture())
+            fn() => RuntimeTypeChecker::checkSelfOut(RuntimeTestSessionFixture::class . '::login', new RuntimeTestSessionFixture())
         );
 
         $resRet = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkReturn(UserService::class . '::find', ['id' => -1, 'name' => 'Alice'], new UserService())
+            fn() => RuntimeTypeChecker::checkReturn(UserService::class . '::find', ['id' => -1, 'name' => 'Alice'], new UserService())
         );
         expect($resRet)->toBe(['id' => -1, 'name' => 'Alice']);
 
         $resSend = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkSend('runtimeTestGeneratorFixture', -50)
+            fn() => RuntimeTypeChecker::checkSend('runtimeTestGeneratorFixture', -50)
         );
         expect($resSend)->toBe(-50);
 
         $resYield = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkYield('runtimeTestGeneratorFixture', 123, -50)
+            fn() => RuntimeTypeChecker::checkYield('runtimeTestGeneratorFixture', 123, -50)
         );
         expect($resYield)->toBe(-50);
     });
@@ -484,63 +477,63 @@ PHP
             $badNode = new GenericTypeNode(new IdentifierTypeNode(Container::class), [new IdentifierTypeNode(Cat::class)]);
 
             $resNode = Acme\VendorTest\VendorCaller::call(
-                fn () => RuntimeTypeChecker::bindInstanceFromNode($dog, $badNode, $fnName)
+                fn() => RuntimeTypeChecker::bindInstanceFromNode($dog, $badNode, $fnName)
             );
             expect($resNode)->toBeNull();
 
             $resVar = Acme\VendorTest\VendorCaller::call(
-                fn () => RuntimeTypeChecker::checkVariable(-5, 'positive-int', 'v', __FILE__, $fnName)
+                fn() => RuntimeTypeChecker::checkVariable(-5, 'positive-int', 'v', __FILE__, $fnName)
             );
             expect($resVar)->toBe(-5);
 
             $resProp = Acme\VendorTest\VendorCaller::call(
-                fn () => RuntimeTypeChecker::checkProperty(['bad'], 'Acme\VendorTest\VendorCaller', 'prop', __FILE__)
+                fn() => RuntimeTypeChecker::checkProperty(['bad'], 'Acme\VendorTest\VendorCaller', 'prop', __FILE__)
             );
             expect($resProp)->toBe(['bad']);
 
             $resMember = Acme\VendorTest\VendorCaller::call(
-                fn () => RuntimeTypeChecker::checkMemberAssign(['count' => 5], [['dim', 'count']], 'not_an_int', 'array{count: int}', 'stats', __FILE__, $fnName)
+                fn() => RuntimeTypeChecker::checkMemberAssign(['count' => 5], [['dim', 'count']], 'not_an_int', 'array{count: int}', 'stats', __FILE__, $fnName)
             );
             expect($resMember)->toBe('not_an_int');
 
             $resParams = Acme\VendorTest\VendorCaller::call(
-                fn () => RuntimeTypeChecker::checkParams($fnName, ['a' => 1])
+                fn() => RuntimeTypeChecker::checkParams($fnName, ['a' => 1])
             );
             expect($resParams)->toBeNull();
 
             $resOut = Acme\VendorTest\VendorCaller::call(
-                fn () => RuntimeTypeChecker::checkParamOut($fnName, 'param', 1)
+                fn() => RuntimeTypeChecker::checkParamOut($fnName, 'param', 1)
             );
             expect($resOut)->toBeNull();
 
             Acme\VendorTest\VendorCaller::call(
-                fn () => RuntimeTypeChecker::checkSelfOut($fnName, new stdClass())
+                fn() => RuntimeTypeChecker::checkSelfOut($fnName, new stdClass())
             );
 
             $resRet = Acme\VendorTest\VendorCaller::call(
-                fn () => RuntimeTypeChecker::checkReturn($fnName, 'any')
+                fn() => RuntimeTypeChecker::checkReturn($fnName, 'any')
             );
             expect($resRet)->toBe('any');
 
             $resSend = Acme\VendorTest\VendorCaller::call(
-                fn () => RuntimeTypeChecker::checkSend($fnName, 'val')
+                fn() => RuntimeTypeChecker::checkSend($fnName, 'val')
             );
             expect($resSend)->toBe('val');
 
             $resYield = Acme\VendorTest\VendorCaller::call(
-                fn () => RuntimeTypeChecker::checkYield($fnName, 'k', 'v')
+                fn() => RuntimeTypeChecker::checkYield($fnName, 'k', 'v')
             );
             expect($resYield)->toBe('v');
 
-            $cb = fn () => 1;
+            $cb = fn() => 1;
             $resCb = Acme\VendorTest\VendorCaller::call(
-                fn () => RuntimeTypeChecker::wrapCallable($fnName, 'cb', $cb)
+                fn() => RuntimeTypeChecker::wrapCallable($fnName, 'cb', $cb)
             );
             expect($resCb)->toBe($cb);
 
             $iter = [1];
             $resIter = Acme\VendorTest\VendorCaller::call(
-                fn () => RuntimeTypeChecker::wrapIterable($fnName, 'iter', $iter)
+                fn() => RuntimeTypeChecker::wrapIterable($fnName, 'iter', $iter)
             );
             expect($resIter)->toBe($iter);
         } finally {
@@ -743,23 +736,47 @@ PHP
         ;
 
         $ignored = RuntimeCheckerIgnoredCaller::run(
-            fn () => RuntimeTypeChecker::checkPropertyMemberAssign($fixture, 'numbers', [['dim', null]], 'wrong', __FILE__)
+            fn() => RuntimeTypeChecker::checkPropertyMemberAssign($fixture, 'numbers', [['dim', null]], 'wrong', __FILE__)
         );
         expect($ignored)->toBe('wrong');
 
         Config::set(['enabled' => false]);
         expect(RuntimeTypeChecker::checkPropertyMemberAssign($fixture, 'numbers', [['dim', null]], 'wrong', __FILE__))
-            ->toBe('wrong')
-        ;
+            ->toBe('wrong');
     });
 
     test('checkStaticProperty does not mark property as checked when validation fails and throws', function () {
-        expect(fn () => RuntimeTypeChecker::checkStaticProperty(StaticPropFixture::class, 'badCount', -5, __FILE__, 1))
-            ->toThrow(TypeError::class, 'positive-int')
+        expect(fn() => RuntimeTypeChecker::checkStaticProperty(StaticPropFixture::class, 'badCount', -5, __FILE__, 1))
+            ->toThrow(TypeError::class, 'positive-int');
+
+        expect(fn() => RuntimeTypeChecker::checkStaticProperty(StaticPropFixture::class, 'badCount', -5, __FILE__, 1))
+            ->toThrow(TypeError::class, 'positive-int');
+    });
+
+    test('checkConstant validates class and global constants and respects disabled switch', function () {
+        $valid = RuntimeTypeChecker::checkConstant('App\Config::Data', ['User', 'Product'], 'list<string>', __FILE__, 10);
+        expect($valid)->toBe(['User', 'Product']);
+
+        $invalidClass = RuntimeTypeChecker::checkConstant('App\Config::Data', ['user' => 'User'], 'list<string>', __FILE__, 10);
+        expect($invalidClass)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalidClass->getMessage())->toContain('must be a list')
         ;
 
-        expect(fn () => RuntimeTypeChecker::checkStaticProperty(StaticPropFixture::class, 'badCount', -5, __FILE__, 1))
-            ->toThrow(TypeError::class, 'positive-int')
+        $invalidGlobal = RuntimeTypeChecker::checkConstant('GLOBAL_TIMEOUT', -5, 'positive-int', __FILE__, 20);
+        expect($invalidGlobal)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalidGlobal->getMessage())->toContain('must be of type positive-int')
         ;
+
+        Config::set(['enabled' => false]);
+        expect(RuntimeTypeChecker::checkConstant('App\Config::Data', ['user' => 'User'], 'list<string>', __FILE__, 10))
+            ->toBe(['user' => 'User']);
+    });
+
+    test('checkConstant respects @typephp-ignore on caller', function () {
+        $res = RuntimeCheckerIgnoredCaller::run(
+            fn() => RuntimeTypeChecker::checkConstant('App\Config::Data', ['user' => 'User'], 'list<string>', __FILE__, 10)
+        );
+
+        expect($res)->toBe(['user' => 'User']);
     });
 });
