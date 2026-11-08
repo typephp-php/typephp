@@ -12,7 +12,7 @@ use JsonSerializable;
 final class ViolationRecord implements JsonSerializable
 {
     /**
-     * @param 'parameter'|'return'|'property'|'variable'|'param-out'|'self-out'|'callback'|'yield'|'send' $kind
+     * @param 'parameter'|'return'|'property'|'variable'|'param-out'|'self-out'|'callback'|'yield'|'send'|'constant' $kind
      */
     public function __construct(
         public readonly string $file,

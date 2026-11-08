@@ -762,4 +762,102 @@ PHP
             ->toThrow(TypeError::class, 'positive-int')
         ;
     });
+
+    test('checkConstant validates class and global constants and respects disabled switch', function () {
+        $valid = RuntimeTypeChecker::checkConstant('App\Config::Data', ['User', 'Product'], 'list<string>', __FILE__, 10);
+        expect($valid)->toBe(['User', 'Product']);
+
+        $invalidClass = RuntimeTypeChecker::checkConstant('App\Config::Data', ['user' => 'User'], 'list<string>', __FILE__, 10);
+        expect($invalidClass)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalidClass->getMessage())->toContain('must be a list')
+        ;
+
+        $invalidGlobal = RuntimeTypeChecker::checkConstant('GLOBAL_TIMEOUT', -5, 'positive-int', __FILE__, 20);
+        expect($invalidGlobal)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalidGlobal->getMessage())->toContain('must be of type positive-int')
+        ;
+
+        Config::set(['enabled' => false]);
+        expect(RuntimeTypeChecker::checkConstant('App\Config::Data', ['user' => 'User'], 'list<string>', __FILE__, 10))
+            ->toBe(['user' => 'User'])
+        ;
+    });
+
+    test('checkConstant respects @typephp-ignore on caller', function () {
+        $res = RuntimeCheckerIgnoredCaller::run(
+            fn () => RuntimeTypeChecker::checkConstant('App\Config::Data', ['user' => 'User'], 'list<string>', __FILE__, 10)
+        );
+
+        expect($res)->toBe(['user' => 'User']);
+    });
+
+    test('checkConstantClosureParam validates arguments and respects config toggles and ignore tags', function () {
+        $valid = RuntimeTypeChecker::checkConstantClosureParam(
+            'App\Config::Formatter',
+            'id',
+            10,
+            'positive-int',
+            __FILE__,
+            15
+        );
+        expect($valid)->toBe(10);
+
+        $invalid = RuntimeTypeChecker::checkConstantClosureParam(
+            'App\Config::Formatter',
+            'id',
+            -5,
+            'positive-int',
+            __FILE__,
+            15
+        );
+        expect($invalid)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalid->getMessage())->toContain('App\Config::Formatter(): Argument $id must be of type positive-int')
+        ;
+
+        Config::set(['params' => false]);
+        expect(RuntimeTypeChecker::checkConstantClosureParam('App\Config::Formatter', 'id', -5, 'positive-int'))->toBe(-5);
+
+        Config::set(['enabled' => false, 'params' => true]);
+        expect(RuntimeTypeChecker::checkConstantClosureParam('App\Config::Formatter', 'id', -5, 'positive-int'))->toBe(-5);
+
+        Config::set(['enabled' => true, 'params' => true]);
+        $ignored = RuntimeCheckerIgnoredCaller::run(
+            fn () => RuntimeTypeChecker::checkConstantClosureParam('App\Config::Formatter', 'id', -5, 'positive-int')
+        );
+        expect($ignored)->toBe(-5);
+    });
+
+    test('checkConstantClosureReturn validates return values and respects config toggles and ignore tags', function () {
+        $valid = RuntimeTypeChecker::checkConstantClosureReturn(
+            'App\Config::Callback',
+            42,
+            'int',
+            __FILE__,
+            25
+        );
+        expect($valid)->toBe(42);
+
+        $invalid = RuntimeTypeChecker::checkConstantClosureReturn(
+            'App\Config::Callback',
+            'not_an_int',
+            'int',
+            __FILE__,
+            25
+        );
+        expect($invalid)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalid->getMessage())->toContain('App\Config::Callback(): Return value must be of type int, string \'not_an_int\' returned')
+        ;
+
+        Config::set(['returns' => false]);
+        expect(RuntimeTypeChecker::checkConstantClosureReturn('App\Config::Callback', 'not_an_int', 'int'))->toBe('not_an_int');
+
+        Config::set(['enabled' => false, 'returns' => true]);
+        expect(RuntimeTypeChecker::checkConstantClosureReturn('App\Config::Callback', 'not_an_int', 'int'))->toBe('not_an_int');
+
+        Config::set(['enabled' => true, 'returns' => true]);
+        $ignored = RuntimeCheckerIgnoredCaller::run(
+            fn () => RuntimeTypeChecker::checkConstantClosureReturn('App\Config::Callback', 'not_an_int', 'int')
+        );
+        expect($ignored)->toBe('not_an_int');
+    });
 });

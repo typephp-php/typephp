@@ -63,6 +63,56 @@ class D2GeneratorFixture
     }
 }
 
+/**
+ * Top-level conditional generator return with default template T = int
+ *
+ * @template T = int
+ *
+ * @param T|null $sample
+ * @param mixed $yieldValue
+ *
+ * @return (T is int ? Generator<int, positive-int> : Generator<int, non-empty-string>)
+ */
+function testConditionalGeneratorReturn(mixed $sample = null, mixed $yieldValue = null): Generator
+{
+    yield 0 => $yieldValue;
+}
+
+/**
+ * Nested conditional element inside Generator<K, V> return
+ *
+ * @template T = int
+ *
+ * @param T|null $sample
+ * @param mixed $yieldValue
+ *
+ * @return Generator<int, (T is int ? positive-int : non-empty-string)>
+ */
+function testNestedConditionalGeneratorReturn(mixed $sample = null, mixed $yieldValue = null): Generator
+{
+    yield 0 => $yieldValue;
+}
+
+/**
+ * Conditional iterable parameter with Traversable lazy wrapping
+ *
+ * @template T = int
+ *
+ * @param iterable<int, (T is int ? positive-int : non-empty-string)> $stream
+ * @param T|null $sample
+ *
+ * @return list<mixed>
+ */
+function testConditionalIterableParam(iterable $stream, mixed $sample = null): array
+{
+    $collected = [];
+    foreach ($stream as $item) {
+        $collected[] = $item;
+    }
+
+    return $collected;
+}
+
 describe('Generic Iterables & Generators (@template T with iterable<T> and Generator<K, V>)', function () {
     describe('Generic Iterable Parameters (iterable<T>)', function () {
         test('collects items from iterable matching inferred template T = int', function () {
@@ -209,6 +259,56 @@ describe('Generic Iterables & Generators (@template T with iterable<T> and Gener
                     // consume yields
                 }
             })->toThrow(TypeError::class, 'must be of type void');
+        });
+    });
+
+    describe('Conditional Generator & Iterable Contracts', function () {
+        test('validates top-level conditional generator return with default T = int and overridden T = string', function () {
+            $validIntGen = testConditionalGeneratorReturn(null, 42);
+            expect(iterator_to_array($validIntGen))->toBe([0 => 42]);
+
+            $badIntGen = testConditionalGeneratorReturn(null, -10);
+            expect(fn () => iterator_to_array($badIntGen))
+                ->toThrow(TypeError::class, 'Return iterator value must be of type positive-int')
+            ;
+
+            $validStrGen = testConditionalGeneratorReturn('override', 'hello');
+            expect(iterator_to_array($validStrGen))->toBe([0 => 'hello']);
+
+            $badStrGen = testConditionalGeneratorReturn('override', '');
+            expect(fn () => iterator_to_array($badStrGen))
+                ->toThrow(TypeError::class, 'Return iterator value must be of type non-empty-string')
+            ;
+        });
+
+        test('validates nested conditional element inside Generator<int, (T is int ? ... : ...)>', function () {
+            $validGen = testNestedConditionalGeneratorReturn(null, 100);
+            expect(iterator_to_array($validGen))->toBe([0 => 100]);
+
+            $badGen = testNestedConditionalGeneratorReturn(null, -5);
+            expect(fn () => iterator_to_array($badGen))
+                ->toThrow(TypeError::class, 'Return iterator value must be of type positive-int')
+            ;
+
+            $badStrGen = testNestedConditionalGeneratorReturn('override', '');
+            expect(fn () => iterator_to_array($badStrGen))
+                ->toThrow(TypeError::class, 'Return iterator value must be of type non-empty-string')
+            ;
+        });
+
+        test('lazily validates conditional iterable parameter on Traversable iteration', function () {
+            $validIter = new ArrayIterator([10, 20, 30]);
+            expect(testConditionalIterableParam($validIter))->toBe([10, 20, 30]);
+
+            $badIntIter = new ArrayIterator([10, -5, 30]);
+            expect(fn () => testConditionalIterableParam($badIntIter))
+                ->toThrow(TypeError::class, 'Iterator $stream value must be of type positive-int')
+            ;
+
+            $badStrIter = new ArrayIterator(['valid', '']);
+            expect(fn () => testConditionalIterableParam($badStrIter, 'override'))
+                ->toThrow(TypeError::class, 'Iterator $stream value must be of type non-empty-string')
+            ;
         });
     });
 });

@@ -10,6 +10,7 @@ use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
+use TypePHP\Internal\Checker\ConditionalChecker;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
@@ -52,6 +53,19 @@ final class IterableWrapper
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+
+        if (ConditionalChecker::containsConditional($typeNode)) {
+            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $function);
+        }
+
+        if (\count($boundTemplates) > 0 || \count($templates) > 0) {
+            $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
+            $typeNode = SpecialTypeResolver::resolve($typeNode, $function, $thisObj);
+        }
+
+        if (ConditionalChecker::containsConditional($typeNode)) {
+            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $function);
+        }
 
         if (\count($boundTemplates) > 0 || \count($templates) > 0) {
             $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);

@@ -6,6 +6,7 @@ namespace TypePHP\Internal;
 
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Ast\ScopeCleaner;
 use TypePHP\Internal\Checker\GeneratorChecker;
 use TypePHP\Internal\Checker\InlineChecker;
@@ -16,10 +17,13 @@ use TypePHP\Internal\Checker\ReturnChecker;
 use TypePHP\Internal\Checker\SelfOutChecker;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Docblock\DocblockExtractor;
+use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Reporting\ViolationCollector;
 use TypePHP\Internal\Resolver\CallerBoundaryResolver;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\IgnoreManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
@@ -65,6 +69,128 @@ final class RuntimeTypeChecker
     public static function isEnabled(): bool
     {
         return Config::isEnabled();
+    }
+
+    /**
+     * Validates class-level and global constants against declared @var contracts upon declaration/load.
+     */
+    public static function checkConstant(
+        string $constantName,
+        mixed $value,
+        string $typeString,
+        string $file = '',
+        ?int $line = null
+    ): mixed {
+        if (! Config::isEnabled()) {
+            return $value;
+        }
+
+        try {
+            $normalized = DocblockNormalizer::normalize($typeString);
+            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+            $tokens = new TokenIterator($lexer->tokenize($normalized));
+            $typeNode = $typeParser->parse($tokens);
+
+            if ($file !== '') {
+                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+            }
+
+            $context = "Constant {$constantName}";
+
+            $err = self::getRegistry()->validate($value, $typeNode, $context);
+            if ($err !== null) {
+                if (IgnoreManager::isCallerIgnored()) {
+                    return $value;
+                }
+
+                return ViolationCollector::handle($err, 'constant', $value, $file, $line, $constantName);
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore unexpected parsing errors
+        }
+
+        return $value;
+    }
+
+    /**
+     * Validates an argument passed into a constant closure against its parameter contract.
+     */
+    public static function checkConstantClosureParam(
+        string $caller,
+        string $paramName,
+        mixed $value,
+        string $typeString,
+        string $file = '',
+        ?int $line = null
+    ): mixed {
+        if (! Config::isEnabled() || ! Config::isParamsEnabled()) {
+            return $value;
+        }
+
+        try {
+            $normalized = DocblockNormalizer::normalize($typeString);
+            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+            $tokens = new TokenIterator($lexer->tokenize($normalized));
+            $typeNode = $typeParser->parse($tokens);
+
+            if ($file !== '') {
+                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+            }
+
+            $context = "{$caller}(): Argument \${$paramName}";
+
+            $err = self::getRegistry()->validate($value, $typeNode, $context);
+            if ($err !== null) {
+                if (IgnoreManager::isCallerIgnored()) {
+                    return $value;
+                }
+
+                return ViolationCollector::handle($err, 'parameter', $value, $file, $line, $caller, '$' . $paramName);
+            }
+        } catch (\Throwable $e) {
+        }
+
+        return $value;
+    }
+
+    /**
+     * Validates a return value from a constant closure against its return type contract.
+     */
+    public static function checkConstantClosureReturn(
+        string $caller,
+        mixed $value,
+        string $typeString,
+        string $file = '',
+        ?int $line = null
+    ): mixed {
+        if (! Config::isEnabled() || ! Config::isReturnsEnabled()) {
+            return $value;
+        }
+
+        try {
+            $normalized = DocblockNormalizer::normalize($typeString);
+            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+            $tokens = new TokenIterator($lexer->tokenize($normalized));
+            $typeNode = $typeParser->parse($tokens);
+
+            if ($file !== '') {
+                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+            }
+
+            $context = "{$caller}(): Return value";
+
+            $err = self::getRegistry()->validate($value, $typeNode, $context);
+            if ($err !== null) {
+                if (IgnoreManager::isCallerIgnored()) {
+                    return $value;
+                }
+
+                return ViolationCollector::handle($err, 'return', $value, $file, $line, $caller, 'return');
+            }
+        } catch (\Throwable $e) {
+        }
+
+        return $value;
     }
 
     /**
@@ -410,9 +536,16 @@ final class RuntimeTypeChecker
 
     /**
      * Validates a by-reference parameter's post-condition (@param-out) upon exit.
+     *
+     * @param array<string, mixed>|null $vars
      */
-    public static function checkParamOut(string $function, string $paramName, mixed $value, object|string|null $thisOrClass = null): ?ErrorMessage
-    {
+    public static function checkParamOut(
+        string $function,
+        string $paramName,
+        mixed $value,
+        object|string|null $thisOrClass = null,
+        ?array $vars = []
+    ): ?ErrorMessage {
         if (! Config::isEnabled() || ! Config::isParamsOutEnabled()) {
             return null;
         }
@@ -424,7 +557,9 @@ final class RuntimeTypeChecker
             return null;
         }
 
-        $res = ParamOutChecker::checkParamOut($function, $paramName, $value, $thisOrClass, self::getRegistry(), $effectiveFunction);
+        $vars = $vars !== null ? $vars : [];
+
+        $res = ParamOutChecker::checkParamOut($function, $paramName, $value, $thisOrClass, self::getRegistry(), $effectiveFunction, $vars);
 
         if ($res instanceof ErrorMessage) {
             if (IgnoreManager::isCallerIgnored()) {

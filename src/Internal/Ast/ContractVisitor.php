@@ -10,7 +10,9 @@ use PhpParser\NodeVisitorAbstract;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
 use TypePHP\Internal\Docblock\DocblockExtractor;
@@ -81,6 +83,11 @@ final class ContractVisitor extends NodeVisitorAbstract
      * @var list<bool>
      */
     private array $byRefStack = [];
+
+    /**
+     * @var array<string, list<string>>
+     */
+    private array $localClassTemplates = [];
 
     public function __construct(private string $currentFile = '')
     {
@@ -208,6 +215,23 @@ final class ContractVisitor extends NodeVisitorAbstract
     {
         $this->trackDeclarationExit($node);
 
+        if ($node instanceof Node\Stmt\Class_ && $node->name !== null) {
+            $className = $this->resolveQualifiedName($node->name);
+            if ($className !== null) {
+                $constChecks = $this->collectUnprovenClassConstantChecks($node, $className);
+                if ($constChecks !== []) {
+                    return [$node, ...$constChecks];
+                }
+            }
+        }
+
+        if ($node instanceof Node\Stmt\Const_) {
+            $globalConstChecks = $this->collectUnprovenGlobalConstantChecks($node);
+            if ($globalConstChecks !== []) {
+                return [$node, ...$globalConstChecks];
+            }
+        }
+
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Expr\Closure) {
             array_pop($this->byRefStack);
         }
@@ -276,6 +300,251 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         return null;
+    }
+
+    /**
+     * @return list<Node\Stmt>
+     */
+    private function collectUnprovenClassConstantChecks(Node\Stmt\Class_ $node, string $className): array
+    {
+        $injectedStmts = [];
+
+        foreach ($node->stmts as $stmt) {
+            if (! ($stmt instanceof Node\Stmt\ClassConst)) {
+                continue;
+            }
+
+            $doc = $stmt->getDocComment();
+            if ($doc === null || ! str_contains($doc->getText(), '@var')) {
+                continue;
+            }
+
+            if (Config::isRespectIgnoreTagsEnabled() && str_contains($doc->getText(), '@typephp-ignore')) {
+                continue;
+            }
+
+            $varTag = DocblockExtractor::extractVarTagFromDoc($doc->getText());
+            if ($varTag === null) {
+                continue;
+            }
+
+            $typeString = $varTag[0];
+
+            try {
+                [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+                $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($typeString)));
+                $typeNode = $typeParser->parse($tokens);
+
+                foreach ($stmt->consts as $const) {
+                    $constName = $const->name->toString();
+                    $fullTarget = $className . '::' . $constName;
+
+                    if ($const->value instanceof Node\Expr\Closure && $typeNode instanceof CallableTypeNode) {
+                        $this->instrumentConstantClosure($const->value, $typeNode, $fullTarget);
+
+                        continue;
+                    }
+
+                    if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile)) {
+                        continue;
+                    }
+
+                    $classConstFetch = new Node\Expr\ClassConstFetch(new Node\Name\FullyQualified($className), $constName);
+
+                    $checkCall = NodeBuilder::createConstantCheckCall(
+                        $fullTarget,
+                        $classConstFetch,
+                        $typeString,
+                        $const->getStartLine()
+                    );
+
+                    $checkStmt = new Node\Stmt\Expression(NodeBuilder::createTernaryThrowExpr($checkCall, $const->getStartLine()));
+                    $checkStmt->setAttribute('typephp_injected', true);
+                    $injectedStmts[] = $checkStmt;
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        return $injectedStmts;
+    }
+
+    /**
+     * @return list<Node\Stmt>
+     */
+    private function collectUnprovenGlobalConstantChecks(Node\Stmt\Const_ $node): array
+    {
+        $doc = $node->getDocComment();
+        if ($doc === null || ! str_contains($doc->getText(), '@var')) {
+            return [];
+        }
+
+        if (Config::isRespectIgnoreTagsEnabled() && str_contains($doc->getText(), '@typephp-ignore')) {
+            return [];
+        }
+
+        $varTag = DocblockExtractor::extractVarTagFromDoc($doc->getText());
+        if ($varTag === null) {
+            return [];
+        }
+
+        $typeString = $varTag[0];
+        $injectedStmts = [];
+
+        try {
+            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+            $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($typeString)));
+            $typeNode = $typeParser->parse($tokens);
+
+            foreach ($node->consts as $const) {
+                $constName = $const->name->toString();
+                $qualifiedConstName = $this->currentNamespace !== ''
+                    ? $this->currentNamespace . '\\' . $constName
+                    : $constName;
+
+                if ($const->value instanceof Node\Expr\Closure && $typeNode instanceof CallableTypeNode) {
+                    $this->instrumentConstantClosure($const->value, $typeNode, $qualifiedConstName);
+
+                    continue;
+                }
+
+                if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile)) {
+                    continue;
+                }
+
+                $constFetch = new Node\Expr\ConstFetch(new Node\Name\FullyQualified($qualifiedConstName));
+
+                $checkCall = NodeBuilder::createConstantCheckCall(
+                    $qualifiedConstName,
+                    $constFetch,
+                    $typeString,
+                    $const->getStartLine()
+                );
+
+                $checkStmt = new Node\Stmt\Expression(NodeBuilder::createTernaryThrowExpr($checkCall, $const->getStartLine()));
+                $checkStmt->setAttribute('typephp_injected', true);
+                $injectedStmts[] = $checkStmt;
+            }
+        } catch (\Throwable) {
+        }
+
+        return $injectedStmts;
+    }
+
+    private function instrumentConstantClosure(
+        Node\Expr\Closure $closure,
+        CallableTypeNode $callableTypeNode,
+        string $caller
+    ): void {
+        $paramChecks = [];
+        $callableParams = $callableTypeNode->parameters;
+        $paramsByName = [];
+
+        foreach ($callableParams as $idx => $pNode) {
+            $pName = $pNode->parameterName !== null ? ltrim($pNode->parameterName, '$') : null;
+            if ($pName !== null) {
+                $paramsByName[$pName] = $pNode;
+            } elseif (isset($closure->params[$idx])) {
+                $closureParam = $closure->params[$idx];
+                if ($closureParam->var instanceof Node\Expr\Variable && \is_string($closureParam->var->name)) {
+                    $paramsByName[$closureParam->var->name] = $pNode;
+                }
+            }
+        }
+
+        foreach ($closure->params as $param) {
+            if ($param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
+                $pName = $param->var->name;
+                $pContract = $paramsByName[$pName] ?? null;
+
+                if ($pContract !== null) {
+                    $typeStr = (string) $pContract->type;
+                    if (strtolower(trim($typeStr)) === 'mixed') {
+                        continue;
+                    }
+
+                    $line = $param->getStartLine();
+                    $checkCall = NodeBuilder::createConstantClosureParamCheckCall(
+                        $caller,
+                        $pName,
+                        new Node\Expr\Variable($pName),
+                        $typeStr,
+                        $line
+                    );
+                    $checkStmt = new Node\Stmt\Expression(NodeBuilder::createTernaryThrowExpr($checkCall, $line));
+                    $checkStmt->setAttribute('typephp_injected', true);
+                    $paramChecks[] = $checkStmt;
+                }
+            }
+        }
+
+        if ($paramChecks !== []) {
+            $closure->stmts = [...$paramChecks, ...$closure->stmts];
+        }
+
+        $returnTypeNode = $callableTypeNode->returnType;
+        $returnTypeStr = (string) $returnTypeNode;
+        $isReturnUnconstrained = \in_array(strtolower(trim($returnTypeStr)), ['void', 'mixed'], true);
+
+        if (! $isReturnUnconstrained) {
+            $traverser = new NodeTraverser();
+            $traverser->addVisitor(new class (
+                $caller,
+                $returnTypeNode,
+                $returnTypeStr,
+                $this->currentFile
+            ) extends NodeVisitorAbstract {
+                public function __construct(
+                    private string $caller,
+                    private TypeNode $returnTypeNode,
+                    private string $returnTypeStr,
+                    private string $currentFile
+                ) {
+                }
+
+                public function enterNode(Node $n): int|Node|null
+                {
+                    if (
+                        $n instanceof Node\Expr\Closure
+                        || $n instanceof Node\Expr\ArrowFunction
+                        || $n instanceof Node\Stmt\Function_
+                        || $n instanceof Node\Stmt\ClassMethod
+                        || $n instanceof Node\Stmt\Class_
+                    ) {
+                        return NodeTraverser::DONT_TRAVERSE_CHILDREN;
+                    }
+
+                    if ($n instanceof Node\Stmt\Return_) {
+                        $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
+
+                        if (
+                            Config::isEliminateStaticallyProvenChecksEnabled()
+                            && StaticTypeEvaluator::satisfies($exprToWrap, $this->returnTypeNode, $this->currentFile)
+                        ) {
+                            return null;
+                        }
+
+                        $line = $n->getStartLine();
+                        $checkCall = NodeBuilder::createConstantClosureReturnCheckCall(
+                            $this->caller,
+                            $exprToWrap,
+                            $this->returnTypeStr,
+                            $line
+                        );
+
+                        $n->expr = FunctionContractInjector::buildTernaryReturnExpr($checkCall, $line);
+
+                        return $n;
+                    }
+
+                    return null;
+                }
+            });
+
+            /** @var array<Node\Stmt> $newStmts */
+            $newStmts = $traverser->traverse($closure->stmts);
+            $closure->stmts = $newStmts;
+        }
     }
 
     private function createForeachBoundaryCheck(Node\Stmt\Foreach_ $node): ?Node\Stmt\Expression
@@ -616,13 +885,36 @@ final class ContractVisitor extends NodeVisitorAbstract
         $hasPropertyWithDoc = false;
         $isReadonly = false;
         $isFinal = false;
-        $hasTemplates = false;
 
         $doc = $node->getDocComment();
         if ($doc === null && $typeName !== null && StubManager::hasClassStub($typeName)) {
             $stubDocText = StubManager::getClassDoc($typeName);
             if ($stubDocText !== null) {
                 $doc = new \PhpParser\Comment\Doc($stubDocText);
+            }
+        }
+
+        $templates = [];
+        if ($doc !== null && (
+            str_contains($doc->getText(), '@template')
+            || str_contains($doc->getText(), '@phpstan-template')
+            || str_contains($doc->getText(), '@psalm-template')
+        )) {
+            try {
+                $phpDocNode = DocblockExtractor::parseDocString($doc->getText());
+                $templates = DocblockExtractor::extractTemplates($phpDocNode);
+            } catch (\Throwable) {
+            }
+        }
+        $hasTemplates = $templates !== [];
+
+        if ($hasTemplates) {
+            $templateNames = array_keys($templates);
+            if ($typeName !== null) {
+                $this->localClassTemplates[$typeName] = $templateNames;
+            }
+            if ($shortName !== null) {
+                $this->localClassTemplates[$shortName] = $templateNames;
             }
         }
 
@@ -639,8 +931,10 @@ final class ContractVisitor extends NodeVisitorAbstract
                 } elseif ($stmt instanceof Node\Stmt\Property && $stmt->getDocComment() !== null) {
                     $hasPropertyWithDoc = true;
                 } elseif ($stmt instanceof Node\Stmt\ClassMethod && strtolower($stmt->name->toString()) === '__construct') {
+                    $ctorDoc = $stmt->getDocComment();
+                    $hasParamInCtor = $ctorDoc !== null && str_contains($ctorDoc->getText(), '@param');
                     foreach ($stmt->params as $param) {
-                        if ($param->isPromoted() && $param->getDocComment() !== null) {
+                        if ($param->isPromoted() && ($param->getDocComment() !== null || $hasParamInCtor)) {
                             $hasPropertyWithDoc = true;
 
                             break;
@@ -649,11 +943,6 @@ final class ContractVisitor extends NodeVisitorAbstract
                 }
             }
 
-            $hasTemplates = $doc !== null && (
-                str_contains($doc->getText(), '@template')
-                || str_contains($doc->getText(), '@phpstan-template')
-                || str_contains($doc->getText(), '@psalm-template')
-            );
             $hasClassDoc = $doc !== null && (
                 $hasTemplates
                 || str_contains($doc->getText(), '@phpstan-')
@@ -667,12 +956,6 @@ final class ContractVisitor extends NodeVisitorAbstract
         } elseif ($node instanceof Node\Stmt\Enum_) {
             $hasRealInheritance = $node->implements !== [];
             $hasInheritance = $hasRealInheritance;
-        } else {
-            $hasTemplates = $doc !== null && (
-                str_contains($doc->getText(), '@template')
-                || str_contains($doc->getText(), '@phpstan-template')
-                || str_contains($doc->getText(), '@psalm-template')
-            );
         }
 
         if ($typeName !== null && ($node instanceof Node\Stmt\Class_ || $node instanceof Node\Stmt\Trait_)) {
@@ -692,16 +975,31 @@ final class ContractVisitor extends NodeVisitorAbstract
                         }
                     }
                 } elseif ($stmt instanceof Node\Stmt\ClassMethod && strtolower($stmt->name->toString()) === '__construct') {
+                    $methodDoc = $stmt->getDocComment();
+                    $methodParamTags = null;
+                    if ($methodDoc !== null && str_contains($methodDoc->getText(), '@param')) {
+                        try {
+                            $methodPhpDoc = DocblockExtractor::parseDocString($methodDoc->getText());
+                            $methodParamTags = DocblockExtractor::getParamTags($methodPhpDoc);
+                        } catch (\Throwable) {
+                        }
+                    }
+
                     foreach ($stmt->params as $p) {
                         if ($p->isPromoted() && $p->var instanceof Node\Expr\Variable && \is_string($p->var->name)) {
-                            $doc = $p->getDocComment();
-                            if ($doc !== null) {
-                                $pType = DocblockExtractor::extractTypeFromPropertyDoc($doc->getText(), $p->var->name);
-                                if ($pType !== null) {
-                                    $this->localClassPropertyTypes[$typeName][$p->var->name] = (string) $pType;
-                                    if ($shortName !== null) {
-                                        $this->localClassPropertyTypes[$shortName][$p->var->name] = (string) $pType;
-                                    }
+                            $paramName = $p->var->name;
+                            $pType = null;
+                            $paramDoc = $p->getDocComment();
+                            if ($paramDoc !== null) {
+                                $pType = DocblockExtractor::extractTypeFromPropertyDoc($paramDoc->getText(), $paramName);
+                            }
+                            if ($pType === null && $methodParamTags !== null && isset($methodParamTags[$paramName])) {
+                                $pType = $methodParamTags[$paramName]->type;
+                            }
+                            if ($pType !== null) {
+                                $this->localClassPropertyTypes[$typeName][$paramName] = (string) $pType;
+                                if ($shortName !== null) {
+                                    $this->localClassPropertyTypes[$shortName][$paramName] = (string) $pType;
                                 }
                             }
                         }
@@ -1136,7 +1434,13 @@ final class ContractVisitor extends NodeVisitorAbstract
                 if (isset($this->localClassPropertyTypes[$deducedType][$propName])) {
                     $deducedType = $this->localClassPropertyTypes[$deducedType][$propName];
                 } else {
-                    $deducedType = TypeDeducer::deducePropertyType($deducedType, $propName);
+                    $deducedType = TypeDeducer::deducePropertyType(
+                        $deducedType,
+                        $propName,
+                        $this->localClassPropertyTypes,
+                        $this->localClassTemplates,
+                        $this->currentFile
+                    );
                 }
                 if ($deducedType === null) {
                     return null;

@@ -357,6 +357,47 @@ class Issue4GeneratorParamOutService
     }
 }
 
+/**
+ * 13. Parameter-based conditional @param-out on standalone function
+ *
+ * @param bool $asInt
+ * @param mixed &$out
+ *
+ * @param-out ($asInt is true ? positive-int : non-empty-string) $out
+ */
+function tddParamOutConditionalByFlag(bool $asInt, mixed &$out, mixed $newVal): void
+{
+    $out = $newVal;
+}
+
+class IssueParamOutConditionalService
+{
+    /**
+     * @param 'int'|'string' $format
+     * @param mixed &$out
+     *
+     * @param-out ($format is 'int' ? positive-int : non-empty-string) $out
+     */
+    public function formatOutput(string $format, mixed &$out, mixed $newVal): void
+    {
+        $out = $newVal;
+    }
+
+    /**
+     * Mutates $asInt inside the body before exit (must evaluate against initial entry argument!)
+     *
+     * @param bool $asInt
+     * @param mixed &$out
+     *
+     * @param-out ($asInt is true ? positive-int : non-empty-string) $out
+     */
+    public function mutateFlagBeforeExit(bool $asInt, mixed &$out, mixed $newVal): void
+    {
+        $asInt = false;
+        $out = $newVal;
+    }
+}
+
 describe('@param-out & @phpstan-param-out Contracts', function () {
     describe('1. Basic Scalar @param-out', function () {
         test('accepts valid post-condition mutation on by-ref parameter', function () {
@@ -676,6 +717,54 @@ describe('@param-out & @phpstan-param-out Contracts', function () {
 
             expect($items)->toBe([1])
                 ->and($x)->toBe(42)
+            ;
+        });
+    });
+
+    describe('13. Parameter-Based Conditional @param-out ($param is Target ? A : B)', function () {
+        test('evaluates true branch (positive-int) on standalone function when $asInt is true', function () {
+            $out = null;
+            tddParamOutConditionalByFlag(true, $out, 42);
+            expect($out)->toBe(42);
+
+            expect(fn () => tddParamOutConditionalByFlag(true, $out, -10))
+                ->toThrow(TypeError::class, 'Argument &$out (param-out) must be of type positive-int')
+            ;
+        });
+
+        test('evaluates else branch (non-empty-string) on standalone function when $asInt is false', function () {
+            $out = null;
+            tddParamOutConditionalByFlag(false, $out, 'valid_text');
+            expect($out)->toBe('valid_text');
+
+            expect(fn () => tddParamOutConditionalByFlag(false, $out, ''))
+                ->toThrow(TypeError::class, 'Argument &$out (param-out) must be of type non-empty-string')
+            ;
+        });
+
+        test('evaluates parameter-based conditional @param-out on class methods and preserves entry argument on in-body mutation', function () {
+            $service = new IssueParamOutConditionalService();
+            $out = null;
+
+            $service->formatOutput('int', $out, 100);
+            expect($out)->toBe(100);
+
+            expect(fn () => $service->formatOutput('int', $out, -5))
+                ->toThrow(TypeError::class, 'Argument &$out (param-out) must be of type positive-int')
+            ;
+
+            $service->formatOutput('string', $out, 'hello');
+            expect($out)->toBe('hello');
+
+            expect(fn () => $service->formatOutput('string', $out, ''))
+                ->toThrow(TypeError::class, 'Argument &$out (param-out) must be of type non-empty-string')
+            ;
+
+            $service->mutateFlagBeforeExit(true, $out, 50);
+            expect($out)->toBe(50);
+
+            expect(fn () => $service->mutateFlagBeforeExit(true, $out, 'wrong_branch'))
+                ->toThrow(TypeError::class, 'Argument &$out (param-out) must be of type positive-int')
             ;
         });
     });

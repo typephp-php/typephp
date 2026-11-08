@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Tests\TypeChecking\Generics;
 
+use Closure;
 use TypePHP\Exception\TypeError;
 
 /**
@@ -58,6 +59,21 @@ final class FBoundPlain
 }
 
 /**
+ * Unbounded generic holder to test F-bound inference from generic objects
+ *
+ * @template T
+ */
+final class FBoundHolder
+{
+    /**
+     * @param T $item
+     */
+    public function __construct(public mixed $item)
+    {
+    }
+}
+
+/**
  * Raw min without docblock contract
  */
 function fBoundRawMin(FBoundComparable $a, FBoundComparable $b): FBoundComparable
@@ -79,6 +95,54 @@ function fBoundRawMin(FBoundComparable $a, FBoundComparable $b): FBoundComparabl
 function fBoundMin(FBoundComparable $a, FBoundComparable $b): FBoundComparable
 {
     return $a->compareTo($b) <= 0 ? $a : $b;
+}
+
+/**
+ * F-Bounded template inside a generic list parameter
+ *
+ * @template T of FBoundComparable<T>
+ *
+ * @param list<T> $items
+ */
+function fBoundAcceptList(array $items): bool
+{
+    return true;
+}
+
+/**
+ * F-Bounded template inside an array shape parameter
+ *
+ * @template T of FBoundComparable<T>
+ *
+ * @param array{item: T} $payload
+ */
+function fBoundAcceptShape(array $payload): bool
+{
+    return true;
+}
+
+/**
+ * F-Bounded template inferred from a Closure parameter typehint
+ *
+ * @template T of FBoundComparable<T>
+ *
+ * @param Closure(T): int $callback
+ */
+function fBoundAcceptClosure(Closure $callback): bool
+{
+    return true;
+}
+
+/**
+ * F-Bounded template inferred from a Generic Object parameter
+ *
+ * @template T of FBoundComparable<T>
+ *
+ * @param FBoundHolder<T> $holder
+ */
+function fBoundAcceptHolder(FBoundHolder $holder): bool
+{
+    return true;
 }
 
 /**
@@ -266,6 +330,40 @@ describe('F-Bounded Polymorphism (@template T of Interface<T>)', function () {
                 TypeError::class,
                 'Generic type argument ' . FBoundPlain::class . ' does not satisfy upper bound ' . FBoundComparable::class . '<' . FBoundPlain::class . '> of template T in ' . FBoundSortedList::class
             );
+        });
+    });
+
+    describe('4. F-Bounds in Compound Parameter Types (Lists, Shapes, Closures & Generic Objects)', function () {
+        test('accepts valid FBoundNum and rejects FBoundRogue inside list<T> parameter', function () {
+            expect(fBoundAcceptList([new FBoundNum(1), new FBoundNum(2)]))->toBeTrue();
+
+            expect(fn () => fBoundAcceptList([new FBoundRogue()]))
+                ->toThrow(TypeError::class)
+            ;
+        });
+
+        test('accepts valid FBoundNum and rejects FBoundRogue inside array shape parameter', function () {
+            expect(fBoundAcceptShape(['item' => new FBoundNum(10)]))->toBeTrue();
+
+            expect(fn () => fBoundAcceptShape(['item' => new FBoundRogue()]))
+                ->toThrow(TypeError::class)
+            ;
+        });
+
+        test('accepts valid FBoundNum and rejects FBoundRogue in Closure(T) parameter typehint', function () {
+            expect(fBoundAcceptClosure(fn (FBoundNum $n): int => $n->value))->toBeTrue();
+
+            expect(fn () => fBoundAcceptClosure(fn (FBoundRogue $r): int => $r->id))
+                ->toThrow(TypeError::class)
+            ;
+        });
+
+        test('accepts valid FBoundNum and rejects FBoundRogue inside Generic Object FBoundHolder<T> parameter', function () {
+            expect(fBoundAcceptHolder(new FBoundHolder(new FBoundNum(5))))->toBeTrue();
+
+            expect(fn () => fBoundAcceptHolder(new FBoundHolder(new FBoundRogue())))
+                ->toThrow(TypeError::class)
+            ;
         });
     });
 });

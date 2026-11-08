@@ -83,4 +83,64 @@ describe('NodeBuilder Unit Tests', function () {
             ->and($call->args)->toHaveCount(5)
         ;
     });
+
+    test('createConstantCheckCall creates FuncCall node for RuntimeTypeChecker::checkConstant', function () {
+        $valExpr = new Node\Expr\ClassConstFetch(new Node\Name\FullyQualified('App\Config'), 'Data');
+
+        $call = NodeBuilder::createConstantCheckCall('App\Config::Data', $valExpr, 'list<string>', 12);
+
+        expect($call)->toBeInstanceOf(Node\Expr\FuncCall::class)
+            ->and($call->name->toString())->toBe('TypePHP\Internal\RuntimeTypeChecker::checkConstant')
+            ->and($call->args)->toHaveCount(5)
+            ->and($call->args[0]->value->value)->toBe('App\Config::Data')
+            ->and($call->args[1]->value)->toBe($valExpr)
+            ->and($call->args[2]->value->value)->toBe('list<string>')
+            ->and($call->args[3]->value)->toBeInstanceOf(Node\Scalar\MagicConst\File::class)
+            ->and($call->args[4]->value->value)->toBe(12)
+        ;
+    });
+
+    test('createConstantClosureParamCheckCall creates FuncCall node for RuntimeTypeChecker::checkConstantClosureParam', function () {
+        $paramVar = new Node\Expr\Variable('id');
+
+        $call = NodeBuilder::createConstantClosureParamCheckCall(
+            'App\Config::Formatter',
+            'id',
+            $paramVar,
+            'positive-int',
+            15
+        );
+
+        expect($call)->toBeInstanceOf(Node\Expr\FuncCall::class)
+            ->and($call->name->toString())->toBe('TypePHP\Internal\RuntimeTypeChecker::checkConstantClosureParam')
+            ->and($call->args)->toHaveCount(6)
+            ->and($call->args[0]->value->value)->toBe('App\Config::Formatter')
+            ->and($call->args[1]->value->value)->toBe('id')
+            ->and($call->args[2]->value)->toBe($paramVar)
+            ->and($call->args[3]->value->value)->toBe('positive-int')
+            ->and($call->args[4]->value)->toBeInstanceOf(Node\Scalar\MagicConst\File::class)
+            ->and($call->args[5]->value->value)->toBe(15)
+        ;
+    });
+
+    test('createConstantClosureReturnCheckCall creates FuncCall node for RuntimeTypeChecker::checkConstantClosureReturn', function () {
+        $valueExpr = new Node\Scalar\String_('test');
+
+        $call = NodeBuilder::createConstantClosureReturnCheckCall(
+            'App\Config::Callback',
+            $valueExpr,
+            'int',
+            20
+        );
+
+        expect($call)->toBeInstanceOf(Node\Expr\FuncCall::class)
+            ->and($call->name->toString())->toBe('TypePHP\Internal\RuntimeTypeChecker::checkConstantClosureReturn')
+            ->and($call->args)->toHaveCount(5)
+            ->and($call->args[0]->value->value)->toBe('App\Config::Callback')
+            ->and($call->args[1]->value)->toBe($valueExpr)
+            ->and($call->args[2]->value->value)->toBe('int')
+            ->and($call->args[3]->value)->toBeInstanceOf(Node\Scalar\MagicConst\File::class)
+            ->and($call->args[4]->value->value)->toBe(20)
+        ;
+    });
 });

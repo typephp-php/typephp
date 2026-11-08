@@ -55,7 +55,7 @@ final class ViolationCollector
     /**
      * Handles a validation failure according to the configured on_violation mode ('throw', 'warn', 'report').
      *
-     * @param 'parameter'|'return'|'property'|'variable'|'param-out'|'self-out'|'callback'|'yield'|'send' $kind
+     * @param 'parameter'|'return'|'property'|'variable'|'param-out'|'self-out'|'callback'|'yield'|'send'|'constant' $kind
      */
     public static function handle(
         ErrorMessage $error,

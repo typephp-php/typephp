@@ -293,8 +293,17 @@ final class ConditionalChecker
         string $function = ''
     ): TypeNode {
         $subjectTypeNode = $node->subjectType;
-        if ($subjectTypeNode instanceof IdentifierTypeNode && isset($boundTemplates[$subjectTypeNode->name])) {
-            $subjectTypeNode = $boundTemplates[$subjectTypeNode->name];
+        if ($subjectTypeNode instanceof IdentifierTypeNode) {
+            if (isset($boundTemplates[$subjectTypeNode->name])) {
+                $subjectTypeNode = $boundTemplates[$subjectTypeNode->name];
+            } elseif ($function !== '') {
+                $contract = DocblockParser::parse($function);
+                $allTemplates = $contract['allTemplates'] ?? [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+                if (isset($allTemplates[$subjectTypeNode->name])) {
+                    $templateTag = $allTemplates[$subjectTypeNode->name];
+                    $subjectTypeNode = $templateTag->default ?? $templateTag->bound ?? $subjectTypeNode;
+                }
+            }
         }
 
         $isTargetMatch = TemplateManager::checkVariance($subjectTypeNode, $node->targetType, GenericTypeNode::VARIANCE_COVARIANT);

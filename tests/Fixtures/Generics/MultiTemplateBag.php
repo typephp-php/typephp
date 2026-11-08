@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace TypePHP\Tests\Fixtures\Generics;
 
 /**
- * @template K of array-key = string
- * @template V = int
+ * @template K of array-key
+ * @template V
  */
 class MultiTemplateBag
 {

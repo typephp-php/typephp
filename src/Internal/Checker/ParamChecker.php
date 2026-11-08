@@ -312,6 +312,10 @@ final class ParamChecker
                 $targetClass = \is_string($thisOrClass) && $thisOrClass !== '' ? $thisOrClass : $declaringClass;
                 TemplateManager::getClassInheritedBindings($targetClass);
             }
+
+            if ($thisObj !== null && ! str_ends_with(strtolower($effectiveFunction), '::__construct')) {
+                TemplateManager::applyClassTemplateDefaults($thisObj, $classTemplates);
+            }
         }
     }
 
@@ -417,7 +421,7 @@ final class ParamChecker
             }
         }
 
-        if (\count($allTemplates) > 1) {
+        if (\count($allTemplates) > 0) {
             return self::validateCrossReferencedTemplateBounds(
                 $contractTypes,
                 $baseTypes,
@@ -651,7 +655,7 @@ final class ParamChecker
     }
 
     /**
-     * Re-validates template upper bounds that reference other sibling templates once all parameters have been bound.
+     * Re-validates template upper bounds that reference templates (F-bounds and cross-template bounds) once all parameters have been bound.
      *
      * @param array<string, TypeNode> $contractTypes
      * @param array<string, TypeNode> $baseTypes
@@ -680,17 +684,13 @@ final class ParamChecker
                 continue;
             }
 
-            $otherTemplates = $allTemplates;
-            unset($otherTemplates[$tName]);
-
-            if (! DocblockParser::typeReferencesTemplate($templateNode->bound, $otherTemplates)) {
+            if (! DocblockParser::typeReferencesTemplate($templateNode->bound, $allTemplates)) {
                 continue;
             }
 
             $substitutedBound = TemplateSubstitutor::substitute($templateNode->bound, $finalBoundTemplates);
             $resolvedBound = SpecialTypeResolver::resolve($substitutedBound, $effectiveFunction, $thisObj);
 
-            $matchedParam = false;
             foreach ($contractTypes as $paramName => $_) {
                 if (! isset($vars[$paramName]) && ! \array_key_exists($paramName, $vars)) {
                     continue;
@@ -701,7 +701,6 @@ final class ParamChecker
                 $isSensitive = $sensitiveParams[$paramName] ?? false;
 
                 if ($baseType instanceof GenericTypeNode && self::isClassStringTemplate($baseType, [$tName => $templateNode])) {
-                    $matchedParam = true;
                     if (\is_string($val) && ! self::checkClassStringSatisfiesBound($val, $resolvedBound)) {
                         $redact = $isSensitive || Config::isRedactValuesEnabled();
                         $boundDisplay = (string) $resolvedBound;
@@ -710,7 +709,6 @@ final class ParamChecker
                         return ErrorFactory::createError($effectiveFunction . '(): Argument $' . $paramName . ' (class-string<' . $tName . '>) must be a class-string of ' . $boundDisplay . ', ' . $displayVal);
                     }
                 } elseif (self::getTemplateName($baseType, [$tName => $templateNode]) === $tName) {
-                    $matchedParam = true;
                     $sampleVal = ($baseType instanceof ArrayTypeNode && \is_array($val)) ? ($val[0] ?? null) : $val;
                     if ($sampleVal !== null) {
                         $err = $registry->validate($sampleVal, $resolvedBound, $effectiveFunction . '(): Argument $' . $paramName . ' (template ' . $tName . ')', $isSensitive);
@@ -721,7 +719,7 @@ final class ParamChecker
                 }
             }
 
-            if (! $matchedParam && ! TemplateManager::checkVariance($finalBoundTemplates[$tName], $resolvedBound, GenericTypeNode::VARIANCE_COVARIANT)) {
+            if (! TemplateManager::checkVariance($finalBoundTemplates[$tName], $resolvedBound, GenericTypeNode::VARIANCE_COVARIANT)) {
                 return ErrorFactory::createError(
                     $effectiveFunction . "(): Generic type argument {$finalBoundTemplates[$tName]} does not satisfy upper bound {$resolvedBound} of template {$tName}"
                 );

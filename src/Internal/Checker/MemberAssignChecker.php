@@ -54,7 +54,9 @@ final class MemberAssignChecker
                 $typeString,
                 $varName,
                 $file,
-                $registry
+                $registry,
+                $caller,
+                $thisOrClass
             );
 
             if ($directErr instanceof ErrorMessage) {
