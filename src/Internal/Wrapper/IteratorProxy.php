@@ -17,7 +17,7 @@ use Traversable;
  */
 final class IteratorProxy implements OuterIterator, Countable
 {
-    private Iterator $inner;
+    private ?Iterator $inner = null;
 
     /**
      * @param Traversable<mixed, mixed> $iterable
@@ -27,7 +27,6 @@ final class IteratorProxy implements OuterIterator, Countable
         private Traversable $iterable,
         private \Closure $typeCheckCallback
     ) {
-        $this->inner = self::resolveIterator($iterable);
     }
 
     /**
@@ -45,24 +44,37 @@ final class IteratorProxy implements OuterIterator, Countable
         return $iterable;
     }
 
-    public function rewind(): void
+    private function getInner(): Iterator
     {
-        if ($this->iterable instanceof IteratorAggregate && $this->inner instanceof \Generator) {
+        if ($this->inner === null) {
             $this->inner = self::resolveIterator($this->iterable);
         }
 
-        $this->inner->rewind();
+        return $this->inner;
+    }
+
+    public function rewind(): void
+    {
+        if ($this->iterable instanceof IteratorAggregate) {
+            $this->inner = self::resolveIterator($this->iterable);
+        } else {
+            $this->inner ??= self::resolveIterator($this->iterable);
+        }
+
+        if (! ($this->inner instanceof \Generator)) {
+            $this->inner->rewind();
+        }
     }
 
     public function valid(): bool
     {
-        return $this->inner->valid();
+        return $this->getInner()->valid();
     }
 
     public function current(): mixed
     {
-        $key = $this->inner->key();
-        $val = $this->inner->current();
+        $key = $this->getInner()->key();
+        $val = $this->getInner()->current();
         ($this->typeCheckCallback)($key, $val);
 
         return $val;
@@ -70,17 +82,17 @@ final class IteratorProxy implements OuterIterator, Countable
 
     public function key(): mixed
     {
-        return $this->inner->key();
+        return $this->getInner()->key();
     }
 
     public function next(): void
     {
-        $this->inner->next();
+        $this->getInner()->next();
     }
 
     public function getInnerIterator(): Iterator
     {
-        return $this->inner;
+        return $this->getInner();
     }
 
     public function count(): int
@@ -89,11 +101,12 @@ final class IteratorProxy implements OuterIterator, Countable
             return $this->iterable->count();
         }
 
-        if ($this->inner instanceof Countable) {
-            return $this->inner->count();
+        $inner = $this->getInner();
+        if ($inner instanceof Countable) {
+            return $inner->count();
         }
 
-        return iterator_count($this->inner);
+        return iterator_count($inner);
     }
 
     /**
@@ -106,9 +119,10 @@ final class IteratorProxy implements OuterIterator, Countable
             return $this->iterable->$method(...$args);
         }
 
-        if ($this->inner !== $this->iterable && method_exists($this->inner, $method)) {
+        $inner = $this->getInner();
+        if ($inner !== $this->iterable && method_exists($inner, $method)) {
             // @phpstan-ignore method.dynamicName
-            return $this->inner->$method(...$args);
+            return $inner->$method(...$args);
         }
 
         // @phpstan-ignore method.dynamicName

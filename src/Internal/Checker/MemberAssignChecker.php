@@ -4,8 +4,14 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Checker;
 
+use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use ReflectionProperty;
+use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Docblock\DocblockParser;
+use TypePHP\Internal\Generics\TemplateManager;
+use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\StructureMutator;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
@@ -109,6 +115,31 @@ final class MemberAssignChecker
         }
 
         $currentVal = self::readPropertyValue($objectOrClass, $className, $propName);
+
+        if (
+            Config::isArrayValidationHybrid()
+            && \is_array($currentVal)
+            && \count($currentVal) > Config::HYBRID_SAMPLE_THRESHOLD
+            && \count($chain) === 1
+            && $chain[0][0] === 'dim'
+        ) {
+            $directErr = self::validatePropertyElementMutation(
+                $objectOrClass,
+                $className,
+                $propName,
+                $chain,
+                $value,
+                $file,
+                $registry
+            );
+
+            if ($directErr instanceof ErrorMessage) {
+                return $directErr;
+            }
+
+            return $value;
+        }
+
         $copy = StructureMutator::mutateCopy($currentVal, $chain, $value);
 
         $res = InlineChecker::checkProperty($copy, $objectOrClass, $propName, $file, $registry);
@@ -118,6 +149,86 @@ final class MemberAssignChecker
         }
 
         return $value;
+    }
+
+    /**
+     * Directly validates a single element appended/assigned to a large property array in O(1).
+     *
+     * @param list<array{0: 'dim'|'prop', 1: mixed}> $chain
+     */
+    private static function validatePropertyElementMutation(
+        mixed $objectOrClass,
+        string $className,
+        string $propName,
+        array $chain,
+        mixed $value,
+        string $file,
+        TypeValidatorRegistry $registry
+    ): ?ErrorMessage {
+        try {
+            $rawTypeNode = DocblockParser::parseProperty($className, $propName);
+            if ($rawTypeNode === null) {
+                return null;
+            }
+
+            $typeNode = $rawTypeNode;
+            if (\is_object($objectOrClass)) {
+                $allTemplates = DocblockParser::parseClassTemplates($className);
+                if ($allTemplates !== []) {
+                    $boundTemplates = TemplateManager::getBoundTemplates('none', $objectOrClass, $allTemplates);
+                    if ($boundTemplates !== []) {
+                        $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $allTemplates);
+                    }
+                }
+            }
+
+            $key = $chain[0][1];
+            $keyStr = \is_string($key) ? $key : (\is_int($key) ? (string) $key : '');
+
+            if ($typeNode instanceof GenericTypeNode) {
+                $base = strtolower((string) $typeNode->type);
+
+                if ($base === 'list' || $base === 'non-empty-list') {
+                    if ($key !== null && ! \is_int($key)) {
+                        return ErrorFactory::createError("Property {$className}::\${$propName} must be a list, non-integer key '{$keyStr}' given");
+                    }
+
+                    $valueType = $typeNode->genericTypes[0] ?? null;
+                    if ($valueType !== null) {
+                        $context = "Property {$className}::\${$propName}" . ($key !== null ? "[{$key}]" : '[]');
+
+                        return $registry->validate($value, $valueType, $context);
+                    }
+                } elseif (\in_array($base, ['array', 'non-empty-array', 'iterable'], true)) {
+                    $genericCount = \count($typeNode->genericTypes);
+
+                    if ($genericCount >= 2 && $key !== null) {
+                        $keyType = $typeNode->genericTypes[0];
+                        $keyErr = $registry->validate($key, $keyType, "Property {$className}::\${$propName} key");
+                        if ($keyErr !== null) {
+                            return $keyErr;
+                        }
+                    }
+
+                    $valueType = $genericCount >= 2
+                        ? $typeNode->genericTypes[1]
+                        : ($typeNode->genericTypes[0] ?? null);
+
+                    if ($valueType !== null) {
+                        $context = "Property {$className}::\${$propName}" . ($key !== null ? "['{$keyStr}']" : '[]');
+
+                        return $registry->validate($value, $valueType, $context);
+                    }
+                }
+            } elseif ($typeNode instanceof ArrayTypeNode) {
+                $context = "Property {$className}::\${$propName}" . ($key !== null ? "[{$keyStr}]" : '[]');
+
+                return $registry->validate($value, $typeNode->type, $context);
+            }
+        } catch (\Throwable) {
+        }
+
+        return null;
     }
 
     /**

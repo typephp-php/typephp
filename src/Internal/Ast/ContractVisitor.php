@@ -1181,6 +1181,14 @@ final class ContractVisitor extends NodeVisitorAbstract
                 if ($resolvedClass !== null) {
                     $this->scopeManager->registerInferredVarType($varName, $resolvedClass);
                 }
+            } elseif ($node->expr instanceof Node\Expr\Clone_ && $node->expr->expr instanceof Node\Expr\Variable && \is_string($node->expr->expr->name)) {
+                $sourceVarName = $node->expr->expr->name;
+                $sourceType = $this->scopeManager->getVarTypeFromScope($sourceVarName)
+                    ?? $this->scopeManager->getInferredVarType($sourceVarName);
+
+                if ($sourceType !== null) {
+                    $this->scopeManager->registerInferredVarType($varName, $sourceType);
+                }
             } elseif (! ($node->expr instanceof Node\Expr\AssignRef)) {
                 $this->scopeManager->unregisterInferredVarType($varName);
             }

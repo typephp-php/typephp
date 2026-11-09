@@ -9,6 +9,7 @@ use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
 use TypePHP\Internal\Checker\ConditionalChecker;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
@@ -86,7 +87,7 @@ final class IterableWrapper
 
         [$keyTypeNode, $itemTypeNode] = self::extractKeyAndItemTypeNodes($typeNode, $aliases);
 
-        if ($keyTypeNode === null && $itemTypeNode === null) {
+        if (self::isUnconstrainedKey($keyTypeNode) && self::isUnconstrained($itemTypeNode)) {
             return $iterable;
         }
 
@@ -104,6 +105,53 @@ final class IterableWrapper
         }
 
         return self::wrapGenerator($iterable, $typeCheckCallback);
+    }
+
+    /**
+     * Checks if a key type node is absent or covers all possible collection keys (mixed, array-key, or any scalar/object).
+     */
+    private static function isUnconstrainedKey(?TypeNode $node): bool
+    {
+        if ($node === null) {
+            return true;
+        }
+
+        if ($node instanceof IdentifierTypeNode) {
+            $lower = strtolower($node->name);
+
+            return \in_array($lower, ['mixed', 'array-key'], true);
+        }
+
+        if ($node instanceof UnionTypeNode) {
+            $types = [];
+            foreach ($node->types as $t) {
+                if ($t instanceof IdentifierTypeNode) {
+                    $types[strtolower($t->name)] = true;
+                }
+            }
+
+            if (isset($types['mixed']) || isset($types['array-key'])) {
+                return true;
+            }
+
+            if (isset($types['string'], $types['int'], $types['bool'], $types['float'], $types['object'])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Checks if a type node is absent or unconstrained mixed.
+     */
+    private static function isUnconstrained(?TypeNode $node): bool
+    {
+        if ($node === null) {
+            return true;
+        }
+
+        return $node instanceof IdentifierTypeNode && strtolower($node->name) === 'mixed';
     }
 
     /**
@@ -190,6 +238,7 @@ final class IterableWrapper
 
     /**
      * Wraps an iterable generator in an interceptor generator to evaluate type checks on each yield.
+     * Advances generators using valid()/current()/next() without calling rewind() on already-started generators.
      *
      * @param iterable<mixed, mixed> $iterable
      * @param \Closure(mixed, mixed): void $typeCheckCallback
@@ -198,6 +247,18 @@ final class IterableWrapper
      */
     private static function wrapGenerator(iterable $iterable, \Closure $typeCheckCallback): Generator
     {
+        if ($iterable instanceof Generator) {
+            while ($iterable->valid()) {
+                $key = $iterable->key();
+                $value = $iterable->current();
+                $typeCheckCallback($key, $value);
+                yield $key => $value;
+                $iterable->next();
+            }
+
+            return;
+        }
+
         foreach ($iterable as $key => $value) {
             $typeCheckCallback($key, $value);
             yield $key => $value;

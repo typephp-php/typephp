@@ -944,8 +944,16 @@ final class ParamChecker
         ?object $thisObj,
         array $templates
     ): void {
-        if ($typeNode instanceof NullableTypeNode) {
+        while ($typeNode instanceof NullableTypeNode) {
             $typeNode = $typeNode->type;
+        }
+
+        if ($typeNode instanceof UnionTypeNode || $typeNode instanceof IntersectionTypeNode) {
+            foreach ($typeNode->types as $subType) {
+                self::inferArrayTemplatesFromAllElements($subType, $arrVal, $effectiveFunction, $thisObj, $templates);
+            }
+
+            return;
         }
 
         if ($typeNode instanceof GenericTypeNode) {
@@ -1109,8 +1117,16 @@ final class ParamChecker
         array $templates,
         array $classTemplates = []
     ): void {
-        if ($typeNode instanceof NullableTypeNode) {
+        while ($typeNode instanceof NullableTypeNode) {
             $typeNode = $typeNode->type;
+        }
+
+        if ($typeNode instanceof UnionTypeNode || $typeNode instanceof IntersectionTypeNode) {
+            foreach ($typeNode->types as $subType) {
+                self::inferGenericObjectNode($subType, $value, $effectiveFunction, $thisObj, $templates, $classTemplates);
+            }
+
+            return;
         }
 
         if ($typeNode instanceof GenericTypeNode && \is_object($value)) {
@@ -1119,12 +1135,27 @@ final class ParamChecker
                 return;
             }
 
+            $contextRef = null;
+            if (str_contains($effectiveFunction, '::')) {
+                $declaringClass = explode('::', $effectiveFunction, 2)[0];
+                if (class_exists($declaringClass, false) || class_exists($declaringClass) || interface_exists($declaringClass) || trait_exists($declaringClass)) {
+                    $contextRef = new \ReflectionClass($declaringClass);
+                }
+            } elseif (\function_exists($effectiveFunction)) {
+                $contextRef = new \ReflectionFunction($effectiveFunction);
+            }
+
+            $targetClassFqcn = SpecialTypeResolver::resolveFqcn((string) $typeNode->type, $contextRef ?? new \ReflectionClass($value));
+
+            if (! is_a($value, $targetClassFqcn)) {
+                return;
+            }
+
             $boundOnInstance = TemplateManager::getBoundTemplatesForInstance($value);
             if ($boundOnInstance === []) {
                 return;
             }
 
-            $targetClassFqcn = SpecialTypeResolver::resolveFqcn((string) $typeNode->type, new \ReflectionClass($value));
             $targetTemplateNames = self::$classDeclaredTemplateNamesCache[$targetClassFqcn] ?? null;
 
             if ($targetTemplateNames === null) {
