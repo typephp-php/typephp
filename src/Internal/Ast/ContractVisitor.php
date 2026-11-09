@@ -488,7 +488,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         if (! $isReturnUnconstrained) {
             $traverser = new NodeTraverser();
-            $traverser->addVisitor(new class (
+            $traverser->addVisitor(new class(
                 $caller,
                 $returnTypeNode,
                 $returnTypeStr,
@@ -499,8 +499,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                     private TypeNode $returnTypeNode,
                     private string $returnTypeStr,
                     private string $currentFile
-                ) {
-                }
+                ) {}
 
                 public function enterNode(Node $n): int|Node|null
                 {
@@ -588,7 +587,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
     private static function isLoopBodyFreeOfOpaqueMutations(Node\Stmt\Foreach_ $node): bool
     {
-        $visitor = new class () extends NodeVisitorAbstract {
+        $visitor = new class() extends NodeVisitorAbstract {
             public bool $hasOpaqueCalls = false;
 
             public function enterNode(Node $n): ?int
@@ -1180,6 +1179,14 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $resolvedClass = $this->resolveClassNameFromNode($node->expr->class);
                 if ($resolvedClass !== null) {
                     $this->scopeManager->registerInferredVarType($varName, $resolvedClass);
+                }
+            } elseif ($node->expr instanceof Node\Expr\Clone_ && $node->expr->expr instanceof Node\Expr\Variable && \is_string($node->expr->expr->name)) {
+                $sourceVarName = $node->expr->expr->name;
+                $sourceType = $this->scopeManager->getVarTypeFromScope($sourceVarName)
+                    ?? $this->scopeManager->getInferredVarType($sourceVarName);
+
+                if ($sourceType !== null) {
+                    $this->scopeManager->registerInferredVarType($varName, $sourceType);
                 }
             } elseif (! ($node->expr instanceof Node\Expr\AssignRef)) {
                 $this->scopeManager->unregisterInferredVarType($varName);

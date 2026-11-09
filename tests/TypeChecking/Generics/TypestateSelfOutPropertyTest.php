@@ -111,3 +111,98 @@ describe('Typestate Properties with @self-out Transitions', function () {
         ;
     });
 });
+
+describe('Typestate Transitions with Cloning & Reference Aliasing', function () {
+    test('cloned instance inherits transitioned typestate from original object', function () {
+        $session = new FixtureTypestateAuthSession();
+        $session->login('alice', 'hunter2');
+
+        expect(TypePHP::getGenericType($session))->toBe("'authenticated'");
+
+        $cloned = clone $session;
+
+        expect(TypePHP::getGenericType($cloned))->toBe("'authenticated'")
+            ->and($cloned->state)->toBe('authenticated')
+            ->and($cloned->username)->toBe('alice')
+        ;
+    });
+
+    test('preserves WeakMap state isolation when clone transitions to a different typestate', function () {
+        $session = new FixtureTypestateAuthSession();
+        $session->login('alice', 'hunter2');
+
+        $cloned = clone $session;
+        expect(TypePHP::getGenericType($cloned))->toBe("'authenticated'");
+
+        $cloned->logout();
+
+        expect(TypePHP::getGenericType($cloned))->toBe("'unauthenticated'")
+            ->and(TypePHP::getGenericType($session))->toBe("'authenticated'")
+            ->and($cloned->state)->toBe('unauthenticated')
+            ->and($session->state)->toBe('authenticated')
+        ;
+    });
+
+    test('enforces inline @var typestate contract when assigning from clone expression', function () {
+        $session = new FixtureTypestateAuthSession();
+        $session->login('alice', 'hunter2');
+
+        /** @var FixtureTypestateAuthSession<'authenticated'> $authCopy */
+        $authCopy = clone $session;
+        expect($authCopy->state)->toBe('authenticated');
+
+        $unauthSession = new FixtureTypestateAuthSession();
+        $unauthSession->login('bob', 'secret');
+        $unauthSession->logout(); 
+
+        expect(function () use ($unauthSession) {
+            /** @var FixtureTypestateAuthSession<'authenticated'> $badCopy */
+            $badCopy = clone $unauthSession;
+        })->toThrow(TypeError::class, "FixtureTypestateAuthSession<invariant 'authenticated'>");
+    });
+
+    test('throws TypeError when assigning invalid value to reference aliasing cloned typestate property', function () {
+        $session = new FixtureTypestateAuthSession();
+        $session->login('alice', 'hunter2');
+
+        /** @var FixtureTypestateAuthSession<'authenticated'> $cloned */
+        $cloned = clone $session;
+
+        $ref = &$cloned->state;
+
+        expect(function () use (&$ref) {
+            $ref = 'hacked_state';
+        })->toThrow(TypeError::class, "must be literal 'authenticated'");
+
+        expect($cloned->state)->toBe('authenticated');
+    });
+
+    test('allows valid assignment to reference aliasing cloned typestate property', function () {
+        $session = new FixtureTypestateAuthSession();
+        $session->login('alice', 'hunter2');
+
+        /** @var FixtureTypestateAuthSession<'authenticated'> $cloned */
+        $cloned = clone $session;
+
+        $ref = &$cloned->state;
+        $ref = 'authenticated';
+
+        expect($cloned->state)->toBe('authenticated')
+            ->and($ref)->toBe('authenticated')
+        ;
+    });
+
+    test('propagates typestate to reference alias when cloning without explicit @var annotation', function () {
+        /** @var FixtureTypestateAuthSession<'authenticated'> $session */
+        $session = new FixtureTypestateAuthSession();
+        $session->login('alice', 'hunter2');
+
+        $cloned = clone $session;
+
+        $ref = &$cloned->state;
+
+        expect(function () use (&$ref) {
+            $ref = 'invalid_state';
+        })->toThrow(TypeError::class, "must be literal 'authenticated'");
+    });
+});
