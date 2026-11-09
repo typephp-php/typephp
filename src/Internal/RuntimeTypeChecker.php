@@ -103,7 +103,12 @@ final class RuntimeTypeChecker
                     return $value;
                 }
 
-                return ViolationCollector::handle($err, 'constant', $value, $file, $line, $constantName);
+                $target = str_contains($constantName, '::')
+                    ? explode('::', $constantName, 2)[1]
+                    : $constantName;
+                $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
+
+                return ViolationCollector::handle($err, 'constant', $value, $file, $line, $constantName, $target, $declaredIn);
             }
         } catch (\Throwable $e) {
             // Silently ignore unexpected parsing errors
@@ -145,7 +150,9 @@ final class RuntimeTypeChecker
                     return $value;
                 }
 
-                return ViolationCollector::handle($err, 'parameter', $value, $file, $line, $caller, '$' . $paramName);
+                $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
+
+                return ViolationCollector::handle($err, 'parameter', $value, null, null, $caller, '$' . $paramName, $declaredIn);
             }
         } catch (\Throwable $e) {
         }
@@ -185,7 +192,9 @@ final class RuntimeTypeChecker
                     return $value;
                 }
 
-                return ViolationCollector::handle($err, 'return', $value, $file, $line, $caller, 'return');
+                $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
+
+                return ViolationCollector::handle($err, 'return', $value, $file, $line, $caller, 'return', $declaredIn);
             }
         } catch (\Throwable $e) {
         }

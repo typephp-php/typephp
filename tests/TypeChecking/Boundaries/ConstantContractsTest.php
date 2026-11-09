@@ -6,6 +6,8 @@ namespace TypePHP\Tests\TypeChecking\Boundaries;
 
 use TypePHP\Exception\TypeError;
 use TypePHP\Internal\Io\StreamWrapper;
+use TypePHP\Internal\Util\Config;
+use TypePHP\TypePHP;
 
 describe('Class & Global Constant Contracts (@var on const)', function () {
     describe('1. Class Constant Validation', function () {
@@ -559,6 +561,55 @@ PHP;
             $transformed = StreamWrapper::transformSource($source, 'StaticallyProvenClosureConst.php');
 
             expect($transformed)->not()->toContain('RuntimeTypeChecker::checkReturn');
+        });
+    });
+
+    describe('5. Constant Violations in Report Mode (on_violation => report)', function () {
+        test('records accurate target, caller, and declared_in metadata for class and global constants in report mode', function () {
+            Config::set(['on_violation' => 'report']);
+
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace TypePHP\Tests\TypeChecking\Boundaries;
+
+class FixtureReportModeConst
+{
+    /**
+     * @var list<int>
+     */
+    public const Data = [
+        1, 2, 3, 'not_an_int',
+    ];
+}
+PHP;
+
+            $tempDir = sys_get_temp_dir() . '/typephp_const_report_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $filePath = $tempDir . '/FixtureReportModeConst.php';
+            file_put_contents($filePath, $source);
+
+            try {
+                StreamWrapper::register();
+                require $filePath;
+
+                $violations = TypePHP::getViolations();
+                expect($violations)->toHaveCount(1)
+                    ->and($violations[0]->kind)->toBe('constant')
+                    ->and($violations[0]->function)->toBe('TypePHP\Tests\TypeChecking\Boundaries\FixtureReportModeConst::Data')
+                    ->and($violations[0]->target)->toBe('Data')
+                    ->and($violations[0]->line)->toBe(12)
+                    ->and($violations[0]->expected)->toBe('int')
+                    ->and($violations[0]->given)->toBe("string 'not_an_int'")
+                    ->and($violations[0]->declaredIn)->toContain('FixtureReportModeConst.php:12')
+                    ->and($violations[0]->caller)->not()->toContain('RuntimeTypeChecker')
+                ;
+            } finally {
+                @unlink($filePath);
+                @rmdir($tempDir);
+            }
         });
     });
 });

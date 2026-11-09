@@ -448,7 +448,7 @@ final class ViolationCollector
             return $genericDecl;
         }
 
-        if ($kind === 'variable') {
+        if ($kind === 'variable' || $kind === 'constant') {
             return self::normalizeRelativePath($resolvedFile) . ':' . $resolvedLine;
         }
 
@@ -622,7 +622,8 @@ final class ViolationCollector
         $appFrames = self::collectApplicationFrames();
 
         if ($explicitFile !== null && $explicitFile !== '' && $explicitLine !== null && $explicitLine > 0) {
-            $callerLabel = self::formatCallerLabel($appFrames, 0);
+            $callerIndex = (isset($appFrames[0]['caller']) && str_starts_with($appFrames[0]['caller'], 'TypePHP\\Internal\\')) ? 1 : 0;
+            $callerLabel = self::formatCallerLabel($appFrames, $callerIndex);
 
             return [$explicitFile, $explicitLine, $callerLabel];
         }
@@ -663,6 +664,7 @@ final class ViolationCollector
                 || str_contains($normalizedFile, 'bin/typephp')
                 || str_contains($normalizedFile, 'vendor/phpunit/')
                 || str_contains($normalizedFile, 'vendor/pestphp/')
+                || str_contains($normalizedFile, 'vendor/composer/')
             ) {
                 continue;
             }
@@ -729,6 +731,9 @@ final class ViolationCollector
         if (preg_match('/^Property\s+([a-zA-Z0-9_\\\\]+(?:::\$[a-zA-Z0-9_\x80-\xff]+)?)/', $message, $m) === 1) {
             return trim($m[1]);
         }
+        if (preg_match('/^Constant\s+([a-zA-Z0-9_\\\\]+(?:::[a-zA-Z0-9_\x80-\xff]+)?)/', $message, $m) === 1) {
+            return trim($m[1]);
+        }
         if (preg_match('/^([^:]+):/', $message, $m) === 1) {
             return trim($m[1]);
         }
@@ -745,6 +750,9 @@ final class ViolationCollector
             return $m[1];
         }
         if (preg_match('/(?:Variable)\s+(\$[a-zA-Z0-9_]+)/', $message, $m) === 1) {
+            return $m[1];
+        }
+        if (preg_match('/^Constant\s+(?:[a-zA-Z0-9_\\\\]+::)?([a-zA-Z0-9_\x80-\xff]+)/', $message, $m) === 1) {
             return $m[1];
         }
         if (str_contains($message, 'Return value')) {
