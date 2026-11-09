@@ -89,3 +89,67 @@ describe('IteratorProxy Unit Tests', function () {
         ;
     });
 });
+
+describe('Laziness & Generator Lifecycle (TDD Bug Verification)', function () {
+    test('does not call getIterator() on IteratorAggregate during construction', function () {
+        $invoked = false;
+        $lazyAggregate = new class ($invoked) implements \IteratorAggregate {
+            public function __construct(private bool &$invoked)
+            {
+            }
+
+            public function getIterator(): \Traversable
+            {
+                $this->invoked = true;
+
+                return (function () {
+                    yield 'x' => 100;
+                })();
+            }
+        };
+
+        $proxy = new IteratorProxy($lazyAggregate, fn () => null);
+
+        expect($invoked)->toBeFalse('IteratorAggregate::getIterator() was called eagerly in IteratorProxy::__construct()');
+
+        $values = [];
+        foreach ($proxy as $k => $v) {
+            $values[$k] = $v;
+        }
+
+        expect($invoked)->toBeTrue()
+            ->and($values)->toBe(['x' => 100])
+        ;
+    });
+
+    test('does not prematurely consume one-shot IteratorAggregate before foreach begins', function () {
+        $consumedPasses = 0;
+        $oneShotAggregate = new class ($consumedPasses) implements \IteratorAggregate {
+            public function __construct(private int &$consumedPasses)
+            {
+            }
+
+            public function getIterator(): \Traversable
+            {
+                if ($this->consumedPasses > 0) {
+                    throw new \RuntimeException('Already iterated!');
+                }
+                $this->consumedPasses++;
+
+                return (function () {
+                    yield 1;
+                    yield 2;
+                })();
+            }
+        };
+
+        $proxy = new IteratorProxy($oneShotAggregate, fn () => null);
+
+        $items = [];
+        foreach ($proxy as $v) {
+            $items[] = $v;
+        }
+
+        expect($items)->toBe([1, 2]);
+    });
+});

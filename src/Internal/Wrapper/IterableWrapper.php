@@ -86,7 +86,7 @@ final class IterableWrapper
 
         [$keyTypeNode, $itemTypeNode] = self::extractKeyAndItemTypeNodes($typeNode, $aliases);
 
-        if ($keyTypeNode === null && $itemTypeNode === null) {
+        if (self::isUnconstrained($keyTypeNode) && self::isUnconstrained($itemTypeNode)) {
             return $iterable;
         }
 
@@ -104,6 +104,18 @@ final class IterableWrapper
         }
 
         return self::wrapGenerator($iterable, $typeCheckCallback);
+    }
+
+    /**
+     * Checks if a type node is absent or unconstrained mixed.
+     */
+    private static function isUnconstrained(?TypeNode $node): bool
+    {
+        if ($node === null) {
+            return true;
+        }
+
+        return $node instanceof IdentifierTypeNode && strtolower($node->name) === 'mixed';
     }
 
     /**
@@ -190,6 +202,7 @@ final class IterableWrapper
 
     /**
      * Wraps an iterable generator in an interceptor generator to evaluate type checks on each yield.
+     * Advances generators using valid()/current()/next() without calling rewind() on already-started generators.
      *
      * @param iterable<mixed, mixed> $iterable
      * @param \Closure(mixed, mixed): void $typeCheckCallback
@@ -198,6 +211,18 @@ final class IterableWrapper
      */
     private static function wrapGenerator(iterable $iterable, \Closure $typeCheckCallback): Generator
     {
+        if ($iterable instanceof Generator) {
+            while ($iterable->valid()) {
+                $key = $iterable->key();
+                $value = $iterable->current();
+                $typeCheckCallback($key, $value);
+                yield $key => $value;
+                $iterable->next();
+            }
+
+            return;
+        }
+
         foreach ($iterable as $key => $value) {
             $typeCheckCallback($key, $value);
             yield $key => $value;

@@ -488,7 +488,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         if (! $isReturnUnconstrained) {
             $traverser = new NodeTraverser();
-            $traverser->addVisitor(new class(
+            $traverser->addVisitor(new class (
                 $caller,
                 $returnTypeNode,
                 $returnTypeStr,
@@ -499,7 +499,8 @@ final class ContractVisitor extends NodeVisitorAbstract
                     private TypeNode $returnTypeNode,
                     private string $returnTypeStr,
                     private string $currentFile
-                ) {}
+                ) {
+                }
 
                 public function enterNode(Node $n): int|Node|null
                 {
@@ -587,7 +588,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
     private static function isLoopBodyFreeOfOpaqueMutations(Node\Stmt\Foreach_ $node): bool
     {
-        $visitor = new class() extends NodeVisitorAbstract {
+        $visitor = new class () extends NodeVisitorAbstract {
             public bool $hasOpaqueCalls = false;
 
             public function enterNode(Node $n): ?int

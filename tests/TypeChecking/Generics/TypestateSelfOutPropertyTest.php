@@ -153,7 +153,7 @@ describe('Typestate Transitions with Cloning & Reference Aliasing', function () 
 
         $unauthSession = new FixtureTypestateAuthSession();
         $unauthSession->login('bob', 'secret');
-        $unauthSession->logout(); 
+        $unauthSession->logout();
 
         expect(function () use ($unauthSession) {
             /** @var FixtureTypestateAuthSession<'authenticated'> $badCopy */

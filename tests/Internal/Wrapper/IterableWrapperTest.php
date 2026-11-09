@@ -324,4 +324,71 @@ PHP;
             }
         });
     });
+
+    describe('Generator Resumption & Lazy Sequence Support (TDD Bug Verification)', function () {
+        test('wraps and consumes an already started generator without throwing Cannot rewind exception', function () {
+            $registry = new TypeValidatorRegistry();
+
+            $generator = (function (): Generator {
+                yield 'first' => 10;
+                yield 'second' => 20;
+                yield 'third' => 30;
+            })();
+
+            $generator->current();
+            $generator->next();
+
+            $wrapped = IterableWrapper::wrap(
+                __NAMESPACE__ . '\fixtureValidIterableFunction',
+                'items',
+                $generator,
+                $registry
+            );
+
+            $results = [];
+            foreach ($wrapped as $k => $v) {
+                $results[$k] = $v;
+            }
+
+            expect($results)->toBe([
+                'second' => 20,
+                'third' => 30,
+            ]);
+        });
+
+        test('wrapping an IteratorAggregate parameter preserves lazy evaluation until iteration', function () {
+            $registry = new TypeValidatorRegistry();
+            $generatorEvaluated = false;
+
+            $lazyAggregate = new class ($generatorEvaluated) implements \IteratorAggregate {
+                public function __construct(private bool &$generatorEvaluated)
+                {
+                }
+
+                public function getIterator(): \Traversable
+                {
+                    $this->generatorEvaluated = true;
+                    yield 'item1' => 10;
+                }
+            };
+
+            $wrapped = IterableWrapper::wrap(
+                __NAMESPACE__ . '\fixtureValidIterableFunction',
+                'items',
+                $lazyAggregate,
+                $registry
+            );
+
+            expect($generatorEvaluated)->toBeFalse('Lazy aggregate was prematurely materialized during IterableWrapper::wrap()');
+
+            $out = [];
+            foreach ($wrapped as $k => $v) {
+                $out[$k] = $v;
+            }
+
+            expect($generatorEvaluated)->toBeTrue()
+                ->and($out)->toBe(['item1' => 10])
+            ;
+        });
+    });
 });
