@@ -1324,6 +1324,24 @@ final class TemplateManager
             $normalizedGenericTypes = self::normalizeGenericArguments($genericTypeNode->genericTypes, $parentTemplateNodes);
             $hierAliases = DocblockParser::parseClassAliases($hierClass->getName());
 
+            $hierTemplates = DocblockParser::parseClassTemplates($hierClass->getName());
+            if ($hierTemplates === []) {
+                $hierDoc = StubManager::getClassDoc($hierClass->getName()) ?? $hierClass->getDocComment();
+                if ($hierDoc !== false) {
+                    $hierPhpDocNode = DocblockExtractor::parseDocString($hierDoc);
+                    $hierTemplates = DocblockExtractor::extractTemplates($hierPhpDocNode);
+                }
+            }
+
+            $hierFallbackBindings = [];
+            foreach ($hierTemplates as $tName => $tTag) {
+                $boundOrDef = $tTag->default ?? $tTag->bound;
+                if ($boundOrDef !== null) {
+                    $boundOrDef = SpecialTypeResolver::resolve($boundOrDef, $hierClass);
+                }
+                $hierFallbackBindings[$tName] = $boundOrDef ?? new IdentifierTypeNode('mixed');
+            }
+
             foreach ($parentTemplateNames as $idx => $templateName) {
                 if (isset($normalizedGenericTypes[$idx])) {
                     $typeArg = $normalizedGenericTypes[$idx];
@@ -1345,11 +1363,11 @@ final class TemplateManager
                             $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($resolved->name);
                             $isRealType = self::isRealTypeSymbol($resolved->name);
 
-                            if (! $isBuiltIn && ! $isRealType) {
+                            if (! $isBuiltIn && ! $isRealType && ! isset($declaredTemplateNames[$resolved->name])) {
                                 continue;
                             }
 
-                            if (isset($declaredTemplateNames[$resolved->name])) {
+                            if (isset($declaredTemplateNames[$resolved->name]) && $resolved->name === $templateName) {
                                 continue;
                             }
                         }
@@ -1357,6 +1375,10 @@ final class TemplateManager
                         if (! self::isRealTypeSymbol($resolved->constExpr->className)) {
                             continue;
                         }
+                    }
+
+                    if (DocblockParser::typeReferencesTemplate($resolved, $declaredTemplateNames) && $hierFallbackBindings !== []) {
+                        $resolved = TemplateSubstitutor::substitute($resolved, $hierFallbackBindings);
                     }
 
                     $bindings[$templateName] ??= $resolved;
