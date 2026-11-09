@@ -9,6 +9,7 @@ use Generator;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use ReflectionClass;
 use TypeError;
 use TypePHP\Internal\Docblock\DocblockParser;
@@ -37,6 +38,34 @@ function fixtureBareIterableFunction(iterable $unparameterized): void
 function fixtureReturnIterableFunction(): iterable
 {
     return ['item1' => 10, 'item2' => 20];
+}
+
+/**
+ * @param iterable<string|mixed, mixed> $items
+ */
+function fixtureUnionWithMixedKey(iterable $items): void
+{
+}
+
+/**
+ * @param iterable<int|array-key, mixed> $items
+ */
+function fixtureUnionWithArrayKey(iterable $items): void
+{
+}
+
+/**
+ * @param iterable<string|int|bool|float|object, mixed> $items
+ */
+function fixtureUnionAllTypesKey(iterable $items): void
+{
+}
+
+/**
+ * @param iterable<string|int, mixed> $items
+ */
+function fixtureConstrainedUnionKey(iterable $items): void
+{
 }
 
 describe('IterableWrapper Unit Tests', function () {
@@ -389,6 +418,92 @@ PHP;
             expect($generatorEvaluated)->toBeTrue()
                 ->and($out)->toBe(['item1' => 10])
             ;
+        });
+    });
+
+    describe('isUnconstrainedKey() Union Type Coverage', function () {
+        test('returns unconstrained true for unions containing mixed or array-key', function () {
+            $registry = new TypeValidatorRegistry();
+            $iterator = new ArrayIterator(['a' => 1]);
+
+            $resultMixed = IterableWrapper::wrap(
+                __NAMESPACE__ . '\fixtureUnionWithMixedKey',
+                'items',
+                $iterator,
+                $registry
+            );
+            expect($resultMixed)->toBe($iterator);
+
+            $resultArrayKey = IterableWrapper::wrap(
+                __NAMESPACE__ . '\fixtureUnionWithArrayKey',
+                'items',
+                $iterator,
+                $registry
+            );
+            expect($resultArrayKey)->toBe($iterator);
+        });
+
+        test('returns unconstrained true for union covering all scalar and object key types', function () {
+            $registry = new TypeValidatorRegistry();
+            $iterator = new ArrayIterator(['a' => 1]);
+
+            $result = IterableWrapper::wrap(
+                __NAMESPACE__ . '\fixtureUnionAllTypesKey',
+                'items',
+                $iterator,
+                $registry
+            );
+            expect($result)->toBe($iterator);
+        });
+
+        test('returns false for constrained union keys and proceeds to wrap iterator', function () {
+            $registry = new TypeValidatorRegistry();
+            $iterator = new ArrayIterator(['a' => 1]);
+
+            $wrapped = IterableWrapper::wrap(
+                __NAMESPACE__ . '\fixtureConstrainedUnionKey',
+                'items',
+                $iterator,
+                $registry
+            );
+
+            expect($wrapped)->toBeInstanceOf(\TypePHP\Internal\Wrapper\IteratorProxy::class);
+        });
+
+        test('directly validates isUnconstrainedKey via reflection across all union branches', function () {
+            $refMethod = new \ReflectionMethod(IterableWrapper::class, 'isUnconstrainedKey');
+
+            $unionMixed = new UnionTypeNode([
+                new IdentifierTypeNode('string'),
+                new IdentifierTypeNode('mixed'),
+            ]);
+            expect($refMethod->invoke(null, $unionMixed))->toBeTrue();
+
+            $unionArrayKey = new UnionTypeNode([
+                new IdentifierTypeNode('int'),
+                new IdentifierTypeNode('array-key'),
+            ]);
+            expect($refMethod->invoke(null, $unionArrayKey))->toBeTrue();
+
+            $unionAllTypes = new UnionTypeNode([
+                new IdentifierTypeNode('string'),
+                new IdentifierTypeNode('int'),
+                new IdentifierTypeNode('bool'),
+                new IdentifierTypeNode('float'),
+                new IdentifierTypeNode('object'),
+            ]);
+            expect($refMethod->invoke(null, $unionAllTypes))->toBeTrue();
+
+            $unionIncomplete = new UnionTypeNode([
+                new IdentifierTypeNode('string'),
+                new IdentifierTypeNode('int'),
+            ]);
+            expect($refMethod->invoke(null, $unionIncomplete))->toBeFalse();
+
+            $unionNonIdentifier = new UnionTypeNode([
+                new ArrayTypeNode(new IdentifierTypeNode('int')),
+            ]);
+            expect($refMethod->invoke(null, $unionNonIdentifier))->toBeFalse();
         });
     });
 });

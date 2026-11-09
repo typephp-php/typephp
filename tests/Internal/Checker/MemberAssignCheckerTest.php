@@ -53,6 +53,7 @@ describe('MemberAssignChecker Unit Tests', function () {
     });
 
     test('accepts valid array shape key assignment and returns value', function () {
+        $registry = $this->registry ?? new TypeValidatorRegistry();
         $root = ['count' => 5, 'name' => 'Alice'];
         $chain = [['dim', 'count']];
 
@@ -63,7 +64,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'array{count: int, name: string}',
             'stats',
             __FILE__,
-            $this->registry
+            $registry
         );
 
         expect($result)->toBe(10)
@@ -72,6 +73,7 @@ describe('MemberAssignChecker Unit Tests', function () {
     });
 
     test('returns ErrorMessage on invalid array shape key assignment', function () {
+        $registry = $this->registry ?? new TypeValidatorRegistry();
         $root = ['count' => 5];
         $chain = [['dim', 'count']];
 
@@ -82,7 +84,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'array{count: int}',
             'stats',
             __FILE__,
-            $this->registry
+            $registry
         );
 
         expect($result)->toBeInstanceOf(ErrorMessage::class)
@@ -91,6 +93,7 @@ describe('MemberAssignChecker Unit Tests', function () {
     });
 
     test('returns ErrorMessage when assigning unexpected key to sealed array shape', function () {
+        $registry = $this->registry ?? new TypeValidatorRegistry();
         $root = ['count' => 5];
         $chain = [['dim', 'extra']];
 
@@ -101,7 +104,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'array{count: int}',
             'stats',
             __FILE__,
-            $this->registry
+            $registry
         );
 
         expect($result)->toBeInstanceOf(ErrorMessage::class)
@@ -111,6 +114,7 @@ describe('MemberAssignChecker Unit Tests', function () {
 
     test('fast-path O(1) in hybrid mode validates leaf directly on large list', function () {
         Config::set(['array_validation' => 'hybrid']);
+        $registry = $this->registry ?? new TypeValidatorRegistry();
 
         $root = range(1, 200);
         $chain = [['dim', 50]];
@@ -122,7 +126,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'list<positive-int>',
             'list',
             __FILE__,
-            $this->registry
+            $registry
         );
         expect($valid)->toBe(100);
 
@@ -133,7 +137,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'list<positive-int>',
             'list',
             __FILE__,
-            $this->registry
+            $registry
         );
         expect($invalid)->toBeInstanceOf(ErrorMessage::class)
             ->and($invalid->getMessage())->toContain('positive-int')
@@ -142,6 +146,7 @@ describe('MemberAssignChecker Unit Tests', function () {
 
     test('fast-path in hybrid mode rejects non-integer keys on list types', function () {
         Config::set(['array_validation' => 'hybrid']);
+        $registry = $this->registry ?? new TypeValidatorRegistry();
 
         $root = [1, 2, 3];
         $chain = [['dim', 'string_key']];
@@ -153,7 +158,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'list<int>',
             'items',
             __FILE__,
-            $this->registry
+            $registry
         );
 
         expect($result)->toBeInstanceOf(ErrorMessage::class)
@@ -163,6 +168,7 @@ describe('MemberAssignChecker Unit Tests', function () {
 
     test('fast-path in hybrid mode validates key on generic maps (array<string, positive-int>)', function () {
         Config::set(['array_validation' => 'hybrid']);
+        $registry = $this->registry ?? new TypeValidatorRegistry();
 
         $root = ['a' => 1];
         $chain = [['dim', 123]];
@@ -174,7 +180,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'array<string, positive-int>',
             'map',
             __FILE__,
-            $this->registry
+            $registry
         );
 
         expect($result)->toBeInstanceOf(ErrorMessage::class)
@@ -183,6 +189,7 @@ describe('MemberAssignChecker Unit Tests', function () {
     });
 
     test('validates multi-level nested array shape assignment', function () {
+        $registry = $this->registry ?? new TypeValidatorRegistry();
         $root = ['user' => ['id' => 1, 'role' => 'admin']];
         $chain = [['dim', 'user'], ['dim', 'id']];
 
@@ -193,7 +200,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'array{user: array{id: positive-int, role: non-empty-string}}',
             'config',
             __FILE__,
-            $this->registry
+            $registry
         );
         expect($valid)->toBe(42);
 
@@ -204,7 +211,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'array{user: array{id: positive-int, role: non-empty-string}}',
             'config',
             __FILE__,
-            $this->registry
+            $registry
         );
         expect($invalid)->toBeInstanceOf(ErrorMessage::class)
             ->and($invalid->getMessage())->toContain("['user']['id']")
@@ -212,6 +219,7 @@ describe('MemberAssignChecker Unit Tests', function () {
     });
 
     test('validates object shape property assignment on stdClass', function () {
+        $registry = $this->registry ?? new TypeValidatorRegistry();
         $root = (object) ['count' => 5];
         $chain = [['prop', 'count']];
 
@@ -222,7 +230,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'object{count: int}',
             'stats',
             __FILE__,
-            $this->registry
+            $registry
         );
         expect($valid)->toBe(10)
             ->and($root->count)->toBe(5)
@@ -235,7 +243,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'object{count: int}',
             'stats',
             __FILE__,
-            $this->registry
+            $registry
         );
         expect($invalid)->toBeInstanceOf(ErrorMessage::class)
             ->and($invalid->getMessage())->toContain('->count must be of type int')
@@ -243,6 +251,7 @@ describe('MemberAssignChecker Unit Tests', function () {
     });
 
     test('returns ErrorMessage when assigning unexpected property to sealed object shape', function () {
+        $registry = $this->registry ?? new TypeValidatorRegistry();
         $root = (object) ['count' => 5];
         $chain = [['prop', 'unexpected_field']];
 
@@ -253,7 +262,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'object{count: int}',
             'stats',
             __FILE__,
-            $this->registry
+            $registry
         );
 
         expect($result)->toBeInstanceOf(ErrorMessage::class)
@@ -262,6 +271,7 @@ describe('MemberAssignChecker Unit Tests', function () {
     });
 
     test('validates multi-level nested object shape property assignment', function () {
+        $registry = $this->registry ?? new TypeValidatorRegistry();
         $root = (object) ['user' => (object) ['id' => 1]];
         $chain = [['prop', 'user'], ['prop', 'id']];
 
@@ -272,7 +282,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'object{user: object{id: positive-int}}',
             'data',
             __FILE__,
-            $this->registry
+            $registry
         );
         expect($valid)->toBe(100);
 
@@ -283,7 +293,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             'object{user: object{id: positive-int}}',
             'data',
             __FILE__,
-            $this->registry
+            $registry
         );
         expect($invalid)->toBeInstanceOf(ErrorMessage::class)
             ->and($invalid->getMessage())->toContain('->user->id')
@@ -291,6 +301,7 @@ describe('MemberAssignChecker Unit Tests', function () {
     });
 
     test('checkProperty validates object property dimension assignments and preserves state on failure', function () {
+        $registry = $this->registry ?? new TypeValidatorRegistry();
         $fixture = new ConfiguredProperty();
         $fixture->numbers = [1, 2, 3];
 
@@ -300,7 +311,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             [['dim', null]],
             4,
             __FILE__,
-            $this->registry
+            $registry
         );
         expect($validAppend)->toBe(4)
             ->and($fixture->numbers)->toBe([1, 2, 3])
@@ -312,7 +323,7 @@ describe('MemberAssignChecker Unit Tests', function () {
             [['dim', null]],
             'not_an_int',
             __FILE__,
-            $this->registry
+            $registry
         );
         expect($invalidAppend)->toBeInstanceOf(ErrorMessage::class)
             ->and($invalidAppend->getMessage())->toContain('numbers[3] must be of type int')
@@ -321,7 +332,9 @@ describe('MemberAssignChecker Unit Tests', function () {
     });
 
     test('checkProperty returns value untouched when target is non-object/non-string or inline properties are disabled', function () {
-        expect(MemberAssignChecker::checkProperty(123, 'numbers', [['dim', null]], 'val', __FILE__, $this->registry))
+        $registry = $this->registry ?? new TypeValidatorRegistry();
+
+        expect(MemberAssignChecker::checkProperty(123, 'numbers', [['dim', null]], 'val', __FILE__, $registry))
             ->toBe('val')
         ;
 
@@ -329,231 +342,243 @@ describe('MemberAssignChecker Unit Tests', function () {
         $fixture = new ConfiguredProperty();
         $fixture->numbers = [1, 2];
 
-        expect(MemberAssignChecker::checkProperty($fixture, 'numbers', [['dim', null]], 'invalid', __FILE__, $this->registry))
+        expect(MemberAssignChecker::checkProperty($fixture, 'numbers', [['dim', null]], 'invalid', __FILE__, $registry))
             ->toBe('invalid')
         ;
     });
 
-    describe('checkProperty with Hybrid Array Validation on large arrays (> 128 elements)', function () {
-        test('validates and accepts element mutation on ArrayTypeNode property with > 128 items', function () {
-            Config::set(['array_validation' => 'hybrid']);
-            $fixture = new ConfiguredProperty();
-            $fixture->numbers = range(1, 150);
+    test('checkProperty validates and accepts element mutation on ArrayTypeNode property with > 128 items in hybrid mode', function () {
+        Config::set(['array_validation' => 'hybrid']);
+        $registry = $this->registry ?? new TypeValidatorRegistry();
 
-            $valid = MemberAssignChecker::checkProperty(
-                $fixture,
-                'numbers',
-                [['dim', 50]],
-                42,
-                __FILE__,
-                $this->registry
-            );
-            expect($valid)->toBe(42);
+        $fixture = new ConfiguredProperty();
+        $fixture->numbers = range(1, 150);
 
-            $validAppend = MemberAssignChecker::checkProperty(
-                $fixture,
-                'numbers',
-                [['dim', null]],
-                100,
-                __FILE__,
-                $this->registry
-            );
-            expect($validAppend)->toBe(100);
-        });
+        $valid = MemberAssignChecker::checkProperty(
+            $fixture,
+            'numbers',
+            [['dim', 50]],
+            42,
+            __FILE__,
+            $registry
+        );
+        expect($valid)->toBe(42);
 
-        test('rejects element mutation on ArrayTypeNode property with > 128 items when value is invalid', function () {
-            Config::set(['array_validation' => 'hybrid']);
-            $fixture = new ConfiguredProperty();
-            $fixture->numbers = range(1, 150);
+        $validAppend = MemberAssignChecker::checkProperty(
+            $fixture,
+            'numbers',
+            [['dim', null]],
+            100,
+            __FILE__,
+            $registry
+        );
+        expect($validAppend)->toBe(100);
+    });
 
-            $invalid = MemberAssignChecker::checkProperty(
-                $fixture,
-                'numbers',
-                [['dim', 50]],
-                'not_an_int',
-                __FILE__,
-                $this->registry
-            );
-            expect($invalid)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalid->getMessage())->toContain('numbers[50] must be of type int')
-            ;
-        });
+    test('checkProperty rejects element mutation on ArrayTypeNode property with > 128 items when value is invalid', function () {
+        Config::set(['array_validation' => 'hybrid']);
+        $registry = $this->registry ?? new TypeValidatorRegistry();
 
-        test('validates list property on > 128 items: valid index, valid append, invalid value, and non-integer key', function () {
-            Config::set(['array_validation' => 'hybrid']);
-            $fixture = new HybridPropertyFixture();
-            $fixture->listProp = range(1, 150);
+        $fixture = new ConfiguredProperty();
+        $fixture->numbers = range(1, 150);
 
-            $validIndex = MemberAssignChecker::checkProperty(
-                $fixture,
-                'listProp',
-                [['dim', 20]],
-                500,
-                __FILE__,
-                $this->registry
-            );
-            expect($validIndex)->toBe(500);
+        $invalid = MemberAssignChecker::checkProperty(
+            $fixture,
+            'numbers',
+            [['dim', 50]],
+            'not_an_int',
+            __FILE__,
+            $registry
+        );
+        expect($invalid)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalid->getMessage())->toContain('numbers[50] must be of type int')
+        ;
+    });
 
-            $validAppend = MemberAssignChecker::checkProperty(
-                $fixture,
-                'listProp',
-                [['dim', null]],
-                600,
-                __FILE__,
-                $this->registry
-            );
-            expect($validAppend)->toBe(600);
+    test('checkProperty validates list property on > 128 items: valid index, valid append, invalid value, and non-integer key', function () {
+        Config::set(['array_validation' => 'hybrid']);
+        $registry = $this->registry ?? new TypeValidatorRegistry();
 
-            $invalidVal = MemberAssignChecker::checkProperty(
-                $fixture,
-                'listProp',
-                [['dim', 20]],
-                -10,
-                __FILE__,
-                $this->registry
-            );
-            expect($invalidVal)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalidVal->getMessage())->toContain('listProp[20] must be of type positive-int')
-            ;
+        $fixture = new HybridPropertyFixture();
+        $fixture->listProp = range(1, 150);
 
-            $invalidKey = MemberAssignChecker::checkProperty(
-                $fixture,
-                'listProp',
-                [['dim', 'non_int_key']],
-                500,
-                __FILE__,
-                $this->registry
-            );
-            expect($invalidKey)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalidKey->getMessage())->toContain("must be a list, non-integer key 'non_int_key' given")
-            ;
-        });
+        $validIndex = MemberAssignChecker::checkProperty(
+            $fixture,
+            'listProp',
+            [['dim', 20]],
+            500,
+            __FILE__,
+            $registry
+        );
+        expect($validIndex)->toBe(500);
 
-        test('validates generic key-value map property on > 128 items: valid key/value, invalid value, and invalid key', function () {
-            Config::set(['array_validation' => 'hybrid']);
-            $fixture = new HybridPropertyFixture();
-            $map = [];
-            for ($i = 0; $i < 150; $i++) {
-                $map["key_{$i}"] = $i + 1;
-            }
-            $fixture->mapProp = $map;
+        $validAppend = MemberAssignChecker::checkProperty(
+            $fixture,
+            'listProp',
+            [['dim', null]],
+            600,
+            __FILE__,
+            $registry
+        );
+        expect($validAppend)->toBe(600);
 
-            $valid = MemberAssignChecker::checkProperty(
-                $fixture,
-                'mapProp',
-                [['dim', 'key_10']],
-                999,
-                __FILE__,
-                $this->registry
-            );
-            expect($valid)->toBe(999);
+        $invalidVal = MemberAssignChecker::checkProperty(
+            $fixture,
+            'listProp',
+            [['dim', 20]],
+            -10,
+            __FILE__,
+            $registry
+        );
+        expect($invalidVal)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalidVal->getMessage())->toContain('listProp[20] must be of type positive-int')
+        ;
 
-            $validAppend = MemberAssignChecker::checkProperty(
-                $fixture,
-                'mapProp',
-                [['dim', null]],
-                888,
-                __FILE__,
-                $this->registry
-            );
-            expect($validAppend)->toBe(888);
+        $invalidKey = MemberAssignChecker::checkProperty(
+            $fixture,
+            'listProp',
+            [['dim', 'non_int_key']],
+            500,
+            __FILE__,
+            $registry
+        );
+        expect($invalidKey)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalidKey->getMessage())->toContain("must be a list, non-integer key 'non_int_key' given")
+        ;
+    });
 
-            $invalidVal = MemberAssignChecker::checkProperty(
-                $fixture,
-                'mapProp',
-                [['dim', 'key_10']],
-                -5,
-                __FILE__,
-                $this->registry
-            );
-            expect($invalidVal)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalidVal->getMessage())->toContain("mapProp['key_10'] must be of type positive-int")
-            ;
+    test('checkProperty validates generic key-value map property on > 128 items: valid key/value, invalid value, and invalid key', function () {
+        Config::set(['array_validation' => 'hybrid']);
+        $registry = $this->registry ?? new TypeValidatorRegistry();
 
-            $invalidKey = MemberAssignChecker::checkProperty(
-                $fixture,
-                'mapProp',
-                [['dim', 12345]],
-                100,
-                __FILE__,
-                $this->registry
-            );
-            expect($invalidKey)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalidKey->getMessage())->toContain('mapProp key must be of type string')
-            ;
-        });
+        $fixture = new HybridPropertyFixture();
+        $map = [];
+        for ($i = 0; $i < 150; $i++) {
+            $map["key_{$i}"] = $i + 1;
+        }
+        $fixture->mapProp = $map;
 
-        test('validates single generic array property on > 128 items (array<T>)', function () {
-            Config::set(['array_validation' => 'hybrid']);
-            $fixture = new HybridPropertyFixture();
-            $fixture->singleGenericProp = range(1, 150);
+        $valid = MemberAssignChecker::checkProperty(
+            $fixture,
+            'mapProp',
+            [['dim', 'key_10']],
+            999,
+            __FILE__,
+            $registry
+        );
+        expect($valid)->toBe(999);
 
-            $valid = MemberAssignChecker::checkProperty(
-                $fixture,
-                'singleGenericProp',
-                [['dim', 10]],
-                50,
-                __FILE__,
-                $this->registry
-            );
-            expect($valid)->toBe(50);
+        $validAppend = MemberAssignChecker::checkProperty(
+            $fixture,
+            'mapProp',
+            [['dim', null]],
+            888,
+            __FILE__,
+            $registry
+        );
+        expect($validAppend)->toBe(888);
 
-            $invalid = MemberAssignChecker::checkProperty(
-                $fixture,
-                'singleGenericProp',
-                [['dim', 10]],
-                -5,
-                __FILE__,
-                $this->registry
-            );
-            expect($invalid)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalid->getMessage())->toContain("singleGenericProp['10'] must be of type positive-int")
-            ;
-        });
+        $invalidVal = MemberAssignChecker::checkProperty(
+            $fixture,
+            'mapProp',
+            [['dim', 'key_10']],
+            -5,
+            __FILE__,
+            $registry
+        );
+        expect($invalidVal)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalidVal->getMessage())->toContain("mapProp['key_10'] must be of type positive-int")
+        ;
 
-        test('substitutes generic templates on class when validating element mutation in hybrid mode', function () {
-            Config::set(['array_validation' => 'hybrid']);
-            $holder = new HybridGenericPropertyHolder();
-            $holder->items = range(1, 150);
-            TemplateManager::bindTemplate('none', $holder, 'T', new IdentifierTypeNode('positive-int'));
+        $invalidKey = MemberAssignChecker::checkProperty(
+            $fixture,
+            'mapProp',
+            [['dim', 12345]],
+            100,
+            __FILE__,
+            $registry
+        );
+        expect($invalidKey)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalidKey->getMessage())->toContain('mapProp key must be of type string')
+        ;
+    });
 
-            $valid = MemberAssignChecker::checkProperty(
-                $holder,
-                'items',
-                [['dim', 10]],
-                42,
-                __FILE__,
-                $this->registry
-            );
-            expect($valid)->toBe(42);
+    test('checkProperty validates single generic array property on > 128 items (array<T>)', function () {
+        Config::set(['array_validation' => 'hybrid']);
+        $registry = $this->registry ?? new TypeValidatorRegistry();
 
-            $invalid = MemberAssignChecker::checkProperty(
-                $holder,
-                'items',
-                [['dim', 10]],
-                -5,
-                __FILE__,
-                $this->registry
-            );
-            expect($invalid)->toBeInstanceOf(ErrorMessage::class)
-                ->and($invalid->getMessage())->toContain('items[10] must be of type positive-int')
-            ;
-        });
+        $fixture = new HybridPropertyFixture();
+        $fixture->singleGenericProp = range(1, 150);
 
-        test('returns null from validatePropertyElementMutation when property has no docblock and falls back cleanly', function () {
-            Config::set(['array_validation' => 'hybrid']);
-            $fixture = new HybridPropertyFixture();
-            $fixture->unannotatedProp = range(1, 150);
+        $valid = MemberAssignChecker::checkProperty(
+            $fixture,
+            'singleGenericProp',
+            [['dim', 10]],
+            50,
+            __FILE__,
+            $registry
+        );
+        expect($valid)->toBe(50);
 
-            $result = MemberAssignChecker::checkProperty(
-                $fixture,
-                'unannotatedProp',
-                [['dim', 10]],
-                'any_value',
-                __FILE__,
-                $this->registry
-            );
-            expect($result)->toBe('any_value');
-        });
+        $invalid = MemberAssignChecker::checkProperty(
+            $fixture,
+            'singleGenericProp',
+            [['dim', 10]],
+            -5,
+            __FILE__,
+            $registry
+        );
+        expect($invalid)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalid->getMessage())->toContain("singleGenericProp['10'] must be of type positive-int")
+        ;
+    });
+
+    test('checkProperty substitutes generic templates on class when validating element mutation in hybrid mode', function () {
+        Config::set(['array_validation' => 'hybrid']);
+        $registry = $this->registry ?? new TypeValidatorRegistry();
+
+        $holder = new HybridGenericPropertyHolder();
+        $holder->items = range(1, 150);
+        TemplateManager::bindTemplate('none', $holder, 'T', new IdentifierTypeNode('positive-int'));
+
+        $valid = MemberAssignChecker::checkProperty(
+            $holder,
+            'items',
+            [['dim', 10]],
+            42,
+            __FILE__,
+            $registry
+        );
+        expect($valid)->toBe(42);
+
+        $invalid = MemberAssignChecker::checkProperty(
+            $holder,
+            'items',
+            [['dim', 10]],
+            -5,
+            __FILE__,
+            $registry
+        );
+        expect($invalid)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalid->getMessage())->toContain('items[10] must be of type positive-int')
+        ;
+    });
+
+    test('checkProperty returns null from validatePropertyElementMutation when property has no docblock and falls back cleanly', function () {
+        Config::set(['array_validation' => 'hybrid']);
+        $registry = $this->registry ?? new TypeValidatorRegistry();
+
+        $fixture = new HybridPropertyFixture();
+        $fixture->unannotatedProp = range(1, 150);
+
+        $result = MemberAssignChecker::checkProperty(
+            $fixture,
+            'unannotatedProp',
+            [['dim', 10]],
+            'any_value',
+            __FILE__,
+            $registry
+        );
+        expect($result)->toBe('any_value');
     });
 });
