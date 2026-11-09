@@ -9,6 +9,7 @@ use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
 use TypePHP\Internal\Checker\ConditionalChecker;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
@@ -86,7 +87,7 @@ final class IterableWrapper
 
         [$keyTypeNode, $itemTypeNode] = self::extractKeyAndItemTypeNodes($typeNode, $aliases);
 
-        if (self::isUnconstrained($keyTypeNode) && self::isUnconstrained($itemTypeNode)) {
+        if (self::isUnconstrainedKey($keyTypeNode) && self::isUnconstrained($itemTypeNode)) {
             return $iterable;
         }
 
@@ -104,6 +105,41 @@ final class IterableWrapper
         }
 
         return self::wrapGenerator($iterable, $typeCheckCallback);
+    }
+
+    /**
+     * Checks if a key type node is absent or covers all possible collection keys (mixed, array-key, or any scalar/object).
+     */
+    private static function isUnconstrainedKey(?TypeNode $node): bool
+    {
+        if ($node === null) {
+            return true;
+        }
+
+        if ($node instanceof IdentifierTypeNode) {
+            $lower = strtolower($node->name);
+
+            return \in_array($lower, ['mixed', 'array-key'], true);
+        }
+
+        if ($node instanceof UnionTypeNode) {
+            $types = [];
+            foreach ($node->types as $t) {
+                if ($t instanceof IdentifierTypeNode) {
+                    $types[strtolower($t->name)] = true;
+                }
+            }
+
+            if (isset($types['mixed']) || isset($types['array-key'])) {
+                return true;
+            }
+
+            if (isset($types['string'], $types['int'], $types['bool'], $types['float'], $types['object'])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
