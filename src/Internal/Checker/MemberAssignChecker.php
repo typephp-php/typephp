@@ -53,7 +53,14 @@ final class MemberAssignChecker
         ?string $caller = null,
         mixed $thisOrClass = null
     ): mixed {
-        if (Config::isArrayValidationHybrid() && ! str_contains($typeString, '{') && \count($chain) === 1 && $chain[0][0] === 'dim') {
+        $isObjectDimAccess = \is_object($root) && ($chain[0][0] ?? null) === 'dim';
+
+        if (
+            (Config::isArrayValidationHybrid() || $isObjectDimAccess)
+            && ! str_contains($typeString, '{')
+            && \count($chain) === 1
+            && $chain[0][0] === 'dim'
+        ) {
             $directErr = InlineChecker::validateCollectionElementMutation(
                 $value,
                 $chain,
@@ -69,6 +76,10 @@ final class MemberAssignChecker
                 return $directErr;
             }
 
+            return $value;
+        }
+
+        if ($isObjectDimAccess) {
             return $value;
         }
 
@@ -115,11 +126,13 @@ final class MemberAssignChecker
         }
 
         $currentVal = self::readPropertyValue($objectOrClass, $className, $propName);
+        $isObjectDimAccess = \is_object($currentVal) && ($chain[0][0] ?? null) === 'dim';
 
         if (
-            Config::isArrayValidationHybrid()
-            && \is_array($currentVal)
-            && \count($currentVal) > Config::HYBRID_SAMPLE_THRESHOLD
+            (
+                (Config::isArrayValidationHybrid() && \is_array($currentVal) && \count($currentVal) > Config::HYBRID_SAMPLE_THRESHOLD)
+                || $isObjectDimAccess
+            )
             && \count($chain) === 1
             && $chain[0][0] === 'dim'
         ) {
@@ -140,6 +153,10 @@ final class MemberAssignChecker
             return $value;
         }
 
+        if ($isObjectDimAccess) {
+            return $value;
+        }
+
         $copy = StructureMutator::mutateCopy($currentVal, $chain, $value);
 
         $res = InlineChecker::checkProperty($copy, $objectOrClass, $propName, $file, $registry);
@@ -152,7 +169,7 @@ final class MemberAssignChecker
     }
 
     /**
-     * Directly validates a single element appended/assigned to a large property array in O(1).
+     * Directly validates a single element appended/assigned to a large property array or generic ArrayAccess object in O(1).
      *
      * @param list<array{0: 'dim'|'prop', 1: mixed}> $chain
      */
@@ -199,7 +216,7 @@ final class MemberAssignChecker
 
                         return $registry->validate($value, $valueType, $context);
                     }
-                } elseif (\in_array($base, ['array', 'non-empty-array', 'iterable'], true)) {
+                } else {
                     $genericCount = \count($typeNode->genericTypes);
 
                     if ($genericCount >= 2 && $key !== null) {
