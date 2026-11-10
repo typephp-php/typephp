@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Internal\Ast;
 
 use PhpParser\Node;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 
 /**
@@ -133,6 +134,7 @@ final class ScopeManager
                 }
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore malformed docblocks
         }
     }

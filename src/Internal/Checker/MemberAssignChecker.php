@@ -7,6 +7,7 @@ namespace TypePHP\Internal\Checker;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use ReflectionProperty;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
@@ -242,7 +243,8 @@ final class MemberAssignChecker
 
                 return $registry->validate($value, $typeNode->type, $context);
             }
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
         }
 
         return null;
@@ -268,7 +270,8 @@ final class MemberAssignChecker
                 // @phpstan-ignore property.dynamicName
                 return $objectOrClass->$propName ?? [];
             }
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
         }
 
         return [];

@@ -15,6 +15,7 @@ use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ParamOutChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
 use TypePHP\Internal\Checker\SelfOutChecker;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockExtractor;
@@ -111,6 +112,7 @@ final class RuntimeTypeChecker
                 return ViolationCollector::handle($err, 'constant', $value, $file, $line, $constantName, $target, $declaredIn);
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore unexpected parsing errors
         }
 
@@ -155,6 +157,7 @@ final class RuntimeTypeChecker
                 return ViolationCollector::handle($err, 'parameter', $value, null, null, $caller, '$' . $paramName, $declaredIn);
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
         }
 
         return $value;
@@ -197,6 +200,7 @@ final class RuntimeTypeChecker
                 return ViolationCollector::handle($err, 'return', $value, $file, $line, $caller, 'return', $declaredIn);
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
         }
 
         return $value;

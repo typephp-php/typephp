@@ -15,6 +15,7 @@ use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
@@ -624,6 +625,7 @@ final class ParamChecker
                     }
                 }
             } catch (\Throwable $e) {
+                DebugLog::swallowed($e);
                 // Silently ignore reflection errors
             }
         }
@@ -1169,6 +1171,7 @@ final class ParamChecker
                             $targetTemplateNames = array_keys(DocblockExtractor::extractTemplates($targetPhpDocNode));
                         }
                     } catch (\Throwable $e) {
+                        DebugLog::swallowed($e);
                     }
                 }
                 self::$classDeclaredTemplateNamesCache[$targetClassFqcn] = $targetTemplateNames;

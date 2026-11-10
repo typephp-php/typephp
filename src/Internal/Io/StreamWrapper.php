@@ -12,6 +12,7 @@ use PhpParser\Parser;
 use PhpParser\ParserFactory;
 use TypePHP\Internal\Ast\ContractVisitor;
 use TypePHP\Internal\Ast\TypePHPPrinter;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\IgnoreManager;
@@ -273,6 +274,8 @@ final class StreamWrapper implements StreamWrapperInterface
                 return $source;
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
+
             return $source;
         }
 
@@ -365,6 +368,8 @@ final class StreamWrapper implements StreamWrapperInterface
 
             return $result;
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
+
             return $code;
         }
     }

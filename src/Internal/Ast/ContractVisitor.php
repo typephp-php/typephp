@@ -15,6 +15,7 @@ use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Docblock\DocblockParser;
@@ -362,7 +363,8 @@ final class ContractVisitor extends NodeVisitorAbstract
                     $checkStmt->setAttribute('typephp_injected', true);
                     $injectedStmts[] = $checkStmt;
                 }
-            } catch (\Throwable) {
+            } catch (\Throwable $e) {
+                DebugLog::swallowed($e);
             }
         }
 
@@ -425,7 +427,8 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $checkStmt->setAttribute('typephp_injected', true);
                 $injectedStmts[] = $checkStmt;
             }
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
         }
 
         return $injectedStmts;
@@ -721,7 +724,8 @@ final class ContractVisitor extends NodeVisitorAbstract
                             if ($classTemplates !== [] && DocblockParser::typeReferencesTemplate($propTypeNode, $classTemplates)) {
                                 continue;
                             }
-                        } catch (\Throwable) {
+                        } catch (\Throwable $e) {
+                            DebugLog::swallowed($e);
                         }
                     }
 
@@ -804,7 +808,8 @@ final class ContractVisitor extends NodeVisitorAbstract
             try {
                 $phpDocNode = DocblockExtractor::parseDocString($nodeDoc->getText());
                 $classTemplates = DocblockExtractor::extractTemplates($phpDocNode);
-            } catch (\Throwable) {
+            } catch (\Throwable $e) {
+                DebugLog::swallowed($e);
             }
         }
 
@@ -814,7 +819,8 @@ final class ContractVisitor extends NodeVisitorAbstract
                 try {
                     $loadedTemplates = DocblockParser::parseClassTemplates($className);
                     $classTemplates = [...$classTemplates, ...$loadedTemplates];
-                } catch (\Throwable) {
+                } catch (\Throwable $e) {
+                    DebugLog::swallowed($e);
                 }
             }
         }
@@ -825,7 +831,8 @@ final class ContractVisitor extends NodeVisitorAbstract
             try {
                 $parentTemplates = DocblockParser::parseClassTemplates($parentClass);
                 $classTemplates = [...$classTemplates, ...$parentTemplates];
-            } catch (\Throwable) {
+            } catch (\Throwable $e) {
+                DebugLog::swallowed($e);
             }
         }
 
@@ -903,7 +910,8 @@ final class ContractVisitor extends NodeVisitorAbstract
             try {
                 $phpDocNode = DocblockExtractor::parseDocString($doc->getText());
                 $templates = DocblockExtractor::extractTemplates($phpDocNode);
-            } catch (\Throwable) {
+            } catch (\Throwable $e) {
+                DebugLog::swallowed($e);
             }
         }
         $hasTemplates = $templates !== [];
@@ -981,7 +989,8 @@ final class ContractVisitor extends NodeVisitorAbstract
                         try {
                             $methodPhpDoc = DocblockExtractor::parseDocString($methodDoc->getText());
                             $methodParamTags = DocblockExtractor::getParamTags($methodPhpDoc);
-                        } catch (\Throwable) {
+                        } catch (\Throwable $e) {
+                            DebugLog::swallowed($e);
                         }
                     }
 
@@ -1168,6 +1177,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                 }
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
         }
     }
 
@@ -1231,7 +1241,8 @@ final class ContractVisitor extends NodeVisitorAbstract
                     if (StaticTypeEvaluator::satisfies($expr, $parsedType, $this->currentFile)) {
                         return;
                     }
-                } catch (\Throwable) {
+                } catch (\Throwable $e) {
+                    DebugLog::swallowed($e);
                 }
 
                 $node->expr = $this->wrapVariableCheck($expr, $typeString, $varName, $node->var->getStartLine());

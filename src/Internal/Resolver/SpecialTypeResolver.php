@@ -26,6 +26,7 @@ use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ThisTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
@@ -1099,6 +1100,7 @@ final class SpecialTypeResolver
                 }
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore reflection errors
         }
 
@@ -1563,6 +1565,7 @@ final class SpecialTypeResolver
 
             self::$fileUseImports[$normalizedFile] = $imports;
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             self::$fileUseImports[$normalizedFile] = [];
         }
     }

@@ -8,6 +8,7 @@ use Closure;
 use ReflectionClass;
 use ReflectionFunction;
 use Throwable;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\PathMatcher;
 
@@ -68,6 +69,7 @@ final class CallerBoundaryResolver
                     return PathMatcher::isVendorPath($normalized);
                 }
             } catch (Throwable $e) {
+                DebugLog::swallowed($e);
             }
         }
 
@@ -98,6 +100,7 @@ final class CallerBoundaryResolver
                 $fileName = $ref->getFileName();
             }
         } catch (Throwable $e) {
+            DebugLog::swallowed($e);
         }
 
         if ($fileName === null || $fileName === false) {

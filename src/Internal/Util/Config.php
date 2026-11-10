@@ -8,6 +8,7 @@ use TypePHP\Extension\ExtensionInterface;
 use TypePHP\Internal\Checker\MemberAssignChecker;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Io\CacheManager;
@@ -257,6 +258,16 @@ final class Config
         }
 
         return self::$redactValues;
+    }
+
+    /**
+     * Whether swallowed internal exceptions are written to the PHP error log (TYPEPHP_DEBUG env only).
+     */
+    public static function isDebugEnabled(): bool
+    {
+        $envDebug = self::getEnvValue('TYPEPHP_DEBUG');
+
+        return $envDebug !== null && filter_var($envDebug, FILTER_VALIDATE_BOOLEAN);
     }
 
     public static function isReportMode(): bool
@@ -521,7 +532,8 @@ final class Config
                         return self::$projectRoot = $normPath;
                     }
                 }
-            } catch (\Throwable) {
+            } catch (\Throwable $e) {
+                DebugLog::swallowed($e);
             }
         }
 

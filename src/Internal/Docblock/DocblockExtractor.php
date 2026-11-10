@@ -22,6 +22,7 @@ use PHPStan\PhpDocParser\Parser\PhpDocParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Util\StubManager;
@@ -171,6 +172,8 @@ final class DocblockExtractor
                 'writeType' => $writeType,
             ];
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
+
             return null;
         }
     }
@@ -291,6 +294,7 @@ final class DocblockExtractor
 
                     return $typeParser->parse($tokens);
                 } catch (\Throwable $e) {
+                    DebugLog::swallowed($e);
                     // Silently ignore malformed tags
                 }
             }
@@ -516,6 +520,7 @@ final class DocblockExtractor
                 }
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore malformed property docblocks
         }
 
@@ -539,6 +544,7 @@ final class DocblockExtractor
                 return [$typeString, $varName];
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore malformed docblocks
         }
 
@@ -664,6 +670,8 @@ final class DocblockExtractor
                     return null;
                 }
             } catch (\Throwable $e) {
+                DebugLog::swallowed($e);
+
                 return null;
             }
         }
@@ -697,6 +705,7 @@ final class DocblockExtractor
                 }
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore malformed class docblocks
         }
 
@@ -716,6 +725,7 @@ final class DocblockExtractor
                 }
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore malformed class docblocks
         }
 

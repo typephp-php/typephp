@@ -10,6 +10,7 @@ use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use SplFileInfo;
 use Throwable;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Io\StreamWrapper;
 
 /**
@@ -154,6 +155,7 @@ final class StubManager
                             self::extractStubsFromAst($stmts);
                         }
                     } catch (Throwable $e) {
+                        DebugLog::swallowed($e);
                         // Silently ignore malformed stub files
                     }
                 }

@@ -23,6 +23,7 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use ReflectionClass;
 use Throwable;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Resolver\HierarchyResolver;
@@ -378,6 +379,7 @@ final class ConditionalChecker
                 }
             }
         } catch (Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore reflection errors
         }
 

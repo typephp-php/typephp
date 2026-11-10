@@ -25,6 +25,7 @@ use PHPStan\PhpDocParser\Ast\Type\ThisTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockExtractor;
@@ -509,6 +510,7 @@ final class TemplateManager
                 return self::$declaredClassTemplateNamesCache[$className] = array_keys($templates);
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
         }
 
         return self::$declaredClassTemplateNamesCache[$className] = [];
@@ -648,6 +650,7 @@ final class TemplateManager
                 }
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore reflection errors
         }
 
@@ -738,6 +741,7 @@ final class TemplateManager
                 }
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore reflection errors
         }
 
@@ -764,6 +768,7 @@ final class TemplateManager
                 return DocblockExtractor::extractTemplateVariances($classPhpDocNode);
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore reflection errors
         }
 
@@ -970,6 +975,7 @@ final class TemplateManager
                 }
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore reflection or parsing errors
         }
 
@@ -1279,6 +1285,7 @@ final class TemplateManager
                 }
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore reflection or parsing errors
         }
 
@@ -1385,6 +1392,7 @@ final class TemplateManager
                 }
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore reflection errors
         }
     }
@@ -1562,6 +1570,7 @@ final class TemplateManager
                         [, $classVariances] = self::collectHierarchyTemplatesAndVariances($ref);
                         $declaredVariances = array_values($classVariances);
                     } catch (\Throwable $e) {
+                        DebugLog::swallowed($e);
                     }
                 }
 
@@ -1742,6 +1751,7 @@ final class TemplateManager
                 [, $classVariances] = self::collectHierarchyTemplatesAndVariances($ref);
                 $declaredVariances = array_values($classVariances);
             } catch (\Throwable $e) {
+                DebugLog::swallowed($e);
             }
         }
 
@@ -1815,6 +1825,7 @@ final class TemplateManager
                 self::bindInstanceFromNode($instance, $typeNode, '', true);
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore malformed docblock strings
         }
 

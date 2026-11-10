@@ -24,6 +24,7 @@ use PHPStan\PhpDocParser\Parser\ConstExprParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use PHPStan\PhpDocParser\Parser\TypeParser;
 use PHPStan\PhpDocParser\ParserConfig;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
@@ -221,6 +222,7 @@ final class InlineChecker
                 $value = self::wrapCollectionCallables($typeNode, $value, $context, $registry);
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore unexpected execution exceptions
         }
 
@@ -302,6 +304,7 @@ final class InlineChecker
                 return $registry->validate($value, $typeNode->type, $context);
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently fall back to prospective whole-structure validation
         }
 
@@ -475,6 +478,7 @@ final class InlineChecker
                 return $err;
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore unexpected execution exceptions
         }
 
@@ -528,6 +532,7 @@ final class InlineChecker
                 }
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently ignore reflection errors
         }
 

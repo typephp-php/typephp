@@ -6,6 +6,7 @@ namespace TypePHP\Internal\Resolver;
 
 use ReflectionClass;
 use ReflectionMethod;
+use TypePHP\Internal\Diagnostic\DebugLog;
 
 /**
  * @internal Resolves class, interface, trait, and method inheritance hierarchies from child to root.
@@ -118,6 +119,7 @@ final class HierarchyResolver
 
             return self::$traitAliasCache[$className] = $aliases;
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             self::$hasTraitAliasesCache[$className] = false;
 
             return self::$traitAliasCache[$className] = [];

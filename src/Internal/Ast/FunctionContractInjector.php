@@ -12,6 +12,7 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Internal\Ast\Elimination\EliminationSafetyPolicy;
 use TypePHP\Internal\Ast\Elimination\Evaluator\GeneratorEvaluator;
 use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Util\StubManager;
 
@@ -152,7 +153,8 @@ final class FunctionContractInjector
                     $returnTypeNode = $returnTag->type;
                 }
                 $hasMethodTemplates = DocblockExtractor::extractTemplates($phpDocNode) !== [];
-            } catch (\Throwable) {
+            } catch (\Throwable $e) {
+                DebugLog::swallowed($e);
             }
         }
 

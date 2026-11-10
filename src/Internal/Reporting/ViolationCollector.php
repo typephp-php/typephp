@@ -7,6 +7,7 @@ namespace TypePHP\Internal\Reporting;
 use ReflectionClass;
 use ReflectionFunction;
 use Throwable;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Io\StreamWrapper;
@@ -462,7 +463,9 @@ final class ViolationCollector
             }
 
             return self::resolveFunctionDeclaration($function);
-        } catch (Throwable) {
+        } catch (Throwable $e) {
+            DebugLog::swallowed($e);
+
             return null;
         }
     }
@@ -492,7 +495,9 @@ final class ViolationCollector
             $startLine = $refClass->getStartLine();
 
             return self::normalizeRelativePath($file) . ':' . ($startLine !== false ? $startLine : 1);
-        } catch (Throwable) {
+        } catch (Throwable $e) {
+            DebugLog::swallowed($e);
+
             return null;
         }
     }
@@ -564,7 +569,9 @@ final class ViolationCollector
                     return self::$propertyLineCache[$file][$propName] = $token->line;
                 }
             }
-        } catch (Throwable) {
+        } catch (Throwable $e) {
+            DebugLog::swallowed($e);
+
             return self::$propertyLineCache[$file][$propName] = null;
         }
 

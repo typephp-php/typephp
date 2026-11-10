@@ -24,6 +24,7 @@ use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Checker\InlineChecker;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
@@ -473,6 +474,8 @@ final class DocblockParser
 
             return $classTemplates;
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
+
             return [];
         }
     }
@@ -557,6 +560,8 @@ final class DocblockParser
 
             return self::$propertyCache[$className][$propertyName] = $resolvedNode;
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
+
             return self::$propertyCache[$className][$propertyName] = null;
         }
     }
@@ -619,6 +624,8 @@ final class DocblockParser
 
             return self::$magicPropertyContractCache[$className][$propertyName] = null;
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
+
             return self::$magicPropertyContractCache[$className][$propertyName] = null;
         }
     }
@@ -791,6 +798,8 @@ final class DocblockParser
                 'templates' => $classTemplates,
             ];
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
+
             return self::$magicMethodCache[$className][$methodName] = null;
         }
     }
@@ -931,6 +940,8 @@ final class DocblockParser
 
             return $aliases;
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
+
             return [];
         }
     }

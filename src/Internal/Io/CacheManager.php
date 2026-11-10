@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Io;
 
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\FileFilter;
 
@@ -310,6 +311,7 @@ final class CacheManager
                 }
             }
         } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
             // Silently handle filesystem read errors
         }
 

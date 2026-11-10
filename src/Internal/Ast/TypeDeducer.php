@@ -17,6 +17,7 @@ use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
+use TypePHP\Internal\Diagnostic\DebugLog;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Docblock\DocblockParser;
@@ -313,7 +314,9 @@ final class TypeDeducer
             $tokens = new TokenIterator($lexer->tokenize($normalized));
 
             return self::$parsedTypeCache[$typeString] = $typeParser->parse($tokens);
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            DebugLog::swallowed($e);
+
             return null;
         }
     }
