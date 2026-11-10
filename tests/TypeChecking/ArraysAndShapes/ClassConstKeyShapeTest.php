@@ -4,22 +4,7 @@ declare(strict_types=1);
 
 use TypePHP\Tests\Fixtures\Types\ConstKeyContainer;
 use TypePHP\Tests\Fixtures\Types\MissingConstKeyContainer;
-
-trait TraitWithConstantFixture
-{
-    public const TRAIT_KEY = 'trait_action';
-}
-
-class TraitConstContainer
-{
-    /**
-     * @param array{TraitWithConstantFixture::TRAIT_KEY: positive-int} $payload
-     */
-    public function process(array $payload): bool
-    {
-        return true;
-    }
-}
+use TypePHP\Tests\Fixtures\Types\TraitConstContainer;
 
 describe('Class Constant Keys in Array Shapes (array{self::CONST_KEY: T})', function () {
 
