@@ -275,7 +275,7 @@ final class InlineChecker
 
                         return $registry->validate($value, $valueType, $context);
                     }
-                } elseif (isset(self::ARRAY_TYPES[$base]) || $base === 'non-empty-array') {
+                } else {
                     $genericCount = \count($typeNode->genericTypes);
 
                     if ($genericCount >= 2 && $key !== null) {
