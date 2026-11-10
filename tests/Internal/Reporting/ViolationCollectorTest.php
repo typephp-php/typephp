@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Tests\Internal\Reporting;
 
 use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Internal\Reporting\ViolationCollector;
 use TypePHP\Internal\Reporting\ViolationRecord;
 use TypePHP\Internal\Util\Config;
@@ -488,6 +489,54 @@ describe('ViolationCollector', function () {
                 if (file_exists($reportFile)) {
                     @unlink($reportFile);
                 }
+                @rmdir($tempDir);
+            }
+        });
+
+        test('exports report and worker shard when a violation carries invalid UTF-8', function () {
+            $tempDir = sys_get_temp_dir() . '/typephp_utf8_test_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $reportFile = $tempDir . '/typephp-report.json';
+
+            // 16 ASCII bytes followed by 2-byte characters: the 17-byte preview cut splits the first "ä".
+            $given = TypeFormatter::formatGivenValue(str_repeat('a', 16) . 'ääääää');
+            expect(preg_match('//u', $given))->toBeFalse();
+
+            putenv('TEST_TOKEN=7');
+
+            try {
+                Config::set([
+                    'on_violation' => 'report',
+                    'report_file' => $reportFile,
+                ]);
+
+                $err = new ErrorMessage("Argument \$name must be of type int, {$given} given");
+                ViolationCollector::handle($err, 'parameter', null, 'src/Action.php', 10);
+
+                expect(ViolationCollector::exportReport($reportFile))->toBe($reportFile);
+
+                $doc = json_decode((string) file_get_contents($reportFile), true);
+                expect($doc['summary']['total_violations'])->toBe(1)
+                    ->and($doc['violations'][0]['message'])->toContain('aaaaaaaaaaaaaaaa')
+                ;
+
+                ViolationCollector::writeWorkerShard($reportFile);
+
+                $shards = glob($tempDir . '/.typephp-shards/shard_7_*.json');
+                expect($shards)->toHaveCount(1);
+
+                $shard = json_decode((string) file_get_contents($shards[0]), true);
+                expect($shard['violations'])->toHaveCount(1);
+            } finally {
+                putenv('TEST_TOKEN');
+                $files = glob($tempDir . '/.typephp-shards/*');
+                if ($files !== false) {
+                    foreach ($files as $f) {
+                        @unlink($f);
+                    }
+                }
+                @rmdir($tempDir . '/.typephp-shards');
+                @unlink($reportFile);
                 @rmdir($tempDir);
             }
         });
