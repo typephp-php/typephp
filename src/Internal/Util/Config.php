@@ -590,11 +590,6 @@ final class Config
      *
      * @return array<string, mixed>
      */
-    /**
-     * Loads and caches global configuration from 'typephp.php', 'composer.json' extra, extensions, and base defaults.
-     *
-     * @return array<string, mixed>
-     */
     public static function get(): array
     {
         if (self::$cachedConfig !== null) {
