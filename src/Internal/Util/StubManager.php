@@ -135,6 +135,32 @@ final class StubManager
     }
 
     /**
+     * Returns the path and mtime of every configured stub file, without parsing them.
+     * Stubs are baked into transformed files, so the transform cache keys on this.
+     */
+    public static function getFilesFingerprint(): string
+    {
+        $rawStubs = Config::get()['stubs'] ?? [];
+        $projectRoot = Config::getProjectRoot();
+        $fingerprint = '';
+
+        foreach (\is_array($rawStubs) ? $rawStubs : [] as $pattern) {
+            if (! \is_string($pattern)) {
+                continue;
+            }
+
+            $files = self::resolveStubFiles($pattern, $projectRoot);
+            sort($files);
+
+            foreach ($files as $file) {
+                $fingerprint .= $file . ':' . (int) @filemtime($file) . ';';
+            }
+        }
+
+        return $fingerprint;
+    }
+
+    /**
      * @param array<int, string> $globs
      */
     private static function loadStubFiles(array $globs): void
