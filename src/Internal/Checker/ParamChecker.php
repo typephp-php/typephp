@@ -1442,29 +1442,7 @@ final class ParamChecker
             } catch (\Throwable) {
             }
         } elseif ($value instanceof \Traversable) {
-            $boundOnInstance = TemplateManager::getBoundTemplatesForInstance($value);
-            if ($boundOnInstance !== []) {
-                $keyTName = null;
-                $valTName = null;
-
-                foreach ($boundOnInstance as $tName => $tNode) {
-                    $lower = strtolower($tName);
-                    if ($lower === 'k' || $lower === 'key' || $lower === 'tkey') {
-                        $keyTName = $tName;
-                    } else {
-                        $valTName = $tName;
-                    }
-                }
-
-                if ($keyTName !== null) {
-                    $inferredKey = $boundOnInstance[$keyTName];
-                }
-                if ($valTName !== null) {
-                    $inferredVal = $boundOnInstance[$valTName];
-                } elseif (\count($boundOnInstance) === 1) {
-                    $inferredVal = reset($boundOnInstance);
-                }
-            }
+            [$inferredKey, $inferredVal] = self::resolveTraversableItemTypes($value);
         }
 
         $genericCount = \count($typeNode->genericTypes);
@@ -1486,6 +1464,83 @@ final class ParamChecker
                 self::bindTemplateIfUnbound($valTarget->name, $inferredVal, $effectiveFunction, $thisObj, $templates, $classTemplates);
             }
         }
+    }
+
+    /**
+     * Resolves the yielded key and value TypeNodes of a Traversable object.
+     *
+     * @return array{0: ?TypeNode, 1: ?TypeNode} [keyType, valueType]
+     */
+    private static function resolveTraversableItemTypes(object $value): array
+    {
+        $className = $value::class;
+        $boundOnInstance = TemplateManager::getBoundTemplatesForInstance($value);
+
+        if ($value instanceof \IteratorAggregate) {
+            try {
+                $refClass = new \ReflectionClass($className);
+                $doc = $refClass->hasMethod('getIterator')
+                    ? $refClass->getMethod('getIterator')->getDocComment()
+                    : false;
+
+                if ($doc !== false) {
+                    $phpDocNode = DocblockExtractor::parseDocString($doc);
+                    $returnTag = DocblockExtractor::getReturnTag($phpDocNode);
+                    $contract = $returnTag !== null ? GeneratorEvaluator::extractContract($returnTag->type) : null;
+
+                    if ($contract !== null) {
+                        $key = $contract['key'] !== null && $boundOnInstance !== [] ? TemplateSubstitutor::substitute($contract['key'], $boundOnInstance) : $contract['key'];
+                        $val = $contract['value'] !== null && $boundOnInstance !== [] ? TemplateSubstitutor::substitute($contract['value'], $boundOnInstance) : $contract['value'];
+
+                        return [$key, $val];
+                    }
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        try {
+            $refClass = new \ReflectionClass($className);
+            $hierarchy = HierarchyResolver::getClassHierarchy($refClass);
+
+            foreach ($hierarchy as $hierClass) {
+                $classDoc = StubManager::getClassDoc($hierClass->getName()) ?? $hierClass->getDocComment();
+                if ($classDoc === false || $classDoc === null) {
+                    continue;
+                }
+
+                $phpDocNode = DocblockExtractor::parseDocString($classDoc);
+                $inheritedTags = DocblockExtractor::getInheritedTags($phpDocNode);
+
+                foreach ($inheritedTags as $inheritedTag) {
+                    $genericNode = $inheritedTag->type;
+                    if (! $genericNode instanceof GenericTypeNode) {
+                        continue;
+                    }
+
+                    $base = strtolower(ltrim((string) $genericNode->type, '\\'));
+                    if ($base !== 'iteratoraggregate' && $base !== 'iterator' && $base !== 'traversable') {
+                        continue;
+                    }
+
+                    $count = \count($genericNode->genericTypes);
+                    $key = $count >= 2 ? $genericNode->genericTypes[0] : null;
+                    $val = $count >= 2 ? $genericNode->genericTypes[1] : ($genericNode->genericTypes[0] ?? null);
+
+                    $key = $key !== null && $boundOnInstance !== [] ? TemplateSubstitutor::substitute($key, $boundOnInstance) : $key;
+                    $val = $val !== null && $boundOnInstance !== [] ? TemplateSubstitutor::substitute($val, $boundOnInstance) : $val;
+
+                    return [$key, $val];
+                }
+            }
+        } catch (\Throwable) {
+        }
+
+        if (\count($boundOnInstance) === 1) {
+            return [null, reset($boundOnInstance)];
+        }
+
+        return [null, null];
     }
 
     /**
