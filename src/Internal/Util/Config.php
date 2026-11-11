@@ -131,22 +131,34 @@ final class Config
 
     public static function isEnabled(): bool
     {
-        $envDisable = self::getEnvValue('TYPEPHP_DISABLE');
-        if ($envDisable !== null && trim($envDisable) !== '') {
-            if (filter_var($envDisable, FILTER_VALIDATE_BOOLEAN)) {
+        // Hot path: called by every runtime check. The overrides are re-probed on each call
+        // (Dotenv may populate them after boot), but only resolved when one is actually present.
+        if (
+            isset($_ENV['TYPEPHP_DISABLE'])
+            || isset($_SERVER['TYPEPHP_DISABLE'])
+            || isset($_ENV['TYPEPHP_ENABLED'])
+            || isset($_SERVER['TYPEPHP_ENABLED'])
+            || getenv('TYPEPHP_DISABLE') !== false
+            || getenv('TYPEPHP_ENABLED') !== false
+            || \defined('TYPEPHP_DISABLE')
+        ) {
+            $envDisable = self::getEnvValue('TYPEPHP_DISABLE');
+            if ($envDisable !== null && trim($envDisable) !== '') {
+                if (filter_var($envDisable, FILTER_VALIDATE_BOOLEAN)) {
+                    return false;
+                }
+            }
+
+            $envEnabled = self::getEnvValue('TYPEPHP_ENABLED');
+            if ($envEnabled !== null && trim($envEnabled) !== '') {
+                if (! filter_var($envEnabled, FILTER_VALIDATE_BOOLEAN)) {
+                    return false;
+                }
+            }
+
+            if (\defined('TYPEPHP_DISABLE') && (bool) TYPEPHP_DISABLE) {
                 return false;
             }
-        }
-
-        $envEnabled = self::getEnvValue('TYPEPHP_ENABLED');
-        if ($envEnabled !== null && trim($envEnabled) !== '') {
-            if (! filter_var($envEnabled, FILTER_VALIDATE_BOOLEAN)) {
-                return false;
-            }
-        }
-
-        if (\defined('TYPEPHP_DISABLE') && (bool) TYPEPHP_DISABLE) {
-            return false;
         }
 
         if (self::$cachedConfig === null) {

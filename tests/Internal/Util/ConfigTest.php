@@ -313,6 +313,22 @@ describe('Config Unit Tests', function () {
             unset($_SERVER['TYPEPHP_ENABLED']);
         });
 
+        test('isEnabled dynamically reflects TYPEPHP_DISABLE and TYPEPHP_ENABLED set through putenv()', function () {
+            expect(Config::isEnabled())->toBeTrue();
+
+            putenv('TYPEPHP_DISABLE=1');
+            expect(Config::isEnabled())->toBeFalse();
+
+            putenv('TYPEPHP_DISABLE');
+            expect(Config::isEnabled())->toBeTrue();
+
+            putenv('TYPEPHP_ENABLED=false');
+            expect(Config::isEnabled())->toBeFalse();
+
+            putenv('TYPEPHP_ENABLED');
+            expect(Config::isEnabled())->toBeTrue();
+        });
+
         test('isAutoBootEnabled resolves values from $_ENV and $_SERVER', function () {
             $_ENV['TYPEPHP_AUTO_BOOT'] = 'false';
             expect(Config::isAutoBootEnabled())->toBeFalse();
