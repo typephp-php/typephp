@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Generics;
 
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
@@ -1184,12 +1185,11 @@ final class TemplateManager
                     return null;
                 }
 
-                $isDefaultOrBound = ($existingTypeNode instanceof IdentifierTypeNode) && (
-                    strtolower($existingTypeNode->name) === 'mixed'
-                    || strtolower($existingTypeNode->name) === 'array-key'
-                    || ($templateTag->bound !== null && (string) $existingTypeNode === (string) $templateTag->bound)
-                    || ($templateTag->default !== null && (string) $existingTypeNode === (string) $templateTag->default)
-                );
+                $isDefaultOrBound = self::isUnspecializedType($existingTypeNode)
+                    || ($existingTypeNode instanceof IdentifierTypeNode && (
+                        ($templateTag->bound !== null && (string) $existingTypeNode === (string) $templateTag->bound)
+                        || ($templateTag->default !== null && (string) $existingTypeNode === (string) $templateTag->default)
+                    ));
 
                 if (self::checkVariance($expectedTypeNode, $existingTypeNode, GenericTypeNode::VARIANCE_COVARIANT)) {
                     if ($isDefaultOrBound || ($isReturnContext && ! $strictInvariance)) {
@@ -1241,6 +1241,106 @@ final class TemplateManager
         }
 
         return null;
+    }
+
+    /**
+     * Checks if a type node contains unspecialized type placeholders (mixed, array-key, or *).
+     */
+    public static function isUnspecializedType(TypeNode $node): bool
+    {
+        if ($node instanceof IdentifierTypeNode) {
+            $lower = strtolower($node->name);
+
+            return $lower === 'mixed' || $lower === 'array-key' || $lower === '*';
+        }
+
+        if ($node instanceof ArrayTypeNode) {
+            return self::isUnspecializedType($node->type);
+        }
+
+        if ($node instanceof GenericTypeNode) {
+            foreach ($node->genericTypes as $gt) {
+                if (self::isUnspecializedType($gt)) {
+                    return true;
+                }
+            }
+        }
+
+        if ($node instanceof ArrayShapeNode) {
+            foreach ($node->items as $item) {
+                if (self::isUnspecializedType($item->valueType)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Recursively verifies variance across array shape elements.
+     */
+    private static function checkNestedArrayShapeVariance(
+        ArrayShapeNode $existing,
+        ArrayShapeNode $expected,
+        string $variance
+    ): bool {
+        if (\count($existing->items) !== \count($expected->items)) {
+            return false;
+        }
+
+        $existingItems = [];
+        $autoIdx = 0;
+        foreach ($existing->items as $item) {
+            $key = self::extractShapeKey($item, $autoIdx);
+            $existingItems[$key] = $item;
+        }
+
+        $expAutoIdx = 0;
+        foreach ($expected->items as $expItem) {
+            $key = self::extractShapeKey($expItem, $expAutoIdx);
+            if (! isset($existingItems[$key])) {
+                return false;
+            }
+
+            $exItem = $existingItems[$key];
+            if ($exItem->optional !== $expItem->optional) {
+                return false;
+            }
+
+            if (! self::checkVariance($exItem->valueType, $expItem->valueType, $variance)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static function extractShapeKey(ArrayShapeItemNode $item, int &$autoIdx): string|int
+    {
+        if ($item->keyName instanceof ConstExprStringNode) {
+            return $item->keyName->value;
+        }
+
+        if ($item->keyName instanceof ConstExprIntegerNode) {
+            $key = (int) $item->keyName->value;
+            $autoIdx = max($autoIdx, $key + 1);
+
+            return $key;
+        }
+
+        if ($item->keyName instanceof IdentifierTypeNode) {
+            return $item->keyName->name;
+        }
+
+        if ($item->keyName !== null) {
+            return (string) $item->keyName;
+        }
+
+        $key = $autoIdx;
+        $autoIdx++;
+
+        return $key;
     }
 
     /**
@@ -1550,6 +1650,14 @@ final class TemplateManager
 
         if ($existing instanceof IntersectionTypeNode) {
             return self::checkExistingIntersectionVariance($existing, $expected, $variance);
+        }
+
+        if ($existing instanceof ArrayTypeNode && $expected instanceof ArrayTypeNode) {
+            return self::checkVariance($existing->type, $expected->type, $variance);
+        }
+
+        if ($existing instanceof ArrayShapeNode && $expected instanceof ArrayShapeNode) {
+            return self::checkNestedArrayShapeVariance($existing, $expected, $variance);
         }
 
         if ($existing instanceof GenericTypeNode && $expected instanceof GenericTypeNode) {

@@ -582,7 +582,7 @@ final class ParamChecker
     }
 
     /**
-     * Infers generic template parameters from closure parameter typehints.
+     * Infers generic template parameters from closure parameter typehints and return types.
      *
      * @param array<string, TypeNode> $types
      * @param array<string, mixed> $vars
@@ -634,10 +634,145 @@ final class ParamChecker
                         }
                     }
                 }
+
+                self::inferClosureReturnTemplate(
+                    $cTypeNode->returnType,
+                    $refClosure,
+                    $effectiveFunction,
+                    $thisObj,
+                    $templates,
+                    $classTemplates
+                );
             } catch (\Throwable $e) {
                 // Silently ignore reflection errors
             }
         }
+    }
+
+    /**
+     * Infers a return-type template parameter from a closure's declared return type.
+     *
+     * Handles direct templates (: R), nullables (: ?R), and union pairs (: R|null) such as in mapNotNull.
+     *
+     * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
+     */
+    private static function inferClosureReturnTemplate(
+        TypeNode $returnTypeNode,
+        \ReflectionFunction $refClosure,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates,
+        array $classTemplates
+    ): void {
+        if (! $refClosure->hasReturnType()) {
+            return;
+        }
+
+        $templateName = null;
+        $unwrapNullable = false;
+
+        if ($returnTypeNode instanceof IdentifierTypeNode && isset($templates[$returnTypeNode->name])) {
+            $templateName = $returnTypeNode->name;
+        } elseif ($returnTypeNode instanceof NullableTypeNode && $returnTypeNode->type instanceof IdentifierTypeNode && isset($templates[$returnTypeNode->type->name])) {
+            $templateName = $returnTypeNode->type->name;
+            $unwrapNullable = true;
+        } elseif ($returnTypeNode instanceof UnionTypeNode) {
+            $foundTemplate = null;
+            $hasNull = false;
+            foreach ($returnTypeNode->types as $member) {
+                if ($member instanceof IdentifierTypeNode) {
+                    if (strtolower($member->name) === 'null') {
+                        $hasNull = true;
+                    } elseif (isset($templates[$member->name])) {
+                        $foundTemplate = $member->name;
+                    }
+                }
+            }
+            if ($foundTemplate !== null && $hasNull && \count($returnTypeNode->types) === 2) {
+                $templateName = $foundTemplate;
+                $unwrapNullable = true;
+            }
+        }
+
+        if ($templateName === null) {
+            return;
+        }
+
+        $isClassLevel = ! TemplateManager::isMethodTemplate($effectiveFunction, $templateName) && isset($classTemplates[$templateName]);
+        $targetObj = $isClassLevel ? $thisObj : null;
+
+        if (TemplateManager::isBound($effectiveFunction, $targetObj, $templateName)) {
+            return;
+        }
+
+        $inferred = self::extractTypeFromReflectionType($refClosure->getReturnType());
+        if ($inferred === null) {
+            return;
+        }
+
+        if ($unwrapNullable && $inferred instanceof NullableTypeNode) {
+            $inferred = $inferred->type;
+        }
+
+        $templateTag = $templates[$templateName];
+        $satisfiesBound = true;
+
+        if ($templateTag->bound !== null) {
+            $resolvedBound = SpecialTypeResolver::resolve($templateTag->bound, $effectiveFunction, $thisObj);
+            $satisfiesBound = TemplateManager::checkVariance($inferred, $resolvedBound, GenericTypeNode::VARIANCE_COVARIANT);
+        }
+
+        if ($satisfiesBound) {
+            TemplateManager::bindTemplate($effectiveFunction, $targetObj, $templateName, $inferred);
+        }
+    }
+
+    /**
+     * Extracts an inferred TypeNode from a ReflectionType object, ignoring unconstrained types.
+     */
+    private static function extractTypeFromReflectionType(?\ReflectionType $type): ?TypeNode
+    {
+        if ($type === null) {
+            return null;
+        }
+
+        if ($type instanceof \ReflectionNamedType) {
+            $name = $type->getName();
+            if ($name === 'mixed' || $name === 'void' || $name === 'never') {
+                return null;
+            }
+
+            if (class_exists($name) || interface_exists($name) || SpecialTypeResolver::isBuiltInTypeKeyword($name)) {
+                $node = new IdentifierTypeNode($name);
+
+                return $type->allowsNull() && $name !== 'null' ? new NullableTypeNode($node) : $node;
+            }
+        } elseif ($type instanceof \ReflectionUnionType) {
+            $members = [];
+            foreach ($type->getTypes() as $subType) {
+                $extracted = self::extractTypeFromReflectionType($subType);
+                if ($extracted !== null) {
+                    $members[] = $extracted;
+                }
+            }
+            if ($members !== []) {
+                return \count($members) === 1 ? $members[0] : new UnionTypeNode($members);
+            }
+        } elseif ($type instanceof \ReflectionIntersectionType) {
+            $members = [];
+            foreach ($type->getTypes() as $subType) {
+                $extracted = self::extractTypeFromReflectionType($subType);
+                if ($extracted !== null) {
+                    $members[] = $extracted;
+                }
+            }
+            if ($members !== []) {
+                return \count($members) === 1 ? $members[0] : new IntersectionTypeNode($members);
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -1284,16 +1419,22 @@ final class ParamChecker
                             $inferredVal = $genContract['value'];
 
                             $genThis = $refGen->getThis();
-                            if ($genThis !== null) {
-                                $boundOnGenThis = TemplateManager::getBoundTemplatesForInstance($genThis);
-                                if ($boundOnGenThis !== []) {
-                                    if ($inferredKey !== null) {
-                                        $inferredKey = TemplateSubstitutor::substitute($inferredKey, $boundOnGenThis);
-                                    }
-                                    if ($inferredVal !== null) {
-                                        $inferredVal = TemplateSubstitutor::substitute($inferredVal, $boundOnGenThis);
-                                    }
-                                }
+                            $boundOnGenThis = ($genThis !== null)
+                                ? TemplateManager::getBoundTemplatesForInstance($genThis)
+                                : [];
+
+                            $genMethodTemplates = DocblockExtractor::extractTemplates($phpDocNode);
+                            $genClassTemplates = [];
+                            if ($genFunc instanceof \ReflectionMethod) {
+                                $genClassTemplates = DocblockParser::parseClassTemplates($genFunc->getDeclaringClass()->getName());
+                            }
+                            $allGenDeclaredTemplates = [...$genClassTemplates, ...$genMethodTemplates];
+
+                            if ($inferredKey !== null) {
+                                $inferredKey = TemplateSubstitutor::substitute($inferredKey, $boundOnGenThis, $allGenDeclaredTemplates);
+                            }
+                            if ($inferredVal !== null) {
+                                $inferredVal = TemplateSubstitutor::substitute($inferredVal, $boundOnGenThis, $allGenDeclaredTemplates);
                             }
                         }
                     }
