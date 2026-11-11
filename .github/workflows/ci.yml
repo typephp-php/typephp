@@ -82,7 +82,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        php: ['8.2', '8.3', '8.4', '8.5']
+        php: ['8.1', '8.2', '8.3', '8.4', '8.5']
 
     steps:
       - name: Checkout Code
@@ -99,6 +99,10 @@ jobs:
         uses: ramsey/composer-install@v3
         with:
           dependency-versions: ${{ matrix.php == '8.2' && 'lowest' || 'highest' }}
+        env:
+          # Pest 2 is the only line that runs on PHP 8.1 and it pins PHPUnit <= 10.5.36, which Composer
+          # blocks for a dev-only advisory (CVE-2026-24765). The Security Audit job still runs unfiltered.
+          COMPOSER_NO_SECURITY_BLOCKING: ${{ matrix.php == '8.1' && '1' || '0' }}
 
       - name: Warm Up TypePHP Cache
         run: php bin/typephp cache:warm

@@ -6,6 +6,7 @@ namespace TypePHP\Tests\TypeChecking\Boundaries;
 
 use Closure;
 use TypePHP\Exception\TypeError;
+use TypePHP\Tests\Fixtures\Readonly\ReadonlyClassWithPromotedProperty;
 
 interface ReadonlyAdapterInterface
 {
@@ -39,16 +40,6 @@ final class PromotedReadonlyClosure
     }
 }
 
-readonly class ReadonlyClassWithPromotedProperty
-{
-    /**
-     * @param iterable<ReadonlyAdapterInterface> $adapters
-     */
-    public function __construct(public iterable $adapters)
-    {
-    }
-}
-
 describe('Promoted Readonly Property Contracts', function () {
     test('instantiates class with promoted readonly iterable without throwing Cannot modify readonly property error', function () {
         $instance = new PromotedReadonlyIterable([new ReadonlyAdapterA()]);
@@ -64,6 +55,12 @@ describe('Promoted Readonly Property Contracts', function () {
     });
 
     test('instantiates PHP 8.2 readonly class with promoted property without throwing Cannot modify readonly property error', function () {
+        if (PHP_VERSION_ID < 80200) {
+            expect(true)->toBeTrue();
+
+            return;
+        }
+
         $instance = new ReadonlyClassWithPromotedProperty([new ReadonlyAdapterA()]);
 
         expect($instance->adapters)->toHaveCount(1);
