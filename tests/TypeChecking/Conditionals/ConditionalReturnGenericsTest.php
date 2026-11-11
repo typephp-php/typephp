@@ -11,7 +11,9 @@ namespace TypePHP\Tests\TypeChecking\Conditionals;
  */
 class ConditionalFilterContainerFixture
 {
-    /** @var list<T> */
+    /**
+     * @var list<T>
+     */
     public array $items;
 
     /**
@@ -47,7 +49,9 @@ class ConditionalFilterContainerFixture
  */
 class ConditionalFlattenContainerFixture
 {
-    /** @var list<T> */
+    /**
+     * @var list<T>
+     */
     public array $items;
 
     /**

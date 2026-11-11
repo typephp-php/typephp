@@ -1634,6 +1634,7 @@ final class TemplateManager
                     foreach ($expected->genericTypes as $gt) {
                         if (! self::isUnspecializedType($gt)) {
                             $allUnconstrained = false;
+
                             break;
                         }
                     }
@@ -1655,6 +1656,7 @@ final class TemplateManager
                         foreach ($expected->genericTypes as $gt) {
                             if (! self::isUnspecializedType($gt)) {
                                 $allUnconstrained = false;
+
                                 break;
                             }
                         }

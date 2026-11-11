@@ -10,7 +10,9 @@ namespace TypePHP\Tests\TypeChecking\Generics;
  */
 class GenericMapFixture
 {
-    /** @var array<mixed, mixed> */
+    /**
+     * @var array<mixed, mixed>
+     */
     public array $elements = [];
 
     /**
@@ -59,7 +61,7 @@ function getFilteredMap(): GenericMapFixture
 {
     /** @var GenericMapFixture<string, int> $map */
     $map = new GenericMapFixture(['a' => 1, 'b' => 2]);
-    
+
     return $map->filter();
 }
 
@@ -68,6 +70,7 @@ describe('Factory Re-construction Generic Return Variance', function () {
         $result = getFilteredMap();
 
         expect($result)->toBeInstanceOf(GenericMapFixture::class)
-            ->and($result->elements)->toBe(['a' => 1, 'b' => 2]);
+            ->and($result->elements)->toBe(['a' => 1, 'b' => 2])
+        ;
     });
 });

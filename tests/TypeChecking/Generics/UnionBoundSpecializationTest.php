@@ -15,6 +15,7 @@ class MapSim
  * @template V
  *
  * @param iterable<K, V>|Closure():iterable<K, V> $data
+ *
  * @return MapSim<K, V>
  */
 function mapOfSim(iterable|Closure $data): MapSim
@@ -27,11 +28,12 @@ function mapOfSim(iterable|Closure $data): MapSim
  * @template V
  *
  * @param iterable<K, V>|Closure():iterable<K, V> $data
+ *
  * @return MapSim<K, V>
  */
 function testHelperMapOf(iterable|Closure $data): MapSim
 {
-    if (! is_callable($data)) {
+    if (! \is_callable($data)) {
         return mapOfSim(fn () => $data);
     }
 
