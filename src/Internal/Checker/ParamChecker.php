@@ -15,6 +15,7 @@ use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
+use TypePHP\Internal\Ast\Elimination\Evaluator\GeneratorEvaluator;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
@@ -44,6 +45,16 @@ final class ParamChecker
         'list' => true,
         'iterable' => true,
         'traversable' => true,
+    ];
+
+    /**
+     * O(1) lookup table for iterable/generator object container types.
+     */
+    private const TRAVERSABLE_OBJECT_TYPES = [
+        'iterable' => true,
+        'traversable' => true,
+        'generator' => true,
+        'iterator' => true,
     ];
 
     /**
@@ -1051,16 +1062,20 @@ final class ParamChecker
      * ensuring it satisfies declared upper bounds.
      *
      * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
      */
     private static function bindTemplateIfUnbound(
         string $templateName,
         TypeNode $inferredType,
         string $effectiveFunction,
         ?object $thisObj,
-        array $templates
+        array $templates,
+        array $classTemplates = []
     ): void {
-        $contract = DocblockParser::parse($effectiveFunction);
-        $classTemplates = $contract['classTemplates'] ?? [];
+        if ($classTemplates === []) {
+            $contract = DocblockParser::parse($effectiveFunction);
+            $classTemplates = $contract['classTemplates'] ?? [];
+        }
         $isClassLevelTemplate = ! TemplateManager::isMethodTemplate($effectiveFunction, $templateName) && isset($classTemplates[$templateName]);
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
 
@@ -1131,6 +1146,13 @@ final class ParamChecker
 
         if ($typeNode instanceof GenericTypeNode && \is_object($value)) {
             $baseName = strtolower((string) $typeNode->type);
+
+            if ($value instanceof \Traversable && isset(self::TRAVERSABLE_OBJECT_TYPES[$baseName])) {
+                self::inferTemplatesFromIterableObject($typeNode, $value, $effectiveFunction, $thisObj, $templates, $classTemplates);
+
+                return;
+            }
+
             if (isset(self::COLLECTION_TYPES[$baseName])) {
                 return;
             }
@@ -1225,6 +1247,102 @@ final class ParamChecker
                         self::inferGenericObjectNode($innerType, $item, $effectiveFunction, $thisObj, $templates, $classTemplates);
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * Infers key and value template parameters when an object (Generator or Traversable)
+     * is passed to an iterable<K, V> or iterable<T> parameter.
+     *
+     * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
+     */
+    private static function inferTemplatesFromIterableObject(
+        GenericTypeNode $typeNode,
+        object $value,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates,
+        array $classTemplates = []
+    ): void {
+        $inferredKey = null;
+        $inferredVal = null;
+
+        if ($value instanceof \Generator) {
+            try {
+                $refGen = new \ReflectionGenerator($value);
+                $genFunc = $refGen->getFunction();
+                $genDoc = $genFunc->getDocComment();
+                if ($genDoc !== false) {
+                    $phpDocNode = DocblockExtractor::parseDocString($genDoc);
+                    $returnTag = DocblockExtractor::getReturnTag($phpDocNode);
+                    if ($returnTag !== null) {
+                        $genContract = GeneratorEvaluator::extractContract($returnTag->type);
+                        if ($genContract !== null) {
+                            $inferredKey = $genContract['key'];
+                            $inferredVal = $genContract['value'];
+
+                            $genThis = $refGen->getThis();
+                            if ($genThis !== null) {
+                                $boundOnGenThis = TemplateManager::getBoundTemplatesForInstance($genThis);
+                                if ($boundOnGenThis !== []) {
+                                    if ($inferredKey !== null) {
+                                        $inferredKey = TemplateSubstitutor::substitute($inferredKey, $boundOnGenThis);
+                                    }
+                                    if ($inferredVal !== null) {
+                                        $inferredVal = TemplateSubstitutor::substitute($inferredVal, $boundOnGenThis);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable) {
+            }
+        } elseif ($value instanceof \Traversable) {
+            $boundOnInstance = TemplateManager::getBoundTemplatesForInstance($value);
+            if ($boundOnInstance !== []) {
+                $keyTName = null;
+                $valTName = null;
+
+                foreach ($boundOnInstance as $tName => $tNode) {
+                    $lower = strtolower($tName);
+                    if ($lower === 'k' || $lower === 'key' || $lower === 'tkey') {
+                        $keyTName = $tName;
+                    } else {
+                        $valTName = $tName;
+                    }
+                }
+
+                if ($keyTName !== null) {
+                    $inferredKey = $boundOnInstance[$keyTName];
+                }
+                if ($valTName !== null) {
+                    $inferredVal = $boundOnInstance[$valTName];
+                } elseif (\count($boundOnInstance) === 1) {
+                    $inferredVal = reset($boundOnInstance);
+                }
+            }
+        }
+
+        $genericCount = \count($typeNode->genericTypes);
+
+        if ($genericCount === 1) {
+            $valTarget = $typeNode->genericTypes[0];
+            if ($valTarget instanceof IdentifierTypeNode && isset($templates[$valTarget->name]) && $inferredVal !== null) {
+                self::bindTemplateIfUnbound($valTarget->name, $inferredVal, $effectiveFunction, $thisObj, $templates, $classTemplates);
+            }
+        } elseif ($genericCount >= 2) {
+            $keyTarget = $typeNode->genericTypes[0];
+            $valTarget = $typeNode->genericTypes[1];
+
+            if ($keyTarget instanceof IdentifierTypeNode && isset($templates[$keyTarget->name]) && $inferredKey !== null) {
+                self::bindTemplateIfUnbound($keyTarget->name, $inferredKey, $effectiveFunction, $thisObj, $templates, $classTemplates);
+            }
+
+            if ($valTarget instanceof IdentifierTypeNode && isset($templates[$valTarget->name]) && $inferredVal !== null) {
+                self::bindTemplateIfUnbound($valTarget->name, $inferredVal, $effectiveFunction, $thisObj, $templates, $classTemplates);
             }
         }
     }

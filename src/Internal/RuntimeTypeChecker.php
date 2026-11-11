@@ -357,8 +357,17 @@ final class RuntimeTypeChecker
                 return null;
             }
 
+            $kind = 'parameter';
+            if (str_contains($context, 'Return value')) {
+                $kind = 'return';
+            } elseif (str_contains($context, 'Property ')) {
+                $kind = 'property';
+            } elseif (str_contains($context, 'Variable ')) {
+                $kind = 'variable';
+            }
+
             /** @var ErrorMessage|null $handled */
-            $handled = ViolationCollector::handle($err, 'parameter', null, function: $context);
+            $handled = ViolationCollector::handle($err, $kind, null, function: $context);
 
             return $handled;
         }

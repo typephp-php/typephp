@@ -409,6 +409,14 @@ final class TemplateManager
     private static array $declaredClassTemplateNamesCache = [];
 
     /**
+     * Cache for raw (unsubstituted) inherited template mappings per class name:
+     * [$className] => array<string, TypeNode>.
+     *
+     * @var array<string, array<string, TypeNode>>
+     */
+    private static array $classInheritedRawMappingsCache = [];
+
+    /**
      * Resets all static generic template bindings, call stack frames, and method template caches.
      */
     public static function reset(): void
@@ -417,6 +425,7 @@ final class TemplateManager
         self::$callStackBindings = [];
         self::$classHierarchyTemplatesCache = [];
         self::$classInheritedBindingsCache = [];
+        self::$classInheritedRawMappingsCache = [];
         self::$subclassCache = [];
         self::$realTypeSymbolCache = [];
         self::$pendingCloneSource = null;
@@ -529,7 +538,11 @@ final class TemplateManager
             return self::$classInheritedBindingsCache[$className] = [];
         }
 
-        return self::$classInheritedBindingsCache[$className] = self::computeClassInheritedBindings($className);
+        $rawBindings = [];
+        $resolved = self::computeClassInheritedBindings($className, $rawBindings);
+        self::$classInheritedRawMappingsCache[$className] = $rawBindings;
+
+        return self::$classInheritedBindingsCache[$className] = $resolved;
     }
 
     /**
@@ -903,6 +916,14 @@ final class TemplateManager
             self::$instanceTemplateBindings ??= new WeakMap();
             $bindings = self::$instanceTemplateBindings[$thisObj] ?? [];
             $bindings[$templateName] = $inferredType;
+
+            $rawMappings = self::$classInheritedRawMappingsCache[$thisObj::class] ?? [];
+            foreach ($rawMappings as $tName => $rawNode) {
+                if (DocblockParser::typeReferencesTemplate($rawNode, [$templateName => true])) {
+                    $bindings[$tName] = TemplateSubstitutor::substitute($rawNode, $bindings);
+                }
+            }
+
             self::$instanceTemplateBindings[$thisObj] = $bindings;
         } else {
             if (! self::hasCallFrame($function)) {
@@ -1206,7 +1227,16 @@ final class TemplateManager
 
         if ($forceBind || ! isset($existingBindings[$templateName])) {
             $bindings = self::$instanceTemplateBindings[$instance] ?? [];
-            $bindings[$templateName] = $isWildcardOrMixed && $templateTag->bound !== null ? $templateTag->bound : $expectedTypeNode;
+            $boundNode = $isWildcardOrMixed && $templateTag->bound !== null ? $templateTag->bound : $expectedTypeNode;
+            $bindings[$templateName] = $boundNode;
+
+            $rawMappings = self::$classInheritedRawMappingsCache[$instance::class] ?? [];
+            foreach ($rawMappings as $tName => $rawNode) {
+                if (DocblockParser::typeReferencesTemplate($rawNode, [$templateName => true])) {
+                    $bindings[$tName] = TemplateSubstitutor::substitute($rawNode, $bindings);
+                }
+            }
+
             self::$instanceTemplateBindings[$instance] = $bindings;
         }
 
@@ -1222,26 +1252,36 @@ final class TemplateManager
         $actualClassName = $instance::class;
         self::$instanceTemplateBindings ??= new WeakMap();
 
-        if (isset(self::$classInheritedBindingsCache[$actualClassName])) {
-            /** @var array<string, TypeNode> $cachedBindings */
-            $cachedBindings = self::$classInheritedBindingsCache[$actualClassName];
-            $existing = self::$instanceTemplateBindings[$instance] ?? [];
-            self::$instanceTemplateBindings[$instance] = [...$cachedBindings, ...$existing];
-
-            return;
+        if (! isset(self::$classInheritedBindingsCache[$actualClassName])) {
+            $rawBindings = [];
+            $resolvedClassBindings = self::computeClassInheritedBindings($actualClassName, $rawBindings);
+            self::$classInheritedBindingsCache[$actualClassName] = $resolvedClassBindings;
+            self::$classInheritedRawMappingsCache[$actualClassName] = $rawBindings;
         }
 
-        $resolvedClassBindings = self::computeClassInheritedBindings($actualClassName);
-        self::$classInheritedBindingsCache[$actualClassName] = $resolvedClassBindings;
-
+        $cachedBindings = self::$classInheritedBindingsCache[$actualClassName];
+        $rawMappings = self::$classInheritedRawMappingsCache[$actualClassName] ?? [];
         $existing = self::$instanceTemplateBindings[$instance] ?? [];
-        self::$instanceTemplateBindings[$instance] = [...$resolvedClassBindings, ...$existing];
+
+        $specializedBindings = [];
+        foreach ($cachedBindings as $tName => $fallbackTypeNode) {
+            $rawNode = $rawMappings[$tName] ?? $fallbackTypeNode;
+            if ($existing !== [] && DocblockParser::typeReferencesTemplate($rawNode, $existing)) {
+                $specializedBindings[$tName] = TemplateSubstitutor::substitute($rawNode, $existing);
+            } else {
+                $specializedBindings[$tName] = $existing[$tName] ?? $fallbackTypeNode;
+            }
+        }
+
+        self::$instanceTemplateBindings[$instance] = [...$existing, ...$specializedBindings];
     }
 
     /**
+     * @param array<string, TypeNode> $rawBindings
+     *
      * @return array<string, TypeNode>
      */
-    private static function computeClassInheritedBindings(string $actualClassName): array
+    private static function computeClassInheritedBindings(string $actualClassName, array &$rawBindings = []): array
     {
         /** @var array<string, TypeNode> $bindings */
         $bindings = [];
@@ -1273,7 +1313,7 @@ final class TemplateManager
                     foreach ($inheritedTags as $inheritedTag) {
                         $genericTypeNode = $inheritedTag->type;
                         if ($genericTypeNode instanceof GenericTypeNode) {
-                            self::collectInheritedGenericTagBindings($genericTypeNode, $hierClass, $declaredTemplateNames, $actualClassName, $bindings);
+                            self::collectInheritedGenericTagBindings($genericTypeNode, $hierClass, $declaredTemplateNames, $actualClassName, $bindings, $rawBindings);
                         }
                     }
                 }
@@ -1288,6 +1328,7 @@ final class TemplateManager
     /**
      * @param array<string, bool> $declaredTemplateNames
      * @param array<string, TypeNode> $bindings
+     * @param array<string, TypeNode> $rawBindings
      * @param \ReflectionClass<object> $hierClass
      */
     private static function collectInheritedGenericTagBindings(
@@ -1295,7 +1336,8 @@ final class TemplateManager
         \ReflectionClass $hierClass,
         array $declaredTemplateNames,
         string $actualClassName,
-        array &$bindings
+        array &$bindings,
+        array &$rawBindings = []
     ): void {
         $parentName = SpecialTypeResolver::resolveFqcn((string) $genericTypeNode->type, $hierClass);
         $isHierarchyMember = is_a($actualClassName, $parentName, true) || trait_exists($parentName);
@@ -1376,6 +1418,8 @@ final class TemplateManager
                             continue;
                         }
                     }
+
+                    $rawBindings[$templateName] ??= $resolved;
 
                     if (DocblockParser::typeReferencesTemplate($resolved, $declaredTemplateNames) && $hierFallbackBindings !== []) {
                         $resolved = TemplateSubstitutor::substitute($resolved, $hierFallbackBindings);

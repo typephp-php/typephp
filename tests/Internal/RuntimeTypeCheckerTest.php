@@ -9,6 +9,7 @@ use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\SelfOutChecker;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Generics\TemplateManager;
+use TypePHP\Internal\Reporting\ViolationCollector;
 use TypePHP\Internal\RuntimeTypeChecker;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
@@ -859,5 +860,35 @@ PHP
             fn () => RuntimeTypeChecker::checkConstantClosureReturn('App\Config::Callback', 'not_an_int', 'int')
         );
         expect($ignored)->toBe('not_an_int');
+    });
+
+    test('bindInstanceFromNode infers violation kind from context string', function () {
+        Config::set(['on_violation' => 'report']);
+        ViolationCollector::clear();
+
+        $dog = new Container(new Dog());
+        $badNode = new GenericTypeNode(new IdentifierTypeNode(Container::class), [new IdentifierTypeNode(Cat::class)]);
+
+        RuntimeTypeChecker::bindInstanceFromNode($dog, $badNode, 'App\Service::process(): Argument $container');
+        $violations = ViolationCollector::getViolations();
+        expect($violations)->toHaveCount(1)
+            ->and($violations[0]->kind)->toBe('parameter')
+        ;
+
+        ViolationCollector::clear();
+
+        RuntimeTypeChecker::bindInstanceFromNode($dog, $badNode, 'App\Service::process(): Return value');
+        $violations = ViolationCollector::getViolations();
+        expect($violations)->toHaveCount(1)
+            ->and($violations[0]->kind)->toBe('return')
+        ;
+
+        ViolationCollector::clear();
+
+        RuntimeTypeChecker::bindInstanceFromNode($dog, $badNode, 'Property App\Service::$container');
+        $violations = ViolationCollector::getViolations();
+        expect($violations)->toHaveCount(1)
+            ->and($violations[0]->kind)->toBe('property')
+        ;
     });
 });
