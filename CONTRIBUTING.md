@@ -44,4 +44,18 @@ To ensure consistency across the codebase, this repository requires the followin
 
 ---
 
+### AI-Assisted Contributions
+
+AI-assisted development tools such as Claude, ChatGPT, GitHub Copilot, and similar tools are permitted when contributing to this project.
+
+However, contributors are fully responsible for the code they submit, regardless of whether it was written manually or generated with AI assistance.
+
+All contributions must meet the project's existing standards for code quality, correctness, maintainability, testing, and documentation.
+
+**AI tools must not be listed as co-authors in Git commit messages or pull request attribution.** The human contributor submitting the changes must take responsibility for the contribution and its implementation.
+
+The maintainers reserve the right to request clarification, additional tests, or revisions when a contributor cannot adequately explain or justify their implementation.
+
+---
+
 The TypePHP ecosystem thanks you for your time and effort!
