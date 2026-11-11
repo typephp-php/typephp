@@ -1489,8 +1489,10 @@ final class ParamChecker
                     $contract = $returnTag !== null ? GeneratorEvaluator::extractContract($returnTag->type) : null;
 
                     if ($contract !== null) {
-                        $key = $contract['key'] !== null && $boundOnInstance !== [] ? TemplateSubstitutor::substitute($contract['key'], $boundOnInstance) : $contract['key'];
-                        $val = $contract['value'] !== null && $boundOnInstance !== [] ? TemplateSubstitutor::substitute($contract['value'], $boundOnInstance) : $contract['value'];
+                        $classTemplates = DocblockParser::parseClassTemplates($refClass->getName());
+
+                        $key = $contract['key'] !== null ? TemplateSubstitutor::substitute($contract['key'], $boundOnInstance, $classTemplates) : null;
+                        $val = $contract['value'] !== null ? TemplateSubstitutor::substitute($contract['value'], $boundOnInstance, $classTemplates) : null;
 
                         return [$key, $val];
                     }
@@ -1527,8 +1529,10 @@ final class ParamChecker
                     $key = $count >= 2 ? $genericNode->genericTypes[0] : null;
                     $val = $count >= 2 ? $genericNode->genericTypes[1] : ($genericNode->genericTypes[0] ?? null);
 
-                    $key = $key !== null && $boundOnInstance !== [] ? TemplateSubstitutor::substitute($key, $boundOnInstance) : $key;
-                    $val = $val !== null && $boundOnInstance !== [] ? TemplateSubstitutor::substitute($val, $boundOnInstance) : $val;
+                    $classTemplates = DocblockParser::parseClassTemplates($hierClass->getName());
+
+                    $key = $key !== null ? TemplateSubstitutor::substitute($key, $boundOnInstance, $classTemplates) : null;
+                    $val = $val !== null ? TemplateSubstitutor::substitute($val, $boundOnInstance, $classTemplates) : null;
 
                     return [$key, $val];
                 }
@@ -1536,6 +1540,7 @@ final class ParamChecker
         } catch (\Throwable) {
         }
 
+        // 3. Fallback: single generic argument container (e.g. Collection<T>)
         if (\count($boundOnInstance) === 1) {
             return [null, reset($boundOnInstance)];
         }
