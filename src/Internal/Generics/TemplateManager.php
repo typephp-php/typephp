@@ -1186,10 +1186,8 @@ final class TemplateManager
                 }
 
                 $isDefaultOrBound = self::isUnspecializedType($existingTypeNode)
-                    || ($existingTypeNode instanceof IdentifierTypeNode && (
-                        ($templateTag->bound !== null && (string) $existingTypeNode === (string) $templateTag->bound)
-                        || ($templateTag->default !== null && (string) $existingTypeNode === (string) $templateTag->default)
-                    ));
+                    || ($templateTag->bound !== null && self::matchesBoundOrDefault($existingTypeNode, $templateTag->bound))
+                    || ($templateTag->default !== null && self::matchesBoundOrDefault($existingTypeNode, $templateTag->default));
 
                 if (self::checkVariance($expectedTypeNode, $existingTypeNode, GenericTypeNode::VARIANCE_COVARIANT)) {
                     if ($isDefaultOrBound || ($isReturnContext && ! $strictInvariance)) {
@@ -1716,6 +1714,18 @@ final class TemplateManager
         }
 
         return false;
+    }
+
+    private static function matchesBoundOrDefault(TypeNode $existing, TypeNode $target): bool
+    {
+        if ($existing === $target) {
+            return true;
+        }
+
+        $existingStr = trim((string) $existing, '() ');
+        $targetStr = trim((string) $target, '() ');
+
+        return $existingStr === $targetStr;
     }
 
     /**
