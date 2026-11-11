@@ -267,7 +267,7 @@ final class ViolationCollector
             'violations' => array_values(self::$violations),
             'instrumented_files' => StreamWrapper::getInstrumentedFiles(),
         ];
-        $content = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $content = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
 
         if ($content !== false) {
             @file_put_contents($shardFile, $content);
@@ -294,7 +294,7 @@ final class ViolationCollector
         }
 
         $document = self::buildReportDocument($allViolations);
-        $json = json_encode($document, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $json = json_encode($document, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
 
         if ($json === false || @file_put_contents($targetFile, $json) === false) {
             return null;
