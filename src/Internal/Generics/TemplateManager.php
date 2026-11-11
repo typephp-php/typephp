@@ -1620,19 +1620,58 @@ final class TemplateManager
             return true;
         }
 
-        if ($variance === GenericTypeNode::VARIANCE_COVARIANT && isset(self::COLLECTION_SUBTYPES[$lowerExpected])) {
-            $allowedSubtypes = self::COLLECTION_SUBTYPES[$lowerExpected];
+        $baseExpected = strtolower($expected instanceof GenericTypeNode ? (string) $expected->type : ($expected instanceof IdentifierTypeNode ? $expected->name : $expectedStr));
+        $baseExisting = strtolower($existing instanceof GenericTypeNode ? (string) $existing->type : ($existing instanceof IdentifierTypeNode ? $existing->name : $existingStr));
 
-            if (isset($allowedSubtypes[$lowerExisting])) {
-                return true;
+        if ($variance === GenericTypeNode::VARIANCE_COVARIANT && isset(self::COLLECTION_SUBTYPES[$baseExpected])) {
+            $allowedSubtypes = self::COLLECTION_SUBTYPES[$baseExpected];
+
+            if (isset($allowedSubtypes[$baseExisting])) {
+                if ($expected instanceof IdentifierTypeNode) {
+                    return true;
+                }
+
+                if ($expected instanceof GenericTypeNode) {
+                    $allUnconstrained = true;
+                    foreach ($expected->genericTypes as $gt) {
+                        if (! self::isUnspecializedType($gt)) {
+                            $allUnconstrained = false;
+                            break;
+                        }
+                    }
+
+                    if ($allUnconstrained) {
+                        return true;
+                    }
+                }
             }
 
             if ($existing instanceof ArrayTypeNode || $existing instanceof ArrayShapeNode) {
-                return $lowerExpected === 'array' || $lowerExpected === 'iterable';
+                if ($baseExpected === 'array' || $baseExpected === 'iterable') {
+                    if ($expected instanceof IdentifierTypeNode) {
+                        return true;
+                    }
+
+                    if ($expected instanceof GenericTypeNode) {
+                        $allUnconstrained = true;
+                        foreach ($expected->genericTypes as $gt) {
+                            if (! self::isUnspecializedType($gt)) {
+                                $allUnconstrained = false;
+                                break;
+                            }
+                        }
+
+                        if ($allUnconstrained) {
+                            return true;
+                        }
+                    }
+                }
             }
 
-            if ($existing instanceof GenericTypeNode && isset($allowedSubtypes[strtolower((string) $existing->type)])) {
-                return true;
+            if ($existing instanceof GenericTypeNode && isset($allowedSubtypes[$baseExisting])) {
+                if ($expected instanceof IdentifierTypeNode) {
+                    return true;
+                }
             }
         }
 
@@ -1877,8 +1916,9 @@ final class TemplateManager
     {
         $expectedClassName = (string) $expected->type;
         $lowerExpected = strtolower($expectedClassName);
+        $isCollection = isset(self::COLLECTION_SUBTYPES[$lowerExpected]);
 
-        if (isset(self::COLLECTION_SUBTYPES[$lowerExpected])) {
+        if ($isCollection) {
             $lowerExisting = strtolower((string) $existing->type);
             if (! isset(self::COLLECTION_SUBTYPES[$lowerExpected][$lowerExisting])) {
                 return false;
@@ -1910,9 +1950,11 @@ final class TemplateManager
             $useSiteVariance = $expected->variances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
             $declaredVariance = $declaredVariances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
 
+            $defaultVariance = $isCollection ? GenericTypeNode::VARIANCE_COVARIANT : GenericTypeNode::VARIANCE_INVARIANT;
+
             $innerVariance = ($useSiteVariance !== GenericTypeNode::VARIANCE_INVARIANT)
                 ? $useSiteVariance
-                : $declaredVariance;
+                : ($declaredVariance !== GenericTypeNode::VARIANCE_INVARIANT ? $declaredVariance : $defaultVariance);
 
             if (! self::checkVariance($existingInner, $expectedInner, $innerVariance)) {
                 return false;
