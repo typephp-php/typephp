@@ -1106,13 +1106,9 @@ final class ParamChecker
             return;
         }
 
-        if ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof ArrayShapeNode) {
+        if ($typeNode instanceof ArrayTypeNode && ($typeNode->type instanceof ArrayShapeNode || $typeNode->type instanceof ObjectShapeNode)) {
             $sampleItems = self::getSampleArraySlice($arrVal);
-            foreach ($sampleItems as $sample) {
-                if (\is_array($sample)) {
-                    self::inferShapeNodeTemplates($typeNode->type, $sample, $effectiveFunction, $thisObj, $templates, $classTemplates);
-                }
-            }
+            self::inferShapeTemplatesFromArraySamples($typeNode->type, $sampleItems, $effectiveFunction, $thisObj, $templates, $classTemplates);
 
             return;
         }
@@ -1128,15 +1124,12 @@ final class ParamChecker
 
             if ($genericCount === 1 && $typeNode->genericTypes[0] instanceof IdentifierTypeNode) {
                 self::inferSingleTemplateFromArraySamples($typeNode->genericTypes[0]->name, $sampleItems, $effectiveFunction, $thisObj, $templates, $classTemplates);
-            } elseif ($genericCount === 1 && $typeNode->genericTypes[0] instanceof ArrayShapeNode) {
-                foreach ($sampleItems as $sample) {
-                    if (\is_array($sample)) {
-                        self::inferShapeNodeTemplates($typeNode->genericTypes[0], $sample, $effectiveFunction, $thisObj, $templates, $classTemplates);
-                    }
-                }
+            } elseif ($genericCount === 1 && ($typeNode->genericTypes[0] instanceof ArrayShapeNode || $typeNode->genericTypes[0] instanceof ObjectShapeNode)) {
+                self::inferShapeTemplatesFromArraySamples($typeNode->genericTypes[0], $sampleItems, $effectiveFunction, $thisObj, $templates, $classTemplates);
             } elseif ($genericCount >= 2) {
                 $keyTName = $typeNode->genericTypes[0] instanceof IdentifierTypeNode ? $typeNode->genericTypes[0]->name : null;
-                $valTName = $typeNode->genericTypes[1] instanceof IdentifierTypeNode ? $typeNode->genericTypes[1]->name : null;
+                $valTypeNode = $typeNode->genericTypes[1];
+                $valTName = $valTypeNode instanceof IdentifierTypeNode ? $valTypeNode->name : null;
 
                 $inferredKeyType = null;
                 $inferredValType = null;
@@ -1158,8 +1151,155 @@ final class ParamChecker
                 if ($valTName !== null && $inferredValType !== null) {
                     self::bindTemplateIfUnbound($valTName, $inferredValType, $effectiveFunction, $thisObj, $templates, $classTemplates);
                 }
+                if ($valTypeNode instanceof ArrayShapeNode || $valTypeNode instanceof ObjectShapeNode) {
+                    self::inferShapeTemplatesFromArraySamples($valTypeNode, $sampleItems, $effectiveFunction, $thisObj, $templates, $classTemplates);
+                }
             }
         }
+    }
+
+    /**
+     * Collects and unifies shape template types across multiple elements of a collection/array.
+     * Within each individual shape element, the first occurrence of a template determines that element's type;
+     * across separate elements of the collection, those types are unified if they satisfy the template's bound.
+     *
+     * @param array<mixed> $sampleItems
+     * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
+     */
+    private static function inferShapeTemplatesFromArraySamples(
+        TypeNode $shapeTypeNode,
+        array $sampleItems,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates,
+        array $classTemplates = []
+    ): void {
+        /** @var array<string, TypeNode> $unifiedAcrossSamples */
+        $unifiedAcrossSamples = [];
+
+        foreach ($sampleItems as $sample) {
+            /** @var array<string, TypeNode> $sampleBindings */
+            $sampleBindings = [];
+            self::collectSingleShapeElementTemplates($shapeTypeNode, $sample, $templates, $sampleBindings);
+
+            foreach ($sampleBindings as $tName => $inferredType) {
+                if (self::doesInferredTypeSatisfyBound($tName, $inferredType, $effectiveFunction, $thisObj, $templates)) {
+                    $unifiedAcrossSamples[$tName] = isset($unifiedAcrossSamples[$tName])
+                        ? self::unifyTypes($unifiedAcrossSamples[$tName], $inferredType)
+                        : $inferredType;
+                }
+            }
+        }
+
+        foreach ($unifiedAcrossSamples as $tName => $unifiedType) {
+            self::bindTemplateIfUnbound($tName, $unifiedType, $effectiveFunction, $thisObj, $templates, $classTemplates);
+        }
+    }
+
+    /**
+     * Extracts template types from a single shape element into $sampleBindings (locking the first seen per template within that element).
+     *
+     * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TypeNode> $sampleBindings
+     */
+    private static function collectSingleShapeElementTemplates(
+        TypeNode $typeNode,
+        mixed $value,
+        array $templates,
+        array &$sampleBindings
+    ): void {
+        if ($typeNode instanceof NullableTypeNode) {
+            $typeNode = $typeNode->type;
+        }
+
+        if ($typeNode instanceof IdentifierTypeNode) {
+            if (isset($templates[$typeNode->name]) && ! isset($sampleBindings[$typeNode->name])) {
+                $sampleBindings[$typeNode->name] = TemplateManager::inferTypeFromValue($value);
+            }
+
+            return;
+        }
+
+        if ($typeNode instanceof IntersectionTypeNode || $typeNode instanceof UnionTypeNode) {
+            foreach ($typeNode->types as $subType) {
+                self::collectSingleShapeElementTemplates($subType, $value, $templates, $sampleBindings);
+            }
+
+            return;
+        }
+
+        if ($typeNode instanceof ObjectShapeNode && \is_object($value)) {
+            foreach ($typeNode->items as $item) {
+                $prop = $item->keyName instanceof IdentifierTypeNode ? $item->keyName->name : (string) $item->keyName;
+
+                // @phpstan-ignore property.dynamicName
+                if (isset($value->$prop) || property_exists($value, $prop)) {
+                    // @phpstan-ignore property.dynamicName
+                    $propVal = $value->$prop;
+                    self::collectSingleShapeElementTemplates($item->valueType, $propVal, $templates, $sampleBindings);
+                }
+            }
+
+            return;
+        }
+
+        if ($typeNode instanceof ArrayShapeNode && \is_array($value)) {
+            $nextIdx = 0;
+            foreach ($typeNode->items as $item) {
+                $key = match (true) {
+                    $item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode => $item->keyName->value,
+                    $item->keyName instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode => (int) $item->keyName->value,
+                    $item->keyName instanceof IdentifierTypeNode => $item->keyName->name,
+                    $item->keyName !== null => (string) $item->keyName,
+                    default => $nextIdx,
+                };
+
+                if (\is_int($key)) {
+                    $nextIdx = max($nextIdx, $key + 1);
+                }
+
+                if (\array_key_exists($key, $value)) {
+                    self::collectSingleShapeElementTemplates($item->valueType, $value[$key], $templates, $sampleBindings);
+                }
+            }
+
+            if ($typeNode->unsealedType !== null) {
+                $unsealed = $typeNode->unsealedType;
+                foreach ($value as $k => $v) {
+                    self::collectSingleShapeElementTemplates($unsealed->valueType, $v, $templates, $sampleBindings);
+                    if ($unsealed->keyType !== null) {
+                        self::collectSingleShapeElementTemplates($unsealed->keyType, $k, $templates, $sampleBindings);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Checks whether a candidate inferred TypeNode satisfies the declared upper bound of a template.
+     *
+     * @param array<string, TemplateTagValueNode> $templates
+     */
+    private static function doesInferredTypeSatisfyBound(
+        string $templateName,
+        TypeNode $inferredType,
+        string $effectiveFunction,
+        ?object $thisObj,
+        array $templates
+    ): bool {
+        if (! isset($templates[$templateName])) {
+            return false;
+        }
+
+        $templateTag = $templates[$templateName];
+        if ($templateTag->bound === null) {
+            return true;
+        }
+
+        $resolvedBound = SpecialTypeResolver::resolve($templateTag->bound, $effectiveFunction, $thisObj);
+
+        return TemplateManager::checkVariance($inferredType, $resolvedBound, GenericTypeNode::VARIANCE_COVARIANT);
     }
 
     /**
@@ -1238,15 +1378,7 @@ final class ParamChecker
         $targetObj = $isClassLevelTemplate ? $thisObj : null;
 
         if (isset($templates[$templateName]) && ! TemplateManager::isBound($effectiveFunction, $targetObj, $templateName)) {
-            $templateTag = $templates[$templateName];
-            $satisfiesBound = true;
-
-            if ($templateTag->bound !== null) {
-                $resolvedBound = SpecialTypeResolver::resolve($templateTag->bound, $effectiveFunction, $thisObj);
-                $satisfiesBound = TemplateManager::checkVariance($inferredType, $resolvedBound, GenericTypeNode::VARIANCE_COVARIANT);
-            }
-
-            if ($satisfiesBound) {
+            if (self::doesInferredTypeSatisfyBound($templateName, $inferredType, $effectiveFunction, $thisObj, $templates)) {
                 TemplateManager::bindTemplate($effectiveFunction, $targetObj, $templateName, $inferredType);
             }
         }
