@@ -665,10 +665,6 @@ final class ParamChecker
         array $templates,
         array $classTemplates
     ): void {
-        if (! $refClosure->hasReturnType()) {
-            return;
-        }
-
         $templateName = null;
         $unwrapNullable = false;
 
@@ -706,8 +702,19 @@ final class ParamChecker
             return;
         }
 
-        $inferred = self::extractTypeFromReflectionType($refClosure->getReturnType());
+        $templateTag = $templates[$templateName];
+        $inferred = $refClosure->hasReturnType()
+            ? self::extractTypeFromReflectionType($refClosure->getReturnType())
+            : null;
+
         if ($inferred === null) {
+            if ($templateTag->default !== null) {
+                $fallback = $templateTag->bound !== null
+                    ? SpecialTypeResolver::resolve($templateTag->bound, $effectiveFunction, $thisObj)
+                    : new IdentifierTypeNode('mixed');
+                TemplateManager::bindTemplate($effectiveFunction, $targetObj, $templateName, $fallback);
+            }
+
             return;
         }
 
@@ -715,7 +722,6 @@ final class ParamChecker
             $inferred = $inferred->type;
         }
 
-        $templateTag = $templates[$templateName];
         $satisfiesBound = true;
 
         if ($templateTag->bound !== null) {
@@ -784,6 +790,10 @@ final class ParamChecker
     {
         $callableNodes = [];
         foreach ($types as $paramName => $tNode) {
+            while ($tNode instanceof NullableTypeNode) {
+                $tNode = $tNode->type;
+            }
+
             if ($tNode instanceof CallableTypeNode) {
                 $callableNodes[$paramName] = $tNode;
             } elseif ($tNode instanceof UnionTypeNode) {
@@ -888,7 +898,9 @@ final class ParamChecker
         if ($cType instanceof \ReflectionNamedType) {
             $cTypeName = $cType->getName();
             if ($cTypeName !== 'mixed' && (class_exists($cTypeName) || interface_exists($cTypeName) || SpecialTypeResolver::isBuiltInTypeKeyword($cTypeName))) {
-                return new IdentifierTypeNode($cTypeName);
+                $node = new IdentifierTypeNode($cTypeName);
+
+                return $cType->allowsNull() && $cTypeName !== 'null' ? new NullableTypeNode($node) : $node;
             }
         } elseif ($cType instanceof \ReflectionUnionType) {
             $unionSubTypes = [];
