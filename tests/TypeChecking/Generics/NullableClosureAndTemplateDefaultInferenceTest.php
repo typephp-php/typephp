@@ -22,6 +22,7 @@ final class ClosureInferredMap
 
     /**
      * @param K $key
+     *
      * @return V
      */
     public function get(int|string $key): mixed
@@ -31,7 +32,9 @@ final class ClosureInferredMap
 
     /**
      * @template NV
+     *
      * @param Closure(V, K): (NV|null) $transform
+     *
      * @return self<K, NV>
      */
     public function mapValuesNotNull(Closure $transform): self
@@ -63,8 +66,10 @@ final class ClosureInferredList
     /**
      * @template K of array-key
      * @template V = E
+     *
      * @param Closure(E, int): K $keySelector
      * @param ?Closure(E, int): V $valueTransform
+     *
      * @return ClosureInferredMap<K, V>
      */
     public function toMap(Closure $keySelector, ?Closure $valueTransform = null): ClosureInferredMap
@@ -80,7 +85,9 @@ final class ClosureInferredList
 
     /**
      * @template V = E
+     *
      * @param ?Closure(E, int): V $valueTransform
+     *
      * @return ClosureInferredMap<int, V>
      */
     public function toIndexedMap(?Closure $valueTransform = null): ClosureInferredMap
@@ -103,7 +110,9 @@ final class ClosureInferredList
  *
  * @template K of array-key
  * @template V
+ *
  * @param Closure(): array<K, V> $producer
+ *
  * @return ClosureInferredMap<K, V>
  */
 function lazyClosureInferredMapOf(Closure $producer): ClosureInferredMap

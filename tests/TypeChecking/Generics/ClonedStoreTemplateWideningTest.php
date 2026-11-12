@@ -58,7 +58,9 @@ final class WideningImmutableSet
 
     /**
      * @template NE
+     *
      * @param NE $element
+     *
      * @return self<E|NE>
      */
     public function add(mixed $element): self
@@ -126,6 +128,7 @@ final class WideningKeyValueStore
     /**
      * @template NK of string|int|object
      * @template NV
+     *
      * @param iterable<NK, NV> $source
      */
     public function putAllFromAssoc(iterable $source): void
@@ -139,6 +142,7 @@ final class WideningKeyValueStore
 
     /**
      * @param K $key
+     *
      * @return V|null
      */
     public function get(string|int|object $key): mixed
@@ -173,8 +177,10 @@ final class WideningImmutableMap
     /**
      * @template NK of string|int|object
      * @template NV
+     *
      * @param NK $key
      * @param NV $value
+     *
      * @return self<K|NK, V|NV>
      */
     public function put(string|int|object $key, mixed $value): self
@@ -188,7 +194,9 @@ final class WideningImmutableMap
     /**
      * @template NK of string|int|object
      * @template NV
+     *
      * @param iterable<NK, NV> $data
+     *
      * @return self<K|NK, V|NV>
      */
     public function putAll(iterable $data): self
@@ -201,6 +209,7 @@ final class WideningImmutableMap
 
     /**
      * @param K $key
+     *
      * @return V|null
      */
     public function get(string|int|object $key): mixed

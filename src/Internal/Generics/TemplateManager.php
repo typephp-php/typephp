@@ -418,6 +418,20 @@ final class TemplateManager
     private static array $classInheritedRawMappingsCache = [];
 
     /**
+     * WeakMap tracking instances whose template bindings were inferred from an unconsumed Generator's static docblock.
+     *
+     * @var WeakMap<object, bool>|null
+     */
+    private static ?WeakMap $generatorInferredInstances = null;
+
+    /**
+     * Tracks active function call frames where template bindings were inferred from a Generator.
+     *
+     * @var array<string, bool>
+     */
+    private static array $generatorInferredCallFrames = [];
+
+    /**
      * Resets all static generic template bindings, call stack frames, and method template caches.
      */
     public static function reset(): void
@@ -436,6 +450,8 @@ final class TemplateManager
         self::$pendingInstantiations = [];
         self::$varianceCycleStack = [];
         self::$declaredClassTemplateNamesCache = [];
+        self::$generatorInferredInstances = null;
+        self::$generatorInferredCallFrames = [];
     }
 
     /**
@@ -578,6 +594,29 @@ final class TemplateManager
     }
 
     /**
+     * Marks an instance or active call frame as having template bindings inferred from a Generator's static docblock.
+     */
+    public static function markGeneratorInferred(?object $instance, string $function = ''): void
+    {
+        if ($instance !== null) {
+            self::$generatorInferredInstances ??= new WeakMap();
+            self::$generatorInferredInstances[$instance] = true;
+        }
+
+        if ($function !== '') {
+            self::$generatorInferredCallFrames[$function] = true;
+        }
+    }
+
+    /**
+     * Checks whether an instance's template bindings were inferred from a Generator's static docblock.
+     */
+    public static function isGeneratorInferred(object $instance): bool
+    {
+        return self::$generatorInferredInstances !== null && isset(self::$generatorInferredInstances[$instance]);
+    }
+
+    /**
      * Copies bound generic template types from a source object to a cloned target object.
      * If cloned inside an active method that widens class templates via method templates in its @return type,
      * the cloned target receives the widened template bindings while the source retains its original bindings.
@@ -588,6 +627,10 @@ final class TemplateManager
             $bindings = self::$instanceTemplateBindings[$source];
             $bindings = self::widenClonedBindingsFromActiveCall($target, $bindings);
             self::$instanceTemplateBindings[$target] = $bindings;
+        }
+
+        if (self::isGeneratorInferred($source)) {
+            self::markGeneratorInferred($target);
         }
     }
 
@@ -607,8 +650,10 @@ final class TemplateManager
         if (isset(self::$callStackBindings[$function])) {
             array_pop(self::$callStackBindings[$function]);
             if (self::$callStackBindings[$function] === []) {
-                unset(self::$callStackBindings[$function]);
+                unset(self::$callStackBindings[$function], self::$generatorInferredCallFrames[$function]);
             }
+        } else {
+            unset(self::$generatorInferredCallFrames[$function]);
         }
     }
 
@@ -1244,6 +1289,13 @@ final class TemplateManager
 
         self::$instanceTemplateBindings ??= new WeakMap();
 
+        if (self::$generatorInferredCallFrames !== [] && self::$callStackBindings !== []) {
+            $activeFunc = array_key_last(self::$callStackBindings);
+            if ($activeFunc !== null && isset(self::$generatorInferredCallFrames[$activeFunc])) {
+                self::markGeneratorInferred($instance);
+            }
+        }
+
         $declaredVariance = $classVariances[$templateTag->name] ?? GenericTypeNode::VARIANCE_INVARIANT;
         $isReturnContext = str_contains($context, 'Return value');
         $strictInvariance = Config::isStrictReturnGenericInvarianceEnabled();
@@ -1263,10 +1315,22 @@ final class TemplateManager
             $valid = self::checkVariance($existingTypeNode, $expectedTypeNode, $variance);
 
             if (! $valid) {
-                if ($forceBind) {
+                if ($forceBind || ($isReturnContext && self::isGeneratorInferred($instance))) {
                     $bindings = self::$instanceTemplateBindings[$instance] ?? [];
                     $bindings[$templateName] = $expectedTypeNode;
+
+                    $rawMappings = self::$classInheritedRawMappingsCache[$instance::class] ?? [];
+                    foreach ($rawMappings as $tName => $rawNode) {
+                        if (DocblockParser::typeReferencesTemplate($rawNode, [$templateName => true])) {
+                            $bindings[$tName] = TemplateSubstitutor::substitute($rawNode, $bindings);
+                        }
+                    }
+
                     self::$instanceTemplateBindings[$instance] = $bindings;
+
+                    if ($isReturnContext && self::isGeneratorInferred($instance)) {
+                        self::propagateGeneratorRefinementToProperties($instance, $templateName, $expectedTypeNode);
+                    }
 
                     return null;
                 }
@@ -1325,6 +1389,45 @@ final class TemplateManager
         }
 
         return null;
+    }
+
+    /**
+     * Propagates a refined return-type template binding to any internal store properties of $instance
+     * that were also initialized from the same Generator.
+     */
+    private static function propagateGeneratorRefinementToProperties(object $instance, string $templateName, TypeNode $expectedTypeNode): void
+    {
+        if (self::$instanceTemplateBindings === null) {
+            return;
+        }
+
+        try {
+            $ref = new \ReflectionObject($instance);
+            foreach ($ref->getProperties() as $prop) {
+                if ($prop->isStatic() || ! $prop->isInitialized($instance)) {
+                    continue;
+                }
+
+                $propVal = $prop->getValue($instance);
+                if (! \is_object($propVal) || ! self::isGeneratorInferred($propVal)) {
+                    continue;
+                }
+
+                self::$instanceTemplateBindings ??= new WeakMap();
+                $propBindings = self::$instanceTemplateBindings[$propVal] ?? [];
+                if (isset($propBindings[$templateName])) {
+                    $propBindings[$templateName] = $expectedTypeNode;
+                    $rawMappings = self::$classInheritedRawMappingsCache[$propVal::class] ?? [];
+                    foreach ($rawMappings as $tName => $rawNode) {
+                        if (DocblockParser::typeReferencesTemplate($rawNode, [$templateName => true])) {
+                            $propBindings[$tName] = TemplateSubstitutor::substitute($rawNode, $propBindings);
+                        }
+                    }
+                    self::$instanceTemplateBindings[$propVal] = $propBindings;
+                }
+            }
+        } catch (\Throwable) {
+        }
     }
 
     /**
@@ -1457,7 +1560,16 @@ final class TemplateManager
             }
         }
 
-        self::$instanceTemplateBindings[$instance] = [...$existing, ...$specializedBindings];
+        foreach ($rawMappings as $tName => $rawNode) {
+            if (! isset($specializedBindings[$tName]) && $existing !== [] && DocblockParser::typeReferencesTemplate($rawNode, $existing)) {
+                $specializedBindings[$tName] = TemplateSubstitutor::substitute($rawNode, $existing);
+            }
+        }
+
+        $merged = [...$existing, ...$specializedBindings];
+        if ($merged !== []) {
+            self::$instanceTemplateBindings[$instance] = $merged;
+        }
     }
 
     /**
@@ -1478,6 +1590,7 @@ final class TemplateManager
             /** @var class-string<object> $actualClassName */
             $ref = new \ReflectionClass($actualClassName);
             $classHierarchy = HierarchyResolver::getClassHierarchy($ref);
+            $rootDeclaredTemplates = array_fill_keys(self::getDeclaredClassTemplateNames($actualClassName), true);
 
             foreach ($classHierarchy as $hierClass) {
                 $docsToInspect = self::collectDocsForClassHierarchyMember($hierClass);
@@ -1497,7 +1610,15 @@ final class TemplateManager
                     foreach ($inheritedTags as $inheritedTag) {
                         $genericTypeNode = $inheritedTag->type;
                         if ($genericTypeNode instanceof GenericTypeNode) {
-                            self::collectInheritedGenericTagBindings($genericTypeNode, $hierClass, $declaredTemplateNames, $actualClassName, $bindings, $rawBindings);
+                            self::collectInheritedGenericTagBindings(
+                                $genericTypeNode,
+                                $hierClass,
+                                $declaredTemplateNames,
+                                $actualClassName,
+                                $bindings,
+                                $rawBindings,
+                                $rootDeclaredTemplates
+                            );
                         }
                     }
                 }
@@ -1513,6 +1634,7 @@ final class TemplateManager
      * @param array<string, bool> $declaredTemplateNames
      * @param array<string, TypeNode> $bindings
      * @param array<string, TypeNode> $rawBindings
+     * @param array<string, bool> $rootDeclaredTemplates
      * @param \ReflectionClass<object> $hierClass
      */
     private static function collectInheritedGenericTagBindings(
@@ -1521,7 +1643,8 @@ final class TemplateManager
         array $declaredTemplateNames,
         string $actualClassName,
         array &$bindings,
-        array &$rawBindings = []
+        array &$rawBindings = [],
+        array $rootDeclaredTemplates = []
     ): void {
         $parentName = SpecialTypeResolver::resolveFqcn((string) $genericTypeNode->type, $hierClass);
         $isHierarchyMember = is_a($actualClassName, $parentName, true) || trait_exists($parentName);
@@ -1574,7 +1697,9 @@ final class TemplateManager
                     if ($hierAliases !== []) {
                         $typeArg = DocblockParser::substituteAliases($typeArg, $hierAliases);
                     }
-                    if ($bindings !== []) {
+                    if ($rawBindings !== []) {
+                        $typeArg = TemplateSubstitutor::substitute($typeArg, $rawBindings);
+                    } elseif ($bindings !== []) {
                         $typeArg = TemplateSubstitutor::substitute($typeArg, $bindings);
                     }
                     $resolved = self::resolveTypeNodeAst($typeArg, $hierClass);
@@ -1589,11 +1714,11 @@ final class TemplateManager
                             $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($resolved->name);
                             $isRealType = self::isRealTypeSymbol($resolved->name);
 
-                            if (! $isBuiltIn && ! $isRealType && ! isset($declaredTemplateNames[$resolved->name])) {
+                            if (! $isBuiltIn && ! $isRealType && ! isset($declaredTemplateNames[$resolved->name]) && ! isset($rootDeclaredTemplates[$resolved->name])) {
                                 continue;
                             }
 
-                            if (isset($declaredTemplateNames[$resolved->name]) && $resolved->name === $templateName) {
+                            if ((isset($declaredTemplateNames[$resolved->name]) || isset($rootDeclaredTemplates[$resolved->name])) && $resolved->name === $templateName) {
                                 continue;
                             }
                         }
@@ -1603,7 +1728,28 @@ final class TemplateManager
                         }
                     }
 
+                    if (isset($rootDeclaredTemplates[$templateName]) && DocblockParser::typeReferencesTemplate($resolved, $rootDeclaredTemplates)) {
+                        continue;
+                    }
+
                     $rawBindings[$templateName] ??= $resolved;
+
+                    if (DocblockParser::typeReferencesTemplate($resolved, $rootDeclaredTemplates)) {
+                        $boundOnlyFallbacks = [];
+                        foreach ($rootDeclaredTemplates as $rootTName => $_) {
+                            $rootTag = $hierTemplates[$rootTName] ?? null;
+                            $boundOrDef = $rootTag !== null ? ($rootTag->default ?? $rootTag->bound) : null;
+                            if ($boundOrDef !== null) {
+                                $boundOnlyFallbacks[$rootTName] = SpecialTypeResolver::resolve($boundOrDef, $hierClass);
+                            }
+                        }
+
+                        if (\count($boundOnlyFallbacks) === \count($rootDeclaredTemplates)) {
+                            $bindings[$templateName] ??= TemplateSubstitutor::substitute($resolved, $boundOnlyFallbacks);
+                        }
+
+                        continue;
+                    }
 
                     if (DocblockParser::typeReferencesTemplate($resolved, $declaredTemplateNames) && $hierFallbackBindings !== []) {
                         $resolved = TemplateSubstitutor::substitute($resolved, $hierFallbackBindings);

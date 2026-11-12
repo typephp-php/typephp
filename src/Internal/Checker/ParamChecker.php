@@ -1480,6 +1480,10 @@ final class ParamChecker
                 return;
             }
 
+            if (TemplateManager::isGeneratorInferred($value)) {
+                TemplateManager::markGeneratorInferred($thisObj, $effectiveFunction);
+            }
+
             $targetTemplateNames = self::$classDeclaredTemplateNamesCache[$targetClassFqcn] ?? null;
 
             if ($targetTemplateNames === null) {
@@ -1572,6 +1576,8 @@ final class ParamChecker
         $inferredVal = null;
 
         if ($value instanceof \Generator) {
+            TemplateManager::markGeneratorInferred($thisObj, $effectiveFunction);
+
             try {
                 $refGen = new \ReflectionGenerator($value);
                 $genFunc = $refGen->getFunction();
@@ -1599,9 +1605,15 @@ final class ParamChecker
 
                             if ($inferredKey !== null) {
                                 $inferredKey = TemplateSubstitutor::substitute($inferredKey, $boundOnGenThis, $allGenDeclaredTemplates);
+                                if (ConditionalChecker::containsConditional($inferredKey)) {
+                                    $inferredKey = ConditionalChecker::resolve($inferredKey, [], $boundOnGenThis, \TypePHP\Internal\RuntimeTypeChecker::getRegistry(), $effectiveFunction);
+                                }
                             }
                             if ($inferredVal !== null) {
                                 $inferredVal = TemplateSubstitutor::substitute($inferredVal, $boundOnGenThis, $allGenDeclaredTemplates);
+                                if (ConditionalChecker::containsConditional($inferredVal)) {
+                                    $inferredVal = ConditionalChecker::resolve($inferredVal, [], $boundOnGenThis, \TypePHP\Internal\RuntimeTypeChecker::getRegistry(), $effectiveFunction);
+                                }
                             }
                         }
                     }
@@ -1656,7 +1668,9 @@ final class ParamChecker
                     $contract = $returnTag !== null ? GeneratorEvaluator::extractContract($returnTag->type) : null;
 
                     if ($contract !== null) {
-                        $classTemplates = DocblockParser::parseClassTemplates($refClass->getName());
+                        $refMethod = $refClass->getMethod('getIterator');
+                        $declaringClassTemplates = DocblockParser::parseClassTemplates($refMethod->getDeclaringClass()->getName());
+                        $classTemplates = [...$declaringClassTemplates, ...DocblockParser::parseClassTemplates($refClass->getName())];
                         $aliases = DocblockParser::parseClassAliases($refClass->getName());
 
                         $key = $contract['key'];
@@ -1670,7 +1684,6 @@ final class ParamChecker
                         $key = $key !== null ? TemplateSubstitutor::substitute($key, $boundOnInstance, $classTemplates) : null;
                         $val = $val !== null ? TemplateSubstitutor::substitute($val, $boundOnInstance, $classTemplates) : null;
 
-                        $refMethod = $refClass->getMethod('getIterator');
                         $key = $key !== null ? SpecialTypeResolver::resolve($key, $refMethod) : null;
                         $val = $val !== null ? SpecialTypeResolver::resolve($val, $refMethod) : null;
 
@@ -1729,7 +1742,6 @@ final class ParamChecker
         } catch (\Throwable) {
         }
 
-        // 3. Fallback: single generic argument container (e.g. Collection<T>)
         if (\count($boundOnInstance) === 1) {
             return [null, reset($boundOnInstance)];
         }
