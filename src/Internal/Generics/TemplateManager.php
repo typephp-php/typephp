@@ -1727,7 +1727,14 @@ final class TemplateManager
         $existingStr = trim((string) $existing, '() ');
         $targetStr = trim((string) $target, '() ');
 
-        return $existingStr === $targetStr;
+        if ($existingStr === $targetStr) {
+            return true;
+        }
+
+        $normExisting = preg_replace('/\s*([|&()])\s*/', '$1', $existingStr);
+        $normTarget = preg_replace('/\s*([|&()])\s*/', '$1', $targetStr);
+
+        return $normExisting === $normTarget;
     }
 
     /**

@@ -575,7 +575,7 @@ final class ParamChecker
         }
 
         if (\count($types) > 0) {
-            self::inferTemplatesFromArrays($types, $vars, $effectiveFunction, $thisObj, $templates);
+            self::inferTemplatesFromArrays($types, $vars, $effectiveFunction, $thisObj, $templates, $classTemplates);
             self::inferTemplatesFromShapes($types, $vars, $effectiveFunction, $thisObj, $templates, $classTemplates);
             self::inferTemplatesFromGenericObjects($types, $vars, $effectiveFunction, $thisObj, $templates, $classTemplates);
         }
@@ -914,20 +914,22 @@ final class ParamChecker
      * @param array<string, TypeNode> $types
      * @param array<string, mixed> $vars
      * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
      */
     private static function inferTemplatesFromArrays(
         array $types,
         array $vars,
         string $effectiveFunction,
         ?object $thisObj,
-        array $templates
+        array $templates,
+        array $classTemplates = []
     ): void {
         foreach ($types as $paramName => $typeNode) {
             if (! isset($vars[$paramName]) || ! \is_array($vars[$paramName]) || \count($vars[$paramName]) === 0) {
                 continue;
             }
 
-            self::inferArrayTemplatesFromAllElements($typeNode, $vars[$paramName], $effectiveFunction, $thisObj, $templates);
+            self::inferArrayTemplatesFromAllElements($typeNode, $vars[$paramName], $effectiveFunction, $thisObj, $templates, $classTemplates);
         }
     }
 
@@ -1082,13 +1084,15 @@ final class ParamChecker
      *
      * @param array<mixed> $arrVal
      * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
      */
     private static function inferArrayTemplatesFromAllElements(
         TypeNode $typeNode,
         array $arrVal,
         string $effectiveFunction,
         ?object $thisObj,
-        array $templates
+        array $templates,
+        array $classTemplates = []
     ): void {
         while ($typeNode instanceof NullableTypeNode) {
             $typeNode = $typeNode->type;
@@ -1096,7 +1100,18 @@ final class ParamChecker
 
         if ($typeNode instanceof UnionTypeNode || $typeNode instanceof IntersectionTypeNode) {
             foreach ($typeNode->types as $subType) {
-                self::inferArrayTemplatesFromAllElements($subType, $arrVal, $effectiveFunction, $thisObj, $templates);
+                self::inferArrayTemplatesFromAllElements($subType, $arrVal, $effectiveFunction, $thisObj, $templates, $classTemplates);
+            }
+
+            return;
+        }
+
+        if ($typeNode instanceof ArrayTypeNode && $typeNode->type instanceof ArrayShapeNode) {
+            $sampleItems = self::getSampleArraySlice($arrVal);
+            foreach ($sampleItems as $sample) {
+                if (\is_array($sample)) {
+                    self::inferShapeNodeTemplates($typeNode->type, $sample, $effectiveFunction, $thisObj, $templates, $classTemplates);
+                }
             }
 
             return;
@@ -1112,7 +1127,13 @@ final class ParamChecker
             $genericCount = \count($typeNode->genericTypes);
 
             if ($genericCount === 1 && $typeNode->genericTypes[0] instanceof IdentifierTypeNode) {
-                self::inferSingleTemplateFromArraySamples($typeNode->genericTypes[0]->name, $sampleItems, $effectiveFunction, $thisObj, $templates);
+                self::inferSingleTemplateFromArraySamples($typeNode->genericTypes[0]->name, $sampleItems, $effectiveFunction, $thisObj, $templates, $classTemplates);
+            } elseif ($genericCount === 1 && $typeNode->genericTypes[0] instanceof ArrayShapeNode) {
+                foreach ($sampleItems as $sample) {
+                    if (\is_array($sample)) {
+                        self::inferShapeNodeTemplates($typeNode->genericTypes[0], $sample, $effectiveFunction, $thisObj, $templates, $classTemplates);
+                    }
+                }
             } elseif ($genericCount >= 2) {
                 $keyTName = $typeNode->genericTypes[0] instanceof IdentifierTypeNode ? $typeNode->genericTypes[0]->name : null;
                 $valTName = $typeNode->genericTypes[1] instanceof IdentifierTypeNode ? $typeNode->genericTypes[1]->name : null;
@@ -1132,10 +1153,10 @@ final class ParamChecker
                 }
 
                 if ($keyTName !== null && $inferredKeyType !== null) {
-                    self::bindTemplateIfUnbound($keyTName, $inferredKeyType, $effectiveFunction, $thisObj, $templates);
+                    self::bindTemplateIfUnbound($keyTName, $inferredKeyType, $effectiveFunction, $thisObj, $templates, $classTemplates);
                 }
                 if ($valTName !== null && $inferredValType !== null) {
-                    self::bindTemplateIfUnbound($valTName, $inferredValType, $effectiveFunction, $thisObj, $templates);
+                    self::bindTemplateIfUnbound($valTName, $inferredValType, $effectiveFunction, $thisObj, $templates, $classTemplates);
                 }
             }
         }
@@ -1144,13 +1165,15 @@ final class ParamChecker
     /**
      * @param array<mixed> $sampleItems
      * @param array<string, TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $classTemplates
      */
     private static function inferSingleTemplateFromArraySamples(
         string $templateName,
         array $sampleItems,
         string $effectiveFunction,
         ?object $thisObj,
-        array $templates
+        array $templates,
+        array $classTemplates = []
     ): void {
         $inferredType = null;
         foreach ($sampleItems as $item) {
@@ -1159,7 +1182,7 @@ final class ParamChecker
         }
 
         if ($inferredType !== null) {
-            self::bindTemplateIfUnbound($templateName, $inferredType, $effectiveFunction, $thisObj, $templates);
+            self::bindTemplateIfUnbound($templateName, $inferredType, $effectiveFunction, $thisObj, $templates, $classTemplates);
         }
     }
 
