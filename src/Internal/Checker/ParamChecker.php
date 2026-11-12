@@ -1490,9 +1490,22 @@ final class ParamChecker
 
                     if ($contract !== null) {
                         $classTemplates = DocblockParser::parseClassTemplates($refClass->getName());
+                        $aliases = DocblockParser::parseClassAliases($refClass->getName());
 
-                        $key = $contract['key'] !== null ? TemplateSubstitutor::substitute($contract['key'], $boundOnInstance, $classTemplates) : null;
-                        $val = $contract['value'] !== null ? TemplateSubstitutor::substitute($contract['value'], $boundOnInstance, $classTemplates) : null;
+                        $key = $contract['key'];
+                        $val = $contract['value'];
+
+                        if ($aliases !== []) {
+                            $key = $key !== null ? DocblockParser::substituteAliases($key, $aliases) : null;
+                            $val = $val !== null ? DocblockParser::substituteAliases($val, $aliases) : null;
+                        }
+
+                        $key = $key !== null ? TemplateSubstitutor::substitute($key, $boundOnInstance, $classTemplates) : null;
+                        $val = $val !== null ? TemplateSubstitutor::substitute($val, $boundOnInstance, $classTemplates) : null;
+
+                        $refMethod = $refClass->getMethod('getIterator');
+                        $key = $key !== null ? SpecialTypeResolver::resolve($key, $refMethod) : null;
+                        $val = $val !== null ? SpecialTypeResolver::resolve($val, $refMethod) : null;
 
                         return [$key, $val];
                     }
@@ -1530,9 +1543,18 @@ final class ParamChecker
                     $val = $count >= 2 ? $genericNode->genericTypes[1] : ($genericNode->genericTypes[0] ?? null);
 
                     $classTemplates = DocblockParser::parseClassTemplates($hierClass->getName());
+                    $aliases = DocblockParser::parseClassAliases($hierClass->getName());
+
+                    if ($aliases !== []) {
+                        $key = $key !== null ? DocblockParser::substituteAliases($key, $aliases) : null;
+                        $val = $val !== null ? DocblockParser::substituteAliases($val, $aliases) : null;
+                    }
 
                     $key = $key !== null ? TemplateSubstitutor::substitute($key, $boundOnInstance, $classTemplates) : null;
                     $val = $val !== null ? TemplateSubstitutor::substitute($val, $boundOnInstance, $classTemplates) : null;
+
+                    $key = $key !== null ? SpecialTypeResolver::resolve($key, $hierClass) : null;
+                    $val = $val !== null ? SpecialTypeResolver::resolve($val, $hierClass) : null;
 
                     return [$key, $val];
                 }
