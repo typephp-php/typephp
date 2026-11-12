@@ -407,7 +407,7 @@ final class FunctionContractInjector
 
     private static function isGenerator(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): bool
     {
-        $visitor = new class() extends NodeVisitorAbstract {
+        $visitor = new class () extends NodeVisitorAbstract {
             public bool $isGen = false;
 
             public function enterNode(Node $n): ?int
@@ -941,7 +941,7 @@ final class FunctionContractInjector
         }
 
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class(
+        $traverser->addVisitor(new class (
             $thisArg,
             $genContract,
             $currentFile,
@@ -960,7 +960,8 @@ final class FunctionContractInjector
                 private bool $needsReturnVars,
                 private array $byRefParams,
                 private bool $hasSelfOut,
-            ) {}
+            ) {
+            }
 
             public function enterNode(Node $n): int|Node|array|null
             {
@@ -1199,7 +1200,7 @@ final class FunctionContractInjector
         self::tagPrecedingAssignments($stmts);
 
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class(
+        $traverser->addVisitor(new class (
             $thisArg,
             $isNativeVoid,
             $needsReturnVars,
@@ -1228,7 +1229,8 @@ final class FunctionContractInjector
                 private ?array $classContext,
                 private ?TypeNode $returnTypeNode,
                 private string $currentFile
-            ) {}
+            ) {
+            }
 
             public function enterNode(Node $n): int|array|null
             {
