@@ -579,11 +579,14 @@ final class TemplateManager
 
     /**
      * Copies bound generic template types from a source object to a cloned target object.
+     * If cloned inside an active method that widens class templates via method templates in its @return type,
+     * the cloned target receives the widened template bindings while the source retains its original bindings.
      */
     public static function copyInstanceBindings(object $source, object $target): void
     {
         if (self::$instanceTemplateBindings !== null && isset(self::$instanceTemplateBindings[$source])) {
             $bindings = self::$instanceTemplateBindings[$source];
+            $bindings = self::widenClonedBindingsFromActiveCall($target, $bindings);
             self::$instanceTemplateBindings[$target] = $bindings;
         }
     }
@@ -1099,6 +1102,89 @@ final class TemplateManager
         }
 
         return self::$classHierarchyTemplatesCache[$className] = [$templates, $classVariances];
+    }
+
+    /**
+     * Widens template bindings on a cloned instance when the enclosing method's @return contract
+     * widens class templates with method-level templates (e.g. @return self<E|NE> or ImmutableMap<K|NK, V|NV>).
+     *
+     * @param array<string, TypeNode> $bindings
+     *
+     * @return array<string, TypeNode>
+     */
+    private static function widenClonedBindingsFromActiveCall(object $target, array $bindings): array
+    {
+        if (self::$callStackBindings === []) {
+            return $bindings;
+        }
+
+        $activeFunction = array_key_last(self::$callStackBindings);
+        $topFrame = self::getTopCallFrame($activeFunction);
+        if ($topFrame === null || $topFrame === []) {
+            return $bindings;
+        }
+
+        $contract = DocblockParser::parse($activeFunction);
+        $returnTypeNode = $contract['return'] ?? null;
+        if (! ($returnTypeNode instanceof GenericTypeNode)) {
+            return $bindings;
+        }
+
+        $targetClass = $target::class;
+        $targetTemplates = DocblockParser::parseClassTemplates($targetClass);
+        if ($targetTemplates === []) {
+            return $bindings;
+        }
+
+        $returnBaseClass = (string) $returnTypeNode->type;
+        if (isset(self::CONTEXT_SELF_REFERENCES[strtolower($returnBaseClass)]) && str_contains($activeFunction, '::')) {
+            $returnBaseClass = explode('::', $activeFunction, 2)[0];
+        }
+
+        $returnTemplateNames = array_keys(DocblockParser::parseClassTemplates($returnBaseClass));
+        $targetTemplateNames = array_keys($targetTemplates);
+        $combinedBindings = [...$bindings, ...$topFrame];
+        $changed = false;
+
+        foreach ($returnTypeNode->genericTypes as $idx => $gtNode) {
+            if (! DocblockParser::typeReferencesTemplate($gtNode, $topFrame)) {
+                continue;
+            }
+
+            $tName = null;
+            if (isset($returnTemplateNames[$idx]) && isset($targetTemplates[$returnTemplateNames[$idx]])) {
+                $tName = $returnTemplateNames[$idx];
+            } elseif (\count($targetTemplateNames) === \count($returnTypeNode->genericTypes) && isset($targetTemplateNames[$idx])) {
+                $tName = $targetTemplateNames[$idx];
+            }
+
+            if ($tName === null) {
+                continue;
+            }
+
+            $widenedNode = TemplateSubstitutor::substitute($gtNode, $combinedBindings);
+            $templateTag = $targetTemplates[$tName];
+
+            if ($templateTag->bound !== null) {
+                if (! self::checkVariance($widenedNode, $templateTag->bound, GenericTypeNode::VARIANCE_COVARIANT)) {
+                    continue;
+                }
+            }
+
+            $bindings[$tName] = $widenedNode;
+            $changed = true;
+        }
+
+        if ($changed) {
+            $rawMappings = self::$classInheritedRawMappingsCache[$targetClass] ?? [];
+            foreach ($rawMappings as $rawTName => $rawNode) {
+                if (DocblockParser::typeReferencesTemplate($rawNode, $bindings)) {
+                    $bindings[$rawTName] = TemplateSubstitutor::substitute($rawNode, $bindings);
+                }
+            }
+        }
+
+        return $bindings;
     }
 
     /**
