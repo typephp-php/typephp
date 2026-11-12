@@ -1374,7 +1374,9 @@ final class TemplateManager
         }
 
         if ($forceBind || ! isset($existingBindings[$templateName])) {
-            $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+            $map = self::$instanceTemplateBindings ??= new WeakMap();
+
+            $bindings = $map[$instance] ?? [];
             $boundNode = $isWildcardOrMixed && $templateTag->bound !== null ? $templateTag->bound : $expectedTypeNode;
             $bindings[$templateName] = $boundNode;
 
@@ -1385,7 +1387,7 @@ final class TemplateManager
                 }
             }
 
-            self::$instanceTemplateBindings[$instance] = $bindings;
+            $map[$instance] = $bindings;
         }
 
         return null;
@@ -1401,6 +1403,8 @@ final class TemplateManager
             return;
         }
 
+        $map = self::$instanceTemplateBindings;
+
         try {
             $ref = new \ReflectionObject($instance);
             foreach ($ref->getProperties() as $prop) {
@@ -1413,8 +1417,7 @@ final class TemplateManager
                     continue;
                 }
 
-                self::$instanceTemplateBindings ??= new WeakMap();
-                $propBindings = self::$instanceTemplateBindings[$propVal] ?? [];
+                $propBindings = $map[$propVal] ?? [];
                 if (isset($propBindings[$templateName])) {
                     $propBindings[$templateName] = $expectedTypeNode;
                     $rawMappings = self::$classInheritedRawMappingsCache[$propVal::class] ?? [];
@@ -1423,7 +1426,7 @@ final class TemplateManager
                             $propBindings[$tName] = TemplateSubstitutor::substitute($rawNode, $propBindings);
                         }
                     }
-                    self::$instanceTemplateBindings[$propVal] = $propBindings;
+                    $map[$propVal] = $propBindings;
                 }
             }
         } catch (\Throwable) {
@@ -1981,7 +1984,7 @@ final class TemplateManager
             return false;
         }
 
-        if ($variance !== GenericTypeNode::VARIANCE_COVARIANT) {
+        if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
             return false;
         }
 
@@ -1993,6 +1996,13 @@ final class TemplateManager
 
         try {
             $classBindings = self::getClassInheritedBindings($existing->name);
+
+            if ($variance === GenericTypeNode::VARIANCE_INVARIANT) {
+                if ($classBindings === [] || self::getDeclaredClassTemplateNames($existing->name) !== []) {
+                    return false;
+                }
+            }
+
             if ($classBindings !== []) {
                 $parentTemplates = DocblockParser::parseClassTemplates((string) $expected->type);
                 $parentTemplateNames = array_keys($parentTemplates);
