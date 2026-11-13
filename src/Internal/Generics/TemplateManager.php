@@ -1132,7 +1132,7 @@ final class TemplateManager
         }
     }
 
-    /**
+   /**
      * Propagates resolved class template bindings on an instance to any of its object properties
      * whose declared types reference those class templates (e.g. $this->store with @var KeyValueStore<K, V>).
      */
@@ -1147,6 +1147,12 @@ final class TemplateManager
             return;
         }
 
+        $ref = new \ReflectionObject($instance);
+
+        if (\PHP_VERSION_ID >= 80400 && $ref->isUninitializedLazyObject($instance)) {
+            return;
+        }
+
         $oid = spl_object_id($instance);
         if (isset(self::$propagationStack[$oid])) {
             return;
@@ -1154,9 +1160,16 @@ final class TemplateManager
         self::$propagationStack[$oid] = true;
 
         try {
-            $ref = new \ReflectionObject($instance);
             foreach ($ref->getProperties() as $prop) {
-                if ($prop->isStatic() || ! $prop->isInitialized($instance)) {
+                if ($prop->isStatic()) {
+                    continue;
+                }
+
+                if (\PHP_VERSION_ID >= 80400 && $prop->isLazy($instance)) {
+                    continue;
+                }
+
+                if (! $prop->isInitialized($instance)) {
                     continue;
                 }
 
