@@ -1019,8 +1019,9 @@ final class TemplateManager
 
     /**
      * Binds generic template types to an object instance or validates variance against an existing binding.
+     * With $refineOnly, an existing binding is never replaced by a less specific one (downward propagation).
      */
-    public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false): ?ErrorMessage
+    public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false, bool $refineOnly = false): ?ErrorMessage
     {
         $className = (string) $typeNode->type;
         if (isset(self::CONTEXT_SELF_REFERENCES[strtolower($className)])) {
@@ -1067,7 +1068,8 @@ final class TemplateManager
                     $classVariances,
                     $context,
                     $forceBind,
-                    $candidateBindings
+                    $candidateBindings,
+                    $refineOnly
                 );
                 if ($err !== null) {
                     return $err;
@@ -1132,7 +1134,7 @@ final class TemplateManager
         }
     }
 
-   /**
+    /**
      * Propagates resolved class template bindings on an instance to any of its object properties
      * whose declared types reference those class templates (e.g. $this->store with @var KeyValueStore<K, V>).
      */
@@ -1189,7 +1191,7 @@ final class TemplateManager
 
                 $resolvedPropType = TemplateSubstitutor::substitute($propType, $instanceBindings);
                 if ($resolvedPropType instanceof GenericTypeNode) {
-                    self::bindInstanceFromNode($propVal, $resolvedPropType, forceBind: true);
+                    self::bindInstanceFromNode($propVal, $resolvedPropType, forceBind: true, refineOnly: true);
                 }
             }
         } catch (\Throwable) {
@@ -1355,7 +1357,8 @@ final class TemplateManager
         array $classVariances,
         string $context,
         bool $forceBind,
-        array $candidateBindings = []
+        array $candidateBindings = [],
+        bool $refineOnly = false
     ): ?ErrorMessage {
         if ($expectedTypeNode instanceof IdentifierTypeNode) {
             if (str_contains($expectedTypeNode->name, '::')) {
@@ -1488,6 +1491,18 @@ final class TemplateManager
 
             $bindings = $map[$instance] ?? [];
             $boundNode = $isWildcardOrMixed && $templateTag->bound !== null ? $templateTag->bound : $expectedTypeNode;
+
+            if ($refineOnly && isset($existingBindings[$templateName])) {
+                $existingTypeNode = $existingBindings[$templateName];
+
+                $isPlaceholder = self::isUnspecializedArgument($boundNode, $templateTag);
+                $isRefinement = self::checkVariance($boundNode, $existingTypeNode, GenericTypeNode::VARIANCE_COVARIANT);
+
+                if ($isPlaceholder && ! $isRefinement) {
+                    return null;
+                }
+            }
+
             $bindings[$templateName] = $boundNode;
 
             $rawMappings = self::$classInheritedRawMappingsCache[$instance::class] ?? [];
@@ -1572,6 +1587,27 @@ final class TemplateManager
                     return true;
                 }
             }
+        }
+
+        return false;
+    }
+
+    /**
+     * Checks if a generic type argument carries no information: an unspecialized placeholder,
+     * or nothing beyond the template's own declared bound or default.
+     */
+    private static function isUnspecializedArgument(TypeNode $node, TemplateTagValueNode $templateTag): bool
+    {
+        if (self::isUnspecializedType($node)) {
+            return true;
+        }
+
+        if ($templateTag->bound !== null && self::matchesBoundOrDefault($node, $templateTag->bound)) {
+            return true;
+        }
+
+        if ($templateTag->default !== null && self::matchesBoundOrDefault($node, $templateTag->default)) {
+            return true;
         }
 
         return false;
