@@ -98,6 +98,43 @@ final class ParamChecker
     private static array $classDeclaredTemplateNamesCache = [];
 
     /**
+     * Memoized reflection context for generic-object FQCN resolution. Null means "no reflectable context".
+     *
+     * @var array<string, \ReflectionClass<object>|\ReflectionFunction|null>
+     */
+    private static array $genericObjectContextCache = [];
+
+    /**
+     * 2D cache for resolved generic-object target FQCNs: [$contextKey][$typeName] => FQCN.
+     *
+     * @var array<string, array<string, string>>
+     */
+    private static array $genericObjectTargetCache = [];
+
+    /**
+     * Per-class traversable contract plan: alias-substituted key/value nodes, the class templates
+     * they are expressed in, and the reflection context they resolve against. All class-derived;
+     * only the instance bindings are applied per call.
+     *
+     * @var array<string, array{key: ?TypeNode, value: ?TypeNode, templates: array<string, TemplateTagValueNode>, context: \ReflectionClass<object>|\ReflectionMethod}|null>
+     */
+    private static array $traversablePlanCache = [];
+
+    /**
+     * In-memory cache for callable parameter nodes per function.
+     *
+     * @var array<string, array<string, CallableTypeNode>>
+     */
+    private static array $callableNodesCache = [];
+
+    /**
+     * 2D cache for whether a parameter's declared type is instance-dependent (static/$this).
+     *
+     * @var array<string, array<string, bool>>
+     */
+    private static array $paramDynamicCache = [];
+
+    /**
      * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
@@ -107,6 +144,11 @@ final class ParamChecker
         self::$classDeclaredTemplateNamesCache = [];
         ClassNameValidator::reset();
         self::$baseTypeCache = [];
+        self::$genericObjectContextCache = [];
+        self::$genericObjectTargetCache = [];
+        self::$traversablePlanCache = [];
+        self::$callableNodesCache = [];
+        self::$paramDynamicCache = [];
     }
 
     /**
@@ -347,7 +389,13 @@ final class ParamChecker
     ): array {
         $baseTypes = [];
         foreach ($types as $paramName => $typeNode) {
-            $isParamDynamic = $paramsAreDynamic && (str_contains((string) $typeNode, 'static') || str_contains((string) $typeNode, '$this'));
+            if ($paramsAreDynamic && ! isset(self::$paramDynamicCache[$effectiveFunction][$paramName])) {
+                $typeString = (string) $typeNode;
+                self::$paramDynamicCache[$effectiveFunction][$paramName] =
+                    str_contains($typeString, 'static') || str_contains($typeString, '$this');
+            }
+
+            $isParamDynamic = $paramsAreDynamic && (self::$paramDynamicCache[$effectiveFunction][$paramName] ?? false);
 
             if (! $isParamDynamic && isset(self::$baseTypeCache[$effectiveFunction][$paramName])) {
                 $baseTypes[$paramName] = self::$baseTypeCache[$effectiveFunction][$paramName];
@@ -468,7 +516,9 @@ final class ParamChecker
             return self::$effectiveFunctionCache[$function][$actualClassName];
         }
 
-        if (str_starts_with($function, $actualClassName . '::') && HierarchyResolver::getTraitAliases($actualClassName) === []) {
+        $traitAliases = HierarchyResolver::getTraitAliases($actualClassName);
+
+        if (str_starts_with($function, $actualClassName . '::') && $traitAliases === []) {
             return self::$effectiveFunctionCache[$function][$actualClassName] = $function;
         }
 
@@ -478,27 +528,23 @@ final class ParamChecker
             ? $actualClassName . '::' . $methodName
             : $function;
 
-        if ($thisObj !== null) {
-            $traitAliases = HierarchyResolver::getTraitAliases($actualClassName);
+        if ($thisObj !== null && $traitAliases !== []) {
+            $isTargetOfAlias = false;
+            foreach ($traitAliases as $originalTarget) {
+                if (str_ends_with($originalTarget, '::' . $methodName)) {
+                    $isTargetOfAlias = true;
 
-            if (\count($traitAliases) > 0) {
-                $isTargetOfAlias = false;
-                foreach ($traitAliases as $originalTarget) {
-                    if (str_ends_with($originalTarget, '::' . $methodName)) {
-                        $isTargetOfAlias = true;
-
-                        break;
-                    }
+                    break;
                 }
+            }
 
-                if ($isTargetOfAlias) {
-                    $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 6);
-                    foreach ($trace as $frame) {
-                        $frameFunc = $frame['function'];
-                        $frameClass = $frame['class'] ?? '';
-                        if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
-                            return self::$effectiveFunctionCache[$function][$actualClassName] = $actualClassName . '::' . $frameFunc;
-                        }
+            if ($isTargetOfAlias) {
+                $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 6);
+                foreach ($trace as $frame) {
+                    $frameFunc = $frame['function'];
+                    $frameClass = $frame['class'] ?? '';
+                    if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
+                        return self::$effectiveFunctionCache[$function][$actualClassName] = $actualClassName . '::' . $frameFunc;
                     }
                 }
             }
@@ -561,17 +607,14 @@ final class ParamChecker
         array $templates,
         array $classTemplates = []
     ): void {
-        $hasClosure = false;
-        foreach ($vars as $v) {
-            if ($v instanceof \Closure) {
-                $hasClosure = true;
+        if (self::callableNodesFor($effectiveFunction, $types) !== []) {
+            foreach ($vars as $v) {
+                if ($v instanceof \Closure) {
+                    self::inferTemplatesFromClosures($types, $vars, $effectiveFunction, $thisObj, $templates, $classTemplates);
 
-                break;
+                    break;
+                }
             }
-        }
-
-        if ($hasClosure) {
-            self::inferTemplatesFromClosures($types, $vars, $effectiveFunction, $thisObj, $templates, $classTemplates);
         }
 
         if (\count($types) > 0) {
@@ -597,7 +640,7 @@ final class ParamChecker
         array $templates,
         array $classTemplates = []
     ): void {
-        $callableNodes = self::extractCallableNodes($types);
+        $callableNodes = self::callableNodesFor($effectiveFunction, $types);
         if (\count($callableNodes) === 0) {
             return;
         }
@@ -749,7 +792,7 @@ final class ParamChecker
                 return null;
             }
 
-            if (class_exists($name) || interface_exists($name) || SpecialTypeResolver::isBuiltInTypeKeyword($name)) {
+            if (SpecialTypeResolver::isBuiltInTypeKeyword($name) || class_exists($name) || interface_exists($name)) {
                 $node = new IdentifierTypeNode($name);
 
                 return $type->allowsNull() && $name !== 'null' ? new NullableTypeNode($node) : $node;
@@ -779,6 +822,18 @@ final class ParamChecker
         }
 
         return null;
+    }
+
+    /**
+     * Returns the callable parameter nodes of a contract, memoized per function.
+     *
+     * @param array<string, TypeNode> $types
+     *
+     * @return array<string, CallableTypeNode>
+     */
+    private static function callableNodesFor(string $effectiveFunction, array $types): array
+    {
+        return self::$callableNodesCache[$effectiveFunction] ??= self::extractCallableNodes($types);
     }
 
     /**
@@ -897,7 +952,7 @@ final class ParamChecker
         $cType = $closureParam->getType();
         if ($cType instanceof \ReflectionNamedType) {
             $cTypeName = $cType->getName();
-            if ($cTypeName !== 'mixed' && (class_exists($cTypeName) || interface_exists($cTypeName) || SpecialTypeResolver::isBuiltInTypeKeyword($cTypeName))) {
+            if ($cTypeName !== 'mixed' && (SpecialTypeResolver::isBuiltInTypeKeyword($cTypeName) || class_exists($cTypeName) || interface_exists($cTypeName))) {
                 $node = new IdentifierTypeNode($cTypeName);
 
                 return $cType->allowsNull() && $cTypeName !== 'null' ? new NullableTypeNode($node) : $node;
@@ -907,7 +962,7 @@ final class ParamChecker
             foreach ($cType->getTypes() as $subNamedType) {
                 if ($subNamedType instanceof \ReflectionNamedType) {
                     $subName = $subNamedType->getName();
-                    if ($subName !== 'mixed' && (class_exists($subName) || interface_exists($subName) || SpecialTypeResolver::isBuiltInTypeKeyword($subName))) {
+                    if ($subName !== 'mixed' && (SpecialTypeResolver::isBuiltInTypeKeyword($subName) || class_exists($subName) || interface_exists($subName))) {
                         $unionSubTypes[] = new IdentifierTypeNode($subName);
                     }
                 }
@@ -1423,6 +1478,31 @@ final class ParamChecker
     }
 
     /**
+     * Resolves the reflection context of a function or method once, memoizing hits and misses alike.
+     *
+     * @return \ReflectionClass<object>|\ReflectionFunction|null
+     */
+    private static function genericObjectContext(string $effectiveFunction): \ReflectionClass|\ReflectionFunction|null
+    {
+        if (\array_key_exists($effectiveFunction, self::$genericObjectContextCache)) {
+            return self::$genericObjectContextCache[$effectiveFunction];
+        }
+
+        $context = null;
+
+        if (str_contains($effectiveFunction, '::')) {
+            $declaringClass = explode('::', $effectiveFunction, 2)[0];
+            if (class_exists($declaringClass, false) || class_exists($declaringClass) || interface_exists($declaringClass) || trait_exists($declaringClass)) {
+                $context = new \ReflectionClass($declaringClass);
+            }
+        } elseif (\function_exists($effectiveFunction)) {
+            $context = new \ReflectionFunction($effectiveFunction);
+        }
+
+        return self::$genericObjectContextCache[$effectiveFunction] = $context;
+    }
+
+    /**
      * @param array<string, TemplateTagValueNode> $templates
      * @param array<string, TemplateTagValueNode> $classTemplates
      */
@@ -1459,17 +1539,15 @@ final class ParamChecker
                 return;
             }
 
-            $contextRef = null;
-            if (str_contains($effectiveFunction, '::')) {
-                $declaringClass = explode('::', $effectiveFunction, 2)[0];
-                if (class_exists($declaringClass, false) || class_exists($declaringClass) || interface_exists($declaringClass) || trait_exists($declaringClass)) {
-                    $contextRef = new \ReflectionClass($declaringClass);
-                }
-            } elseif (\function_exists($effectiveFunction)) {
-                $contextRef = new \ReflectionFunction($effectiveFunction);
-            }
+            $typeName = (string) $typeNode->type;
+            $contextRef = self::genericObjectContext($effectiveFunction);
+            $contextKey = $contextRef !== null ? $effectiveFunction : '@' . $value::class;
 
-            $targetClassFqcn = SpecialTypeResolver::resolveFqcn((string) $typeNode->type, $contextRef ?? new \ReflectionClass($value));
+            $targetClassFqcn = self::$genericObjectTargetCache[$contextKey][$typeName] ?? null;
+            if ($targetClassFqcn === null) {
+                $targetClassFqcn = SpecialTypeResolver::resolveFqcn($typeName, $contextRef ?? new \ReflectionClass($value));
+                self::$genericObjectTargetCache[$contextKey][$typeName] = $targetClassFqcn;
+            }
 
             if (! is_a($value, $targetClassFqcn)) {
                 return;
@@ -1652,94 +1730,20 @@ final class ParamChecker
      */
     private static function resolveTraversableItemTypes(object $value): array
     {
-        $className = $value::class;
+        $plan = self::traversablePlan($value);
         $boundOnInstance = TemplateManager::getBoundTemplatesForInstance($value);
 
-        if ($value instanceof \IteratorAggregate) {
-            try {
-                $refClass = new \ReflectionClass($className);
-                $doc = $refClass->hasMethod('getIterator')
-                    ? $refClass->getMethod('getIterator')->getDocComment()
-                    : false;
+        if ($plan !== null) {
+            $key = $plan['key'];
+            $val = $plan['value'];
 
-                if ($doc !== false) {
-                    $phpDocNode = DocblockExtractor::parseDocString($doc);
-                    $returnTag = DocblockExtractor::getReturnTag($phpDocNode);
-                    $contract = $returnTag !== null ? GeneratorEvaluator::extractContract($returnTag->type) : null;
+            $key = $key !== null ? TemplateSubstitutor::substitute($key, $boundOnInstance, $plan['templates']) : null;
+            $val = $val !== null ? TemplateSubstitutor::substitute($val, $boundOnInstance, $plan['templates']) : null;
 
-                    if ($contract !== null) {
-                        $refMethod = $refClass->getMethod('getIterator');
-                        $declaringClassTemplates = DocblockParser::parseClassTemplates($refMethod->getDeclaringClass()->getName());
-                        $classTemplates = [...$declaringClassTemplates, ...DocblockParser::parseClassTemplates($refClass->getName())];
-                        $aliases = DocblockParser::parseClassAliases($refClass->getName());
+            $key = $key !== null ? SpecialTypeResolver::resolve($key, $plan['context']) : null;
+            $val = $val !== null ? SpecialTypeResolver::resolve($val, $plan['context']) : null;
 
-                        $key = $contract['key'];
-                        $val = $contract['value'];
-
-                        if ($aliases !== []) {
-                            $key = $key !== null ? DocblockParser::substituteAliases($key, $aliases) : null;
-                            $val = $val !== null ? DocblockParser::substituteAliases($val, $aliases) : null;
-                        }
-
-                        $key = $key !== null ? TemplateSubstitutor::substitute($key, $boundOnInstance, $classTemplates) : null;
-                        $val = $val !== null ? TemplateSubstitutor::substitute($val, $boundOnInstance, $classTemplates) : null;
-
-                        $key = $key !== null ? SpecialTypeResolver::resolve($key, $refMethod) : null;
-                        $val = $val !== null ? SpecialTypeResolver::resolve($val, $refMethod) : null;
-
-                        return [$key, $val];
-                    }
-                }
-            } catch (\Throwable) {
-            }
-        }
-
-        try {
-            $refClass = new \ReflectionClass($className);
-            $hierarchy = HierarchyResolver::getClassHierarchy($refClass);
-
-            foreach ($hierarchy as $hierClass) {
-                $classDoc = StubManager::getClassDoc($hierClass->getName()) ?? $hierClass->getDocComment();
-                if ($classDoc === false || $classDoc === null) {
-                    continue;
-                }
-
-                $phpDocNode = DocblockExtractor::parseDocString($classDoc);
-                $inheritedTags = DocblockExtractor::getInheritedTags($phpDocNode);
-
-                foreach ($inheritedTags as $inheritedTag) {
-                    $genericNode = $inheritedTag->type;
-                    if (! $genericNode instanceof GenericTypeNode) {
-                        continue;
-                    }
-
-                    $base = strtolower(ltrim((string) $genericNode->type, '\\'));
-                    if ($base !== 'iteratoraggregate' && $base !== 'iterator' && $base !== 'traversable') {
-                        continue;
-                    }
-
-                    $count = \count($genericNode->genericTypes);
-                    $key = $count >= 2 ? $genericNode->genericTypes[0] : null;
-                    $val = $count >= 2 ? $genericNode->genericTypes[1] : ($genericNode->genericTypes[0] ?? null);
-
-                    $classTemplates = DocblockParser::parseClassTemplates($hierClass->getName());
-                    $aliases = DocblockParser::parseClassAliases($hierClass->getName());
-
-                    if ($aliases !== []) {
-                        $key = $key !== null ? DocblockParser::substituteAliases($key, $aliases) : null;
-                        $val = $val !== null ? DocblockParser::substituteAliases($val, $aliases) : null;
-                    }
-
-                    $key = $key !== null ? TemplateSubstitutor::substitute($key, $boundOnInstance, $classTemplates) : null;
-                    $val = $val !== null ? TemplateSubstitutor::substitute($val, $boundOnInstance, $classTemplates) : null;
-
-                    $key = $key !== null ? SpecialTypeResolver::resolve($key, $hierClass) : null;
-                    $val = $val !== null ? SpecialTypeResolver::resolve($val, $hierClass) : null;
-
-                    return [$key, $val];
-                }
-            }
-        } catch (\Throwable) {
+            return [$key, $val];
         }
 
         if (\count($boundOnInstance) === 1) {
@@ -1750,13 +1754,114 @@ final class ParamChecker
     }
 
     /**
+     * Builds and memoizes everything about a Traversable's iteration contract that does not
+     * depend on the instance's bound templates.
+     *
+     * @return array{key: ?TypeNode, value: ?TypeNode, templates: array<string, TemplateTagValueNode>, context: \ReflectionClass<object>|\ReflectionMethod}|null
+     */
+    private static function traversablePlan(object $value): ?array
+    {
+        $className = $value::class;
+
+        if (\array_key_exists($className, self::$traversablePlanCache)) {
+            return self::$traversablePlanCache[$className];
+        }
+
+        $plan = null;
+
+        if ($value instanceof \IteratorAggregate) {
+            try {
+                $refClass = new \ReflectionClass($className);
+                $refMethod = $refClass->hasMethod('getIterator') ? $refClass->getMethod('getIterator') : null;
+                $doc = $refMethod?->getDocComment() ?? false;
+
+                if ($doc !== false && $refMethod !== null) {
+                    $phpDocNode = DocblockExtractor::parseDocString($doc);
+                    $returnTag = DocblockExtractor::getReturnTag($phpDocNode);
+                    $contract = $returnTag !== null ? GeneratorEvaluator::extractContract($returnTag->type) : null;
+
+                    if ($contract !== null) {
+                        $aliases = DocblockParser::parseClassAliases($refClass->getName());
+                        $key = $contract['key'];
+                        $val = $contract['value'];
+
+                        if ($aliases !== []) {
+                            $key = $key !== null ? DocblockParser::substituteAliases($key, $aliases) : null;
+                            $val = $val !== null ? DocblockParser::substituteAliases($val, $aliases) : null;
+                        }
+
+                        $plan = [
+                            'key' => $key,
+                            'value' => $val,
+                            'templates' => [
+                                ...DocblockParser::parseClassTemplates($refMethod->getDeclaringClass()->getName()),
+                                ...DocblockParser::parseClassTemplates($refClass->getName()),
+                            ],
+                            'context' => $refMethod,
+                        ];
+                    }
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        if ($plan === null) {
+            try {
+                $refClass = new \ReflectionClass($className);
+
+                foreach (HierarchyResolver::getClassHierarchy($refClass) as $hierClass) {
+                    $classDoc = StubManager::getClassDoc($hierClass->getName()) ?? $hierClass->getDocComment();
+                    if ($classDoc === false || $classDoc === null) {
+                        continue;
+                    }
+
+                    $phpDocNode = DocblockExtractor::parseDocString($classDoc);
+
+                    foreach (DocblockExtractor::getInheritedTags($phpDocNode) as $inheritedTag) {
+                        $genericNode = $inheritedTag->type;
+                        if (! $genericNode instanceof GenericTypeNode) {
+                            continue;
+                        }
+
+                        $base = strtolower(ltrim((string) $genericNode->type, '\\'));
+                        if ($base !== 'iteratoraggregate' && $base !== 'iterator' && $base !== 'traversable') {
+                            continue;
+                        }
+
+                        $count = \count($genericNode->genericTypes);
+                        $key = $count >= 2 ? $genericNode->genericTypes[0] : null;
+                        $val = $count >= 2 ? $genericNode->genericTypes[1] : ($genericNode->genericTypes[0] ?? null);
+
+                        $aliases = DocblockParser::parseClassAliases($hierClass->getName());
+                        if ($aliases !== []) {
+                            $key = $key !== null ? DocblockParser::substituteAliases($key, $aliases) : null;
+                            $val = $val !== null ? DocblockParser::substituteAliases($val, $aliases) : null;
+                        }
+
+                        $plan = [
+                            'key' => $key,
+                            'value' => $val,
+                            'templates' => DocblockParser::parseClassTemplates($hierClass->getName()),
+                            'context' => $hierClass,
+                        ];
+
+                        break 2;
+                    }
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        return self::$traversablePlanCache[$className] = $plan;
+    }
+
+    /**
      * Unified single-parameter validation pipeline.
      *
      * @param array<string, TemplateTagValueNode> $templates
      * @param array<string, TypeNode> $aliases
      * @param array<string, TypeNode> $boundTemplates
      * @param array<string, TemplateTagValueNode> $declaredTemplates
-     * @param TypeValidatorRegistry $registry
      * @param array<string, TemplateTagValueNode> $classTemplates
      * @param array<int|string, mixed> $vars
      */

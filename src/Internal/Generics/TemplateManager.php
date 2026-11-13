@@ -66,6 +66,27 @@ final class TemplateManager
     private static array $classHierarchyTemplatesCache = [];
 
     /**
+     * Cache for declared template variance lists per class name (positional, as consumed by variance checks).
+     *
+     * @var array<string, list<string>>
+     */
+    private static array $declaredVarianceListCache = [];
+
+    /**
+     * Cache for usable declared template defaults per class name.
+     *
+     * @var array<string, array<string, TypeNode>>
+     */
+    private static array $classTemplateDefaultsCache = [];
+
+    /**
+     * Cache for declared template variances per class name.
+     *
+     * @var array<string, array<string, string>>
+     */
+    private static array $templateVariancesCache = [];
+
+    /**
      * Cache for inherited template bindings per class name.
      *
      * @var array<string, array<string, TypeNode>>
@@ -446,6 +467,14 @@ final class TemplateManager
     private static array $propagationStack = [];
 
     /**
+     * Per-class propagation plan: non-static properties whose declared type is generic.
+     * Holds reusable ReflectionProperty descriptors so propagation allocates nothing per instance.
+     *
+     * @var array<string, list<array{prop: \ReflectionProperty, type: GenericTypeNode}>>
+     */
+    private static array $propagationPlanCache = [];
+
+    /**
      * Resets all static generic template bindings, call stack frames, and method template caches.
      */
     public static function reset(): void
@@ -453,6 +482,9 @@ final class TemplateManager
         self::$instanceTemplateBindings = null;
         self::$callStackBindings = [];
         self::$classHierarchyTemplatesCache = [];
+        self::$declaredVarianceListCache = [];
+        self::$classTemplateDefaultsCache = [];
+        self::$templateVariancesCache = [];
         self::$classInheritedBindingsCache = [];
         self::$classInheritedRawMappingsCache = [];
         self::$subclassCache = [];
@@ -468,6 +500,7 @@ final class TemplateManager
         self::$generatorInferredCallFrames = [];
         self::$callStackThis = [];
         self::$propagationStack = [];
+        self::$propagationPlanCache = [];
     }
 
     /**
@@ -734,17 +767,10 @@ final class TemplateManager
     {
         $bindings = self::getClassInheritedBindings($className);
 
-        try {
-            $ref = new \ReflectionClass($className);
-            [$hierarchyTemplates] = self::collectHierarchyTemplatesAndVariances($ref);
-
-            foreach ($hierarchyTemplates as $tName => $templateTag) {
-                if (! isset($bindings[$tName]) && $templateTag->default !== null && ! self::isUnspecializedDefault($templateTag)) {
-                    $bindings[$tName] = $templateTag->default;
-                }
+        foreach (self::classTemplateDefaults($className) as $tName => $default) {
+            if (! isset($bindings[$tName])) {
+                $bindings[$tName] = $default;
             }
-        } catch (\Throwable $e) {
-            // Silently ignore reflection errors
         }
 
         return $bindings;
@@ -824,17 +850,10 @@ final class TemplateManager
             ? self::$instanceTemplateBindings[$instance]
             : [];
 
-        try {
-            $ref = new \ReflectionClass($instance);
-            [$hierarchyTemplates] = self::collectHierarchyTemplatesAndVariances($ref);
-
-            foreach ($hierarchyTemplates as $tName => $templateTag) {
-                if (! isset($bindings[$tName]) && $templateTag->default !== null && ! self::isUnspecializedDefault($templateTag)) {
-                    $bindings[$tName] = $templateTag->default;
-                }
+        foreach (self::classTemplateDefaults($instance::class) as $tName => $default) {
+            if (! isset($bindings[$tName])) {
+                $bindings[$tName] = $default;
             }
-        } catch (\Throwable $e) {
-            // Silently ignore reflection errors
         }
 
         return $bindings;
@@ -849,6 +868,10 @@ final class TemplateManager
     {
         $className = $instance::class;
 
+        if (isset(self::$templateVariancesCache[$className])) {
+            return self::$templateVariancesCache[$className];
+        }
+
         try {
             $stubDoc = StubManager::getClassDoc($className);
             $ref = new \ReflectionClass($instance);
@@ -857,13 +880,13 @@ final class TemplateManager
             if ($classDoc !== false) {
                 $classPhpDocNode = DocblockExtractor::parseDocString($classDoc);
 
-                return DocblockExtractor::extractTemplateVariances($classPhpDocNode);
+                return self::$templateVariancesCache[$className] = DocblockExtractor::extractTemplateVariances($classPhpDocNode);
             }
         } catch (\Throwable $e) {
             // Silently ignore reflection errors
         }
 
-        return [];
+        return self::$templateVariancesCache[$className] = [];
     }
 
     /**
@@ -1035,9 +1058,7 @@ final class TemplateManager
         self::resolveInheritedTemplates($instance, $className);
 
         try {
-            /** @var class-string<object> $className */
-            $ref = new \ReflectionClass($className);
-            [$templates, $classVariances] = self::collectHierarchyTemplatesAndVariances($ref);
+            [$templates, $classVariances] = self::hierarchyTemplatesForClass($className);
 
             self::$instanceTemplateBindings ??= new WeakMap();
             $templateList = array_values($templates);
@@ -1135,6 +1156,38 @@ final class TemplateManager
     }
 
     /**
+     * Builds the per-class propagation plan: non-static properties whose declared type is generic.
+     * ReflectionProperty descriptors are reusable across instances, so propagation allocates nothing per instance.
+     *
+     * @return list<array{prop: \ReflectionProperty, type: GenericTypeNode}>
+     */
+    private static function propagationPlan(string $className): array
+    {
+        if (isset(self::$propagationPlanCache[$className])) {
+            return self::$propagationPlanCache[$className];
+        }
+
+        $plan = [];
+        try {
+            /** @var class-string<object> $className */
+            $ref = new \ReflectionClass($className);
+            foreach ($ref->getProperties() as $prop) {
+                if ($prop->isStatic()) {
+                    continue;
+                }
+
+                $propType = DocblockParser::parseProperty($className, $prop->getName());
+                if ($propType instanceof GenericTypeNode) {
+                    $plan[] = ['prop' => $prop, 'type' => $propType];
+                }
+            }
+        } catch (\Throwable) {
+        }
+
+        return self::$propagationPlanCache[$className] = $plan;
+    }
+
+    /**
      * Propagates resolved class template bindings on an instance to any of its object properties
      * whose declared types reference those class templates (e.g. $this->store with @var KeyValueStore<K, V>).
      */
@@ -1149,9 +1202,8 @@ final class TemplateManager
             return;
         }
 
-        $ref = new \ReflectionObject($instance);
-
-        if (\PHP_VERSION_ID >= 80400 && $ref->isUninitializedLazyObject($instance)) {
+        $plan = self::propagationPlan($instance::class);
+        if ($plan === []) {
             return;
         }
 
@@ -1162,10 +1214,12 @@ final class TemplateManager
         self::$propagationStack[$oid] = true;
 
         try {
-            foreach ($ref->getProperties() as $prop) {
-                if ($prop->isStatic()) {
-                    continue;
-                }
+            if (\PHP_VERSION_ID >= 80400 && (new \ReflectionObject($instance))->isUninitializedLazyObject($instance)) {
+                return;
+            }
+
+            foreach ($plan as $entry) {
+                $prop = $entry['prop'];
 
                 if (\PHP_VERSION_ID >= 80400 && $prop->isLazy($instance)) {
                     continue;
@@ -1180,16 +1234,11 @@ final class TemplateManager
                     continue;
                 }
 
-                $propType = DocblockParser::parseProperty($instance::class, $prop->getName());
-                if (! ($propType instanceof GenericTypeNode)) {
+                if (! DocblockParser::typeReferencesTemplate($entry['type'], $instanceBindings)) {
                     continue;
                 }
 
-                if (! DocblockParser::typeReferencesTemplate($propType, $instanceBindings)) {
-                    continue;
-                }
-
-                $resolvedPropType = TemplateSubstitutor::substitute($propType, $instanceBindings);
+                $resolvedPropType = TemplateSubstitutor::substitute($entry['type'], $instanceBindings);
                 if ($resolvedPropType instanceof GenericTypeNode) {
                     self::bindInstanceFromNode($propVal, $resolvedPropType, forceBind: true, refineOnly: true);
                 }
@@ -1198,6 +1247,21 @@ final class TemplateManager
         } finally {
             unset(self::$propagationStack[$oid]);
         }
+    }
+
+    /**
+     * Resolves hierarchy templates and variances by class name, skipping reflection entirely on a cache hit.
+     *
+     * @return array{0: array<string, TemplateTagValueNode>, 1: array<string, string>}
+     */
+    private static function hierarchyTemplatesForClass(string $className): array
+    {
+        if (isset(self::$classHierarchyTemplatesCache[$className])) {
+            return self::$classHierarchyTemplatesCache[$className];
+        }
+
+        /** @var class-string<object> $className */
+        return self::collectHierarchyTemplatesAndVariances(new \ReflectionClass($className));
     }
 
     /**
@@ -1251,6 +1315,57 @@ final class TemplateManager
         }
 
         return self::$classHierarchyTemplatesCache[$className] = [$templates, $classVariances];
+    }
+
+    /**
+     * Returns the positional declared variances of a class, memoized so recursive variance
+     * checks never construct reflection for a class already resolved.
+     *
+     * @return list<string>
+     */
+    private static function declaredVarianceList(string $className): array
+    {
+        if (isset(self::$declaredVarianceListCache[$className])) {
+            return self::$declaredVarianceListCache[$className];
+        }
+
+        $variances = [];
+        if (class_exists($className, false) || class_exists($className) || interface_exists($className)) {
+            try {
+                [, $classVariances] = self::hierarchyTemplatesForClass($className);
+                $variances = array_values($classVariances);
+            } catch (\Throwable $e) {
+            }
+        }
+
+        return self::$declaredVarianceListCache[$className] = $variances;
+    }
+
+    /**
+     * Returns the usable declared template defaults of a class, memoized so the common
+     * "no defaults" case costs neither reflection nor a hierarchy walk.
+     *
+     * @return array<string, TypeNode>
+     */
+    private static function classTemplateDefaults(string $className): array
+    {
+        if (isset(self::$classTemplateDefaultsCache[$className])) {
+            return self::$classTemplateDefaultsCache[$className];
+        }
+
+        $defaults = [];
+        try {
+            [$hierarchyTemplates] = self::hierarchyTemplatesForClass($className);
+            foreach ($hierarchyTemplates as $tName => $templateTag) {
+                if ($templateTag->default !== null && ! self::isUnspecializedDefault($templateTag)) {
+                    $defaults[$tName] = $templateTag->default;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore reflection errors
+        }
+
+        return self::$classTemplateDefaultsCache[$className] = $defaults;
     }
 
     /**
@@ -1699,10 +1814,22 @@ final class TemplateManager
         $rawMappings = self::$classInheritedRawMappingsCache[$actualClassName] ?? [];
         $existing = self::$instanceTemplateBindings[$instance] ?? [];
 
+        if ($cachedBindings === [] && $rawMappings === []) {
+            return;
+        }
+        
+        if ($existing === []) {
+            if ($cachedBindings !== []) {
+                self::$instanceTemplateBindings[$instance] = $cachedBindings;
+            }
+
+            return;
+        }
+
         $specializedBindings = [];
         foreach ($cachedBindings as $tName => $fallbackTypeNode) {
             $rawNode = $rawMappings[$tName] ?? $fallbackTypeNode;
-            if ($existing !== [] && DocblockParser::typeReferencesTemplate($rawNode, $existing)) {
+            if (DocblockParser::typeReferencesTemplate($rawNode, $existing)) {
                 $specializedBindings[$tName] = TemplateSubstitutor::substitute($rawNode, $existing);
             } else {
                 $specializedBindings[$tName] = $existing[$tName] ?? $fallbackTypeNode;
@@ -1710,13 +1837,13 @@ final class TemplateManager
         }
 
         foreach ($rawMappings as $tName => $rawNode) {
-            if (! isset($specializedBindings[$tName]) && $existing !== [] && DocblockParser::typeReferencesTemplate($rawNode, $existing)) {
+            if (! isset($specializedBindings[$tName]) && DocblockParser::typeReferencesTemplate($rawNode, $existing)) {
                 $specializedBindings[$tName] = TemplateSubstitutor::substitute($rawNode, $existing);
             }
         }
 
         $merged = [...$existing, ...$specializedBindings];
-        if ($merged !== []) {
+        if ($merged !== [] && $merged !== $existing) {
             self::$instanceTemplateBindings[$instance] = $merged;
         }
     }
@@ -2153,15 +2280,7 @@ final class TemplateManager
                 $parentTemplates = DocblockParser::parseClassTemplates((string) $expected->type);
                 $parentTemplateNames = array_keys($parentTemplates);
 
-                $declaredVariances = [];
-                if (class_exists((string) $expected->type, false) || class_exists((string) $expected->type) || interface_exists((string) $expected->type)) {
-                    try {
-                        $ref = new \ReflectionClass((string) $expected->type);
-                        [, $classVariances] = self::collectHierarchyTemplatesAndVariances($ref);
-                        $declaredVariances = array_values($classVariances);
-                    } catch (\Throwable $e) {
-                    }
-                }
+                $declaredVariances = self::declaredVarianceList((string) $expected->type);
 
                 foreach ($parentTemplateNames as $idx => $tName) {
                     if (isset($classBindings[$tName], $expected->genericTypes[$idx])) {
@@ -2334,15 +2453,7 @@ final class TemplateManager
             return false;
         }
 
-        $declaredVariances = [];
-        if (class_exists($expectedClassName, false) || class_exists($expectedClassName) || interface_exists($expectedClassName)) {
-            try {
-                $ref = new \ReflectionClass($expectedClassName);
-                [, $classVariances] = self::collectHierarchyTemplatesAndVariances($ref);
-                $declaredVariances = array_values($classVariances);
-            } catch (\Throwable $e) {
-            }
-        }
+        $declaredVariances = self::declaredVarianceList($expectedClassName);
 
         foreach ($expected->genericTypes as $idx => $expectedInner) {
             if ($expectedInner instanceof IdentifierTypeNode) {
