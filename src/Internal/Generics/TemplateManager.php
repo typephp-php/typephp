@@ -432,6 +432,20 @@ final class TemplateManager
     private static array $generatorInferredCallFrames = [];
 
     /**
+     * Call stack frames storing $this objects per function or method call.
+     *
+     * @var array<string, list<?object>>
+     */
+    private static array $callStackThis = [];
+
+    /**
+     * Cycle-guarded tracker for property binding propagation.
+     *
+     * @var array<int, bool>
+     */
+    private static array $propagationStack = [];
+
+    /**
      * Resets all static generic template bindings, call stack frames, and method template caches.
      */
     public static function reset(): void
@@ -452,6 +466,8 @@ final class TemplateManager
         self::$declaredClassTemplateNamesCache = [];
         self::$generatorInferredInstances = null;
         self::$generatorInferredCallFrames = [];
+        self::$callStackThis = [];
+        self::$propagationStack = [];
     }
 
     /**
@@ -637,9 +653,10 @@ final class TemplateManager
     /**
      * Pushes a new empty call frame onto the stack for a function execution.
      */
-    public static function pushCallFrame(string $function): void
+    public static function pushCallFrame(string $function, ?object $thisObj = null): void
     {
         self::$callStackBindings[$function][] = [];
+        self::$callStackThis[$function][] = $thisObj;
     }
 
     /**
@@ -649,8 +666,11 @@ final class TemplateManager
     {
         if (isset(self::$callStackBindings[$function])) {
             array_pop(self::$callStackBindings[$function]);
+            if (isset(self::$callStackThis[$function])) {
+                array_pop(self::$callStackThis[$function]);
+            }
             if (self::$callStackBindings[$function] === []) {
-                unset(self::$callStackBindings[$function], self::$generatorInferredCallFrames[$function]);
+                unset(self::$callStackBindings[$function], self::$callStackThis[$function], self::$generatorInferredCallFrames[$function]);
             }
         } else {
             unset(self::$generatorInferredCallFrames[$function]);
@@ -662,9 +682,23 @@ final class TemplateManager
      *
      * @param array<string, TemplateTagValueNode> $templates
      */
-    public static function clearCallBindings(string $function, array $templates): void
+    public static function clearCallBindings(string $function, array $templates, ?object $thisObj = null): void
     {
-        self::pushCallFrame($function);
+        self::pushCallFrame($function, $thisObj);
+    }
+
+    /**
+     * @return object|null
+     */
+    private static function getTopCallThis(string $function): ?object
+    {
+        if (! isset(self::$callStackThis[$function]) || self::$callStackThis[$function] === []) {
+            return null;
+        }
+
+        $top = end(self::$callStackThis[$function]);
+
+        return $top !== false ? $top : null;
     }
 
     /**
@@ -1043,6 +1077,8 @@ final class TemplateManager
             // Silently ignore reflection or parsing errors
         }
 
+        self::propagateBindingsToInstanceProperties($instance);
+
         return null;
     }
 
@@ -1093,6 +1129,59 @@ final class TemplateManager
 
         if ($changed) {
             self::$instanceTemplateBindings[$instance] = $bindings;
+        }
+    }
+
+    /**
+     * Propagates resolved class template bindings on an instance to any of its object properties
+     * whose declared types reference those class templates (e.g. $this->store with @var KeyValueStore<K, V>).
+     */
+    private static function propagateBindingsToInstanceProperties(object $instance): void
+    {
+        if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$instance])) {
+            return;
+        }
+
+        $instanceBindings = self::$instanceTemplateBindings[$instance];
+        if ($instanceBindings === []) {
+            return;
+        }
+
+        $oid = spl_object_id($instance);
+        if (isset(self::$propagationStack[$oid])) {
+            return;
+        }
+        self::$propagationStack[$oid] = true;
+
+        try {
+            $ref = new \ReflectionObject($instance);
+            foreach ($ref->getProperties() as $prop) {
+                if ($prop->isStatic() || ! $prop->isInitialized($instance)) {
+                    continue;
+                }
+
+                $propVal = $prop->getValue($instance);
+                if (! \is_object($propVal)) {
+                    continue;
+                }
+
+                $propType = DocblockParser::parseProperty($instance::class, $prop->getName());
+                if (! ($propType instanceof GenericTypeNode)) {
+                    continue;
+                }
+
+                if (! DocblockParser::typeReferencesTemplate($propType, $instanceBindings)) {
+                    continue;
+                }
+
+                $resolvedPropType = TemplateSubstitutor::substitute($propType, $instanceBindings);
+                if ($resolvedPropType instanceof GenericTypeNode) {
+                    self::bindInstanceFromNode($propVal, $resolvedPropType, forceBind: true);
+                }
+            }
+        } catch (\Throwable) {
+        } finally {
+            unset(self::$propagationStack[$oid]);
         }
     }
 
@@ -1188,8 +1277,11 @@ final class TemplateManager
 
         $returnTemplateNames = array_keys(DocblockParser::parseClassTemplates($returnBaseClass));
         $targetTemplateNames = array_keys($targetTemplates);
-        $combinedBindings = [...$bindings, ...$topFrame];
+        $activeThis = self::getTopCallThis($activeFunction);
+        $thisBindings = $activeThis !== null ? self::getBoundTemplatesForInstance($activeThis) : [];
+        $combinedBindings = [...$thisBindings, ...$bindings, ...$topFrame];
         $changed = false;
+        $isReturnBaseInstance = is_a($target, $returnBaseClass);
 
         foreach ($returnTypeNode->genericTypes as $idx => $gtNode) {
             if (! DocblockParser::typeReferencesTemplate($gtNode, $topFrame)) {
@@ -1199,7 +1291,7 @@ final class TemplateManager
             $tName = null;
             if (isset($returnTemplateNames[$idx]) && isset($targetTemplates[$returnTemplateNames[$idx]])) {
                 $tName = $returnTemplateNames[$idx];
-            } elseif (\count($targetTemplateNames) === \count($returnTypeNode->genericTypes) && isset($targetTemplateNames[$idx])) {
+            } elseif ($isReturnBaseInstance && \count($targetTemplateNames) === \count($returnTypeNode->genericTypes) && isset($targetTemplateNames[$idx])) {
                 $tName = $targetTemplateNames[$idx];
             }
 
@@ -1208,6 +1300,11 @@ final class TemplateManager
             }
 
             $widenedNode = TemplateSubstitutor::substitute($gtNode, $combinedBindings);
+
+            if (DocblockParser::typeReferencesTemplate($widenedNode, array_fill_keys($returnTemplateNames, true))) {
+                continue;
+            }
+
             $templateTag = $targetTemplates[$tName];
 
             if ($templateTag->bound !== null) {

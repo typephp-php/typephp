@@ -312,7 +312,7 @@ final class ParamChecker
         $hasTemplatesToClear = \count($methodTemplates) > 0 || ($thisObj === null && \count($classTemplates) > 0);
 
         if ($hasTemplatesToClear) {
-            TemplateManager::clearCallBindings($effectiveFunction, [...$classTemplates, ...$methodTemplates]);
+            TemplateManager::clearCallBindings($effectiveFunction, [...$classTemplates, ...$methodTemplates], $thisObj);
         }
 
         if (\count($classTemplates) > 0 && str_contains($effectiveFunction, '::')) {
