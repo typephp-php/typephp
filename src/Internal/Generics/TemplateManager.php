@@ -1168,6 +1168,7 @@ final class TemplateManager
         }
 
         $plan = [];
+
         try {
             /** @var class-string<object> $className */
             $ref = new \ReflectionClass($className);
@@ -1354,6 +1355,7 @@ final class TemplateManager
         }
 
         $defaults = [];
+
         try {
             [$hierarchyTemplates] = self::hierarchyTemplatesForClass($className);
             foreach ($hierarchyTemplates as $tName => $templateTag) {
@@ -1817,7 +1819,7 @@ final class TemplateManager
         if ($cachedBindings === [] && $rawMappings === []) {
             return;
         }
-        
+
         if ($existing === []) {
             if ($cachedBindings !== []) {
                 self::$instanceTemplateBindings[$instance] = $cachedBindings;
