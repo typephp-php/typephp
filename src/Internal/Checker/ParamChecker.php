@@ -1676,21 +1676,55 @@ final class ParamChecker
 
                             $genMethodTemplates = DocblockExtractor::extractTemplates($phpDocNode);
                             $genClassTemplates = [];
+                            $genAliases = [];
+                            $genContext = null;
+
                             if ($genFunc instanceof \ReflectionMethod) {
-                                $genClassTemplates = DocblockParser::parseClassTemplates($genFunc->getDeclaringClass()->getName());
+                                $genContext = $genFunc;
+                                $declaringClassName = $genFunc->getDeclaringClass()->getName();
+                                $genClassTemplates = DocblockParser::parseClassTemplates($declaringClassName);
+                                $genAliases = DocblockParser::parseClassAliases($declaringClassName);
+                                DocblockExtractor::extractAliases($phpDocNode, $genAliases, $genFunc);
+                                $genFunctionName = $declaringClassName . '::' . $genFunc->getName();
+                            } elseif ($genFunc instanceof \ReflectionFunction) {
+                                $genContext = $genFunc;
+                                DocblockExtractor::extractAliases($phpDocNode, $genAliases, $genFunc);
+                                $genFunctionName = $genFunc->getName();
+                            } else {
+                                $genFunctionName = $genFunc->getName();
                             }
+
                             $allGenDeclaredTemplates = [...$genClassTemplates, ...$genMethodTemplates];
 
                             if ($inferredKey !== null) {
+                                if ($genAliases !== []) {
+                                    $inferredKey = DocblockParser::substituteAliases($inferredKey, $genAliases);
+                                }
                                 $inferredKey = TemplateSubstitutor::substitute($inferredKey, $boundOnGenThis, $allGenDeclaredTemplates);
+                                if ($genContext !== null) {
+                                    $inferredKey = SpecialTypeResolver::resolve($inferredKey, $genContext, $genThis);
+                                }
                                 if (ConditionalChecker::containsConditional($inferredKey)) {
-                                    $inferredKey = ConditionalChecker::resolve($inferredKey, [], $boundOnGenThis, \TypePHP\Internal\RuntimeTypeChecker::getRegistry(), $effectiveFunction);
+                                    $inferredKey = ConditionalChecker::resolve($inferredKey, [], $boundOnGenThis, \TypePHP\Internal\RuntimeTypeChecker::getRegistry(), $genFunctionName);
+                                    if ($genContext !== null) {
+                                        $inferredKey = SpecialTypeResolver::resolve($inferredKey, $genContext, $genThis);
+                                    }
                                 }
                             }
+
                             if ($inferredVal !== null) {
+                                if ($genAliases !== []) {
+                                    $inferredVal = DocblockParser::substituteAliases($inferredVal, $genAliases);
+                                }
                                 $inferredVal = TemplateSubstitutor::substitute($inferredVal, $boundOnGenThis, $allGenDeclaredTemplates);
+                                if ($genContext !== null) {
+                                    $inferredVal = SpecialTypeResolver::resolve($inferredVal, $genContext, $genThis);
+                                }
                                 if (ConditionalChecker::containsConditional($inferredVal)) {
-                                    $inferredVal = ConditionalChecker::resolve($inferredVal, [], $boundOnGenThis, \TypePHP\Internal\RuntimeTypeChecker::getRegistry(), $effectiveFunction);
+                                    $inferredVal = ConditionalChecker::resolve($inferredVal, [], $boundOnGenThis, \TypePHP\Internal\RuntimeTypeChecker::getRegistry(), $genFunctionName);
+                                    if ($genContext !== null) {
+                                        $inferredVal = SpecialTypeResolver::resolve($inferredVal, $genContext, $genThis);
+                                    }
                                 }
                             }
                         }
