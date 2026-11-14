@@ -6,6 +6,7 @@ namespace TypePHP\Internal\Io;
 
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\FileFilter;
+use TypePHP\Internal\Util\StubManager;
 
 /**
  * @internal
@@ -16,6 +17,23 @@ final class CacheManager
      * Cache version prefix string. Bump this whenever AST printer/transformation rules change.
      */
     public const VERSION_PREFIX = 'v0.13.0_';
+
+    /**
+     * Config keys that only steer runtime behaviour and never change the transformed source.
+     * Every other key is part of the cache key, so new options invalidate the cache by default.
+     */
+    private const RUNTIME_ONLY_CONFIG_KEYS = [
+        'enabled' => true,
+        'auto_boot' => true,
+        'on_violation' => true,
+        'report_file' => true,
+        'fail_on_report' => true,
+        'fail_on_zero_files' => true,
+        'redact_values' => true,
+        'cache' => true,
+        'cache_dir' => true,
+        'cache_check_mtime' => true,
+    ];
 
     /**
      * Cached absolute cache directory path.
@@ -34,11 +52,17 @@ final class CacheManager
      */
     private static array $cacheKeyMap = [];
 
+    /**
+     * Memoized fingerprint of everything besides the source file that shapes the transformed output.
+     */
+    private static ?string $transformFingerprint = null;
+
     public static function reset(): void
     {
         self::$resolvedCacheDir = null;
         self::$secureDirVerified = null;
         self::$cacheKeyMap = [];
+        self::$transformFingerprint = null;
     }
 
     /**
@@ -76,7 +100,8 @@ final class CacheManager
     }
 
     /**
-     * Generates a unique cache key for a given file path based on its mtime and version prefix.
+     * Generates a unique cache key for a given file path based on its mtime, version prefix,
+     * and the configuration the transformation depends on.
      */
     public static function getCacheKey(string $resolvedPath): string
     {
@@ -88,10 +113,32 @@ final class CacheManager
             $mtime = @filemtime($resolvedPath);
             $mtimeStr = $mtime !== false ? (string) $mtime : '0';
 
-            return self::$cacheKeyMap[$resolvedPath] = hash('xxh128', self::VERSION_PREFIX . $resolvedPath . $mtimeStr);
+            return self::$cacheKeyMap[$resolvedPath] = hash('xxh128', self::VERSION_PREFIX . self::getTransformFingerprint() . $resolvedPath . $mtimeStr);
         }
 
-        return self::$cacheKeyMap[$resolvedPath] = hash('xxh128', self::VERSION_PREFIX . $resolvedPath);
+        return self::$cacheKeyMap[$resolvedPath] = hash('xxh128', self::VERSION_PREFIX . self::getTransformFingerprint() . $resolvedPath);
+    }
+
+    /**
+     * Hashes the transform-relevant configuration and stub files, so a cached file is never reused
+     * after a setting that changes the injected checks (ignore tags, inline vars, stubs, ...) was edited.
+     */
+    private static function getTransformFingerprint(): string
+    {
+        if (self::$transformFingerprint !== null) {
+            return self::$transformFingerprint;
+        }
+
+        $config = array_diff_key(Config::get(), self::RUNTIME_ONLY_CONFIG_KEYS);
+        ksort($config);
+
+        return self::$transformFingerprint = hash(
+            'xxh128',
+            var_export($config, true)
+                // Env override, so the config array alone does not reflect the effective value.
+                . (Config::isEliminateStaticallyProvenChecksEnabled() ? '1' : '0')
+                . (Config::isCacheCheckMtimeEnabled() ? StubManager::getFilesFingerprint() : '')
+        );
     }
 
     /**

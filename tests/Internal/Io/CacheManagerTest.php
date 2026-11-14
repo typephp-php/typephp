@@ -57,4 +57,58 @@ describe('CacheManager Unit Tests', function () {
             Config::reset();
         }
     });
+
+    test('cache key follows settings that change the transformed source', function () {
+        try {
+            $file = __FILE__;
+
+            Config::set(['respect_ignore_tags' => true, 'on_violation' => 'throw']);
+            $key = CacheManager::getCacheKey($file);
+
+            Config::set(['on_violation' => 'report', 'report_file' => '/tmp/report.json']);
+            expect(CacheManager::getCacheKey($file))->toBe($key);
+
+            Config::set(['respect_ignore_tags' => false]);
+            expect(CacheManager::getCacheKey($file))->not()->toBe($key);
+
+            Config::set(['respect_ignore_tags' => true]);
+            expect(CacheManager::getCacheKey($file))->toBe($key);
+
+            putenv('TYPEPHP_ELIMINATE_STATICALLY_PROVEN_CHECKS=false');
+            CacheManager::reset();
+            expect(CacheManager::getCacheKey($file))->not()->toBe($key);
+        } finally {
+            putenv('TYPEPHP_ELIMINATE_STATICALLY_PROVEN_CHECKS');
+            Config::reset();
+        }
+    });
+
+    test('cache key follows edits to configured stub files', function () {
+        $stubFile = sys_get_temp_dir() . '/typephp_stub_' . uniqid() . '.stub';
+        file_put_contents($stubFile, '<?php');
+        touch($stubFile, 1_700_000_000);
+
+        try {
+            $file = __FILE__;
+
+            Config::set(['stubs' => [$stubFile]]);
+            $key = CacheManager::getCacheKey($file);
+
+            touch($stubFile, 1_700_000_100);
+            clearstatcache();
+            CacheManager::reset();
+            expect(CacheManager::getCacheKey($file))->not()->toBe($key);
+
+            Config::set(['cache_check_mtime' => false]);
+            $keyWithoutMtime = CacheManager::getCacheKey($file);
+
+            touch($stubFile, 1_700_000_200);
+            clearstatcache();
+            CacheManager::reset();
+            expect(CacheManager::getCacheKey($file))->toBe($keyWithoutMtime);
+        } finally {
+            Config::reset();
+            @unlink($stubFile);
+        }
+    });
 });
