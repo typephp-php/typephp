@@ -168,7 +168,8 @@ final class FunctionContractInjector
                     $hasMethodTemplates,
                     $needsReturnVars,
                     $hasParamOut ? $byRefParams : [],
-                    $hasSelfOut
+                    $hasSelfOut,
+                    $hasParam
                 )
                 : self::wrapNonGeneratorReturns(
                     $node->stmts,
@@ -850,6 +851,11 @@ final class FunctionContractInjector
         array $byRefParams = [],
         bool $needsReturnVars = false
     ): Node\Expr {
+        $scopeArg = new Node\Expr\BinaryOp\Coalesce(
+            new Node\Expr\Variable('__typephpScope'),
+            new Node\Expr\ConstFetch(new Node\Name('null'))
+        );
+
         if ($wrapYield) {
             $checkYieldCall = new Node\Expr\FuncCall(
                 new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkYield'),
@@ -858,6 +864,7 @@ final class FunctionContractInjector
                     new Node\Arg($n->key ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
                     new Node\Arg($n->value ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
                     new Node\Arg($thisArg),
+                    new Node\Arg($scopeArg),
                 ]
             );
 
@@ -886,6 +893,7 @@ final class FunctionContractInjector
                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
                 new Node\Arg($n),
                 new Node\Arg($thisArg),
+                new Node\Arg($scopeArg),
             ]
         );
 
@@ -916,7 +924,8 @@ final class FunctionContractInjector
         bool $hasMethodTemplates = false,
         bool $needsReturnVars = false,
         array $byRefParams = [],
-        bool $hasSelfOut = false
+        bool $hasSelfOut = false,
+        bool $hasScope = false
     ): array {
         $canEliminate = $functionNode !== null
             && ! $hasMethodTemplates
@@ -938,7 +947,7 @@ final class FunctionContractInjector
             $currentFile,
             $needsReturnVars,
             $byRefParams,
-            $hasSelfOut
+            $hasSelfOut,
         ) extends NodeVisitorAbstract {
             /**
              * @param array{key: ?TypeNode, value: ?TypeNode, send: ?TypeNode, return: ?TypeNode}|null $genContract
@@ -950,7 +959,7 @@ final class FunctionContractInjector
                 private string $currentFile,
                 private bool $needsReturnVars,
                 private array $byRefParams,
-                private bool $hasSelfOut
+                private bool $hasSelfOut,
             ) {
             }
 
@@ -1089,12 +1098,18 @@ final class FunctionContractInjector
                         return $exitStmts !== [] ? [...$exitStmts, $n] : $n;
                     }
 
+                    $scopeArg = new Node\Expr\BinaryOp\Coalesce(
+                        new Node\Expr\Variable('__typephpScope'),
+                        new Node\Expr\ConstFetch(new Node\Name('null'))
+                    );
+
                     $checkCall = new Node\Expr\FuncCall(
                         new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkGeneratorReturn'),
                         [
                             new Node\Arg(new Node\Scalar\MagicConst\Method()),
                             new Node\Arg($exprToWrap),
                             new Node\Arg($this->thisArg),
+                            new Node\Arg($scopeArg),
                         ]
                     );
 
@@ -1133,12 +1148,18 @@ final class FunctionContractInjector
                 $genContract === null
                 || ! GeneratorEvaluator::canEliminateGeneratorReturn(null, $genContract['return'], $currentFile)
             ) {
+                $scopeArg = new Node\Expr\BinaryOp\Coalesce(
+                    new Node\Expr\Variable('__typephpScope'),
+                    new Node\Expr\ConstFetch(new Node\Name('null'))
+                );
+
                 $checkCall = new Node\Expr\FuncCall(
                     new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkGeneratorReturn'),
                     [
                         new Node\Arg(new Node\Scalar\MagicConst\Method()),
                         new Node\Arg(new Node\Expr\ConstFetch(new Node\Name('null'))),
                         new Node\Arg($thisArg),
+                        new Node\Arg($scopeArg),
                     ]
                 );
 

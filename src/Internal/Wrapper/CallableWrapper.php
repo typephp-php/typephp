@@ -31,6 +31,7 @@ use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Internal\Reporting\ViolationCollector;
 use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\IgnoreManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
@@ -486,6 +487,10 @@ final class CallableWrapper
                         return;
                     }
 
+                    if (IgnoreManager::isCallerIgnored()) {
+                        return;
+                    }
+
                     $handled = ViolationCollector::handle($boundErr, 'callback', null);
                     if ($handled instanceof ErrorMessage) {
                         throw ErrorFactory::prepareException(new TypePHPTypeError($boundErr->getMessage()));
@@ -617,6 +622,10 @@ final class CallableWrapper
             $err = $registry->validate($result, $typeNode->returnType, "$prefix return value");
             if ($err !== null) {
                 if (! CallerBoundaryResolver::shouldBypassCallback($callable, $prefix)) {
+                    if (IgnoreManager::isCallerIgnored()) {
+                        return $result;
+                    }
+
                     $handled = ViolationCollector::handle($err, 'callback', $result);
                     if ($handled instanceof ErrorMessage) {
                         throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
@@ -642,6 +651,10 @@ final class CallableWrapper
                 return;
             }
 
+            if (IgnoreManager::isCallerIgnored()) {
+                return;
+            }
+
             $err = new ErrorMessage($prefix . ' must be of type Closure, ' . TypeFormatter::formatGivenValue($callable) . ' given');
             $handled = ViolationCollector::handle($err, 'callback', null);
 
@@ -654,6 +667,10 @@ final class CallableWrapper
             $refFunc = new ReflectionFunction($callable);
             if ($refFunc->getClosureThis() !== null) {
                 if (CallerBoundaryResolver::shouldBypassCallback($callable, $prefix)) {
+                    return;
+                }
+
+                if (IgnoreManager::isCallerIgnored()) {
                     return;
                 }
 
@@ -722,6 +739,10 @@ final class CallableWrapper
                         continue;
                     }
 
+                    if (IgnoreManager::isCallerIgnored()) {
+                        continue;
+                    }
+
                     $handled = ViolationCollector::handle($err, 'callback', null);
                     if ($handled instanceof ErrorMessage) {
                         throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
@@ -787,6 +808,10 @@ final class CallableWrapper
                 $err = $registry->validate($val, $paramNode->type, "$prefix $argLabel");
                 if ($err !== null) {
                     if ($callable !== null && CallerBoundaryResolver::shouldBypassCallback($callable, $prefix)) {
+                        continue;
+                    }
+
+                    if (IgnoreManager::isCallerIgnored()) {
                         continue;
                     }
 
