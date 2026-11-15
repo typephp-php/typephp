@@ -128,8 +128,8 @@ final class ArrayLiteralEvaluator
         return match ($name) {
             'array', 'iterable', 'mixed' => true,
             'list' => self::isSequentialList($arrayExpr),
-            'non-empty-array' => \count($arrayExpr->items) > 0,
-            'non-empty-list' => \count($arrayExpr->items) > 0 && self::isSequentialList($arrayExpr),
+            'non-empty-array' => self::hasConcreteItem($arrayExpr),
+            'non-empty-list' => self::hasConcreteItem($arrayExpr) && self::isSequentialList($arrayExpr),
             default => false,
         };
     }
@@ -184,7 +184,7 @@ final class ArrayLiteralEvaluator
 
         $expectedIdx = 0;
         foreach ($arrayExpr->items as $item) {
-            if ($item === null) {
+            if ($item === null || $item->unpack) {
                 return false;
             }
 
@@ -216,7 +216,7 @@ final class ArrayLiteralEvaluator
 
         $currentIdx = 0;
         foreach ($arrayExpr->items as $item) {
-            if ($item === null) {
+            if ($item === null || $item->unpack) {
                 return false;
             }
 
@@ -276,7 +276,7 @@ final class ArrayLiteralEvaluator
         $actualItems = [];
         $currentIdx = 0;
         foreach ($arrayExpr->items as $item) {
-            if ($item === null) {
+            if ($item === null || $item->unpack) {
                 return false;
             }
 
@@ -342,7 +342,7 @@ final class ArrayLiteralEvaluator
     {
         $expectedIdx = 0;
         foreach ($arrayExpr->items as $item) {
-            if ($item === null) {
+            if ($item === null || $item->unpack) {
                 return false;
             }
 
@@ -355,5 +355,19 @@ final class ArrayLiteralEvaluator
         }
 
         return true;
+    }
+
+    /**
+     * Checks whether an array expression contains at least one non-unpacked concrete item.
+     */
+    private static function hasConcreteItem(Array_ $arrayExpr): bool
+    {
+        foreach ($arrayExpr->items as $item) {
+            if ($item !== null && ! $item->unpack) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
