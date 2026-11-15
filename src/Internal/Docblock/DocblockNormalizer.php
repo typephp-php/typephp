@@ -82,10 +82,6 @@ final class DocblockNormalizer
             }
         }
 
-        if (str_contains($doc, '::') && str_contains($doc, ':')) {
-            $doc = preg_replace('/(\\\\?[a-zA-Z_\x80-\xff][\\\\a-zA-Z0-9_\x80-\xff]*::[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)\s*(\??:)/', '"$1"$2', $doc) ?? $doc;
-        }
-
         if (str_contains($doc, 'int-mask-of') && str_contains($doc, '*')) {
             $doc = preg_replace('/int-mask-of<\s*([a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*\*)\s*>/', 'int-mask-of<"$1">', $doc) ?? $doc;
         }
@@ -220,6 +216,7 @@ final class DocblockNormalizer
             function (array $matches): string {
                 $className = $matches[1];
                 $shapeBody = self::normalizeShapes($matches[2]);
+                $shapeBody = self::quoteShapeConstantKeys($shapeBody);
 
                 $lower = strtolower(ltrim($className, '\\'));
                 if (\in_array($lower, self::BUILTIN_SHAPE_KEYWORDS, strict: true)) {
@@ -230,5 +227,22 @@ final class DocblockNormalizer
             },
             $doc
         ) ?? $doc;
+    }
+
+    /**
+     * Quotes unquoted Class::CONST keys inside array/object shape bodies for phpdoc-parser compatibility,
+     * leaving class constants inside conditional type expressions untouched.
+     */
+    private static function quoteShapeConstantKeys(string $shapeBody): string
+    {
+        if (! str_contains($shapeBody, '::') || ! str_contains($shapeBody, ':')) {
+            return $shapeBody;
+        }
+
+        return preg_replace(
+            '/(^|,)((?:\s|\*(?!\/))*)(\\\\?[a-zA-Z_\x80-\xff][\\\\a-zA-Z0-9_\x80-\xff]*::[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)\s*(\??:)/',
+            '$1$2"$3"$4',
+            $shapeBody
+        ) ?? $shapeBody;
     }
 }
