@@ -36,6 +36,7 @@ use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ThisTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
+use TypePHP\Tests\Fixtures\Types\StatusEnum;
 
 describe('StaticTypeEvaluator Comprehensive Unit Tests', function () {
     describe('Safety Invariants', function () {
@@ -230,11 +231,13 @@ describe('StaticTypeEvaluator Comprehensive Unit Tests', function () {
         });
 
         test('evaluates enum case fetches against enum base type and case wildcards', function () {
-            $enumFetch = new ClassConstFetch(new Name('StatusEnum'), new Identifier('Active'));
+            enum_exists(StatusEnum::class);
 
-            expect(StaticTypeEvaluator::satisfies($enumFetch, new IdentifierTypeNode('StatusEnum')))->toBeTrue()
-                ->and(StaticTypeEvaluator::satisfies($enumFetch, new ConstTypeNode(new ConstFetchNode('StatusEnum', '*'))))->toBeTrue()
-                ->and(StaticTypeEvaluator::satisfies($enumFetch, new ConstTypeNode(new ConstFetchNode('StatusEnum', 'ACT*'))))->toBeTrue()
+            $enumFetch = new ClassConstFetch(new Name(StatusEnum::class), new Identifier('Active'));
+
+            expect(StaticTypeEvaluator::satisfies($enumFetch, new IdentifierTypeNode(StatusEnum::class)))->toBeTrue()
+                ->and(StaticTypeEvaluator::satisfies($enumFetch, new ConstTypeNode(new ConstFetchNode(StatusEnum::class, '*'))))->toBeTrue()
+                ->and(StaticTypeEvaluator::satisfies($enumFetch, new ConstTypeNode(new ConstFetchNode(StatusEnum::class, 'ACT*'))))->toBeTrue()
             ;
         });
 
@@ -254,11 +257,12 @@ describe('StaticTypeEvaluator Comprehensive Unit Tests', function () {
         });
 
         test('evaluates enum backing property access against value-of<Enum>', function () {
+            enum_exists(StatusEnum::class);
             $propFetch = new PropertyFetch(
-                new ClassConstFetch(new Name('StatusEnum'), new Identifier('Active')),
+                new ClassConstFetch(new Name(StatusEnum::class), new Identifier('Active')),
                 new Identifier('value')
             );
-            $valueOf = new GenericTypeNode(new IdentifierTypeNode('value-of'), [new IdentifierTypeNode('StatusEnum')]);
+            $valueOf = new GenericTypeNode(new IdentifierTypeNode('value-of'), [new IdentifierTypeNode(StatusEnum::class)]);
 
             expect(StaticTypeEvaluator::satisfies($propFetch, $valueOf))->toBeTrue();
         });

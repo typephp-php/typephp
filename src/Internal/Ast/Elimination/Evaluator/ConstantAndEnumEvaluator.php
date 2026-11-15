@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Ast\Elimination\Evaluator;
 
+use BackedEnum;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\BinaryOp\BitwiseOr;
 use PhpParser\Node\Expr\ClassConstFetch;
@@ -16,6 +17,7 @@ use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use UnitEnum;
 
 /**
  * Statically evaluates whether constant fetches, enum cases, bitmasks,
@@ -26,12 +28,24 @@ use TypePHP\Internal\Resolver\SpecialTypeResolver;
 final class ConstantAndEnumEvaluator
 {
     /**
+     * O(1) hash map of relative class keywords.
+     *
+     * @var array<string, true>
+     */
+    private const RELATIVE_CLASS_KEYWORDS = [
+        'self' => true,
+        'static' => true,
+        'parent' => true,
+        '$this' => true,
+    ];
+
+    /**
      * Determines whether an expression satisfies constant or enum contracts.
      *
      * Flow of logic:
-     * 1. Evaluates ClassConstFetch nodes against exact constants, wildcards, and base enum types.
+     * 1. Evaluates ClassConstFetch nodes against exact constants, wildcards, and loaded enum cases.
      * 2. Evaluates bitwise OR expressions (A | B) against `int-mask-of` wildcards.
-     * 3. Evaluates enum backing property reads (Enum::Case->value) against `value-of<Enum>`.
+     * 3. Evaluates backed enum property reads (Enum::Case->value) against `value-of<Enum>`.
      */
     public static function satisfies(Expr $expr, TypeNode $typeNode, string $currentFile = ''): bool
     {
@@ -60,9 +74,17 @@ final class ConstantAndEnumEvaluator
         }
 
         $constName = $fetch->name->toString();
+        if (strtolower($constName) === 'class') {
+            return false;
+        }
+
         $targetClassName = $fetch->class->toString();
 
         if ($typeNode instanceof ConstTypeNode && $typeNode->constExpr instanceof ConstFetchNode) {
+            if (! self::classesMatch($targetClassName, $typeNode->constExpr->className, $currentFile)) {
+                return false;
+            }
+
             $docConstName = $typeNode->constExpr->name;
 
             if (str_contains($docConstName, '*')) {
@@ -73,20 +95,31 @@ final class ConstantAndEnumEvaluator
         }
 
         if ($typeNode instanceof IdentifierTypeNode) {
-            if ($currentFile !== '') {
-                $resolvedFetchClass = SpecialTypeResolver::resolveFqcnForFile($targetClassName, $currentFile, false);
-                $resolvedTypeClass = SpecialTypeResolver::resolveFqcnForFile($typeNode->name, $currentFile, false);
-
-                return $resolvedFetchClass !== '' && $resolvedFetchClass === $resolvedTypeClass;
+            if (! self::classesMatch($targetClassName, $typeNode->name, $currentFile)) {
+                return false;
             }
 
-            return $targetClassName === $typeNode->name;
+            $resolvedEnum = self::resolveClassForReflection($targetClassName, $currentFile);
+            if ($resolvedEnum === '' || ! enum_exists($resolvedEnum, false)) {
+                return false;
+            }
+
+            return self::isEnumCase($resolvedEnum, $constName);
         }
 
         if ($typeNode instanceof GenericTypeNode && strtolower((string) $typeNode->type) === 'int-mask-of') {
             $inner = $typeNode->genericTypes[0] ?? null;
             if ($inner instanceof ConstTypeNode && $inner->constExpr instanceof ConstFetchNode) {
-                return self::matchesWildcard($constName, $inner->constExpr->name);
+                if (! self::classesMatch($targetClassName, $inner->constExpr->className, $currentFile)) {
+                    return false;
+                }
+
+                $pattern = $inner->constExpr->name;
+                if (str_contains($pattern, '*')) {
+                    return self::matchesWildcard($constName, $pattern);
+                }
+
+                return $constName === $pattern;
             }
         }
 
@@ -107,7 +140,7 @@ final class ConstantAndEnumEvaluator
     }
 
     /**
-     * Verifies whether an Enum::Case->value property access satisfies `value-of<Enum>`.
+     * Verifies whether a BackedEnum::Case->value property access satisfies `value-of<Enum>`.
      */
     private static function satisfiesEnumBackingValue(PropertyFetch $fetch, TypeNode $typeNode, string $currentFile): bool
     {
@@ -115,7 +148,7 @@ final class ConstantAndEnumEvaluator
             return false;
         }
 
-        if (! ($fetch->var instanceof ClassConstFetch) || ! ($fetch->var->class instanceof Name)) {
+        if (! ($fetch->var instanceof ClassConstFetch) || ! ($fetch->var->class instanceof Name) || ! ($fetch->var->name instanceof Identifier)) {
             return false;
         }
 
@@ -129,15 +162,86 @@ final class ConstantAndEnumEvaluator
         }
 
         $enumClassName = $fetch->var->class->toString();
+        $caseName = $fetch->var->name->toString();
 
-        if ($currentFile !== '') {
-            $resolvedEnumClass = SpecialTypeResolver::resolveFqcnForFile($enumClassName, $currentFile, false);
-            $resolvedTargetClass = SpecialTypeResolver::resolveFqcnForFile($enumTarget->name, $currentFile, false);
-
-            return $resolvedEnumClass !== '' && $resolvedEnumClass === $resolvedTargetClass;
+        if (strtolower($caseName) === 'class') {
+            return false;
         }
 
-        return $enumClassName === $enumTarget->name;
+        if (! self::classesMatch($enumClassName, $enumTarget->name, $currentFile)) {
+            return false;
+        }
+
+        $resolvedEnum = self::resolveClassForReflection($enumClassName, $currentFile);
+        if ($resolvedEnum === '' || ! enum_exists($resolvedEnum, false) || ! is_subclass_of($resolvedEnum, BackedEnum::class)) {
+            return false;
+        }
+
+        return self::isEnumCase($resolvedEnum, $caseName);
+    }
+
+    /**
+     * Verifies whether two class references deterministically denote the same class/enum.
+     */
+    private static function classesMatch(string $fetchClass, string $docClass, string $currentFile): bool
+    {
+        if ($docClass === '') {
+            return false;
+        }
+
+        $lowerFetch = strtolower($fetchClass);
+        $lowerDoc = strtolower($docClass);
+
+        if ($lowerFetch === 'self' && $lowerDoc === 'self') {
+            return true;
+        }
+
+        if (isset(self::RELATIVE_CLASS_KEYWORDS[$lowerFetch]) || isset(self::RELATIVE_CLASS_KEYWORDS[$lowerDoc])) {
+            return false;
+        }
+
+        if ($fetchClass === $docClass) {
+            return true;
+        }
+
+        if ($currentFile !== '') {
+            $resolvedFetchClass = SpecialTypeResolver::resolveFqcnForFile($fetchClass, $currentFile, false);
+            $resolvedTypeClass = SpecialTypeResolver::resolveFqcnForFile($docClass, $currentFile, false);
+
+            return $resolvedFetchClass !== '' && $resolvedFetchClass === $resolvedTypeClass;
+        }
+
+        return false;
+    }
+
+    /**
+     * Resolves a class name without invoking autoloading.
+     */
+    private static function resolveClassForReflection(string $rawClass, string $currentFile): string
+    {
+        if ($currentFile !== '') {
+            return SpecialTypeResolver::resolveFqcnForFile($rawClass, $currentFile, false);
+        }
+
+        return ltrim($rawClass, '\\');
+    }
+
+    /**
+     * Verifies that a symbol is a declared enum case (excluding regular class constants on enums).
+     */
+    private static function isEnumCase(string $enumClass, string $caseName): bool
+    {
+        if (! enum_exists($enumClass, false) || ! is_subclass_of($enumClass, UnitEnum::class)) {
+            return false;
+        }
+
+        foreach ($enumClass::cases() as $case) {
+            if ($case->name === $caseName) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
