@@ -137,9 +137,11 @@ final class FunctionContractInjector
             $hasInheritance || str_contains($docText, ' is ') || ($hasReturnDoc && str_contains($docText, '$'))
         )) || ($isClassMethod && $paramCount > 0 && ($isMagicGet || $isMagicCall));
 
+        $useDynamicMethodKey = $isClassMethod && ! $isPrivate && ! $isFinalClass;
+
         $injectedStmts = [];
         if ($hasParam) {
-            $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg, $isReadonlyClass, $needsReturnVars);
+            $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg, $isReadonlyClass, $needsReturnVars, $useDynamicMethodKey);
         }
 
         $returnTypeNode = null;
@@ -445,9 +447,10 @@ final class FunctionContractInjector
         string $docText,
         Node\Expr $thisArg,
         bool $isReadonlyClass = false,
-        bool $needsReturnVars = false
+        bool $needsReturnVars = false,
+        bool $useDynamicMethodKey = false
     ): array {
-        $setupScopeStmts = self::buildSetupScopeStmt($params, $thisArg, $needsReturnVars);
+        $setupScopeStmts = self::buildSetupScopeStmt($params, $thisArg, $needsReturnVars, $useDynamicMethodKey);
         $callableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isCallableCandidate'], 'wrapCallable', $isReadonlyClass);
         $iterableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isIterableCandidate'], 'wrapIterable', $isReadonlyClass);
 
@@ -459,8 +462,12 @@ final class FunctionContractInjector
      *
      * @return array<Node\Stmt>
      */
-    private static function buildSetupScopeStmt(array $params, Node\Expr $thisArg, bool $needsReturnVars = false): array
-    {
+    private static function buildSetupScopeStmt(
+        array $params,
+        Node\Expr $thisArg,
+        bool $needsReturnVars = false,
+        bool $useDynamicMethodKey = false
+    ): array {
         $arrayItems = [];
         foreach ($params as $param) {
             if ($param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
@@ -490,7 +497,15 @@ final class FunctionContractInjector
         );
 
         $throwStmt = self::buildTypeErrorThrowStmt(new Node\Expr\Variable('__typephpScope'));
-        $cacheKeyExpr = new Node\Scalar\MagicConst\Method();
+        $cacheKeyExpr = $useDynamicMethodKey
+            ? new Node\Expr\BinaryOp\Concat(
+                new Node\Expr\BinaryOp\Concat(
+                    new Node\Expr\ClassConstFetch(new Node\Name('static'), 'class'),
+                    new Node\Scalar\String_('::')
+                ),
+                new Node\Scalar\MagicConst\Function_()
+            )
+            : new Node\Scalar\MagicConst\Method();
 
         $noParamFetch = new Node\Expr\StaticPropertyFetch(
             new Node\Name\FullyQualified('TypePHP\Internal\Checker\ParamChecker'),

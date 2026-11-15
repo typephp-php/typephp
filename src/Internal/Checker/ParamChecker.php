@@ -224,7 +224,6 @@ final class ParamChecker
 
         if (! $contract['hasParamContract']) {
             self::$noParamContractCache[$effectiveFunction] = true;
-            self::$noParamContractCache[$function] = true;
 
             return null;
         }

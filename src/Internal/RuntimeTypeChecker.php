@@ -469,8 +469,8 @@ final class RuntimeTypeChecker
         }
 
         if (
-            isset(ParamChecker::$noParamContractCache[$function])
-            && ! (self::$hasMethodTemplatesCache[$function] ?? false)
+            isset(ParamChecker::$noParamContractCache[$effectiveFunction])
+            && ! (self::$hasMethodTemplatesCache[$effectiveFunction] ?? false)
         ) {
             return null;
         }
@@ -478,7 +478,6 @@ final class RuntimeTypeChecker
         $contract = DocblockParser::parse($effectiveFunction);
         if (! $isMagicCall && ($contract['allParamsUnconstrained'] ?? false)) {
             ParamChecker::$noParamContractCache[$effectiveFunction] = true;
-            ParamChecker::$noParamContractCache[$function] = true;
 
             return null;
         }
@@ -513,7 +512,6 @@ final class RuntimeTypeChecker
                 || ($contract['returnUsesMethodTemplates'] ?? false)
                 || ($isStaticCall && ($contract['classTemplates'] ?? []) !== [])
             );
-            self::$hasMethodTemplatesCache[$function] = $hasMethodTemplates;
         }
 
         if ($hasMethodTemplates) {
@@ -614,15 +612,9 @@ final class RuntimeTypeChecker
             return;
         }
 
-        if (isset(SelfOutChecker::$noSelfOutContractCache[$function])) {
-            return;
-        }
-
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisObj, $thisObj);
 
         if (isset(SelfOutChecker::$noSelfOutContractCache[$effectiveFunction])) {
-            SelfOutChecker::$noSelfOutContractCache[$function] = true;
-
             return;
         }
 
@@ -661,9 +653,7 @@ final class RuntimeTypeChecker
             && (str_contains($effectiveFunction, '__call') || str_ends_with($effectiveFunction, '::__get'));
 
         if (! $isDynamicDispatch) {
-            if (isset(ReturnChecker::$noReturnContractCache[$function]) || isset(ReturnChecker::$noReturnContractCache[$effectiveFunction])) {
-                ReturnChecker::$noReturnContractCache[$function] = true;
-
+            if (isset(ReturnChecker::$noReturnContractCache[$effectiveFunction])) {
                 return $value;
             }
         }

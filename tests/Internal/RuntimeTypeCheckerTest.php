@@ -445,7 +445,7 @@ describe('RuntimeTypeChecker Unit Tests', function () {
 
         RuntimeTypeChecker::checkSelfOut('FakeParent::runMethod', new stdClass());
 
-        expect(SelfOutChecker::$noSelfOutContractCache['FakeParent::runMethod'])->toBeTrue();
+        expect(SelfOutChecker::$noSelfOutContractCache)->not()->toHaveKey('FakeParent::runMethod');
     });
 
     test('handles vendor boundary bypasses across methods', function () {

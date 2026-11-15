@@ -118,9 +118,7 @@ final class ReturnChecker
         $isMagicGet = str_ends_with($effectiveFunction, '::__get');
 
         if (! $isMagicCall && ! $isMagicGet) {
-            if (isset(self::$noReturnContractCache[$function]) || isset(self::$noReturnContractCache[$effectiveFunction])) {
-                self::$noReturnContractCache[$function] = true;
-
+            if (isset(self::$noReturnContractCache[$effectiveFunction])) {
                 return $value;
             }
         }
@@ -155,7 +153,6 @@ final class ReturnChecker
 
         if (! ($contract['hasReturnContract'] ?? ($contract['return'] !== null))) {
             self::$noReturnContractCache[$effectiveFunction] = true;
-            self::$noReturnContractCache[$function] = true;
 
             return $value;
         }
@@ -163,7 +160,6 @@ final class ReturnChecker
         $returnTypeNode = $contract['return'];
         if ($returnTypeNode === null) {
             self::$noReturnContractCache[$effectiveFunction] = true;
-            self::$noReturnContractCache[$function] = true;
 
             return $value;
         }
