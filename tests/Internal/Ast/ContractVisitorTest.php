@@ -397,7 +397,8 @@ PHP;
         $transformed = $this->printer->prettyPrint($newStmts);
 
         expect($transformed)->toContain("RuntimeTypeChecker::checkProperty(\$className::\$staticCount + 5, \$className, 'staticCount'")
-            ->and($transformed)->toContain("RuntimeTypeChecker::checkProperty(\$getObj()::\$staticCount + 1, \$getObj(), 'staticCount'")
+            ->and($transformed)->toContain('$__typephpTgt0 = $getObj()')
+            ->and($transformed)->toContain("RuntimeTypeChecker::checkProperty(\$__typephpTgt0::\$staticCount + 1, \$__typephpTgt0, 'staticCount'")
             ->and($transformed)->toContain("RuntimeTypeChecker::checkProperty(\$className::\$staticCount2 - 1, \$className, 'staticCount2'")
         ;
     });

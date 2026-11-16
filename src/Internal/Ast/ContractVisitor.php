@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Internal\Ast;
 
 use PhpParser\Node;
+use PhpParser\NodeFinder;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
@@ -89,6 +90,8 @@ final class ContractVisitor extends NodeVisitorAbstract
      */
     private array $localClassTemplates = [];
 
+    private int $hoistTempCounter = 0;
+
     public function __construct(private string $currentFile = '')
     {
         $this->scopeManager = new ScopeManager();
@@ -97,9 +100,9 @@ final class ContractVisitor extends NodeVisitorAbstract
     /**
      * Traverses and transforms AST nodes during entry.
      *
-     * @return array<Node>|null
+     * @return Node|array<Node>|null
      */
-    public function enterNode(Node $node): ?array
+    public function enterNode(Node $node): Node|array|null
     {
         $this->trackDeclarationEntry($node);
 
@@ -141,6 +144,8 @@ final class ContractVisitor extends NodeVisitorAbstract
                     $this->scopeManager->unregisterVarType($v->name);
                 }
             }
+        } elseif ($node instanceof Node\ArrayItem && $node->byRef) {
+            $this->markWriteContext($node->value);
         } elseif ($node instanceof Node\Expr\Isset_) {
             foreach ($node->vars as $v) {
                 $this->markWriteContext($v);
@@ -192,13 +197,22 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $this->scopeManager->extractVarDocblock($doc->getText(), $node->valueVar);
             }
 
+            if ($node->keyVar !== null) {
+                $this->markWriteContext($node->keyVar);
+            }
+            $this->markWriteContext($node->valueVar);
+
             $this->handleForeachTypePropagation($node);
 
             return null;
         }
 
         if ($node instanceof Node\Expr\Assign) {
-            $this->handleAssign($node);
+            if ($node->getAttribute('typephp_wrapped') === true) {
+                return null;
+            }
+
+            return $this->handleAssign($node);
         } elseif ($node instanceof Node\Expr\AssignRef) {
             $this->handleAssignRef($node);
         }
@@ -1171,7 +1185,7 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
     }
 
-    private function handleAssign(Node\Expr\Assign $node): void
+    private function handleAssign(Node\Expr\Assign $node): ?Node
     {
         if ($node->var instanceof Node\Expr\Variable && \is_string($node->var->name)) {
             $varName = $node->var->name;
@@ -1220,7 +1234,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
                     $node->expr = $this->wrapVariableCheck($expr, $typeString, $varName, $node->var->getStartLine());
 
-                    return;
+                    return null;
                 }
 
                 try {
@@ -1229,21 +1243,39 @@ final class ContractVisitor extends NodeVisitorAbstract
                     $parsedType = $typeParser->parse($tokens);
 
                     if (StaticTypeEvaluator::satisfies($expr, $parsedType, $this->currentFile)) {
-                        return;
+                        return null;
                     }
                 } catch (\Throwable) {
                 }
 
                 $node->expr = $this->wrapVariableCheck($expr, $typeString, $varName, $node->var->getStartLine());
 
-                return;
+                return null;
             }
+        }
+
+        if ($this->targetHasSideEffects($node->var)) {
+            $preAssignments = [];
+            $cleanTarget = $this->hoistImpureTarget($node->var, $preAssignments);
+            $wrapped = $this->wrapTargetMutation($cleanTarget, $node->expr, $node->var->getStartLine());
+
+            if ($wrapped !== null) {
+                $this->markWriteContext($cleanTarget);
+                $newAssign = new Node\Expr\Assign($cleanTarget, $wrapped);
+                $newAssign->setAttribute('typephp_wrapped', true);
+
+                return $this->wrapWithPreEvaluations($preAssignments, $newAssign);
+            }
+
+            return null;
         }
 
         $wrapped = $this->wrapTargetMutation($node->var, $node->expr, $node->var->getStartLine());
         if ($wrapped !== null) {
             $node->expr = $wrapped;
         }
+
+        return null;
     }
 
     private function handleAssignRef(Node\Expr\AssignRef $node): void
@@ -1338,11 +1370,26 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
     }
 
-    private function handleAssignOp(Node\Expr\AssignOp $node): ?Node\Expr\Assign
+    private function handleAssignOp(Node\Expr\AssignOp $node): ?Node\Expr
     {
         $binaryOpClass = self::ASSIGN_OP_MAP[$node::class] ?? null;
         if ($binaryOpClass === null) {
             return null;
+        }
+
+        if ($this->targetHasSideEffects($node->var)) {
+            $preAssignments = [];
+            $cleanTarget = $this->hoistImpureTarget($node->var, $preAssignments);
+            $binaryExpr = new $binaryOpClass(clone $cleanTarget, $node->expr);
+            $wrapped = $this->wrapTargetMutation(clone $cleanTarget, $binaryExpr, $node->var->getStartLine());
+
+            if ($wrapped === null) {
+                return null;
+            }
+
+            $this->markWriteContext($cleanTarget);
+
+            return $this->wrapWithPreEvaluations($preAssignments, new Node\Expr\Assign($cleanTarget, $wrapped));
         }
 
         $binaryExpr = new $binaryOpClass($node->var, $node->expr);
@@ -1351,15 +1398,140 @@ final class ContractVisitor extends NodeVisitorAbstract
         return $wrapped !== null ? new Node\Expr\Assign($node->var, $wrapped) : null;
     }
 
-    private function handleIncDec(Node\Expr\PreInc|Node\Expr\PostInc|Node\Expr\PreDec|Node\Expr\PostDec $node): ?Node\Expr\Assign
+    private function handleIncDec(Node\Expr\PreInc|Node\Expr\PostInc|Node\Expr\PreDec|Node\Expr\PostDec $node): ?Node\Expr
     {
         $isInc = $node instanceof Node\Expr\PreInc || $node instanceof Node\Expr\PostInc;
         $binaryClass = $isInc ? Node\Expr\BinaryOp\Plus::class : Node\Expr\BinaryOp\Minus::class;
+
+        if ($this->targetHasSideEffects($node->var)) {
+            $preAssignments = [];
+            $cleanTarget = $this->hoistImpureTarget($node->var, $preAssignments);
+            $binaryExpr = new $binaryClass(clone $cleanTarget, new Node\Scalar\LNumber(1));
+            $wrapped = $this->wrapTargetMutation(clone $cleanTarget, $binaryExpr, $node->var->getStartLine());
+
+            if ($wrapped === null) {
+                return null;
+            }
+
+            $this->markWriteContext($cleanTarget);
+
+            return $this->wrapWithPreEvaluations($preAssignments, new Node\Expr\Assign($cleanTarget, $wrapped));
+        }
+
         $binaryExpr = new $binaryClass($node->var, new Node\Scalar\LNumber(1));
 
         $wrapped = $this->wrapTargetMutation($node->var, $binaryExpr, $node->var->getStartLine());
 
         return $wrapped !== null ? new Node\Expr\Assign($node->var, $wrapped) : null;
+    }
+
+    private function targetHasSideEffects(Node $node): bool
+    {
+        return (new NodeFinder())->findFirst($node, static function (Node $n): bool {
+            return $n instanceof Node\Expr\CallLike
+                || $n instanceof Node\Expr\PreInc
+                || $n instanceof Node\Expr\PostInc
+                || $n instanceof Node\Expr\PreDec
+                || $n instanceof Node\Expr\PostDec
+                || $n instanceof Node\Expr\Assign
+                || $n instanceof Node\Expr\AssignOp
+                || $n instanceof Node\Expr\AssignRef
+                || $n instanceof Node\Expr\Yield_
+                || $n instanceof Node\Expr\YieldFrom
+                || $n instanceof Node\Expr\Throw_
+                || $n instanceof Node\Expr\Eval_
+                || $n instanceof Node\Expr\Include_
+                || $n instanceof Node\Expr\ShellExec
+                || $n instanceof Node\Expr\Exit_;
+        }) !== null;
+    }
+
+    /**
+     * @param list<Node\Expr\Assign> $preAssignments
+     */
+    private function hoistImpureTarget(Node\Expr $target, array &$preAssignments): Node\Expr
+    {
+        if ($target instanceof Node\Expr\PropertyFetch) {
+            $newVar = $this->targetHasSideEffects($target->var)
+                ? $this->hoistImpureTarget($target->var, $preAssignments)
+                : $target->var;
+
+            $newName = $target->name;
+            if ($newName instanceof Node\Expr && $this->targetHasSideEffects($newName)) {
+                $newName = $this->createHoistedTemp($newName, $preAssignments);
+            }
+
+            return new Node\Expr\PropertyFetch($newVar, $newName);
+        }
+
+        if ($target instanceof Node\Expr\StaticPropertyFetch) {
+            $newClass = $target->class;
+            if ($newClass instanceof Node\Expr && $this->targetHasSideEffects($newClass)) {
+                $newClass = $this->hoistImpureTarget($newClass, $preAssignments);
+            }
+
+            $newName = $target->name;
+            if ($newName instanceof Node\Expr && $this->targetHasSideEffects($newName)) {
+                $newName = $this->createHoistedTemp($newName, $preAssignments);
+            }
+
+            return new Node\Expr\StaticPropertyFetch($newClass, $newName);
+        }
+
+        if ($target instanceof Node\Expr\ArrayDimFetch) {
+            $newVar = $this->targetHasSideEffects($target->var)
+                ? $this->hoistImpureTarget($target->var, $preAssignments)
+                : $target->var;
+
+            $newDim = $target->dim;
+            if ($newDim !== null && $this->targetHasSideEffects($newDim)) {
+                $newDim = $this->createHoistedTemp($newDim, $preAssignments);
+            }
+
+            return new Node\Expr\ArrayDimFetch($newVar, $newDim);
+        }
+
+        if ($this->targetHasSideEffects($target)) {
+            return $this->createHoistedTemp($target, $preAssignments);
+        }
+
+        return $target;
+    }
+
+    /**
+     * @param list<Node\Expr\Assign> $preAssignments
+     */
+    private function createHoistedTemp(Node\Expr $expr, array &$preAssignments): Node\Expr\Variable
+    {
+        $tempVar = new Node\Expr\Variable('__typephpTgt' . $this->hoistTempCounter++);
+        $preAssignments[] = new Node\Expr\Assign($tempVar, $expr);
+
+        return new Node\Expr\Variable($tempVar->name);
+    }
+
+    /**
+     * @param list<Node\Expr\Assign> $preAssignments
+     */
+    private function wrapWithPreEvaluations(array $preAssignments, Node\Expr $expr): Node\Expr
+    {
+        if ($preAssignments === []) {
+            return $expr;
+        }
+
+        $falseNode = static fn (): Node\Expr\ConstFetch => new Node\Expr\ConstFetch(new Node\Name('false'));
+
+        $cond = new Node\Expr\Ternary($preAssignments[0], $falseNode(), $falseNode());
+        $count = \count($preAssignments);
+        for ($i = 1; $i < $count; $i++) {
+            $step = new Node\Expr\Ternary($preAssignments[$i], $falseNode(), $falseNode());
+            $cond = new Node\Expr\BinaryOp\BooleanOr($cond, $step);
+        }
+
+        return new Node\Expr\Ternary(
+            $cond,
+            new Node\Expr\ConstFetch(new Node\Name('null')),
+            $expr
+        );
     }
 
     /**
