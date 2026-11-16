@@ -59,6 +59,13 @@ final class TemplateManager
     private static array $callStackBindings = [];
 
     /**
+     * Sequential execution order of active function call frames on the stack.
+     *
+     * @var list<string>
+     */
+    private static array $activeCallOrder = [];
+
+    /**
      * Cache for resolved hierarchy templates and variances per class name.
      *
      * @var array<string, array{0: array<string, TemplateTagValueNode>, 1: array<string, string>}>
@@ -481,6 +488,7 @@ final class TemplateManager
     {
         self::$instanceTemplateBindings = null;
         self::$callStackBindings = [];
+        self::$activeCallOrder = [];
         self::$classHierarchyTemplatesCache = [];
         self::$declaredVarianceListCache = [];
         self::$classTemplateDefaultsCache = [];
@@ -703,6 +711,7 @@ final class TemplateManager
     {
         self::$callStackBindings[$function][] = [];
         self::$callStackThis[$function][] = $thisObj;
+        self::$activeCallOrder[] = $function;
     }
 
     /**
@@ -718,6 +727,8 @@ final class TemplateManager
             if (self::$callStackBindings[$function] === []) {
                 unset(self::$callStackBindings[$function], self::$callStackThis[$function], self::$generatorInferredCallFrames[$function]);
             }
+
+            self::popActiveCallOrder($function);
         } else {
             unset(self::$generatorInferredCallFrames[$function]);
         }
@@ -731,6 +742,24 @@ final class TemplateManager
     public static function clearCallBindings(string $function, array $templates, ?object $thisObj = null): void
     {
         self::pushCallFrame($function, $thisObj);
+    }
+
+    private static function popActiveCallOrder(string $function): void
+    {
+        $count = \count(self::$activeCallOrder);
+        if ($count > 0 && self::$activeCallOrder[$count - 1] === $function) {
+            array_pop(self::$activeCallOrder);
+
+            return;
+        }
+
+        for ($i = $count - 2; $i >= 0; $i--) {
+            if (self::$activeCallOrder[$i] === $function) {
+                array_splice(self::$activeCallOrder, $i, 1);
+
+                break;
+            }
+        }
     }
 
     /**
@@ -1047,6 +1076,7 @@ final class TemplateManager
         } else {
             if (! self::hasCallFrame($function)) {
                 self::$callStackBindings[$function][] = [];
+                self::$activeCallOrder[] = $function;
             }
             $lastIndex = \count(self::$callStackBindings[$function]) - 1;
             self::$callStackBindings[$function][$lastIndex][$templateName] = $inferredType;
@@ -1393,11 +1423,15 @@ final class TemplateManager
      */
     private static function widenClonedBindingsFromActiveCall(object $target, array $bindings): array
     {
-        if (self::$callStackBindings === []) {
+        if (self::$activeCallOrder === []) {
             return $bindings;
         }
 
-        $activeFunction = array_key_last(self::$callStackBindings);
+        $activeFunction = end(self::$activeCallOrder);
+        if ($activeFunction === false) {
+            return $bindings;
+        }
+
         $topFrame = self::getTopCallFrame($activeFunction);
         if ($topFrame === null || $topFrame === []) {
             return $bindings;
@@ -1532,9 +1566,9 @@ final class TemplateManager
 
         self::$instanceTemplateBindings ??= new WeakMap();
 
-        if (self::$generatorInferredCallFrames !== [] && self::$callStackBindings !== []) {
-            $activeFunc = array_key_last(self::$callStackBindings);
-            if ($activeFunc !== null && isset(self::$generatorInferredCallFrames[$activeFunc])) {
+        if (self::$generatorInferredCallFrames !== [] && self::$activeCallOrder !== []) {
+            $activeFunc = end(self::$activeCallOrder);
+            if ($activeFunc !== false && isset(self::$generatorInferredCallFrames[$activeFunc])) {
                 self::markGeneratorInferred($instance);
             }
         }
