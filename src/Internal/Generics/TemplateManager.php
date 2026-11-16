@@ -524,12 +524,25 @@ final class TemplateManager
      */
     public static function pushPendingInstantiation(string $typeString, string $file): void
     {
-        $pos = strpos($typeString, '<');
-        $rawClass = $pos !== false ? trim(substr($typeString, 0, $pos)) : $typeString;
-        $targetClass = SpecialTypeResolver::resolveFqcnForFile($rawClass, $file);
+        $resolvedTypeString = $typeString;
+        $targetClass = '';
+
+        if (str_starts_with($typeString, '?') || str_contains($typeString, '|') || str_contains($typeString, '&')) {
+            $extracted = self::extractSingleGenericTypeString($typeString);
+            if ($extracted !== null) {
+                $resolvedTypeString = $extracted[0];
+                $targetClass = SpecialTypeResolver::resolveFqcnForFile($extracted[1], $file);
+            }
+        } else {
+            $pos = strpos($typeString, '<');
+            $rawClass = $pos !== false ? trim(substr($typeString, 0, $pos)) : $typeString;
+            if (! SpecialTypeResolver::isBuiltInTypeKeyword($rawClass) && ClassNameValidator::isValid($rawClass)) {
+                $targetClass = SpecialTypeResolver::resolveFqcnForFile($rawClass, $file);
+            }
+        }
 
         self::$pendingInstantiations[] = [
-            'typeString' => $typeString,
+            'typeString' => $resolvedTypeString,
             'file' => $file,
             'targetClass' => $targetClass,
         ];
@@ -553,7 +566,7 @@ final class TemplateManager
         }
 
         $pending = end(self::$pendingInstantiations);
-        if ($pending !== false && is_a($instance, $pending['targetClass'])) {
+        if ($pending !== false && $pending['targetClass'] !== '' && is_a($instance, $pending['targetClass'])) {
             self::bindInstance($instance, $pending['typeString'], $pending['file']);
         }
     }
@@ -2525,8 +2538,17 @@ final class TemplateManager
                 $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
             }
 
+            while ($typeNode instanceof NullableTypeNode) {
+                $typeNode = $typeNode->type;
+            }
+
             if ($typeNode instanceof GenericTypeNode) {
                 self::bindInstanceFromNode($instance, $typeNode, '', true);
+            } elseif ($typeNode instanceof UnionTypeNode || $typeNode instanceof IntersectionTypeNode) {
+                $matching = self::collectMatchingObjectGenericNodes($instance, $typeNode);
+                if (\count($matching) === 1) {
+                    self::bindInstanceFromNode($instance, $matching[0], '', true);
+                }
             }
         } catch (\Throwable $e) {
             // Silently ignore malformed docblock strings
@@ -2585,6 +2607,76 @@ final class TemplateManager
         }
 
         return self::$mixedNode ??= new IdentifierTypeNode('mixed');
+    }
+
+    /**
+     * @return array{0: string, 1: string}|null
+     */
+    private static function extractSingleGenericTypeString(string $typeString): ?array
+    {
+        try {
+            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+            $tokens = new TokenIterator($lexer->tokenize($typeString));
+            $typeNode = $typeParser->parse($tokens);
+
+            $candidates = self::collectObjectGenericNodesFromType($typeNode);
+            if (\count($candidates) === 1) {
+                $node = $candidates[0];
+
+                return [(string) $node, (string) $node->type];
+            }
+        } catch (\Throwable) {
+        }
+
+        return null;
+    }
+
+    /**
+     * @return list<GenericTypeNode>
+     */
+    private static function collectObjectGenericNodesFromType(TypeNode $node): array
+    {
+        while ($node instanceof NullableTypeNode) {
+            $node = $node->type;
+        }
+
+        if ($node instanceof GenericTypeNode) {
+            $baseName = (string) $node->type;
+            if (! SpecialTypeResolver::isBuiltInTypeKeyword($baseName) && ClassNameValidator::isValid($baseName)) {
+                return [$node];
+            }
+
+            return [];
+        }
+
+        if ($node instanceof UnionTypeNode || $node instanceof IntersectionTypeNode) {
+            $collected = [];
+            foreach ($node->types as $member) {
+                foreach (self::collectObjectGenericNodesFromType($member) as $found) {
+                    $collected[] = $found;
+                }
+            }
+
+            return $collected;
+        }
+
+        return [];
+    }
+
+    /**
+     * @return list<GenericTypeNode>
+     */
+    private static function collectMatchingObjectGenericNodes(object $instance, TypeNode $node): array
+    {
+        $matching = [];
+        foreach (self::collectObjectGenericNodesFromType($node) as $candidate) {
+            $baseName = (string) $candidate->type;
+            if (is_a($instance, $baseName)) {
+                $matching[] = $candidate;
+            }
+        }
+
+        return $matching;
     }
 
     /**

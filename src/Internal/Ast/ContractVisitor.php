@@ -12,14 +12,19 @@ use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\StubManager;
 
@@ -1211,41 +1216,47 @@ final class ContractVisitor extends NodeVisitorAbstract
 
             if ($typeString !== null) {
                 $expr = $node->expr;
-                if ($expr instanceof Node\Expr\New_ && str_contains($typeString, '<')) {
-                    $constructorArgs = $expr->args;
-                    $factoryArrow = new Node\Expr\ArrowFunction([
-                        'params' => [new Node\Param(new Node\Expr\Variable('_typephpCtorArgs'), null, null, false, true)],
-                        'expr' => new Node\Expr\New_(
-                            $expr->class,
-                            [new Node\Arg(new Node\Expr\Variable('_typephpCtorArgs'), false, true)]
-                        ),
-                    ]);
-
-                    $expr = new Node\Expr\StaticCall(
-                        new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker'),
-                        'withPendingGeneric',
-                        [
-                            new Node\Arg(new Node\Scalar\String_($typeString)),
-                            new Node\Arg($factoryArrow),
-                            new Node\Arg(new Node\Scalar\MagicConst\File()),
-                            ...$constructorArgs,
-                        ]
-                    );
-
-                    $node->expr = $this->wrapVariableCheck($expr, $typeString, $varName, $node->var->getStartLine());
-
-                    return null;
-                }
+                $parsedType = null;
 
                 try {
                     [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
                     $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($typeString)));
                     $parsedType = $typeParser->parse($tokens);
+                } catch (\Throwable) {
+                }
 
-                    if (StaticTypeEvaluator::satisfies($expr, $parsedType, $this->currentFile)) {
+                if ($expr instanceof Node\Expr\New_ && $parsedType !== null) {
+                    $pendingGenericTypeString = $this->extractPendingGenericTypeString($parsedType, $expr);
+
+                    if ($pendingGenericTypeString !== null) {
+                        $constructorArgs = $expr->args;
+                        $factoryArrow = new Node\Expr\ArrowFunction([
+                            'params' => [new Node\Param(new Node\Expr\Variable('_typephpCtorArgs'), null, null, false, true)],
+                            'expr' => new Node\Expr\New_(
+                                $expr->class,
+                                [new Node\Arg(new Node\Expr\Variable('_typephpCtorArgs'), false, true)]
+                            ),
+                        ]);
+
+                        $wrappedNew = new Node\Expr\StaticCall(
+                            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker'),
+                            'withPendingGeneric',
+                            [
+                                new Node\Arg(new Node\Scalar\String_($pendingGenericTypeString)),
+                                new Node\Arg($factoryArrow),
+                                new Node\Arg(new Node\Scalar\MagicConst\File()),
+                                ...$constructorArgs,
+                            ]
+                        );
+
+                        $node->expr = $this->wrapVariableCheck($wrappedNew, $typeString, $varName, $node->var->getStartLine());
+
                         return null;
                     }
-                } catch (\Throwable) {
+                }
+
+                if ($parsedType !== null && StaticTypeEvaluator::satisfies($expr, $parsedType, $this->currentFile)) {
+                    return null;
                 }
 
                 $node->expr = $this->wrapVariableCheck($expr, $typeString, $varName, $node->var->getStartLine());
@@ -1276,6 +1287,71 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         return null;
+    }
+
+    private function extractPendingGenericTypeString(TypeNode $typeNode, Node\Expr\New_ $newExpr): ?string
+    {
+        $candidates = $this->collectObjectGenericNodes($typeNode);
+        if ($candidates === []) {
+            return null;
+        }
+
+        if (\count($candidates) === 1) {
+            return (string) $candidates[0];
+        }
+
+        if ($newExpr->class instanceof Node\Name) {
+            $instantiatedFqcn = $this->resolveClassNameFromNode($newExpr->class);
+            if ($instantiatedFqcn !== null) {
+                $instantiatedFqcn = ltrim($instantiatedFqcn, '\\');
+                $matching = [];
+
+                foreach ($candidates as $candidate) {
+                    $candFqcn = $this->resolveClassNameFromNode(new Node\Name((string) $candidate->type));
+                    if ($candFqcn !== null && ltrim($candFqcn, '\\') === $instantiatedFqcn) {
+                        $matching[] = $candidate;
+                    }
+                }
+
+                if (\count($matching) === 1) {
+                    return (string) $matching[0];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return list<GenericTypeNode>
+     */
+    private function collectObjectGenericNodes(TypeNode $node): array
+    {
+        while ($node instanceof NullableTypeNode) {
+            $node = $node->type;
+        }
+
+        if ($node instanceof GenericTypeNode) {
+            $baseName = (string) $node->type;
+            if (! SpecialTypeResolver::isBuiltInTypeKeyword($baseName) && ClassNameValidator::isValid($baseName)) {
+                return [$node];
+            }
+
+            return [];
+        }
+
+        if ($node instanceof UnionTypeNode || $node instanceof IntersectionTypeNode) {
+            $collected = [];
+            foreach ($node->types as $member) {
+                foreach ($this->collectObjectGenericNodes($member) as $found) {
+                    $collected[] = $found;
+                }
+            }
+
+            return $collected;
+        }
+
+        return [];
     }
 
     private function handleAssignRef(Node\Expr\AssignRef $node): void
