@@ -82,8 +82,6 @@ final class FunctionContractInjector
             || str_contains($docText, '@phpstan-return')
             || str_contains($docText, '@psalm-return');
 
-        $hasMethodReturnStatements = self::hasReturnStatements($node);
-
         $hasReturn = ! $isMagicLifecycle
             && ! $isNativeNever
             && ! ($isNativeVoid && ! $hasReturnDoc)
@@ -92,9 +90,6 @@ final class FunctionContractInjector
                 $isClassMethod,
                 $hasInheritance,
                 $isPrivate,
-                $isFinalClass,
-                $node->returnType !== null,
-                $hasMethodReturnStatements,
                 $classContext === null,
             ));
 
@@ -327,9 +322,6 @@ final class FunctionContractInjector
         bool $isClassMethod,
         bool $hasInheritance,
         bool $isPrivate,
-        bool $isFinalClass = false,
-        bool $hasNativeReturnType = false,
-        bool $hasReturnStatements = false,
         bool $isDirectUnitTest = false,
     ): bool {
         if ($isDirectUnitTest && $isClassMethod) {
@@ -365,34 +357,11 @@ final class FunctionContractInjector
             return false;
         }
 
-        if ($hasInheritance && ! $isPrivate) {
-            return true;
-        }
-
-        if ($isFinalClass) {
-            return false;
-        }
-
-        if (! $hasNativeReturnType) {
+        if (! $hasInheritance) {
             return false;
         }
 
         return ! $isPrivate;
-    }
-
-    private static function hasReturnStatements(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): bool
-    {
-        if ($node->stmts === null || $node->stmts === []) {
-            return false;
-        }
-
-        foreach ($node->stmts as $stmt) {
-            if ($stmt instanceof Node\Stmt\Return_ && $stmt->expr !== null) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static function resolveThisArg(bool $isClassMethod, Node\Stmt\Function_|Node\Stmt\ClassMethod $node): Node\Expr
