@@ -75,7 +75,11 @@ final class DocblockNormalizer
         }
 
         if (stripos($doc, 'callable') !== false || stripos($doc, 'closure') !== false) {
-            $doc = preg_replace('/(callable|Closure|static-closure)(?:<[^>]+>)?\s*(\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))(?!\s*:)/i', '$1$2: mixed', $doc) ?? $doc;
+            $doc = preg_replace(
+                '/(callable|Closure|static-closure)(<(?>(?:[^<>]+|(?2)))*>)?\s*(\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))(?!\s*:)/i',
+                '$1$2$3: mixed',
+                $doc
+            ) ?? $doc;
 
             if (str_contains($doc, ':')) {
                 $doc = self::normalizeNestedCallables($doc);
@@ -88,7 +92,11 @@ final class DocblockNormalizer
 
         if (str_contains($doc, '...')) {
             $doc = preg_replace('/(\.\.\.\s*)([a-zA-Z0-9_\x80-\xff\\\\]+)\[\]/', '$1<$2>', $doc) ?? $doc;
-            $doc = preg_replace('/(\.\.\.\s*)(?:list|array)<([^>]+)>/', '$1<$2>', $doc) ?? $doc;
+            $doc = preg_replace(
+                '/(\.\.\.\s*)(?:non-empty-list|non-empty-array|list|array)<((?:[^<>]|(?<angles><(?:[^<>]|(?&angles))*>))*)>/',
+                '$1<$2>',
+                $doc
+            ) ?? $doc;
         }
 
         if (str_contains($doc, '$')) {
@@ -127,7 +135,7 @@ final class DocblockNormalizer
                 }
 
                 $remaining = substr($doc, $j);
-                if (preg_match('/^(callable|Closure|static-closure)\s*\(/i', $remaining) === 1) {
+                if (preg_match('/^(callable|Closure|static-closure)(?<angles><(?:[^<>]|(?&angles))*>)?\s*\(/i', $remaining) === 1) {
                     $result .= ': (';
 
                     $k = $j;
