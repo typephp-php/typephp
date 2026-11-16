@@ -176,6 +176,20 @@ final class SpecialTypeResolver
     private static array $anonymousTraitUseDocs = [];
 
     /**
+     * In-memory cache of per-namespace use import maps keyed by filename and namespace name.
+     *
+     * @var array<string, array<string, array<string, string>>>
+     */
+    private static array $fileNamespaceUseImports = [];
+
+    /**
+     * In-memory cache of namespace line ranges keyed by filename.
+     *
+     * @var array<string, list<array{start: int, end: int, ns: string}>>
+     */
+    private static array $fileNamespaceRanges = [];
+
+    /**
      * Resets reflection context and dynamic caches. Preserves static file imports.
      */
     public static function reset(): void
@@ -327,7 +341,7 @@ final class SpecialTypeResolver
     /**
      * Recursively resolves type identifiers in a TypeNode AST using file context (use imports and namespace).
      */
-    public static function resolveForFile(TypeNode $node, string $file): TypeNode
+    public static function resolveForFile(TypeNode $node, string $file, ?string $namespace = null): TypeNode
     {
         $file = str_replace('\\', '/', $file);
 
@@ -348,25 +362,25 @@ final class SpecialTypeResolver
                     return clone $node;
                 }
 
-                $resolvedClass = self::resolveFqcnForFile($className, $file);
+                $resolvedClass = self::resolveFqcnForFile($className, $file, true, $namespace);
 
                 return $resolvedClass !== $className ? new IdentifierTypeNode($resolvedClass . '::' . $member) : clone $node;
             }
 
-            $fqcn = self::resolveFqcnForFile($node->name, $file);
+            $fqcn = self::resolveFqcnForFile($node->name, $file, true, $namespace);
 
             return $fqcn !== $node->name ? new IdentifierTypeNode($fqcn) : clone $node;
         }
 
         if ($node instanceof ConstTypeNode) {
-            return self::resolveConstTypeForFile($node, $file);
+            return self::resolveConstTypeForFile($node, $file, $namespace);
         }
 
         if ($node instanceof GenericTypeNode) {
-            $genericType = self::resolveForFile($node->type, $file);
+            $genericType = self::resolveForFile($node->type, $file, $namespace);
             $innerTypes = [];
             foreach ($node->genericTypes as $gt) {
-                $innerTypes[] = self::resolveForFile($gt, $file);
+                $innerTypes[] = self::resolveForFile($gt, $file, $namespace);
             }
 
             return new GenericTypeNode(
@@ -377,27 +391,27 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof OffsetAccessTypeNode) {
-            return self::resolveOffsetAccessForFile($node, $file);
+            return self::resolveOffsetAccessForFile($node, $file, $namespace);
         }
 
         if ($node instanceof ArrayShapeNode) {
-            return self::resolveArrayShapeForFile($node, $file);
+            return self::resolveArrayShapeForFile($node, $file, $namespace);
         }
 
         if ($node instanceof ObjectShapeNode) {
-            return self::resolveObjectShapeForFile($node, $file);
+            return self::resolveObjectShapeForFile($node, $file, $namespace);
         }
 
         if ($node instanceof CallableTypeNode) {
-            return self::resolveCallableForFile($node, $file);
+            return self::resolveCallableForFile($node, $file, $namespace);
         }
 
         if ($node instanceof ConditionalTypeNode) {
             return new ConditionalTypeNode(
-                self::resolveForFile($node->subjectType, $file),
-                self::resolveForFile($node->targetType, $file),
-                self::resolveForFile($node->if, $file),
-                self::resolveForFile($node->else, $file),
+                self::resolveForFile($node->subjectType, $file, $namespace),
+                self::resolveForFile($node->targetType, $file, $namespace),
+                self::resolveForFile($node->if, $file, $namespace),
+                self::resolveForFile($node->else, $file, $namespace),
                 $node->negated
             );
         }
@@ -405,25 +419,25 @@ final class SpecialTypeResolver
         if ($node instanceof ConditionalTypeForParameterNode) {
             return new ConditionalTypeForParameterNode(
                 $node->parameterName,
-                self::resolveForFile($node->targetType, $file),
-                self::resolveForFile($node->if, $file),
-                self::resolveForFile($node->else, $file),
+                self::resolveForFile($node->targetType, $file, $namespace),
+                self::resolveForFile($node->if, $file, $namespace),
+                self::resolveForFile($node->else, $file, $namespace),
                 $node->negated
             );
         }
 
         if ($node instanceof NullableTypeNode) {
-            return new NullableTypeNode(self::resolveForFile($node->type, $file));
+            return new NullableTypeNode(self::resolveForFile($node->type, $file, $namespace));
         }
 
         if ($node instanceof ArrayTypeNode) {
-            return new ArrayTypeNode(self::resolveForFile($node->type, $file));
+            return new ArrayTypeNode(self::resolveForFile($node->type, $file, $namespace));
         }
 
         if ($node instanceof UnionTypeNode) {
             $types = [];
             foreach ($node->types as $t) {
-                $types[] = self::resolveForFile($t, $file);
+                $types[] = self::resolveForFile($t, $file, $namespace);
             }
 
             return new UnionTypeNode($types);
@@ -432,7 +446,7 @@ final class SpecialTypeResolver
         if ($node instanceof IntersectionTypeNode) {
             $types = [];
             foreach ($node->types as $t) {
-                $types[] = self::resolveForFile($t, $file);
+                $types[] = self::resolveForFile($t, $file, $namespace);
             }
 
             return new IntersectionTypeNode($types);
@@ -759,7 +773,7 @@ final class SpecialTypeResolver
         return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $resolvedTemplateTypes);
     }
 
-    private static function resolveConstTypeForFile(ConstTypeNode $node, string $file): ConstTypeNode
+    private static function resolveConstTypeForFile(ConstTypeNode $node, string $file, ?string $namespace = null): ConstTypeNode
     {
         if ($node->constExpr instanceof ConstFetchNode && $node->constExpr->className !== '') {
             $className = $node->constExpr->className;
@@ -768,7 +782,7 @@ final class SpecialTypeResolver
             if ($lowerClassName === 'self' || $lowerClassName === 'parent') {
                 $resolvedClass = $className;
             } else {
-                $resolvedClass = self::resolveFqcnForFile($className, $file);
+                $resolvedClass = self::resolveFqcnForFile($className, $file, true, $namespace);
             }
 
             return new ConstTypeNode(new ConstFetchNode($resolvedClass, $node->constExpr->name));
@@ -777,10 +791,10 @@ final class SpecialTypeResolver
         return clone $node;
     }
 
-    private static function resolveOffsetAccessForFile(OffsetAccessTypeNode $node, string $file): TypeNode
+    private static function resolveOffsetAccessForFile(OffsetAccessTypeNode $node, string $file, ?string $namespace = null): TypeNode
     {
-        $baseType = self::resolveForFile($node->type, $file);
-        $offsetType = self::resolveForFile($node->offset, $file);
+        $baseType = self::resolveForFile($node->type, $file, $namespace);
+        $offsetType = self::resolveForFile($node->offset, $file, $namespace);
 
         $offsetKey = self::extractOffsetKey($offsetType);
 
@@ -805,7 +819,7 @@ final class SpecialTypeResolver
         return new OffsetAccessTypeNode($baseType, $offsetType);
     }
 
-    private static function resolveArrayShapeForFile(ArrayShapeNode $node, string $file): ArrayShapeNode
+    private static function resolveArrayShapeForFile(ArrayShapeNode $node, string $file, ?string $namespace = null): ArrayShapeNode
     {
         $items = [];
         foreach ($node->items as $item) {
@@ -828,7 +842,7 @@ final class SpecialTypeResolver
                 $lowerClassName = strtolower($className);
 
                 if ($lowerClassName !== 'self' && $lowerClassName !== 'parent') {
-                    $resolvedClass = self::resolveFqcnForFile($className, $file);
+                    $resolvedClass = self::resolveFqcnForFile($className, $file, true, $namespace);
                     $resolvedKeyNode = self::resolveConstantKeyValue($resolvedClass, $constName);
                     if ($resolvedKeyNode !== null) {
                         $keyName = $resolvedKeyNode;
@@ -839,7 +853,7 @@ final class SpecialTypeResolver
             $items[] = new ArrayShapeItemNode(
                 $keyName,
                 $item->optional,
-                self::resolveForFile($item->valueType, $file)
+                self::resolveForFile($item->valueType, $file, $namespace)
             );
         }
 
@@ -849,39 +863,39 @@ final class SpecialTypeResolver
 
         $unsealedType = null;
         if ($node->unsealedType !== null) {
-            $unsealedKey = $node->unsealedType->keyType !== null ? self::resolveForFile($node->unsealedType->keyType, $file) : null;
-            $unsealedValue = self::resolveForFile($node->unsealedType->valueType, $file);
+            $unsealedKey = $node->unsealedType->keyType !== null ? self::resolveForFile($node->unsealedType->keyType, $file, $namespace) : null;
+            $unsealedValue = self::resolveForFile($node->unsealedType->valueType, $file, $namespace);
             $unsealedType = new ArrayShapeUnsealedTypeNode($unsealedValue, $unsealedKey);
         }
 
         return ArrayShapeNode::createUnsealed($items, $unsealedType, $node->kind);
     }
 
-    private static function resolveObjectShapeForFile(ObjectShapeNode $node, string $file): ObjectShapeNode
+    private static function resolveObjectShapeForFile(ObjectShapeNode $node, string $file, ?string $namespace = null): ObjectShapeNode
     {
         $items = [];
         foreach ($node->items as $item) {
             $items[] = new ObjectShapeItemNode(
                 $item->keyName,
                 $item->optional,
-                self::resolveForFile($item->valueType, $file)
+                self::resolveForFile($item->valueType, $file, $namespace)
             );
         }
 
         return new ObjectShapeNode($items);
     }
 
-    private static function resolveCallableForFile(CallableTypeNode $node, string $file): CallableTypeNode
+    private static function resolveCallableForFile(CallableTypeNode $node, string $file, ?string $namespace = null): CallableTypeNode
     {
         $localTemplates = [];
         $resolvedTemplateTypes = [];
         foreach ($node->templateTypes as $tTag) {
             $localTemplates[$tTag->name] = true;
             $resolvedBound = $tTag->bound !== null
-                ? self::resolveForFile($tTag->bound, $file)
+                ? self::resolveForFile($tTag->bound, $file, $namespace)
                 : null;
             $resolvedDefault = $tTag->default !== null
-                ? self::resolveForFile($tTag->default, $file)
+                ? self::resolveForFile($tTag->default, $file, $namespace)
                 : null;
             $resolvedTemplateTypes[] = new \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode(
                 $tTag->name,
@@ -895,7 +909,7 @@ final class SpecialTypeResolver
         foreach ($node->parameters as $param) {
             $paramType = ($param->type instanceof IdentifierTypeNode && isset($localTemplates[(string) $param->type]))
                 ? clone $param->type
-                : self::resolveForFile($param->type, $file);
+                : self::resolveForFile($param->type, $file, $namespace);
 
             $resolvedParameters[] = new CallableTypeParameterNode(
                 $paramType,
@@ -908,7 +922,7 @@ final class SpecialTypeResolver
 
         $resolvedReturnType = ($node->returnType instanceof IdentifierTypeNode && isset($localTemplates[$node->returnType->name]))
             ? clone $node->returnType
-            : self::resolveForFile($node->returnType, $file);
+            : self::resolveForFile($node->returnType, $file, $namespace);
 
         return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $resolvedTemplateTypes);
     }
@@ -1004,21 +1018,36 @@ final class SpecialTypeResolver
      * @param array<string, string> $imports
      * @param array<string, array<int, string>> $classTraitUseDocs
      * @param array<int, array<int, string>> $anonymousTraitUseDocs
+     * @param array<string, array<string, string>> $namespaceImports
+     * @param list<array{start: int, end: int, ns: string}> $namespaceRanges
      */
     public static function seedFileMetadata(
         string $fileName,
         string $namespace,
         array $imports,
         array $classTraitUseDocs = [],
-        array $anonymousTraitUseDocs = []
+        array $anonymousTraitUseDocs = [],
+        array $namespaceImports = [],
+        array $namespaceRanges = []
     ): void {
         if ($fileName !== '') {
             $fileName = str_replace('\\', '/', $fileName);
             self::$fileNamespaces[$fileName] = $namespace;
             self::$fileUseImports[$fileName] = $imports;
+            self::$fileNamespaceUseImports[$fileName] = $namespaceImports !== []
+                ? $namespaceImports
+                : [$namespace => $imports];
+
+            if ($namespaceRanges !== []) {
+                self::$fileNamespaceRanges[$fileName] = $namespaceRanges;
+            } else {
+                unset(self::$fileNamespaceRanges[$fileName]);
+            }
+
             foreach ($classTraitUseDocs as $className => $docs) {
                 self::$classTraitUseDocs[$className] = $docs;
             }
+
             if ($anonymousTraitUseDocs !== []) {
                 self::$anonymousTraitUseDocs[$fileName] = $anonymousTraitUseDocs;
             }
@@ -1123,11 +1152,11 @@ final class SpecialTypeResolver
     }
 
     /**
-     * Extracts and caches use imports directly from a file path.
+     * Extracts and caches use imports directly from a file path, optionally scoped to a namespace.
      *
      * @return array<string, string>
      */
-    public static function getUseImportsFromFile(string $fileName): array
+    public static function getUseImportsFromFile(string $fileName, ?string $namespace = null): array
     {
         if ($fileName === '') {
             return [];
@@ -1135,20 +1164,22 @@ final class SpecialTypeResolver
 
         $fileName = str_replace('\\', '/', $fileName);
 
-        if (isset(self::$fileUseImports[$fileName])) {
-            return self::$fileUseImports[$fileName];
+        if (! isset(self::$fileUseImports[$fileName])) {
+            if (! file_exists($fileName)) {
+                return [];
+            }
+
+            $source = file_get_contents($fileName);
+            if ($source === false) {
+                return self::$fileUseImports[$fileName] = [];
+            }
+
+            self::parseFileMetadata($fileName, $source);
         }
 
-        if (! file_exists($fileName)) {
-            return [];
+        if ($namespace !== null && isset(self::$fileNamespaceUseImports[$fileName])) {
+            return self::$fileNamespaceUseImports[$fileName][$namespace] ?? [];
         }
-
-        $source = file_get_contents($fileName);
-        if ($source === false) {
-            return self::$fileUseImports[$fileName] = [];
-        }
-
-        self::parseFileMetadata($fileName, $source);
 
         return self::$fileUseImports[$fileName] ?? [];
     }
@@ -1207,7 +1238,9 @@ final class SpecialTypeResolver
 
         $fileName = $ref->getFileName();
         if ($fileName !== false && $fileName !== '') {
-            return self::resolveFqcnForFile($name, $fileName);
+            $namespace = self::resolveNamespaceFromReflection($ref, $fileName);
+
+            return self::resolveFqcnForFile($name, $fileName, true, $namespace);
         }
 
         $contextKey = $ref instanceof \ReflectionMethod
@@ -1236,7 +1269,7 @@ final class SpecialTypeResolver
     /**
      * Resolves a short class name to its FQCN purely based on file context with 2D caching.
      */
-    public static function resolveFqcnForFile(string $name, string $file, bool $autoload = true): string
+    public static function resolveFqcnForFile(string $name, string $file, bool $autoload = true, ?string $namespace = null): string
     {
         $file = str_replace('\\', '/', $file);
         $lower = strtolower($name);
@@ -1255,21 +1288,62 @@ final class SpecialTypeResolver
             return $name;
         }
 
-        $cacheKey = $autoload ? $name : ($name . ':no_auto');
+        $cacheKey = ($namespace !== null ? $namespace . '|' : '') . ($autoload ? $name : ($name . ':no_auto'));
         if (isset(self::$fileFqcnCache[$file][$cacheKey])) {
             return self::$fileFqcnCache[$file][$cacheKey];
         }
 
-        $imports = self::getUseImportsFromFile($file);
-        $namespace = self::getNamespaceFromFile($file);
+        $imports = self::getUseImportsFromFile($file, $namespace);
+        $resolvedNamespace = $namespace ?? self::getNamespaceFromFile($file);
 
-        $resolved = self::resolveNameFromImportsAndNamespace($name, $imports, $namespace, $autoload);
+        $resolved = self::resolveNameFromImportsAndNamespace($name, $imports, $resolvedNamespace, $autoload);
 
         if (isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) && $resolved === $name && ! self::symbolExists($name, $autoload)) {
             return self::$fileFqcnCache[$file][$cacheKey] = $name;
         }
 
         return self::$fileFqcnCache[$file][$cacheKey] = $resolved;
+    }
+
+    /**
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     */
+    private static function resolveNamespaceFromReflection(\ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref, string $fileName): string
+    {
+        $normalizedFile = str_replace('\\', '/', $fileName);
+
+        if (! isset(self::$fileUseImports[$normalizedFile]) && file_exists($fileName)) {
+            $source = file_get_contents($fileName);
+            if ($source !== false) {
+                self::parseFileMetadata($fileName, $source);
+            }
+        }
+
+        if (isset(self::$fileNamespaceRanges[$normalizedFile])) {
+            $ranges = self::$fileNamespaceRanges[$normalizedFile];
+            if (\count($ranges) === 1) {
+                return $ranges[0]['ns'];
+            }
+
+            $startLine = $ref->getStartLine();
+            if ($startLine !== false) {
+                foreach ($ranges as $range) {
+                    if ($startLine >= $range['start'] && $startLine <= $range['end']) {
+                        return $range['ns'];
+                    }
+                }
+            }
+        }
+
+        if (isset(self::$fileNamespaces[$normalizedFile])) {
+            return self::$fileNamespaces[$normalizedFile];
+        }
+
+        return match (true) {
+            $ref instanceof \ReflectionClass => $ref->getNamespaceName(),
+            $ref instanceof \ReflectionMethod => $ref->getDeclaringClass()->getNamespaceName(),
+            $ref instanceof \ReflectionFunction => $ref->getNamespaceName(),
+        };
     }
 
     /**
@@ -1365,17 +1439,24 @@ final class SpecialTypeResolver
         $normalizedFile = str_replace('\\', '/', $fileName);
         self::$fileNamespaces[$normalizedFile] = '';
         self::$fileUseImports[$normalizedFile] = [];
+        self::$fileNamespaceUseImports[$normalizedFile] = [];
         self::$anonymousTraitUseDocs[$normalizedFile] = [];
+        unset(self::$fileNamespaceRanges[$normalizedFile]);
 
         try {
             $tokens = \PhpToken::tokenize($source);
             $count = \count($tokens);
             $namespace = '';
             $imports = [];
+            $allImports = [];
+            $namespaceImports = [];
+            $namespaceRanges = [];
+            $hasSeenNamespace = false;
+            $currentNsStartLine = 1;
 
-            /** @var list<array{type: 'named'|'anon', name?: string, line?: int, depth: int}> $classStack */
+            /** @var list<array{type: 'named'|'anon', name?: ?string, line?: ?int, depth: int}> $classStack */
             $classStack = [];
-            /** @var array{type: 'named'|'anon', name?: string, line?: int}|null $pendingClass */
+            /** @var array{type: 'named'|'anon', name?: ?string, line?: ?int}|null $pendingClass */
             $pendingClass = null;
             $braceDepth = 0;
 
@@ -1383,6 +1464,21 @@ final class SpecialTypeResolver
                 $token = $tokens[$i];
 
                 if ($token->id === T_NAMESPACE) {
+                    if ($hasSeenNamespace) {
+                        $namespaceImports[$namespace] = $imports;
+                        $namespaceRanges[] = [
+                            'start' => $currentNsStartLine,
+                            'end' => max($currentNsStartLine, $token->line - 1),
+                            'ns' => $namespace,
+                        ];
+                    } elseif ($imports !== []) {
+                        $namespaceImports[$namespace] = $imports;
+                    }
+
+                    $hasSeenNamespace = true;
+                    $currentNsStartLine = $token->line;
+                    $imports = [];
+
                     $nsParts = [];
                     for ($j = $i + 1; $j < $count; $j++) {
                         if ($tokens[$j]->text === ';' || $tokens[$j]->text === '{') {
@@ -1530,9 +1626,10 @@ final class SpecialTypeResolver
                                     continue;
                                 }
                                 if (preg_match('/^([a-zA-Z0-9_\\\\]+)(?:\s+as\s+([a-zA-Z0-9_]+))?$/i', $part, $m) === 1) {
-                                    $fqcn = rtrim($prefix, '\\') . '\\' . trim($m[1]);
+                                    $fqcn = ltrim(rtrim($prefix, '\\') . '\\' . trim($m[1]), '\\');
                                     $alias = $m[2] ?? basename(str_replace('\\', '/', $fqcn));
-                                    $imports[$alias] = ltrim($fqcn, '\\');
+                                    $imports[$alias] = $fqcn;
+                                    $allImports[$alias] = $fqcn;
                                 }
                             }
 
@@ -1548,22 +1645,40 @@ final class SpecialTypeResolver
                                 continue;
                             }
                             if (preg_match('/^(?:function\s+|const\s+)?([a-zA-Z0-9_\\\\]+)(?:\s+as\s+([a-zA-Z0-9_]+))?$/i', $part, $m) === 1) {
-                                $fqcn = trim($m[1]);
+                                $fqcn = ltrim(trim($m[1]), '\\');
                                 $alias = $m[2] ?? basename(str_replace('\\', '/', $fqcn));
-                                $imports[$alias] = ltrim($fqcn, '\\');
+                                $imports[$alias] = $fqcn;
+                                $allImports[$alias] = $fqcn;
                             }
                         }
                     } elseif (preg_match('/^(?:function\s+|const\s+)?([a-zA-Z0-9_\\\\]+)(?:\s+as\s+([a-zA-Z0-9_]+))?$/i', trim($useStatement), $m) === 1) {
-                        $fqcn = trim($m[1]);
+                        $fqcn = ltrim(trim($m[1]), '\\');
                         $alias = $m[2] ?? basename(str_replace('\\', '/', $fqcn));
-                        $imports[$alias] = ltrim($fqcn, '\\');
+                        $imports[$alias] = $fqcn;
+                        $allImports[$alias] = $fqcn;
                     }
                 }
             }
 
-            self::$fileUseImports[$normalizedFile] = $imports;
+            $namespaceImports[$namespace] = $imports;
+            if ($hasSeenNamespace) {
+                $lastTokenLine = $count > 0 ? $tokens[$count - 1]->line : $currentNsStartLine;
+                $namespaceRanges[] = [
+                    'start' => $currentNsStartLine,
+                    'end' => max($currentNsStartLine, $lastTokenLine),
+                    'ns' => $namespace,
+                ];
+            }
+
+            self::$fileNamespaceUseImports[$normalizedFile] = $namespaceImports;
+            if ($namespaceRanges !== []) {
+                self::$fileNamespaceRanges[$normalizedFile] = $namespaceRanges;
+            }
+            self::$fileUseImports[$normalizedFile] = $allImports;
         } catch (\Throwable $e) {
             self::$fileUseImports[$normalizedFile] = [];
+            self::$fileNamespaceUseImports[$normalizedFile] = [];
+            unset(self::$fileNamespaceRanges[$normalizedFile]);
         }
     }
 }

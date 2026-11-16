@@ -975,55 +975,47 @@ final class StreamWrapper implements StreamWrapperInterface
             return;
         }
 
-        $namespace = '';
-        $imports = [];
+        $lastNamespace = '';
+        $mergedImports = [];
+        $namespaceImports = [];
+        $namespaceRanges = [];
         $classTraitUseDocs = [];
         $anonymousTraitUseDocs = [];
 
-        $nodesToScan = $stmts;
+        $hasNamespaceStmt = false;
+        $topLevelOtherStmts = [];
+
         foreach ($stmts as $stmt) {
             if ($stmt instanceof \PhpParser\Node\Stmt\Namespace_) {
-                $namespace = $stmt->name !== null ? $stmt->name->toString() : '';
-                $nodesToScan = $stmt->stmts;
+                $hasNamespaceStmt = true;
+                $ns = $stmt->name !== null ? $stmt->name->toString() : '';
+                $lastNamespace = $ns;
+                $namespaceRanges[] = [
+                    'start' => $stmt->getStartLine(),
+                    'end' => $stmt->getEndLine(),
+                    'ns' => $ns,
+                ];
 
-                break;
+                self::scanNamespaceStatements(
+                    $stmt->stmts,
+                    $ns,
+                    $mergedImports,
+                    $namespaceImports,
+                    $classTraitUseDocs
+                );
+            } else {
+                $topLevelOtherStmts[] = $stmt;
             }
         }
 
-        foreach ($nodesToScan as $stmt) {
-            if ($stmt instanceof \PhpParser\Node\Stmt\Use_) {
-                if ($stmt->type !== \PhpParser\Node\Stmt\Use_::TYPE_NORMAL) {
-                    continue;
-                }
-
-                foreach ($stmt->uses as $use) {
-                    $fqcn = $use->name->toString();
-                    $alias = $use->getAlias()->toString();
-                    $imports[$alias] = $fqcn;
-                }
-            } elseif ($stmt instanceof \PhpParser\Node\Stmt\GroupUse) {
-                $prefix = $stmt->prefix->toString();
-
-                foreach ($stmt->uses as $use) {
-                    if ($use->type !== \PhpParser\Node\Stmt\Use_::TYPE_NORMAL && $use->type !== \PhpParser\Node\Stmt\Use_::TYPE_UNKNOWN && $stmt->type !== \PhpParser\Node\Stmt\Use_::TYPE_NORMAL) {
-                        continue;
-                    }
-
-                    $fqcn = $prefix . '\\' . $use->name->toString();
-                    $alias = $use->getAlias()->toString();
-                    $imports[$alias] = $fqcn;
-                }
-            } elseif ($stmt instanceof \PhpParser\Node\Stmt\Class_ && $stmt->name !== null) {
-                $className = $namespace !== '' ? $namespace . '\\' . $stmt->name->toString() : $stmt->name->toString();
-                foreach ($stmt->stmts as $classStmt) {
-                    if ($classStmt instanceof \PhpParser\Node\Stmt\TraitUse) {
-                        $doc = $classStmt->getDocComment();
-                        if ($doc !== null) {
-                            $classTraitUseDocs[$className][] = $doc->getText();
-                        }
-                    }
-                }
-            }
+        if (! $hasNamespaceStmt && $topLevelOtherStmts !== []) {
+            self::scanNamespaceStatements(
+                $topLevelOtherStmts,
+                '',
+                $mergedImports,
+                $namespaceImports,
+                $classTraitUseDocs
+            );
         }
 
         $nodeFinder = new \PhpParser\NodeFinder();
@@ -1044,6 +1036,83 @@ final class StreamWrapper implements StreamWrapperInterface
             }
         }
 
-        SpecialTypeResolver::seedFileMetadata($filePath, $namespace, $imports, $classTraitUseDocs, $anonymousTraitUseDocs);
+        SpecialTypeResolver::seedFileMetadata(
+            $filePath,
+            $lastNamespace,
+            $mergedImports,
+            $classTraitUseDocs,
+            $anonymousTraitUseDocs,
+            $namespaceImports,
+            $namespaceRanges
+        );
+    }
+
+    /**
+     * Extracts use imports and TraitUse docblocks for a single namespace block or un-namespaced statement list.
+     *
+     * @param array<\PhpParser\Node\Stmt> $statements
+     * @param array<string, string> $mergedImports
+     * @param array<string, array<string, string>> $namespaceImports
+     * @param array<string, array<int, string>> $classTraitUseDocs
+     */
+    private static function scanNamespaceStatements(
+        array $statements,
+        string $ns,
+        array &$mergedImports,
+        array &$namespaceImports,
+        array &$classTraitUseDocs
+    ): void {
+        $nsImports = $namespaceImports[$ns] ?? [];
+
+        foreach ($statements as $stmt) {
+            if ($stmt instanceof \PhpParser\Node\Stmt\Use_) {
+                if ($stmt->type !== \PhpParser\Node\Stmt\Use_::TYPE_NORMAL) {
+                    continue;
+                }
+
+                foreach ($stmt->uses as $use) {
+                    $fqcn = $use->name->toString();
+                    $alias = $use->getAlias()->toString();
+                    $nsImports[$alias] = $fqcn;
+                    $mergedImports[$alias] = $fqcn;
+                }
+            } elseif ($stmt instanceof \PhpParser\Node\Stmt\GroupUse) {
+                $prefix = $stmt->prefix->toString();
+
+                foreach ($stmt->uses as $use) {
+                    if (
+                        $use->type !== \PhpParser\Node\Stmt\Use_::TYPE_NORMAL
+                        && $use->type !== \PhpParser\Node\Stmt\Use_::TYPE_UNKNOWN
+                        && $stmt->type !== \PhpParser\Node\Stmt\Use_::TYPE_NORMAL
+                    ) {
+                        continue;
+                    }
+
+                    $fqcn = $prefix . '\\' . $use->name->toString();
+                    $alias = $use->getAlias()->toString();
+                    $nsImports[$alias] = $fqcn;
+                    $mergedImports[$alias] = $fqcn;
+                }
+            } elseif (
+                (
+                    $stmt instanceof \PhpParser\Node\Stmt\Class_
+                    || $stmt instanceof \PhpParser\Node\Stmt\Enum_
+                    || $stmt instanceof \PhpParser\Node\Stmt\Trait_
+                )
+                && $stmt->name !== null
+            ) {
+                $typeName = $ns !== '' ? $ns . '\\' . $stmt->name->toString() : $stmt->name->toString();
+                foreach ($stmt->stmts as $classStmt) {
+                    if ($classStmt instanceof \PhpParser\Node\Stmt\TraitUse) {
+                        $doc = $classStmt->getDocComment();
+                        if ($doc !== null) {
+                            $classTraitUseDocs[$typeName][] = $doc->getText();
+                        }
+                    }
+                }
+            }
+        }
+
+        $namespaceImports[$ns] = $nsImports;
     }
 }
