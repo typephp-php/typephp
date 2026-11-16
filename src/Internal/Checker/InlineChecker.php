@@ -167,7 +167,8 @@ final class InlineChecker
             [$typeNode, $needsContext] = self::parseTypeString($normalized);
 
             if ($file !== '') {
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+                $callerNamespace = self::extractNamespaceFromCaller($caller);
+                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file, $callerNamespace);
             }
 
             if ($needsContext && $caller !== null) {
@@ -251,7 +252,8 @@ final class InlineChecker
             [$typeNode, $needsContext] = self::parseTypeString($normalized);
 
             if ($file !== '') {
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+                $callerNamespace = self::extractNamespaceFromCaller($caller);
+                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file, $callerNamespace);
             }
 
             if ($needsContext && $caller !== null) {
@@ -306,6 +308,22 @@ final class InlineChecker
         }
 
         return null;
+    }
+
+    private static function extractNamespaceFromCaller(?string $caller): ?string
+    {
+        if ($caller === null || $caller === '') {
+            return null;
+        }
+
+        $symbol = str_contains($caller, '::') ? explode('::', $caller, 2)[0] : $caller;
+        if (str_contains($symbol, '@anonymous')) {
+            return null;
+        }
+
+        $pos = strrpos($symbol, '\\');
+
+        return $pos !== false ? substr($symbol, 0, $pos) : '';
     }
 
     /**

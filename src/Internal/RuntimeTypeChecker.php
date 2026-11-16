@@ -60,6 +60,7 @@ final class RuntimeTypeChecker
         CallerBoundaryResolver::reset();
         ParamOutChecker::reset();
         SelfOutChecker::reset();
+        GeneratorChecker::reset();
         ViolationCollector::reset();
     }
 
@@ -357,8 +358,17 @@ final class RuntimeTypeChecker
                 return null;
             }
 
+            $kind = 'parameter';
+            if (str_contains($context, 'Return value')) {
+                $kind = 'return';
+            } elseif (str_contains($context, 'Property ')) {
+                $kind = 'property';
+            } elseif (str_contains($context, 'Variable ')) {
+                $kind = 'variable';
+            }
+
             /** @var ErrorMessage|null $handled */
-            $handled = ViolationCollector::handle($err, 'parameter', null, function: $context);
+            $handled = ViolationCollector::handle($err, $kind, null, function: $context);
 
             return $handled;
         }
@@ -459,8 +469,8 @@ final class RuntimeTypeChecker
         }
 
         if (
-            isset(ParamChecker::$noParamContractCache[$function])
-            && ! (self::$hasMethodTemplatesCache[$function] ?? false)
+            isset(ParamChecker::$noParamContractCache[$effectiveFunction])
+            && ! (self::$hasMethodTemplatesCache[$effectiveFunction] ?? false)
         ) {
             return null;
         }
@@ -468,7 +478,6 @@ final class RuntimeTypeChecker
         $contract = DocblockParser::parse($effectiveFunction);
         if (! $isMagicCall && ($contract['allParamsUnconstrained'] ?? false)) {
             ParamChecker::$noParamContractCache[$effectiveFunction] = true;
-            ParamChecker::$noParamContractCache[$function] = true;
 
             return null;
         }
@@ -503,10 +512,18 @@ final class RuntimeTypeChecker
                 || ($contract['returnUsesMethodTemplates'] ?? false)
                 || ($isStaticCall && ($contract['classTemplates'] ?? []) !== [])
             );
-            self::$hasMethodTemplatesCache[$function] = $hasMethodTemplates;
         }
 
-        return $hasMethodTemplates ? new ScopeCleaner($effectiveFunction) : null;
+        if ($hasMethodTemplates) {
+            $cleaner = new ScopeCleaner($effectiveFunction);
+            $contract = DocblockParser::parse($effectiveFunction);
+            $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+            $cleaner->boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates);
+
+            return $cleaner;
+        }
+
+        return null;
     }
 
     /**
@@ -595,15 +612,9 @@ final class RuntimeTypeChecker
             return;
         }
 
-        if (isset(SelfOutChecker::$noSelfOutContractCache[$function])) {
-            return;
-        }
-
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisObj, $thisObj);
 
         if (isset(SelfOutChecker::$noSelfOutContractCache[$effectiveFunction])) {
-            SelfOutChecker::$noSelfOutContractCache[$function] = true;
-
             return;
         }
 
@@ -642,9 +653,7 @@ final class RuntimeTypeChecker
             && (str_contains($effectiveFunction, '__call') || str_ends_with($effectiveFunction, '::__get'));
 
         if (! $isDynamicDispatch) {
-            if (isset(ReturnChecker::$noReturnContractCache[$function]) || isset(ReturnChecker::$noReturnContractCache[$effectiveFunction])) {
-                ReturnChecker::$noReturnContractCache[$function] = true;
-
+            if (isset(ReturnChecker::$noReturnContractCache[$effectiveFunction])) {
                 return $value;
             }
         }
@@ -681,8 +690,12 @@ final class RuntimeTypeChecker
     /**
      * Validates a value sent into a generator via $gen->send() against TSend.
      */
-    public static function checkSend(string $function, mixed $sendValue, object|string|null $thisOrClass = null): mixed
-    {
+    public static function checkSend(
+        string $function,
+        mixed $sendValue,
+        object|string|null $thisOrClass = null,
+        ?ScopeCleaner $scopeCleaner = null
+    ): mixed {
         if (! Config::isEnabled()) {
             return $sendValue;
         }
@@ -694,7 +707,7 @@ final class RuntimeTypeChecker
             return $sendValue;
         }
 
-        $res = GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass);
+        $res = GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass, $scopeCleaner);
 
         if ($res instanceof ErrorMessage) {
             if (IgnoreManager::isCallerIgnored()) {
@@ -710,8 +723,12 @@ final class RuntimeTypeChecker
     /**
      * Validates a value returned from a generator against TReturn.
      */
-    public static function checkGeneratorReturn(string $function, mixed $value, object|string|null $thisOrClass = null): mixed
-    {
+    public static function checkGeneratorReturn(
+        string $function,
+        mixed $value,
+        object|string|null $thisOrClass = null,
+        ?ScopeCleaner $scopeCleaner = null
+    ): mixed {
         if (! Config::isEnabled() || ! Config::isReturnsEnabled()) {
             return $value;
         }
@@ -723,7 +740,7 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        $res = GeneratorChecker::checkReturn($function, $value, self::getRegistry(), $thisOrClass);
+        $res = GeneratorChecker::checkReturn($function, $value, self::getRegistry(), $thisOrClass, $scopeCleaner);
 
         if ($res instanceof ErrorMessage) {
             if (IgnoreManager::isCallerIgnored()) {
@@ -739,8 +756,13 @@ final class RuntimeTypeChecker
     /**
      * Validates yielded keys and values from a generator function against TKey and TValue.
      */
-    public static function checkYield(string $function, mixed $key, mixed $value, object|string|null $thisOrClass = null): mixed
-    {
+    public static function checkYield(
+        string $function,
+        mixed $key,
+        mixed $value,
+        object|string|null $thisOrClass = null,
+        ?ScopeCleaner $scopeCleaner = null
+    ): mixed {
         if (! Config::isEnabled()) {
             return $value;
         }
@@ -752,7 +774,7 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        $res = GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass);
+        $res = GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass, $scopeCleaner);
 
         if ($res instanceof ErrorMessage) {
             if (IgnoreManager::isCallerIgnored()) {

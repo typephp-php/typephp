@@ -8,6 +8,7 @@ use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use TypePHP\Internal\Ast\ScopeCleaner;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Internal\Docblock\DocblockParser;
@@ -44,6 +45,13 @@ final class GeneratorChecker
      */
     private static array $genericYieldTypeCache = [];
 
+    public static function reset(): void
+    {
+        self::$noContractCache = [];
+        self::$staticYieldTypeCache = [];
+        self::$genericYieldTypeCache = [];
+    }
+
     /**
      * Validates a value sent into a generator via $gen->send() against TSend.
      */
@@ -51,13 +59,14 @@ final class GeneratorChecker
         string $function,
         mixed $sendValue,
         TypeValidatorRegistry $registry,
-        object|string|null $thisOrClass = null
+        object|string|null $thisOrClass = null,
+        ?ScopeCleaner $scopeCleaner = null
     ): mixed {
         if ($sendValue === null) {
             return null;
         }
 
-        $types = self::resolveYieldAndSendTypes($function, $thisOrClass, $registry);
+        $types = self::resolveYieldAndSendTypes($function, $thisOrClass, $registry, $scopeCleaner);
         if ($types === null) {
             return $sendValue;
         }
@@ -80,9 +89,10 @@ final class GeneratorChecker
         mixed $key,
         mixed $value,
         TypeValidatorRegistry $registry,
-        object|string|null $thisOrClass = null
+        object|string|null $thisOrClass = null,
+        ?ScopeCleaner $scopeCleaner = null
     ): mixed {
-        $types = self::resolveYieldAndSendTypes($function, $thisOrClass, $registry);
+        $types = self::resolveYieldAndSendTypes($function, $thisOrClass, $registry, $scopeCleaner);
         if ($types === null) {
             return $value;
         }
@@ -113,9 +123,10 @@ final class GeneratorChecker
         string $function,
         mixed $value,
         TypeValidatorRegistry $registry,
-        object|string|null $thisOrClass = null
+        object|string|null $thisOrClass = null,
+        ?ScopeCleaner $scopeCleaner = null
     ): mixed {
-        $types = self::resolveYieldAndSendTypes($function, $thisOrClass, $registry);
+        $types = self::resolveYieldAndSendTypes($function, $thisOrClass, $registry, $scopeCleaner);
         if ($types === null) {
             return $value;
         }
@@ -146,13 +157,14 @@ final class GeneratorChecker
     private static function resolveYieldAndSendTypes(
         string $function,
         object|string|null $thisOrClass,
-        ?TypeValidatorRegistry $registry = null
+        ?TypeValidatorRegistry $registry = null,
+        ?ScopeCleaner $scopeCleaner = null
     ): ?array {
-        if (isset(self::$noContractCache[$function])) {
+        if ($scopeCleaner === null && isset(self::$noContractCache[$function])) {
             return null;
         }
 
-        if (isset(self::$staticYieldTypeCache[$function])) {
+        if ($scopeCleaner === null && isset(self::$staticYieldTypeCache[$function])) {
             return self::$staticYieldTypeCache[$function];
         }
 
@@ -172,19 +184,22 @@ final class GeneratorChecker
         $hasConditionals = ConditionalChecker::containsConditional($returnTypeNode);
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
 
-        // Static / non-generic generator: cache permanently for this function
-        if (! $hasGenerics && ! $hasAliases && ! $hasConditionals && $thisObj === null) {
+        if (! $hasGenerics && ! $hasAliases && ! $hasConditionals && $thisObj === null && $scopeCleaner === null) {
             $resolvedNode = SpecialTypeResolver::resolve($returnTypeNode, $function, null);
 
             return self::$staticYieldTypeCache[$function] = self::extractYieldTypes($resolvedNode);
         }
 
-        // Generic generator: check signature-based 2D cache
-        $boundTemplates = $hasGenerics ? TemplateManager::getBoundTemplates($function, $thisObj, $allTemplates) : [];
+        $boundTemplates = [];
+        if ($scopeCleaner !== null && $scopeCleaner->boundTemplates !== []) {
+            $boundTemplates = $scopeCleaner->boundTemplates;
+        } elseif ($hasGenerics) {
+            $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $allTemplates);
+        }
 
         $sig = null;
         $boundCount = \count($boundTemplates);
-        if ($boundCount > 0 && $boundCount <= 2 && ! $hasAliases && ! $hasConditionals && $thisObj === null) {
+        if ($boundCount > 0 && $boundCount <= 2 && ! $hasAliases && ! $hasConditionals && $thisObj === null && $scopeCleaner === null) {
             if ($boundCount === 1) {
                 $first = reset($boundTemplates);
                 $sig = $first instanceof IdentifierTypeNode ? $first->name : (string) $first;

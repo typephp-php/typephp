@@ -20,6 +20,7 @@ use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Internal\Reporting\ViolationCollector;
 use TypePHP\Internal\Resolver\CallerBoundaryResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\IgnoreManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
@@ -209,6 +210,10 @@ final class IterableWrapper
                         return;
                     }
 
+                    if (IgnoreManager::isCallerIgnored()) {
+                        return;
+                    }
+
                     $handled = ViolationCollector::handle($err, 'yield', null, function: $function);
                     if ($handled instanceof ErrorMessage) {
                         throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
@@ -224,6 +229,10 @@ final class IterableWrapper
                     }
 
                     if (CallerBoundaryResolver::isCallerVendor()) {
+                        return;
+                    }
+
+                    if (IgnoreManager::isCallerIgnored()) {
                         return;
                     }
 

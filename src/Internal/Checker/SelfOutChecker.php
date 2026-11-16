@@ -52,8 +52,6 @@ final class SelfOutChecker
         }
 
         if (isset(self::$noSelfOutContractCache[$effectiveFunction])) {
-            self::$noSelfOutContractCache[$function] = true;
-
             return;
         }
 
@@ -61,7 +59,6 @@ final class SelfOutChecker
 
         if (! ($contract['hasSelfOutContract'] ?? false) || $contract['selfOut'] === null) {
             self::$noSelfOutContractCache[$effectiveFunction] = true;
-            self::$noSelfOutContractCache[$function] = true;
 
             return;
         }

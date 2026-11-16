@@ -19,7 +19,7 @@ use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
-use TypePHP\Internal\RuntimeTypeChecker;
+use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Util\Config;
 
@@ -817,7 +817,7 @@ final class GenericValidator implements TypeValidatorInterface
             return ErrorFactory::createError($context . ' must be an instance of ' . (string) $node->type . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
-        return RuntimeTypeChecker::bindInstanceFromNode($value, $node, $context);
+        return TemplateManager::bindInstanceFromNode($value, $node, $context);
     }
 
     /**

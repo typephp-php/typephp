@@ -75,15 +75,15 @@ final class DocblockNormalizer
         }
 
         if (stripos($doc, 'callable') !== false || stripos($doc, 'closure') !== false) {
-            $doc = preg_replace('/(callable|Closure|static-closure)(?:<[^>]+>)?\s*(\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))(?!\s*:)/i', '$1$2: mixed', $doc) ?? $doc;
+            $doc = preg_replace(
+                '/(callable|Closure|static-closure)(<(?>(?:[^<>]+|(?2)))*>)?\s*(\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))(?!\s*:)/i',
+                '$1$2$3: mixed',
+                $doc
+            ) ?? $doc;
 
             if (str_contains($doc, ':')) {
                 $doc = self::normalizeNestedCallables($doc);
             }
-        }
-
-        if (str_contains($doc, '::') && str_contains($doc, ':')) {
-            $doc = preg_replace('/(\\\\?[a-zA-Z_\x80-\xff][\\\\a-zA-Z0-9_\x80-\xff]*::[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)\s*(\??:)/', '"$1"$2', $doc) ?? $doc;
         }
 
         if (str_contains($doc, 'int-mask-of') && str_contains($doc, '*')) {
@@ -92,7 +92,11 @@ final class DocblockNormalizer
 
         if (str_contains($doc, '...')) {
             $doc = preg_replace('/(\.\.\.\s*)([a-zA-Z0-9_\x80-\xff\\\\]+)\[\]/', '$1<$2>', $doc) ?? $doc;
-            $doc = preg_replace('/(\.\.\.\s*)(?:list|array)<([^>]+)>/', '$1<$2>', $doc) ?? $doc;
+            $doc = preg_replace(
+                '/(\.\.\.\s*)(?:non-empty-list|non-empty-array|list|array)<((?:[^<>]|(?<angles><(?:[^<>]|(?&angles))*>))*)>/',
+                '$1<$2>',
+                $doc
+            ) ?? $doc;
         }
 
         if (str_contains($doc, '$')) {
@@ -131,7 +135,7 @@ final class DocblockNormalizer
                 }
 
                 $remaining = substr($doc, $j);
-                if (preg_match('/^(callable|Closure|static-closure)\s*\(/i', $remaining) === 1) {
+                if (preg_match('/^(callable|Closure|static-closure)(?<angles><(?:[^<>]|(?&angles))*>)?\s*\(/i', $remaining) === 1) {
                     $result .= ': (';
 
                     $k = $j;
@@ -220,6 +224,7 @@ final class DocblockNormalizer
             function (array $matches): string {
                 $className = $matches[1];
                 $shapeBody = self::normalizeShapes($matches[2]);
+                $shapeBody = self::quoteShapeConstantKeys($shapeBody);
 
                 $lower = strtolower(ltrim($className, '\\'));
                 if (\in_array($lower, self::BUILTIN_SHAPE_KEYWORDS, strict: true)) {
@@ -230,5 +235,22 @@ final class DocblockNormalizer
             },
             $doc
         ) ?? $doc;
+    }
+
+    /**
+     * Quotes unquoted Class::CONST keys inside array/object shape bodies for phpdoc-parser compatibility,
+     * leaving class constants inside conditional type expressions untouched.
+     */
+    private static function quoteShapeConstantKeys(string $shapeBody): string
+    {
+        if (! str_contains($shapeBody, '::') || ! str_contains($shapeBody, ':')) {
+            return $shapeBody;
+        }
+
+        return preg_replace(
+            '/(^|,)((?:\s|\*(?!\/))*)(\\\\?[a-zA-Z_\x80-\xff][\\\\a-zA-Z0-9_\x80-\xff]*::[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)\s*(\??:)/',
+            '$1$2"$3"$4',
+            $shapeBody
+        ) ?? $shapeBody;
     }
 }

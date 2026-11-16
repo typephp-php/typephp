@@ -56,8 +56,6 @@ final class ParamOutChecker
         }
 
         if (isset(self::$noParamOutContractCache[$effectiveFunction])) {
-            self::$noParamOutContractCache[$function] = true;
-
             return null;
         }
 
@@ -65,7 +63,6 @@ final class ParamOutChecker
 
         if (! ($contract['hasParamOutContract'] ?? false)) {
             self::$noParamOutContractCache[$effectiveFunction] = true;
-            self::$noParamOutContractCache[$function] = true;
 
             return null;
         }

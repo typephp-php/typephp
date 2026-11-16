@@ -968,7 +968,7 @@ final class DocblockParser
             self::parseClassLevelDocs($ref->getDeclaringClass(), $classTemplates, $aliases);
         }
 
-        self::parseMethodHierarchyDocs($ref, $types, $methodTemplates, $returnType, $aliases, $paramOuts, $selfOut, $classTemplates, $sensitiveParams);
+        self::parseMethodHierarchyDocs($ref, $types, $methodTemplates, $returnType, $aliases, $paramOuts, $selfOut, $classTemplates, $sensitiveParams, $targetClass->getName());
 
         if ($ref->getName() === '__construct') {
             self::applyConstructorPromotionFallback($ref, $types, $classTemplates, $aliases);
@@ -1358,9 +1358,10 @@ final class DocblockParser
         array &$paramOuts = [],
         ?TypeNode &$selfOut = null,
         array &$classTemplates = [],
-        array &$sensitiveParams = []
+        array &$sensitiveParams = [],
+        ?string $targetClassName = null
     ): void {
-        $hierarchy = HierarchyResolver::getMethodHierarchy($ref);
+        $hierarchy = HierarchyResolver::getMethodHierarchy($ref, $targetClassName);
         $baseParams = $ref->getParameters();
         $baseParamNames = [];
         $baseParamSet = [];

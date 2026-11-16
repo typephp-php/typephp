@@ -82,8 +82,6 @@ final class FunctionContractInjector
             || str_contains($docText, '@phpstan-return')
             || str_contains($docText, '@psalm-return');
 
-        $hasMethodReturnStatements = self::hasReturnStatements($node);
-
         $hasReturn = ! $isMagicLifecycle
             && ! $isNativeNever
             && ! ($isNativeVoid && ! $hasReturnDoc)
@@ -92,9 +90,6 @@ final class FunctionContractInjector
                 $isClassMethod,
                 $hasInheritance,
                 $isPrivate,
-                $isFinalClass,
-                $node->returnType !== null,
-                $hasMethodReturnStatements,
                 $classContext === null,
             ));
 
@@ -137,9 +132,11 @@ final class FunctionContractInjector
             $hasInheritance || str_contains($docText, ' is ') || ($hasReturnDoc && str_contains($docText, '$'))
         )) || ($isClassMethod && $paramCount > 0 && ($isMagicGet || $isMagicCall));
 
+        $useDynamicMethodKey = $isClassMethod && ! $isPrivate && ! $isFinalClass;
+
         $injectedStmts = [];
         if ($hasParam) {
-            $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg, $isReadonlyClass, $needsReturnVars);
+            $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg, $isReadonlyClass, $needsReturnVars, $useDynamicMethodKey);
         }
 
         $returnTypeNode = null;
@@ -168,7 +165,8 @@ final class FunctionContractInjector
                     $hasMethodTemplates,
                     $needsReturnVars,
                     $hasParamOut ? $byRefParams : [],
-                    $hasSelfOut
+                    $hasSelfOut,
+                    $hasParam
                 )
                 : self::wrapNonGeneratorReturns(
                     $node->stmts,
@@ -324,9 +322,6 @@ final class FunctionContractInjector
         bool $isClassMethod,
         bool $hasInheritance,
         bool $isPrivate,
-        bool $isFinalClass = false,
-        bool $hasNativeReturnType = false,
-        bool $hasReturnStatements = false,
         bool $isDirectUnitTest = false,
     ): bool {
         if ($isDirectUnitTest && $isClassMethod) {
@@ -362,34 +357,11 @@ final class FunctionContractInjector
             return false;
         }
 
-        if ($hasInheritance && ! $isPrivate) {
-            return true;
-        }
-
-        if ($isFinalClass) {
-            return false;
-        }
-
-        if (! $hasNativeReturnType) {
+        if (! $hasInheritance) {
             return false;
         }
 
         return ! $isPrivate;
-    }
-
-    private static function hasReturnStatements(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): bool
-    {
-        if ($node->stmts === null || $node->stmts === []) {
-            return false;
-        }
-
-        foreach ($node->stmts as $stmt) {
-            if ($stmt instanceof Node\Stmt\Return_ && $stmt->expr !== null) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static function resolveThisArg(bool $isClassMethod, Node\Stmt\Function_|Node\Stmt\ClassMethod $node): Node\Expr
@@ -444,9 +416,10 @@ final class FunctionContractInjector
         string $docText,
         Node\Expr $thisArg,
         bool $isReadonlyClass = false,
-        bool $needsReturnVars = false
+        bool $needsReturnVars = false,
+        bool $useDynamicMethodKey = false
     ): array {
-        $setupScopeStmts = self::buildSetupScopeStmt($params, $thisArg, $needsReturnVars);
+        $setupScopeStmts = self::buildSetupScopeStmt($params, $thisArg, $needsReturnVars, $useDynamicMethodKey);
         $callableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isCallableCandidate'], 'wrapCallable', $isReadonlyClass);
         $iterableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isIterableCandidate'], 'wrapIterable', $isReadonlyClass);
 
@@ -458,8 +431,12 @@ final class FunctionContractInjector
      *
      * @return array<Node\Stmt>
      */
-    private static function buildSetupScopeStmt(array $params, Node\Expr $thisArg, bool $needsReturnVars = false): array
-    {
+    private static function buildSetupScopeStmt(
+        array $params,
+        Node\Expr $thisArg,
+        bool $needsReturnVars = false,
+        bool $useDynamicMethodKey = false
+    ): array {
         $arrayItems = [];
         foreach ($params as $param) {
             if ($param->var instanceof Node\Expr\Variable && \is_string($param->var->name)) {
@@ -489,7 +466,15 @@ final class FunctionContractInjector
         );
 
         $throwStmt = self::buildTypeErrorThrowStmt(new Node\Expr\Variable('__typephpScope'));
-        $cacheKeyExpr = new Node\Scalar\MagicConst\Method();
+        $cacheKeyExpr = $useDynamicMethodKey
+            ? new Node\Expr\BinaryOp\Concat(
+                new Node\Expr\BinaryOp\Concat(
+                    new Node\Expr\ClassConstFetch(new Node\Name('static'), 'class'),
+                    new Node\Scalar\String_('::')
+                ),
+                new Node\Scalar\MagicConst\Function_()
+            )
+            : new Node\Scalar\MagicConst\Method();
 
         $noParamFetch = new Node\Expr\StaticPropertyFetch(
             new Node\Name\FullyQualified('TypePHP\Internal\Checker\ParamChecker'),
@@ -850,6 +835,11 @@ final class FunctionContractInjector
         array $byRefParams = [],
         bool $needsReturnVars = false
     ): Node\Expr {
+        $scopeArg = new Node\Expr\BinaryOp\Coalesce(
+            new Node\Expr\Variable('__typephpScope'),
+            new Node\Expr\ConstFetch(new Node\Name('null'))
+        );
+
         if ($wrapYield) {
             $checkYieldCall = new Node\Expr\FuncCall(
                 new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkYield'),
@@ -858,6 +848,7 @@ final class FunctionContractInjector
                     new Node\Arg($n->key ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
                     new Node\Arg($n->value ?? new Node\Expr\ConstFetch(new Node\Name('null'))),
                     new Node\Arg($thisArg),
+                    new Node\Arg($scopeArg),
                 ]
             );
 
@@ -886,6 +877,7 @@ final class FunctionContractInjector
                 new Node\Arg(new Node\Scalar\MagicConst\Method()),
                 new Node\Arg($n),
                 new Node\Arg($thisArg),
+                new Node\Arg($scopeArg),
             ]
         );
 
@@ -916,7 +908,8 @@ final class FunctionContractInjector
         bool $hasMethodTemplates = false,
         bool $needsReturnVars = false,
         array $byRefParams = [],
-        bool $hasSelfOut = false
+        bool $hasSelfOut = false,
+        bool $hasScope = false
     ): array {
         $canEliminate = $functionNode !== null
             && ! $hasMethodTemplates
@@ -938,7 +931,7 @@ final class FunctionContractInjector
             $currentFile,
             $needsReturnVars,
             $byRefParams,
-            $hasSelfOut
+            $hasSelfOut,
         ) extends NodeVisitorAbstract {
             /**
              * @param array{key: ?TypeNode, value: ?TypeNode, send: ?TypeNode, return: ?TypeNode}|null $genContract
@@ -950,7 +943,7 @@ final class FunctionContractInjector
                 private string $currentFile,
                 private bool $needsReturnVars,
                 private array $byRefParams,
-                private bool $hasSelfOut
+                private bool $hasSelfOut,
             ) {
             }
 
@@ -1089,12 +1082,18 @@ final class FunctionContractInjector
                         return $exitStmts !== [] ? [...$exitStmts, $n] : $n;
                     }
 
+                    $scopeArg = new Node\Expr\BinaryOp\Coalesce(
+                        new Node\Expr\Variable('__typephpScope'),
+                        new Node\Expr\ConstFetch(new Node\Name('null'))
+                    );
+
                     $checkCall = new Node\Expr\FuncCall(
                         new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkGeneratorReturn'),
                         [
                             new Node\Arg(new Node\Scalar\MagicConst\Method()),
                             new Node\Arg($exprToWrap),
                             new Node\Arg($this->thisArg),
+                            new Node\Arg($scopeArg),
                         ]
                     );
 
@@ -1133,12 +1132,18 @@ final class FunctionContractInjector
                 $genContract === null
                 || ! GeneratorEvaluator::canEliminateGeneratorReturn(null, $genContract['return'], $currentFile)
             ) {
+                $scopeArg = new Node\Expr\BinaryOp\Coalesce(
+                    new Node\Expr\Variable('__typephpScope'),
+                    new Node\Expr\ConstFetch(new Node\Name('null'))
+                );
+
                 $checkCall = new Node\Expr\FuncCall(
                     new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkGeneratorReturn'),
                     [
                         new Node\Arg(new Node\Scalar\MagicConst\Method()),
                         new Node\Arg(new Node\Expr\ConstFetch(new Node\Name('null'))),
                         new Node\Arg($thisArg),
+                        new Node\Arg($scopeArg),
                     ]
                 );
 

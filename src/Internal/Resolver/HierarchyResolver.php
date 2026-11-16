@@ -129,9 +129,10 @@ final class HierarchyResolver
      *
      * @return list<ReflectionMethod>
      */
-    public static function getMethodHierarchy(ReflectionMethod $ref): array
+    public static function getMethodHierarchy(ReflectionMethod $ref, ?string $targetClassName = null): array
     {
-        $targetClassName = $ref->class;
+        $declaringClassName = $ref->class;
+        $targetClassName ??= $declaringClassName;
         $methodName = $ref->getName();
 
         if (isset(self::$methodHierarchyCache[$targetClassName][$methodName])) {
@@ -139,15 +140,25 @@ final class HierarchyResolver
         }
 
         $hierarchy = [$ref];
-        $targetClass = new ReflectionClass($targetClassName);
+        $seen = [$declaringClassName . '::' . $methodName => true];
 
-        $traitAliases = self::getTraitAliases($targetClassName);
+        /** @var class-string<object> $targetClassName */
+        $targetClass = self::typeExists($targetClassName)
+            ? new ReflectionClass($targetClassName)
+            : new ReflectionClass($declaringClassName);
+
+        $traitAliases = self::getTraitAliases($targetClass->getName());
         if (isset($traitAliases[$methodName])) {
             [$traitName, $originalMethodName] = explode('::', $traitAliases[$methodName], 2);
             if (trait_exists($traitName)) {
                 $traitRef = new ReflectionClass($traitName);
                 if ($traitRef->hasMethod($originalMethodName)) {
-                    $hierarchy[] = $traitRef->getMethod($originalMethodName);
+                    $m = $traitRef->getMethod($originalMethodName);
+                    $key = $m->class . '::' . $m->getName();
+                    if (! isset($seen[$key])) {
+                        $seen[$key] = true;
+                        $hierarchy[] = $m;
+                    }
                 }
             }
         }
@@ -155,20 +166,35 @@ final class HierarchyResolver
         $parent = $targetClass->getParentClass();
         while ($parent !== false) {
             if ($parent->hasMethod($methodName)) {
-                $hierarchy[] = $parent->getMethod($methodName);
+                $m = $parent->getMethod($methodName);
+                $key = $m->class . '::' . $m->getName();
+                if (! isset($seen[$key])) {
+                    $seen[$key] = true;
+                    $hierarchy[] = $m;
+                }
             }
             $parent = $parent->getParentClass();
         }
 
         foreach ($targetClass->getInterfaces() as $interface) {
             if ($interface->hasMethod($methodName)) {
-                $hierarchy[] = $interface->getMethod($methodName);
+                $m = $interface->getMethod($methodName);
+                $key = $m->class . '::' . $m->getName();
+                if (! isset($seen[$key])) {
+                    $seen[$key] = true;
+                    $hierarchy[] = $m;
+                }
             }
         }
 
         foreach ($targetClass->getTraits() as $trait) {
             if ($trait->hasMethod($methodName)) {
-                $hierarchy[] = $trait->getMethod($methodName);
+                $m = $trait->getMethod($methodName);
+                $key = $m->class . '::' . $m->getName();
+                if (! isset($seen[$key])) {
+                    $seen[$key] = true;
+                    $hierarchy[] = $m;
+                }
             }
         }
 

@@ -14,6 +14,7 @@ use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
+use TypePHP\Tests\Fixtures\Types\StatusEnum;
 
 describe('ConstantAndEnumEvaluator Unit Tests', function () {
     describe('Class Constants & Wildcards', function () {
@@ -55,8 +56,10 @@ describe('ConstantAndEnumEvaluator Unit Tests', function () {
 
     describe('Enums and Backing Values', function () {
         test('evaluates enum case fetch against enum base type', function () {
-            $fetch = new ClassConstFetch(new Name('StatusEnum'), new Identifier('Active'));
-            $type = new IdentifierTypeNode('StatusEnum');
+            enum_exists(StatusEnum::class);
+
+            $fetch = new ClassConstFetch(new Name(StatusEnum::class), new Identifier('Active'));
+            $type = new IdentifierTypeNode(StatusEnum::class);
 
             expect(StaticTypeEvaluator::satisfies($fetch, $type))->toBeTrue();
         });
@@ -76,13 +79,15 @@ describe('ConstantAndEnumEvaluator Unit Tests', function () {
         });
 
         test('evaluates enum backing property access against value-of<Enum>', function () {
+            enum_exists(StatusEnum::class);
+
             $propFetch = new PropertyFetch(
-                new ClassConstFetch(new Name('StatusEnum'), new Identifier('Active')),
+                new ClassConstFetch(new Name(StatusEnum::class), new Identifier('Active')),
                 new Identifier('value')
             );
 
             $valueOf = new GenericTypeNode(new IdentifierTypeNode('value-of'), [
-                new IdentifierTypeNode('StatusEnum'),
+                new IdentifierTypeNode(StatusEnum::class),
             ]);
 
             expect(StaticTypeEvaluator::satisfies($propFetch, $valueOf))->toBeTrue();
