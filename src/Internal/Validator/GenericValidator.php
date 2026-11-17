@@ -82,13 +82,18 @@ final class GenericValidator implements TypeValidatorInterface
     {
         /** @var GenericTypeNode $genericNode */
         $genericNode = $node;
-        $baseType = strtolower((string) $genericNode->type);
+        $typeName = $genericNode->type instanceof IdentifierTypeNode
+            ? $genericNode->type->name
+            : (string) $genericNode->type;
+        $baseType = strtolower($typeName);
 
         return match ($baseType) {
             'int', 'integer' => $this->validateIntRange($value, $genericNode, $context, $isSensitive),
             'class-string' => $this->validateClassString($value, $genericNode, $context, $isSensitive),
-            'list', 'non-empty-list', 'non-empty-array-list' => $this->validateList($value, $genericNode, $context, $registry, $isSensitive),
-            'array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator' => $this->validateArray($value, $genericNode, $context, $registry, $isSensitive),
+            'list' => $this->validateList($value, $genericNode, $context, $registry, $isSensitive, false),
+            'non-empty-list', 'non-empty-array-list' => $this->validateList($value, $genericNode, $context, $registry, $isSensitive, true),
+            'array', 'iterable', 'traversable', 'generator', 'iterator' => $this->validateArray($value, $genericNode, $context, $registry, $isSensitive, false),
+            'non-empty-array' => $this->validateArray($value, $genericNode, $context, $registry, $isSensitive, true),
             'key-of' => $this->validateKeyOf($value, $genericNode, $context, $registry, $isSensitive),
             'value-of' => $this->validateValueOf($value, $genericNode, $context, $registry, $isSensitive),
             'int-mask' => $this->validateIntMask($value, $genericNode, $context, $isSensitive),
@@ -496,17 +501,15 @@ final class GenericValidator implements TypeValidatorInterface
         return self::$maskOfCache[$cacheKey] = [$allowedMask, $foundFlags];
     }
 
-    private function validateList(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
+    private function validateList(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false, bool $requireNonEmpty = false): ?ErrorMessage
     {
-        $baseType = strtolower((string) $node->type);
-
-        if (! \is_array($value) || (\count($value) > 0 && ! array_is_list($value))) {
+        if (! \is_array($value) || ($value !== [] && ! array_is_list($value))) {
             return ErrorFactory::createError($context . ' must be a list, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
         $count = \count($value);
 
-        if (str_contains($baseType, 'non-empty') && $count === 0) {
+        if ($requireNonEmpty && $count === 0) {
             return ErrorFactory::createError($context . ' must be a non-empty list, empty array given');
         }
 
@@ -526,10 +529,8 @@ final class GenericValidator implements TypeValidatorInterface
         );
     }
 
-    private function validateArray(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
+    private function validateArray(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false, bool $requireNonEmpty = false): ?ErrorMessage
     {
-        $baseType = strtolower((string) $node->type);
-
         if (! \is_array($value) && ! ($value instanceof \Traversable)) {
             return ErrorFactory::createError($context . ' must be of type ' . (string) $node->type . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
@@ -540,7 +541,7 @@ final class GenericValidator implements TypeValidatorInterface
 
         $count = \count($value);
 
-        if (str_contains($baseType, 'non-empty') && $count === 0) {
+        if ($requireNonEmpty && $count === 0) {
             return ErrorFactory::createError($context . ' must be a non-empty array, empty array given');
         }
 

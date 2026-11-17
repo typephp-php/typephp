@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Validator;
 
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFalseNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprNullNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprTrueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
@@ -17,16 +20,58 @@ use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Internal\Util\ClassNameValidator;
+use WeakMap;
 
 /**
  * @internal Class for validating union types like int | string.
  */
 final class UnionValidator implements TypeValidatorInterface
 {
+    /**
+     * Compiled primitive & literal fast-path sets cached per UnionTypeNode.
+     *
+     * @var WeakMap<UnionTypeNode, array{
+     *     hasObject: bool,
+     *     hasInt: bool,
+     *     hasString: bool,
+     *     hasBool: bool,
+     *     hasNull: bool,
+     *     hasTrue: bool,
+     *     hasFalse: bool,
+     *     hasClassString: bool,
+     *     stringLiterals: array<string, true>,
+     *     intLiterals: array<int, true>
+     * }>|null
+     */
+    private static ?WeakMap $compiledUnionCache = null;
+
     public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         /** @var UnionTypeNode $unionNode */
         $unionNode = $node;
+
+        self::$compiledUnionCache ??= new WeakMap();
+        $compiled = self::$compiledUnionCache[$unionNode] ??= self::compileUnion($unionNode);
+
+        if ($value === null && $compiled['hasNull']) {
+            return null;
+        }
+
+        if (\is_int($value) && ($compiled['hasInt'] || isset($compiled['intLiterals'][$value]))) {
+            return null;
+        }
+
+        if (\is_string($value) && ($compiled['hasString'] || isset($compiled['stringLiterals'][$value]) || ($compiled['hasClassString'] && ClassNameValidator::isValidClassString($value)))) {
+            return null;
+        }
+
+        if (\is_bool($value) && ($compiled['hasBool'] || ($value ? $compiled['hasTrue'] : $compiled['hasFalse']))) {
+            return null;
+        }
+
+        if (\is_object($value) && $compiled['hasObject']) {
+            return null;
+        }
 
         foreach ($unionNode->types as $type) {
             if ($type instanceof IdentifierTypeNode) {
@@ -187,5 +232,100 @@ final class UnionValidator implements TypeValidatorInterface
         }
 
         return ['hasDiscriminator' => false, 'isMatched' => false];
+    }
+
+    /**
+     * @return array{
+     *     hasObject: bool,
+     *     hasInt: bool,
+     *     hasString: bool,
+     *     hasBool: bool,
+     *     hasNull: bool,
+     *     hasTrue: bool,
+     *     hasFalse: bool,
+     *     hasClassString: bool,
+     *     stringLiterals: array<string, true>,
+     *     intLiterals: array<int, true>
+     * }
+     */
+    private static function compileUnion(UnionTypeNode $unionNode): array
+    {
+        $hasObject = false;
+        $hasInt = false;
+        $hasString = false;
+        $hasBool = false;
+        $hasNull = false;
+        $hasTrue = false;
+        $hasFalse = false;
+        $hasClassString = false;
+        $stringLiterals = [];
+        $intLiterals = [];
+
+        foreach ($unionNode->types as $type) {
+            if ($type instanceof IdentifierTypeNode) {
+                switch (strtolower($type->name)) {
+                    case 'object':
+                        $hasObject = true;
+
+                        break;
+                    case 'int':
+                    case 'integer':
+                        $hasInt = true;
+
+                        break;
+                    case 'string':
+                        $hasString = true;
+
+                        break;
+                    case 'bool':
+                    case 'boolean':
+                        $hasBool = true;
+
+                        break;
+                    case 'null':
+                        $hasNull = true;
+
+                        break;
+                    case 'true':
+                        $hasTrue = true;
+
+                        break;
+                    case 'false':
+                        $hasFalse = true;
+
+                        break;
+                    case 'class-string':
+                        $hasClassString = true;
+
+                        break;
+                }
+            } elseif ($type instanceof ConstTypeNode) {
+                $constExpr = $type->constExpr;
+                if ($constExpr instanceof ConstExprStringNode) {
+                    $stringLiterals[$constExpr->value] = true;
+                } elseif ($constExpr instanceof ConstExprIntegerNode) {
+                    $intLiterals[(int) $constExpr->value] = true;
+                } elseif ($constExpr instanceof ConstExprTrueNode) {
+                    $hasTrue = true;
+                } elseif ($constExpr instanceof ConstExprFalseNode) {
+                    $hasFalse = true;
+                } elseif ($constExpr instanceof ConstExprNullNode) {
+                    $hasNull = true;
+                }
+            }
+        }
+
+        return [
+            'hasObject' => $hasObject,
+            'hasInt' => $hasInt,
+            'hasString' => $hasString,
+            'hasBool' => $hasBool,
+            'hasNull' => $hasNull,
+            'hasTrue' => $hasTrue,
+            'hasFalse' => $hasFalse,
+            'hasClassString' => $hasClassString,
+            'stringLiterals' => $stringLiterals,
+            'intLiterals' => $intLiterals,
+        ];
     }
 }

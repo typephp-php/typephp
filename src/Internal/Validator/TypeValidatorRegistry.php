@@ -87,6 +87,24 @@ final class TypeValidatorRegistry
     public function validate(mixed $value, TypeNode $node, string $context = '', bool $isSensitive = false): ?ErrorMessage
     {
         if ($node instanceof IdentifierTypeNode) {
+            $ok = match ($node->name) {
+                'int' => \is_int($value),
+                'string' => \is_string($value),
+                'positive-int' => \is_int($value) && $value > 0,
+                'non-empty-string' => \is_string($value) && $value !== '',
+                'bool' => \is_bool($value),
+                'float' => \is_float($value) || \is_int($value),
+                'array-key' => \is_int($value) || \is_string($value),
+                'array' => \is_array($value),
+                'mixed' => true,
+                'null' => $value === null,
+                default => false,
+            };
+
+            if ($ok) {
+                return null;
+            }
+
             return $this->identifierValidator->validate($value, $node, $context, $this, $isSensitive);
         }
 

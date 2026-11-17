@@ -12,12 +12,27 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
+use WeakMap;
 
 /**
  * @internal Class for validating array shapes and tuple shapes like array{0: string, 1: int} or array{string, int}.
  */
 final class ArrayShapeValidator implements TypeValidatorInterface
 {
+    /**
+     * Compiled shape metadata cached per ArrayShapeNode instance.
+     *
+     * @var WeakMap<ArrayShapeNode, array{
+     *     isList: bool,
+     *     sealed: bool,
+     *     items: list<array{0: string|int, 1: bool, 2: TypeNode}>,
+     *     knownKeys: array<string|int, true>,
+     *     unsealedKeyType: ?TypeNode,
+     *     unsealedValueType: ?TypeNode
+     * }>|null
+     */
+    private static ?WeakMap $compiledShapeCache = null;
+
     public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
         if (! \is_array($value)) {
@@ -27,35 +42,18 @@ final class ArrayShapeValidator implements TypeValidatorInterface
         /** @var ArrayShapeNode $shapeNode */
         $shapeNode = $node;
 
-        if ($shapeNode->kind === ArrayShapeNode::KIND_LIST && \count($value) > 0 && ! array_is_list($value)) {
+        self::$compiledShapeCache ??= new WeakMap();
+        $compiled = self::$compiledShapeCache[$shapeNode] ??= self::compileShape($shapeNode);
+
+        if ($compiled['isList'] && $value !== [] && ! array_is_list($value)) {
             return ErrorFactory::createError($context . ' must be a list, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
-        $knownKeys = [];
-        $nextAutoIndex = 0;
         $matchedKeysCount = 0;
 
-        foreach ($shapeNode->items as $item) {
-            $key = null;
-
-            if ($item->keyName instanceof ConstExprStringNode) {
-                $key = $item->keyName->value;
-            } elseif ($item->keyName instanceof ConstExprIntegerNode) {
-                $key = (int) $item->keyName->value;
-                $nextAutoIndex = max($nextAutoIndex, $key + 1);
-            } elseif ($item->keyName instanceof IdentifierTypeNode) {
-                $key = $item->keyName->name;
-            } elseif ($item->keyName !== null) {
-                $key = (string) $item->keyName;
-            } else {
-                $key = $nextAutoIndex;
-                $nextAutoIndex++;
-            }
-
-            $knownKeys[$key] = true;
-
+        foreach ($compiled['items'] as [$key, $optional, $valueType]) {
             if (! \array_key_exists($key, $value)) {
-                if (! $item->optional) {
+                if (! $optional) {
                     return ErrorFactory::createError($context . " is missing required key '$key'");
                 }
 
@@ -64,7 +62,7 @@ final class ArrayShapeValidator implements TypeValidatorInterface
 
             $matchedKeysCount++;
 
-            $err = $registry->validate($value[$key], $item->valueType, '', $isSensitive);
+            $err = $registry->validate($value[$key], $valueType, '', $isSensitive);
             if ($err !== null) {
                 return ErrorFactory::createError($context . "['" . $key . "']" . $err->getMessage());
             }
@@ -76,7 +74,9 @@ final class ArrayShapeValidator implements TypeValidatorInterface
             return null;
         }
 
-        if ($shapeNode->sealed) {
+        $knownKeys = $compiled['knownKeys'];
+
+        if ($compiled['sealed']) {
             foreach ($value as $k => $_) {
                 if (! isset($knownKeys[$k])) {
                     return ErrorFactory::createError($context . " contains unsealed unexpected key '{$k}'");
@@ -84,9 +84,9 @@ final class ArrayShapeValidator implements TypeValidatorInterface
             }
         }
 
-        if ($shapeNode->unsealedType !== null) {
-            $unsealedKeyType = $shapeNode->unsealedType->keyType;
-            $unsealedValueType = $shapeNode->unsealedType->valueType;
+        if ($compiled['unsealedValueType'] !== null) {
+            $unsealedKeyType = $compiled['unsealedKeyType'];
+            $unsealedValueType = $compiled['unsealedValueType'];
 
             foreach ($value as $k => $v) {
                 if (isset($knownKeys[$k])) {
@@ -108,5 +108,50 @@ final class ArrayShapeValidator implements TypeValidatorInterface
         }
 
         return null;
+    }
+
+    /**
+     * @return array{
+     *     isList: bool,
+     *     sealed: bool,
+     *     items: list<array{0: string|int, 1: bool, 2: TypeNode}>,
+     *     knownKeys: array<string|int, true>,
+     *     unsealedKeyType: ?TypeNode,
+     *     unsealedValueType: ?TypeNode
+     * }
+     */
+    private static function compileShape(ArrayShapeNode $shapeNode): array
+    {
+        $items = [];
+        $knownKeys = [];
+        $nextAutoIndex = 0;
+
+        foreach ($shapeNode->items as $item) {
+            if ($item->keyName instanceof ConstExprStringNode) {
+                $key = $item->keyName->value;
+            } elseif ($item->keyName instanceof ConstExprIntegerNode) {
+                $key = (int) $item->keyName->value;
+                $nextAutoIndex = max($nextAutoIndex, $key + 1);
+            } elseif ($item->keyName instanceof IdentifierTypeNode) {
+                $key = $item->keyName->name;
+            } elseif ($item->keyName !== null) {
+                $key = (string) $item->keyName;
+            } else {
+                $key = $nextAutoIndex;
+                $nextAutoIndex++;
+            }
+
+            $knownKeys[$key] = true;
+            $items[] = [$key, $item->optional, $item->valueType];
+        }
+
+        return [
+            'isList' => $shapeNode->kind === ArrayShapeNode::KIND_LIST,
+            'sealed' => $shapeNode->sealed,
+            'items' => $items,
+            'knownKeys' => $knownKeys,
+            'unsealedKeyType' => $shapeNode->unsealedType?->keyType,
+            'unsealedValueType' => $shapeNode->unsealedType?->valueType,
+        ];
     }
 }

@@ -69,6 +69,21 @@ final class ParamChecker
         'non-empty-list' => true,
     ];
 
+    public const KIND_NORMAL = 0;
+
+    public const KIND_CONSTRUCT = 1;
+
+    public const KIND_MAGIC_CALL = 2;
+
+    public const KIND_MAGIC_GET = 4;
+
+    /**
+     * In-memory cache for method kind flags: [$effectiveFunction] => int (KIND_*).
+     *
+     * @var array<string, int>
+     */
+    public static array $functionKindCache = [];
+
     /**
      * 2D Cache for effective functions: [$function][$actualClassName] => effectiveFunction.
      *
@@ -141,6 +156,7 @@ final class ParamChecker
     {
         self::$effectiveFunctionCache = [];
         self::$noParamContractCache = [];
+        self::$functionKindCache = [];
         self::$classDeclaredTemplateNamesCache = [];
         ClassNameValidator::reset();
         self::$baseTypeCache = [];
@@ -157,7 +173,7 @@ final class ParamChecker
      */
     public static function areAllParamsUnconstrained(string $effectiveFunction): bool
     {
-        if (str_contains($effectiveFunction, '__call') || str_ends_with($effectiveFunction, '::__get')) {
+        if ((self::$functionKindCache[$effectiveFunction] ??= self::detectFunctionKind($effectiveFunction)) >= self::KIND_MAGIC_CALL) {
             return false;
         }
 
@@ -201,8 +217,9 @@ final class ParamChecker
             $effectiveFunction = self::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
         }
 
-        $isMagicCall = str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic');
-        $isMagicGet = str_ends_with($effectiveFunction, '::__get');
+        $functionKind = self::$functionKindCache[$effectiveFunction] ??= self::detectFunctionKind($effectiveFunction);
+        $isMagicCall = ($functionKind === self::KIND_MAGIC_CALL);
+        $isMagicGet = ($functionKind === self::KIND_MAGIC_GET);
 
         if (! $isMagicCall && ! $isMagicGet && isset(self::$noParamContractCache[$effectiveFunction])) {
             return null;
@@ -212,11 +229,11 @@ final class ParamChecker
             return null;
         }
 
-        $magicError = self::handleMagicCall($effectiveFunction, $vars, $thisObj, $registry);
-        if ($magicError !== null) {
-            return $magicError;
+        if ($isMagicCall) {
+            return self::handleMagicCall($effectiveFunction, $vars, $thisObj, $registry);
         }
-        if ($isMagicCall || $isMagicGet) {
+
+        if ($isMagicGet) {
             return null;
         }
 
@@ -237,7 +254,15 @@ final class ParamChecker
         $sensitiveParams = $contract['sensitiveParams'] ?? [];
 
         if (! $paramsUseGenerics && ! $hasMethodTemplates && \count($aliases) === 0 && ! $paramsAreDynamic) {
-            return self::validateSimpleParams($contract['types'], $vars, $effectiveFunction, $registry, $sensitiveParams);
+            return self::validateSimpleParams(
+                $contract['constrainedTypes'] ?? $contract['types'],
+                $vars,
+                $effectiveFunction,
+                $registry,
+                $sensitiveParams,
+                $contract['paramConditionals'] ?? null,
+                ! isset($contract['constrainedTypes'])
+            );
         }
 
         self::prepareGenericBindings($effectiveFunction, $methodTemplates, $thisObj, $classTemplates, $thisOrClass);
@@ -308,22 +333,33 @@ final class ParamChecker
      * @param array<string, TypeNode> $types
      * @param array<string, mixed> $vars
      * @param array<string, bool> $sensitiveParams
+     * @param array<string, true>|null $paramConditionals
      */
-    private static function validateSimpleParams(
+    public static function validateSimpleParams(
         array $types,
         array $vars,
         string $effectiveFunction,
         TypeValidatorRegistry $registry,
-        array $sensitiveParams = []
+        array $sensitiveParams = [],
+        ?array $paramConditionals = null,
+        bool $filterUnconstrained = false
     ): ?ErrorMessage {
         foreach ($types as $paramName => $typeNode) {
             if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
-                if (! ($typeNode instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($typeNode)) {
+                if ($paramConditionals === null) {
+                    if (! ($typeNode instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($typeNode)) {
+                        $typeNode = ConditionalChecker::resolve($typeNode, $vars, [], $registry, $effectiveFunction);
+                        if (self::isUnconstrained($typeNode)) {
+                            continue;
+                        }
+                    } elseif ($filterUnconstrained && self::isUnconstrained($typeNode)) {
+                        continue;
+                    }
+                } elseif (isset($paramConditionals[$paramName])) {
                     $typeNode = ConditionalChecker::resolve($typeNode, $vars, [], $registry, $effectiveFunction);
-                }
-
-                if (self::isUnconstrained($typeNode)) {
-                    continue;
+                    if (self::isUnconstrained($typeNode)) {
+                        continue;
+                    }
                 }
 
                 $isSensitive = $sensitiveParams[$paramName] ?? false;
@@ -501,8 +537,22 @@ final class ParamChecker
      */
     public static function resolveEffectiveFunction(string $function, object|string|null $thisOrClass, ?object $thisObj = null): string
     {
-        if (! str_contains($function, '::')) {
+        if ($thisOrClass === null) {
             return $function;
+        }
+
+        $actualClassName = \is_object($thisOrClass) ? $thisOrClass::class : $thisOrClass;
+
+        if ($actualClassName === '') {
+            return $function;
+        }
+
+        if (isset(self::$effectiveFunctionCache[$function][$actualClassName])) {
+            return self::$effectiveFunctionCache[$function][$actualClassName];
+        }
+
+        if (! str_contains($function, '::')) {
+            return self::$effectiveFunctionCache[$function][$actualClassName] = $function;
         }
 
         $actualClassName = \is_object($thisOrClass) ? $thisOrClass::class : (\is_string($thisOrClass) ? $thisOrClass : '');
@@ -1020,6 +1070,27 @@ final class ParamChecker
                 self::inferShapeNodeTemplates($typeNode, $vars[$paramName], $effectiveFunction, $thisObj, $templates, $classTemplates);
             }
         }
+    }
+
+    public static function detectFunctionKind(string $effectiveFunction): int
+    {
+        if (! str_contains($effectiveFunction, '::__')) {
+            return self::KIND_NORMAL;
+        }
+
+        if (str_ends_with($effectiveFunction, '::__construct')) {
+            return self::KIND_CONSTRUCT;
+        }
+
+        if (str_ends_with($effectiveFunction, '::__call') || str_ends_with($effectiveFunction, '::__callStatic')) {
+            return self::KIND_MAGIC_CALL;
+        }
+
+        if (str_ends_with($effectiveFunction, '::__get')) {
+            return self::KIND_MAGIC_GET;
+        }
+
+        return self::KIND_NORMAL;
     }
 
     /**

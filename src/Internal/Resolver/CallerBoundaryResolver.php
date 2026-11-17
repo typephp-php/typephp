@@ -26,10 +26,19 @@ final class CallerBoundaryResolver
      */
     private static array $callerVendorCache = [];
 
+    /**
+     * Fast-path cache for functions guaranteed not to require boundary bypass
+     * (either callee is non-vendor, or vendor_boundary_only is disabled).
+     *
+     * @var array<string, true>
+     */
+    public static array $nonBypassCalleeCache = [];
+
     public static function reset(): void
     {
         self::$calleeVendorCache = [];
         self::$callerVendorCache = [];
+        self::$nonBypassCalleeCache = [];
     }
 
     /**
@@ -38,11 +47,13 @@ final class CallerBoundaryResolver
      */
     public static function shouldBypass(string $function): bool
     {
-        if (! Config::isVendorBoundaryOnlyEnabled()) {
+        if (isset(self::$nonBypassCalleeCache[$function])) {
             return false;
         }
 
-        if (! self::isCalleeVendor($function)) {
+        if (! Config::isVendorBoundaryOnlyEnabled() || ! self::isCalleeVendor($function)) {
+            self::$nonBypassCalleeCache[$function] = true;
+
             return false;
         }
 

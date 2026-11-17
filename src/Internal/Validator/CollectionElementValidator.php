@@ -35,18 +35,14 @@ final class CollectionElementValidator
             return null;
         }
 
-        if ($elementTypeNode instanceof IdentifierTypeNode && \in_array(strtolower($elementTypeNode->name), ['mixed', 't', 'tvalue', 'v', 'value', 'telement'], true)) {
-            return null;
-        }
-
-        if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
-            return self::validateHybrid($items, $elementTypeNode, $context, $registry, $count, $isList, $isSensitive);
-        }
-
         if ($elementTypeNode instanceof IdentifierTypeNode) {
             $elemName = $elementTypeNode->name;
 
             if ($elemName === 'int') {
+                if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+                    return self::validateHybrid($items, $elementTypeNode, $context, $registry, $count, $isList, $isSensitive);
+                }
+
                 foreach ($items as $k => $v) {
                     if (! \is_int($v)) {
                         return ErrorFactory::createError($context . self::formatKey($k, $isList) . ' must be of type int, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
@@ -57,6 +53,10 @@ final class CollectionElementValidator
             }
 
             if ($elemName === 'positive-int') {
+                if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+                    return self::validateHybrid($items, $elementTypeNode, $context, $registry, $count, $isList, $isSensitive);
+                }
+
                 foreach ($items as $k => $v) {
                     if (! \is_int($v) || $v <= 0) {
                         return ErrorFactory::createError($context . self::formatKey($k, $isList) . ' must be of type positive-int, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
@@ -67,6 +67,10 @@ final class CollectionElementValidator
             }
 
             if ($elemName === 'string') {
+                if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+                    return self::validateHybrid($items, $elementTypeNode, $context, $registry, $count, $isList, $isSensitive);
+                }
+
                 foreach ($items as $k => $v) {
                     if (! \is_string($v)) {
                         return ErrorFactory::createError($context . self::formatKey($k, $isList) . ' must be of type string, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
@@ -77,6 +81,10 @@ final class CollectionElementValidator
             }
 
             if ($elemName === 'non-empty-string') {
+                if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+                    return self::validateHybrid($items, $elementTypeNode, $context, $registry, $count, $isList, $isSensitive);
+                }
+
                 foreach ($items as $k => $v) {
                     if (! \is_string($v) || $v === '') {
                         return ErrorFactory::createError($context . self::formatKey($k, $isList) . ' must be of type non-empty-string, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
@@ -87,6 +95,10 @@ final class CollectionElementValidator
             }
 
             if ($elemName === 'bool') {
+                if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+                    return self::validateHybrid($items, $elementTypeNode, $context, $registry, $count, $isList, $isSensitive);
+                }
+
                 foreach ($items as $k => $v) {
                     if (! \is_bool($v)) {
                         return ErrorFactory::createError($context . self::formatKey($k, $isList) . ' must be of type bool, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
@@ -97,6 +109,10 @@ final class CollectionElementValidator
             }
 
             if ($elemName === 'float') {
+                if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+                    return self::validateHybrid($items, $elementTypeNode, $context, $registry, $count, $isList, $isSensitive);
+                }
+
                 foreach ($items as $k => $v) {
                     if (! \is_float($v) && ! \is_int($v)) {
                         return ErrorFactory::createError($context . self::formatKey($k, $isList) . ' must be of type float, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
@@ -105,6 +121,14 @@ final class CollectionElementValidator
 
                 return null;
             }
+
+            if (\in_array(strtolower($elemName), ['mixed', 't', 'tvalue', 'v', 'value', 'telement'], true)) {
+                return null;
+            }
+        }
+
+        if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
+            return self::validateHybrid($items, $elementTypeNode, $context, $registry, $count, $isList, $isSensitive);
         }
 
         foreach ($items as $k => $v) {

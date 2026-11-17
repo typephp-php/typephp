@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal;
 
+use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
+use Traversable;
 use TypePHP\Internal\Ast\ScopeCleaner;
 use TypePHP\Internal\Checker\GeneratorChecker;
 use TypePHP\Internal\Checker\InlineChecker;
@@ -453,23 +456,25 @@ final class RuntimeTypeChecker
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+        if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return null;
         }
 
-        if ($thisObj !== null && str_ends_with($effectiveFunction, '::__construct')) {
+        $functionKind = ParamChecker::$functionKindCache[$effectiveFunction] ??= ParamChecker::detectFunctionKind($effectiveFunction);
+
+        if ($thisObj !== null && $functionKind === ParamChecker::KIND_CONSTRUCT) {
             TemplateManager::applyPendingInstantiation($thisObj);
         }
 
-        $isMagicCall = str_contains($effectiveFunction, '__call');
-        $isMagicGet = str_ends_with($effectiveFunction, '::__get');
-
-        if ($isMagicGet) {
+        if ($functionKind === ParamChecker::KIND_MAGIC_GET) {
             return null;
         }
 
+        $isMagicCall = ($functionKind === ParamChecker::KIND_MAGIC_CALL);
+
         if (
-            isset(ParamChecker::$noParamContractCache[$effectiveFunction])
+            ! $isMagicCall
+            && isset(ParamChecker::$noParamContractCache[$effectiveFunction])
             && ! (self::$hasMethodTemplatesCache[$effectiveFunction] ?? false)
         ) {
             return null;
@@ -482,11 +487,44 @@ final class RuntimeTypeChecker
             return null;
         }
 
+        $registry = self::$registry ??= new TypeValidatorRegistry();
+
+        if (
+            ! $isMagicCall
+            && $contract['isSimple']
+            && ($thisObj !== null || $contract['classTemplates'] === [])
+        ) {
+            if ($vars !== []) {
+                $err = ParamChecker::validateSimpleParams(
+                    $contract['constrainedTypes'] ?? $contract['types'],
+                    $vars,
+                    $effectiveFunction,
+                    $registry,
+                    $contract['sensitiveParams'],
+                    $contract['paramConditionals'] ?? null,
+                    ! isset($contract['constrainedTypes'])
+                );
+
+                if ($err !== null) {
+                    if (IgnoreManager::isCallerIgnored()) {
+                        return null;
+                    }
+
+                    $handled = ViolationCollector::handle($err, 'parameter', null, function: $effectiveFunction);
+                    if ($handled instanceof ErrorMessage) {
+                        return $handled;
+                    }
+                }
+            }
+
+            return null;
+        }
+
         $err = ParamChecker::checkParams(
             $function,
             $vars,
             $thisOrClass,
-            self::getRegistry(),
+            $registry,
             $effectiveFunction,
             $contract
         );
@@ -508,16 +546,15 @@ final class RuntimeTypeChecker
         if ($hasMethodTemplates === null) {
             $isStaticCall = ($thisObj === null);
             $hasMethodTemplates = self::$hasMethodTemplatesCache[$effectiveFunction] = (
-                (($contract['templates'] ?? []) !== [])
-                || ($contract['returnUsesMethodTemplates'] ?? false)
-                || ($isStaticCall && ($contract['classTemplates'] ?? []) !== [])
+                ($contract['templates'] !== [])
+                || $contract['returnUsesMethodTemplates']
+                || ($isStaticCall && $contract['classTemplates'] !== [])
             );
         }
 
         if ($hasMethodTemplates) {
             $cleaner = new ScopeCleaner($effectiveFunction);
-            $contract = DocblockParser::parse($effectiveFunction);
-            $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+            $allTemplates = [...$contract['classTemplates'], ...$contract['templates']];
             $cleaner->boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates);
 
             return $cleaner;
@@ -645,21 +682,68 @@ final class RuntimeTypeChecker
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+        if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return $value;
         }
 
-        $isDynamicDispatch = str_contains($effectiveFunction, '::__')
-            && (str_contains($effectiveFunction, '__call') || str_ends_with($effectiveFunction, '::__get'));
+        $functionKind = ParamChecker::$functionKindCache[$effectiveFunction] ??= ParamChecker::detectFunctionKind($effectiveFunction);
+        $isDynamicDispatch = ($functionKind >= ParamChecker::KIND_MAGIC_CALL);
 
-        if (! $isDynamicDispatch) {
-            if (isset(ReturnChecker::$noReturnContractCache[$effectiveFunction])) {
-                return $value;
-            }
+        if (! $isDynamicDispatch && isset(ReturnChecker::$noReturnContractCache[$effectiveFunction])) {
+            return $value;
         }
 
         $contract = DocblockParser::parse($effectiveFunction);
         if (! $isDynamicDispatch && ($contract['returnUnconstrained'] ?? false)) {
+            return $value;
+        }
+
+        $registry = self::$registry ??= new TypeValidatorRegistry();
+        $returnTypeNode = $contract['return'];
+
+        if (
+            ! $isDynamicDispatch
+            && $returnTypeNode !== null
+            && $contract['isSimple']
+            && $contract['classTemplates'] === []
+            && ! ($contract['returnHasConditional'] ?? true)
+            && ! $contract['returnIsDynamic']
+            && ! ($returnTypeNode instanceof CallableTypeNode)
+        ) {
+            $resolvedType = ReturnChecker::$resolvedStaticReturnCache[$effectiveFunction]
+                ??= SpecialTypeResolver::resolve($returnTypeNode, $effectiveFunction, null);
+
+            if ($resolvedType instanceof IdentifierTypeNode) {
+                $lowerName = strtolower($resolvedType->name);
+                if ($lowerName === 'mixed' || $lowerName === 'array') {
+                    return $value;
+                }
+            }
+
+            $err = $registry->validate($value, $resolvedType, 'Return value');
+            if ($err !== null) {
+                if (IgnoreManager::isCallerIgnored()) {
+                    return $value;
+                }
+
+                $formattedErr = ErrorFactory::createError($effectiveFunction . '(): ' . $err->getMessage());
+
+                return ViolationCollector::handle($formattedErr, 'return', $value, function: $effectiveFunction, target: 'return');
+            }
+
+            if ($value instanceof Traversable) {
+                $baseName = '';
+                if ($resolvedType instanceof IdentifierTypeNode) {
+                    $baseName = strtolower(ltrim($resolvedType->name, '\\'));
+                } elseif ($resolvedType instanceof GenericTypeNode) {
+                    $baseName = strtolower(ltrim((string) $resolvedType->type, '\\'));
+                }
+
+                if (isset(ReturnChecker::GENERIC_ITERABLES[$baseName])) {
+                    return self::wrapIterable($effectiveFunction, 'return', $value);
+                }
+            }
+
             return $value;
         }
 
@@ -670,7 +754,7 @@ final class RuntimeTypeChecker
             $value,
             $thisOrClass,
             $vars,
-            self::getRegistry(),
+            $registry,
             [self::class, 'wrapIterable'],
             $effectiveFunction,
             $contract

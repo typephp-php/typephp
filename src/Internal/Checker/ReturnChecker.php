@@ -29,7 +29,7 @@ final class ReturnChecker
     /**
      * Fast O(1) lookup set for generic iterable return types.
      */
-    private const GENERIC_ITERABLES = [
+    public const GENERIC_ITERABLES = [
         'iterable' => true,
         'traversable' => true,
         'iterator' => true,
@@ -55,7 +55,7 @@ final class ReturnChecker
      *
      * @var array<string, TypeNode>
      */
-    private static array $resolvedStaticReturnCache = [];
+    public static array $resolvedStaticReturnCache = [];
 
     /**
      * In-memory 2D cache for concrete substituted generic return types: [$function][$templateSignature] => TypeNode.
@@ -81,7 +81,7 @@ final class ReturnChecker
      */
     public static function isReturnUnconstrained(string $effectiveFunction): bool
     {
-        if (str_contains($effectiveFunction, '__call') || str_ends_with($effectiveFunction, '::__get')) {
+        if ((ParamChecker::$functionKindCache[$effectiveFunction] ??= ParamChecker::detectFunctionKind($effectiveFunction)) >= ParamChecker::KIND_MAGIC_CALL) {
             return false;
         }
 
@@ -114,31 +114,26 @@ final class ReturnChecker
             $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
         }
 
-        $isMagicCall = str_contains($effectiveFunction, '__call');
-        $isMagicGet = str_ends_with($effectiveFunction, '::__get');
+        $functionKind = ParamChecker::$functionKindCache[$effectiveFunction] ??= ParamChecker::detectFunctionKind($effectiveFunction);
 
-        if (! $isMagicCall && ! $isMagicGet) {
-            if (isset(self::$noReturnContractCache[$effectiveFunction])) {
-                return $value;
+        if ($functionKind === ParamChecker::KIND_MAGIC_CALL) {
+            $magicResult = self::handleMagicReturn(
+                $effectiveFunction,
+                $value,
+                $thisObj,
+                $vars,
+                $registry,
+                $wrapIterableCallback
+            );
+
+            if ($magicResult !== null) {
+                return $magicResult;
             }
-        }
 
-        $magicResult = self::handleMagicReturn(
-            $effectiveFunction,
-            $value,
-            $thisObj,
-            $vars,
-            $registry,
-            $wrapIterableCallback
-        );
-        if ($magicResult !== null) {
-            return $magicResult;
-        }
-        if ($isMagicCall) {
             return $value;
         }
 
-        if ($isMagicGet) {
+        if ($functionKind === ParamChecker::KIND_MAGIC_GET) {
             return self::handleMagicPropertyRead(
                 $effectiveFunction,
                 $value,
@@ -147,6 +142,10 @@ final class ReturnChecker
                 $registry,
                 $wrapIterableCallback
             );
+        }
+
+        if (isset(self::$noReturnContractCache[$effectiveFunction])) {
+            return $value;
         }
 
         $contract ??= DocblockParser::parse($effectiveFunction);
@@ -343,7 +342,8 @@ final class ReturnChecker
 
         $hasGenerics = (\count($templates) > 0);
         $hasAliases = (\count($aliases) > 0);
-        $hasConditionals = ! ($returnTypeNode instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($returnTypeNode);
+        $hasConditionals = $contract['returnHasConditional']
+            ?? (! ($returnTypeNode instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($returnTypeNode));
 
         if (! $hasGenerics && ! $hasAliases && ! $hasConditionals && ! ($returnTypeNode instanceof CallableTypeNode)) {
             $isDynamic = $contract['returnIsDynamic'] ?? (str_contains((string) $returnTypeNode, 'static') || str_contains((string) $returnTypeNode, '$this'));

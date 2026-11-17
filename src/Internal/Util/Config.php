@@ -103,6 +103,14 @@ final class Config
 
     private static int $ignoreTraceDepth = 25;
 
+    private static bool $processEnvProbed = false;
+
+    private static ?string $processEnvDisable = null;
+
+    private static ?string $processEnvEnabled = null;
+
+    private static bool $hasProcessEnvOverride = false;
+
     private static function getEnvValue(string $key): ?string
     {
         if (isset($_ENV[$key])) {
@@ -131,25 +139,26 @@ final class Config
 
     public static function isEnabled(): bool
     {
-        // Hot path: called by every runtime check. The overrides are re-probed on each call
-        // (Dotenv may populate them after boot), but only resolved when one is actually present.
+        if (! self::$processEnvProbed) {
+            self::probeProcessEnvOverrides();
+        }
+
         if (
-            isset($_ENV['TYPEPHP_DISABLE'])
+            self::$hasProcessEnvOverride
+            || isset($_ENV['TYPEPHP_DISABLE'])
             || isset($_SERVER['TYPEPHP_DISABLE'])
             || isset($_ENV['TYPEPHP_ENABLED'])
             || isset($_SERVER['TYPEPHP_ENABLED'])
-            || getenv('TYPEPHP_DISABLE') !== false
-            || getenv('TYPEPHP_ENABLED') !== false
             || \defined('TYPEPHP_DISABLE')
         ) {
-            $envDisable = self::getEnvValue('TYPEPHP_DISABLE');
+            $envDisable = self::resolveEnabledOverride('TYPEPHP_DISABLE', self::$processEnvDisable);
             if ($envDisable !== null && trim($envDisable) !== '') {
                 if (filter_var($envDisable, FILTER_VALIDATE_BOOLEAN)) {
                     return false;
                 }
             }
 
-            $envEnabled = self::getEnvValue('TYPEPHP_ENABLED');
+            $envEnabled = self::resolveEnabledOverride('TYPEPHP_ENABLED', self::$processEnvEnabled);
             if ($envEnabled !== null && trim($envEnabled) !== '') {
                 if (! filter_var($envEnabled, FILTER_VALIDATE_BOOLEAN)) {
                     return false;
@@ -859,6 +868,10 @@ final class Config
         self::$inlineScalars = true;
         self::$inlineArrays = true;
         self::$inlineObjects = true;
+        self::$processEnvProbed = false;
+        self::$processEnvDisable = null;
+        self::$processEnvEnabled = null;
+        self::$hasProcessEnvOverride = false;
 
         DocblockParser::reset();
         ParamChecker::reset();
@@ -934,5 +947,37 @@ final class Config
         self::$inlineScalars = (bool) ($inline['scalars'] ?? true);
         self::$inlineArrays = (bool) ($inline['arrays'] ?? true);
         self::$inlineObjects = (bool) ($inline['objects'] ?? true);
+    }
+
+    private static function probeProcessEnvOverrides(): void
+    {
+        $disable = getenv('TYPEPHP_DISABLE');
+        $enabled = getenv('TYPEPHP_ENABLED');
+
+        self::$processEnvDisable = $disable !== false ? $disable : null;
+        self::$processEnvEnabled = $enabled !== false ? $enabled : null;
+        self::$hasProcessEnvOverride = self::$processEnvDisable !== null || self::$processEnvEnabled !== null;
+        self::$processEnvProbed = true;
+    }
+
+    private static function resolveEnabledOverride(string $key, ?string $cachedProcessEnv): ?string
+    {
+        if (isset($_ENV[$key])) {
+            $val = $_ENV[$key];
+        } elseif (isset($_SERVER[$key])) {
+            $val = $_SERVER[$key];
+        } else {
+            return $cachedProcessEnv;
+        }
+
+        if (\is_string($val)) {
+            return $val;
+        }
+
+        if (\is_scalar($val)) {
+            return (string) $val;
+        }
+
+        return null;
     }
 }
