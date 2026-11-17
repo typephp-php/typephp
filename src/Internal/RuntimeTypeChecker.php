@@ -38,6 +38,44 @@ use TypePHP\Internal\Wrapper\IterableWrapper;
  */
 final class RuntimeTypeChecker
 {
+    private const PARAM_CHECK_FALLBACK = 0;
+
+    private const PARAM_CHECK_INT = 1;
+
+    private const PARAM_CHECK_STRING = 2;
+
+    private const PARAM_CHECK_POSITIVE_INT = 3;
+
+    private const PARAM_CHECK_NON_EMPTY_STRING = 4;
+
+    private const PARAM_CHECK_BOOL = 5;
+
+    private const PARAM_CHECK_FLOAT = 6;
+
+    private const PARAM_CHECK_ARRAY_KEY = 7;
+
+    private const PARAM_CHECK_ARRAY = 8;
+
+    private const PARAM_CHECK_LIST = 9;
+
+    private const PARAM_CHECK_NON_NEGATIVE_INT = 10;
+
+    private const PARAM_CHECK_NEGATIVE_INT = 11;
+
+    private const PARAM_CHECK_NON_POSITIVE_INT = 12;
+
+    private const PARAM_CHECK_NON_ZERO_INT = 13;
+
+    private const PARAM_CHECK_MIXED = 14;
+
+    private const PARAM_CHECK_NULL = 15;
+
+    private const PARAM_CHECK_TRUE = 16;
+
+    private const PARAM_CHECK_FALSE = 17;
+
+    private const PARAM_CHECK_SCALAR = 18;
+
     public static bool $isEnabled = true;
 
     public static bool $paramsEnabled = true;
@@ -48,8 +86,10 @@ final class RuntimeTypeChecker
 
     public static bool $selfOutEnabled = true;
 
+    private static ?TypeValidatorRegistry $registry = null;
+
     /**
-     * @var array<string, array{types: array<string, TypeNode>, sensitive: array<string, bool>, conditionals: ?array<string, true>}>
+     * @var array<string, array{class: ?string, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool}>}>
      */
     private static array $simpleScopePlanCache = [];
 
@@ -57,8 +97,6 @@ final class RuntimeTypeChecker
      * @var array<string, TypeNode|false>
      */
     private static array $simpleReturnPlanCache = [];
-
-    private static ?TypeValidatorRegistry $registry = null;
 
     /**
      * @var array<string, bool>
@@ -107,7 +145,7 @@ final class RuntimeTypeChecker
         string $file = '',
         ?int $line = null
     ): mixed {
-        if (! Config::isEnabled()) {
+        if (! self::$isEnabled) {
             return $value;
         }
 
@@ -154,7 +192,7 @@ final class RuntimeTypeChecker
         string $file = '',
         ?int $line = null
     ): mixed {
-        if (! Config::isEnabled() || ! Config::isParamsEnabled()) {
+        if (! self::$isEnabled || ! self::$paramsEnabled) {
             return $value;
         }
 
@@ -196,7 +234,7 @@ final class RuntimeTypeChecker
         string $file = '',
         ?int $line = null
     ): mixed {
-        if (! Config::isEnabled() || ! Config::isReturnsEnabled()) {
+        if (! self::$isEnabled || ! self::$returnsEnabled) {
             return $value;
         }
 
@@ -246,7 +284,7 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        if (! Config::isEnabled() || ! Config::isInlinePropertiesEnabled()) {
+        if (! self::$isEnabled || ! Config::isInlinePropertiesEnabled()) {
             return $value;
         }
 
@@ -286,7 +324,7 @@ final class RuntimeTypeChecker
         ?string $caller = null,
         mixed $thisOrClass = null
     ): mixed {
-        if (! Config::isEnabled()) {
+        if (! self::$isEnabled) {
             return $value;
         }
 
@@ -320,7 +358,7 @@ final class RuntimeTypeChecker
      */
     public static function withPendingGeneric(string $typeString, \Closure $factory, string $file = '', mixed ...$args): mixed
     {
-        if (! Config::isEnabled() || ! Config::isInlineGenericsEnabled()) {
+        if (! self::$isEnabled || ! Config::isInlineGenericsEnabled()) {
             return $factory(...$args);
         }
 
@@ -343,7 +381,7 @@ final class RuntimeTypeChecker
         string $file = '',
         ?int $line = null
     ): mixed {
-        if (! Config::isEnabled() || ! Config::isInlinePropertiesEnabled()) {
+        if (! self::$isEnabled || ! Config::isInlinePropertiesEnabled()) {
             return $value;
         }
 
@@ -372,7 +410,7 @@ final class RuntimeTypeChecker
      */
     public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false): ?ErrorMessage
     {
-        if (! Config::isEnabled()) {
+        if (! self::$isEnabled) {
             return null;
         }
 
@@ -412,7 +450,7 @@ final class RuntimeTypeChecker
         ?string $caller = null,
         mixed $thisOrClass = null
     ): mixed {
-        if (! Config::isEnabled()) {
+        if (! self::$isEnabled) {
             return $value;
         }
 
@@ -447,7 +485,7 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        if (! Config::isEnabled()) {
+        if (! self::$isEnabled) {
             return $value;
         }
 
@@ -475,30 +513,63 @@ final class RuntimeTypeChecker
             return null;
         }
 
-        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+        $plan = self::$simpleScopePlanCache[$function] ?? null;
 
-        // Fast-path: simple non-templated scope plan
-        if (isset(self::$simpleScopePlanCache[$effectiveFunction])) {
-            $plan = self::$simpleScopePlanCache[$effectiveFunction];
-            if ($vars !== []) {
-                $registry = self::$registry ??= new TypeValidatorRegistry();
-                $err = ParamChecker::validateSimpleParams(
-                    $plan['types'],
-                    $vars,
-                    $effectiveFunction,
-                    $registry,
-                    $plan['sensitive'],
-                    $plan['conditionals'],
-                    false
-                );
+        // Fast-path: pre-compiled simple non-templated scope plan with direct class match
+        if ($plan !== null && ($thisOrClass === null || (\is_object($thisOrClass) ? $thisOrClass::class === $plan['class'] : $thisOrClass === $plan['class']))) {
+            if ($vars === []) {
+                return null;
+            }
 
+            $registry = self::$registry ??= new TypeValidatorRegistry();
+            $effectiveFunc = $plan['function'];
+
+            foreach ($plan['items'] as $item) {
+                $paramName = $item[0];
+
+                if (isset($vars[$paramName])) {
+                    $val = $vars[$paramName];
+                } elseif (\array_key_exists($paramName, $vars)) {
+                    $val = null;
+                } else {
+                    continue;
+                }
+
+                $ok = match ($item[1]) {
+                    self::PARAM_CHECK_POSITIVE_INT => \is_int($val) && $val > 0,
+                    self::PARAM_CHECK_NON_EMPTY_STRING => \is_string($val) && $val !== '',
+                    self::PARAM_CHECK_INT => \is_int($val),
+                    self::PARAM_CHECK_STRING => \is_string($val),
+                    self::PARAM_CHECK_BOOL => \is_bool($val),
+                    self::PARAM_CHECK_FLOAT => \is_float($val) || \is_int($val),
+                    self::PARAM_CHECK_ARRAY_KEY => \is_int($val) || \is_string($val),
+                    self::PARAM_CHECK_ARRAY => \is_array($val),
+                    self::PARAM_CHECK_LIST => \is_array($val) && ($val === [] || array_is_list($val)),
+                    self::PARAM_CHECK_NON_NEGATIVE_INT => \is_int($val) && $val >= 0,
+                    self::PARAM_CHECK_NEGATIVE_INT => \is_int($val) && $val < 0,
+                    self::PARAM_CHECK_NON_POSITIVE_INT => \is_int($val) && $val <= 0,
+                    self::PARAM_CHECK_NON_ZERO_INT => \is_int($val) && $val !== 0,
+                    self::PARAM_CHECK_MIXED => true,
+                    self::PARAM_CHECK_NULL => $val === null,
+                    self::PARAM_CHECK_TRUE => $val === true,
+                    self::PARAM_CHECK_FALSE => $val === false,
+                    self::PARAM_CHECK_SCALAR => \is_scalar($val),
+                    default => false,
+                };
+
+                if ($ok) {
+                    continue;
+                }
+
+                $err = $registry->validate($val, $item[2], '', $item[3]);
                 if ($err !== null) {
+                    $formattedErr = ErrorFactory::createError($effectiveFunc . '(): Argument $' . $paramName . $err->getMessage());
+
                     if (IgnoreManager::isCallerIgnored()) {
                         return null;
                     }
 
-                    $handled = ViolationCollector::handle($err, 'parameter', null, function: $effectiveFunction);
+                    $handled = ViolationCollector::handle($formattedErr, 'parameter', null, function: $effectiveFunc);
                     if ($handled instanceof ErrorMessage) {
                         return $handled;
                     }
@@ -509,6 +580,9 @@ final class RuntimeTypeChecker
         }
 
         // Slow-path / initial execution & analysis
+        $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
+        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
         if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return null;
         }
@@ -547,12 +621,23 @@ final class RuntimeTypeChecker
             && $contract['isSimple']
             && ($thisObj !== null || $contract['classTemplates'] === [])
         ) {
-            if ($functionKind !== ParamChecker::KIND_CONSTRUCT && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction])) {
-                self::$simpleScopePlanCache[$effectiveFunction] = [
-                    'types' => $contract['constrainedTypes'] ?? $contract['types'],
-                    'sensitive' => $contract['sensitiveParams'],
-                    'conditionals' => $contract['paramConditionals'] ?? null,
+            $hasNoConditionals = ($contract['paramConditionals'] ?? null) === null || $contract['paramConditionals'] === [];
+
+            if ($hasNoConditionals && $functionKind !== ParamChecker::KIND_CONSTRUCT && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction])) {
+                $typesToValidate = $contract['constrainedTypes'] ?? $contract['types'];
+                $compiledItems = self::compileSimpleScopePlanItems($typesToValidate, $contract['sensitiveParams']);
+                $declaringClass = str_contains($effectiveFunction, '::') ? explode('::', $effectiveFunction, 2)[0] : null;
+
+                $compiledPlan = [
+                    'class' => $declaringClass,
+                    'function' => $effectiveFunction,
+                    'items' => $compiledItems,
                 ];
+
+                self::$simpleScopePlanCache[$function] = $compiledPlan;
+                if ($function !== $effectiveFunction) {
+                    self::$simpleScopePlanCache[$effectiveFunction] = $compiledPlan;
+                }
             }
 
             if ($vars !== []) {
@@ -625,13 +710,56 @@ final class RuntimeTypeChecker
     }
 
     /**
+     * @param array<string, TypeNode> $types
+     * @param array<string, bool> $sensitiveParams
+     *
+     * @return list<array{0: string, 1: int, 2: TypeNode, 3: bool}>
+     */
+    private static function compileSimpleScopePlanItems(array $types, array $sensitiveParams): array
+    {
+        $items = [];
+        foreach ($types as $paramName => $typeNode) {
+            $isSensitive = $sensitiveParams[$paramName] ?? false;
+            $checkKind = self::PARAM_CHECK_FALLBACK;
+
+            if ($typeNode instanceof IdentifierTypeNode) {
+                $checkKind = match (strtolower($typeNode->name)) {
+                    'int', 'integer' => self::PARAM_CHECK_INT,
+                    'string' => self::PARAM_CHECK_STRING,
+                    'positive-int' => self::PARAM_CHECK_POSITIVE_INT,
+                    'non-empty-string' => self::PARAM_CHECK_NON_EMPTY_STRING,
+                    'bool', 'boolean' => self::PARAM_CHECK_BOOL,
+                    'float', 'double' => self::PARAM_CHECK_FLOAT,
+                    'array-key' => self::PARAM_CHECK_ARRAY_KEY,
+                    'array' => self::PARAM_CHECK_ARRAY,
+                    'list' => self::PARAM_CHECK_LIST,
+                    'non-negative-int', 'unsigned-int' => self::PARAM_CHECK_NON_NEGATIVE_INT,
+                    'negative-int' => self::PARAM_CHECK_NEGATIVE_INT,
+                    'non-positive-int' => self::PARAM_CHECK_NON_POSITIVE_INT,
+                    'non-zero-int' => self::PARAM_CHECK_NON_ZERO_INT,
+                    'mixed' => self::PARAM_CHECK_MIXED,
+                    'null' => self::PARAM_CHECK_NULL,
+                    'true' => self::PARAM_CHECK_TRUE,
+                    'false' => self::PARAM_CHECK_FALSE,
+                    'scalar' => self::PARAM_CHECK_SCALAR,
+                    default => self::PARAM_CHECK_FALLBACK,
+                };
+            }
+
+            $items[] = [$paramName, $checkKind, $typeNode, $isSensitive];
+        }
+
+        return $items;
+    }
+
+    /**
      * Validates all incoming parameters against the function or method's declared contract.
      *
      * @param array<string, mixed> $vars
      */
     public static function checkParams(string $function, array $vars, object|string|null $thisOrClass = null): ?ErrorMessage
     {
-        if (! Config::isEnabled()) {
+        if (! self::$isEnabled) {
             return null;
         }
 
@@ -670,7 +798,7 @@ final class RuntimeTypeChecker
         object|string|null $thisOrClass = null,
         ?array $vars = []
     ): ?ErrorMessage {
-        if (! Config::isEnabled() || ! Config::isParamsOutEnabled()) {
+        if (! self::$isEnabled || ! self::$paramsOutEnabled) {
             return null;
         }
 
@@ -706,7 +834,7 @@ final class RuntimeTypeChecker
      */
     public static function checkSelfOut(string $function, object $thisObj, ?array $vars = []): void
     {
-        if (! Config::isEnabled() || ! Config::isSelfOutEnabled()) {
+        if (! self::$isEnabled || ! self::$selfOutEnabled) {
             return;
         }
 
@@ -740,6 +868,28 @@ final class RuntimeTypeChecker
             return $value;
         }
 
+        // Fast-path: pre-compiled simple return plan
+        if (isset(self::$simpleReturnPlanCache[$function])) {
+            $resolvedType = self::$simpleReturnPlanCache[$function];
+            if ($resolvedType === false) {
+                return $value;
+            }
+
+            $registry = self::$registry ??= new TypeValidatorRegistry();
+            $err = $registry->validate($value, $resolvedType, 'Return value');
+            if ($err !== null) {
+                if (IgnoreManager::isCallerIgnored()) {
+                    return $value;
+                }
+
+                $formattedErr = ErrorFactory::createError($function . '(): ' . $err->getMessage());
+
+                return ViolationCollector::handle($formattedErr, 'return', $value, function: $function, target: 'return');
+            }
+
+            return $value;
+        }
+
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
@@ -764,6 +914,7 @@ final class RuntimeTypeChecker
             return $value;
         }
 
+        // Slow-path / initial execution & analysis
         if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return $value;
         }
@@ -777,6 +928,7 @@ final class RuntimeTypeChecker
 
         $contract = DocblockParser::parse($effectiveFunction);
         if (! $isDynamicDispatch && ($contract['returnUnconstrained'] ?? false)) {
+            self::$simpleReturnPlanCache[$function] = false;
             self::$simpleReturnPlanCache[$effectiveFunction] = false;
 
             return $value;
@@ -800,6 +952,7 @@ final class RuntimeTypeChecker
             if ($resolvedType instanceof IdentifierTypeNode) {
                 $lowerName = strtolower($resolvedType->name);
                 if ($lowerName === 'mixed' || $lowerName === 'array') {
+                    self::$simpleReturnPlanCache[$function] = false;
                     self::$simpleReturnPlanCache[$effectiveFunction] = false;
 
                     return $value;
@@ -816,6 +969,7 @@ final class RuntimeTypeChecker
             }
 
             if (! $isTraversableIterable && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction])) {
+                self::$simpleReturnPlanCache[$function] = $resolvedType;
                 self::$simpleReturnPlanCache[$effectiveFunction] = $resolvedType;
             }
 
@@ -870,7 +1024,7 @@ final class RuntimeTypeChecker
         object|string|null $thisOrClass = null,
         ?ScopeCleaner $scopeCleaner = null
     ): mixed {
-        if (! Config::isEnabled()) {
+        if (! self::$isEnabled) {
             return $sendValue;
         }
 
@@ -903,7 +1057,7 @@ final class RuntimeTypeChecker
         object|string|null $thisOrClass = null,
         ?ScopeCleaner $scopeCleaner = null
     ): mixed {
-        if (! Config::isEnabled() || ! Config::isReturnsEnabled()) {
+        if (! self::$isEnabled || ! self::$returnsEnabled) {
             return $value;
         }
 
@@ -937,7 +1091,7 @@ final class RuntimeTypeChecker
         object|string|null $thisOrClass = null,
         ?ScopeCleaner $scopeCleaner = null
     ): mixed {
-        if (! Config::isEnabled()) {
+        if (! self::$isEnabled) {
             return $value;
         }
 
@@ -966,7 +1120,7 @@ final class RuntimeTypeChecker
      */
     public static function wrapCallable(string $function, string $paramName, mixed $callable, object|string|null $thisOrClass = null): mixed
     {
-        if (! Config::isEnabled()) {
+        if (! self::$isEnabled) {
             return $callable;
         }
 
@@ -985,7 +1139,7 @@ final class RuntimeTypeChecker
      */
     public static function wrapIterable(string $function, string $paramName, mixed $iterable, object|string|null $thisOrClass = null): mixed
     {
-        if (! Config::isEnabled()) {
+        if (! self::$isEnabled) {
             return $iterable;
         }
 
