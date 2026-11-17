@@ -197,11 +197,14 @@ final class GeneratorEvaluator
 
     /**
      * Determines whether `RuntimeTypeChecker::checkGeneratorReturn()` can be statically eliminated.
+     *
+     * @param array<string, TypeNode> $trustedVariableTypes
      */
     public static function canEliminateGeneratorReturn(
         ?Expr $returnExpr,
         ?TypeNode $returnType,
-        string $currentFile = ''
+        string $currentFile = '',
+        array $trustedVariableTypes = []
     ): bool {
         if (! Config::isEliminateStaticallyProvenChecksEnabled()) {
             return false;
@@ -213,7 +216,7 @@ final class GeneratorEvaluator
 
         $effectiveExpr = $returnExpr ?? new ConstFetch(new Name('null'));
 
-        return StaticTypeEvaluator::satisfies($effectiveExpr, $returnType, $currentFile);
+        return StaticTypeEvaluator::satisfies($effectiveExpr, $returnType, $currentFile, $trustedVariableTypes);
     }
 
     /**
