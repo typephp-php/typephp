@@ -38,6 +38,26 @@ use TypePHP\Internal\Wrapper\IterableWrapper;
  */
 final class RuntimeTypeChecker
 {
+    public static bool $isEnabled = true;
+
+    public static bool $paramsEnabled = true;
+
+    public static bool $returnsEnabled = true;
+
+    public static bool $paramsOutEnabled = true;
+
+    public static bool $selfOutEnabled = true;
+
+    /**
+     * @var array<string, array{types: array<string, TypeNode>, sensitive: array<string, bool>, conditionals: ?array<string, true>}>
+     */
+    private static array $simpleScopePlanCache = [];
+
+    /**
+     * @var array<string, TypeNode|false>
+     */
+    private static array $simpleReturnPlanCache = [];
+
     private static ?TypeValidatorRegistry $registry = null;
 
     /**
@@ -57,6 +77,8 @@ final class RuntimeTypeChecker
      */
     public static function reset(): void
     {
+        self::$simpleScopePlanCache = [];
+        self::$simpleReturnPlanCache = [];
         self::$hasMethodTemplatesCache = [];
         self::$checkedStaticProperties = [];
         IgnoreManager::reset();
@@ -449,13 +471,44 @@ final class RuntimeTypeChecker
      */
     public static function setupScope(string $function, array $vars, object|string|null $thisOrClass = null): ErrorMessage|ScopeCleaner|null
     {
-        if (! Config::isEnabled() || ! Config::isParamsEnabled()) {
+        if (! self::$isEnabled || ! self::$paramsEnabled) {
             return null;
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
+        // Fast-path: simple non-templated scope plan
+        if (isset(self::$simpleScopePlanCache[$effectiveFunction])) {
+            $plan = self::$simpleScopePlanCache[$effectiveFunction];
+            if ($vars !== []) {
+                $registry = self::$registry ??= new TypeValidatorRegistry();
+                $err = ParamChecker::validateSimpleParams(
+                    $plan['types'],
+                    $vars,
+                    $effectiveFunction,
+                    $registry,
+                    $plan['sensitive'],
+                    $plan['conditionals'],
+                    false
+                );
+
+                if ($err !== null) {
+                    if (IgnoreManager::isCallerIgnored()) {
+                        return null;
+                    }
+
+                    $handled = ViolationCollector::handle($err, 'parameter', null, function: $effectiveFunction);
+                    if ($handled instanceof ErrorMessage) {
+                        return $handled;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        // Slow-path / initial execution & analysis
         if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return null;
         }
@@ -494,6 +547,14 @@ final class RuntimeTypeChecker
             && $contract['isSimple']
             && ($thisObj !== null || $contract['classTemplates'] === [])
         ) {
+            if ($functionKind !== ParamChecker::KIND_CONSTRUCT && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction])) {
+                self::$simpleScopePlanCache[$effectiveFunction] = [
+                    'types' => $contract['constrainedTypes'] ?? $contract['types'],
+                    'sensitive' => $contract['sensitiveParams'],
+                    'conditionals' => $contract['paramConditionals'] ?? null,
+                ];
+            }
+
             if ($vars !== []) {
                 $err = ParamChecker::validateSimpleParams(
                     $contract['constrainedTypes'] ?? $contract['types'],
@@ -675,12 +736,33 @@ final class RuntimeTypeChecker
      */
     public static function checkReturn(string $function, mixed $value, object|string|null $thisOrClass = null, ?array $vars = []): mixed
     {
-        if (! Config::isEnabled() || ! Config::isReturnsEnabled()) {
+        if (! self::$isEnabled || ! self::$returnsEnabled) {
             return $value;
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        if (isset(self::$simpleReturnPlanCache[$effectiveFunction])) {
+            $resolvedType = self::$simpleReturnPlanCache[$effectiveFunction];
+            if ($resolvedType === false) {
+                return $value;
+            }
+
+            $registry = self::$registry ??= new TypeValidatorRegistry();
+            $err = $registry->validate($value, $resolvedType, 'Return value');
+            if ($err !== null) {
+                if (IgnoreManager::isCallerIgnored()) {
+                    return $value;
+                }
+
+                $formattedErr = ErrorFactory::createError($effectiveFunction . '(): ' . $err->getMessage());
+
+                return ViolationCollector::handle($formattedErr, 'return', $value, function: $effectiveFunction, target: 'return');
+            }
+
+            return $value;
+        }
 
         if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return $value;
@@ -695,6 +777,8 @@ final class RuntimeTypeChecker
 
         $contract = DocblockParser::parse($effectiveFunction);
         if (! $isDynamicDispatch && ($contract['returnUnconstrained'] ?? false)) {
+            self::$simpleReturnPlanCache[$effectiveFunction] = false;
+
             return $value;
         }
 
@@ -716,8 +800,23 @@ final class RuntimeTypeChecker
             if ($resolvedType instanceof IdentifierTypeNode) {
                 $lowerName = strtolower($resolvedType->name);
                 if ($lowerName === 'mixed' || $lowerName === 'array') {
+                    self::$simpleReturnPlanCache[$effectiveFunction] = false;
+
                     return $value;
                 }
+            }
+
+            $isTraversableIterable = false;
+            if ($resolvedType instanceof IdentifierTypeNode) {
+                $baseName = strtolower(ltrim($resolvedType->name, '\\'));
+                $isTraversableIterable = isset(ReturnChecker::GENERIC_ITERABLES[$baseName]);
+            } elseif ($resolvedType instanceof GenericTypeNode) {
+                $baseName = strtolower(ltrim((string) $resolvedType->type, '\\'));
+                $isTraversableIterable = isset(ReturnChecker::GENERIC_ITERABLES[$baseName]);
+            }
+
+            if (! $isTraversableIterable && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction])) {
+                self::$simpleReturnPlanCache[$effectiveFunction] = $resolvedType;
             }
 
             $err = $registry->validate($value, $resolvedType, 'Return value');
@@ -731,17 +830,8 @@ final class RuntimeTypeChecker
                 return ViolationCollector::handle($formattedErr, 'return', $value, function: $effectiveFunction, target: 'return');
             }
 
-            if ($value instanceof Traversable) {
-                $baseName = '';
-                if ($resolvedType instanceof IdentifierTypeNode) {
-                    $baseName = strtolower(ltrim($resolvedType->name, '\\'));
-                } elseif ($resolvedType instanceof GenericTypeNode) {
-                    $baseName = strtolower(ltrim((string) $resolvedType->type, '\\'));
-                }
-
-                if (isset(ReturnChecker::GENERIC_ITERABLES[$baseName])) {
-                    return self::wrapIterable($effectiveFunction, 'return', $value);
-                }
+            if ($isTraversableIterable && $value instanceof Traversable) {
+                return self::wrapIterable($effectiveFunction, 'return', $value);
             }
 
             return $value;

@@ -22,12 +22,26 @@ use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Util\Config;
+use WeakMap;
 
 /**
  * @internal Validates values against generic AST structures (int ranges, class-string<T>, list<T>, array<K,V>, object generics, key-of, value-of, int-mask, int-mask-of).
  */
 final class GenericValidator implements TypeValidatorInterface
 {
+    private const KIND_FALLBACK = 0;
+    private const KIND_LIST = 1;
+    private const KIND_NON_EMPTY_LIST = 2;
+    private const KIND_ARRAY = 3;
+    private const KIND_NON_EMPTY_ARRAY = 4;
+    private const KIND_INT_RANGE = 5;
+    private const KIND_CLASS_STRING = 6;
+    private const KIND_KEY_OF = 7;
+    private const KIND_VALUE_OF = 8;
+    private const KIND_INT_MASK = 9;
+    private const KIND_INT_MASK_OF = 10;
+    private const KIND_OBJECT_GENERIC = 11;
+
     private const BUILTIN_GENERICS = [
         'int' => true,
         'integer' => true,
@@ -46,6 +60,11 @@ final class GenericValidator implements TypeValidatorInterface
         'int-mask' => true,
         'int-mask-of' => true,
     ];
+
+    /**
+     * @var WeakMap<GenericTypeNode, array{0: int, 1: mixed}>|null
+     */
+    private static ?WeakMap $compiledGenericCache = null;
 
     /**
      * @var array<string, mixed>
@@ -69,6 +88,7 @@ final class GenericValidator implements TypeValidatorInterface
 
     public static function reset(): void
     {
+        self::$compiledGenericCache = null;
         self::$constantCache = [];
         self::$enumKeyCache = [];
         self::$enumValueCache = [];
@@ -82,23 +102,149 @@ final class GenericValidator implements TypeValidatorInterface
     {
         /** @var GenericTypeNode $genericNode */
         $genericNode = $node;
-        $typeName = $genericNode->type instanceof IdentifierTypeNode
-            ? $genericNode->type->name
-            : (string) $genericNode->type;
+
+        if (self::$compiledGenericCache === null) {
+            self::$compiledGenericCache = new WeakMap();
+        }
+
+        $compiled = self::$compiledGenericCache[$genericNode] ?? null;
+        if ($compiled === null) {
+            self::$compiledGenericCache[$genericNode] = $compiled = $this->compileGeneric($genericNode);
+        }
+
+        $kind = $compiled[0];
+
+        if ($kind === self::KIND_LIST) {
+            if (! \is_array($value) || ($value !== [] && ! array_is_list($value))) {
+                return ErrorFactory::createError($context . ' must be a list, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+            }
+
+            $count = \count($value);
+            $valueTypeNode = $compiled[1];
+
+            if ($valueTypeNode === null || $count === 0) {
+                return null;
+            }
+
+            return CollectionElementValidator::validateElements(
+                $value,
+                $valueTypeNode,
+                $context,
+                $registry,
+                isList: true,
+                isSensitive: $isSensitive,
+                count: $count,
+            );
+        }
+
+        if ($kind === self::KIND_NON_EMPTY_LIST) {
+            if (! \is_array($value) || ($value !== [] && ! array_is_list($value))) {
+                return ErrorFactory::createError($context . ' must be a list, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+            }
+
+            $count = \count($value);
+            if ($count === 0) {
+                return ErrorFactory::createError($context . ' must be a non-empty list, empty array given');
+            }
+
+            $valueTypeNode = $compiled[1];
+            if ($valueTypeNode === null) {
+                return null;
+            }
+
+            return CollectionElementValidator::validateElements(
+                $value,
+                $valueTypeNode,
+                $context,
+                $registry,
+                isList: true,
+                isSensitive: $isSensitive,
+                count: $count,
+            );
+        }
+
+        if ($kind === self::KIND_ARRAY) {
+            return $this->validateArray($value, $genericNode, $context, $registry, $isSensitive, false);
+        }
+
+        if ($kind === self::KIND_NON_EMPTY_ARRAY) {
+            return $this->validateArray($value, $genericNode, $context, $registry, $isSensitive, true);
+        }
+
+        if ($kind === self::KIND_INT_RANGE) {
+            if (! \is_int($value)) {
+                return ErrorFactory::createError($context . ' must be of type int, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+            }
+
+            [$minVal, $maxVal] = $compiled[1];
+            $redact = $isSensitive || Config::isRedactValuesEnabled();
+
+            if ($minVal !== null && $value < $minVal) {
+                $valDisplay = $redact ? 'int given' : "$value given";
+
+                return ErrorFactory::createError($context . " must be >= $minVal, $valDisplay");
+            }
+
+            if ($maxVal !== null && $value > $maxVal) {
+                $valDisplay = $redact ? 'int given' : "$value given";
+
+                return ErrorFactory::createError($context . " must be <= $maxVal, $valDisplay");
+            }
+
+            return null;
+        }
+
+        if ($kind === self::KIND_CLASS_STRING) {
+            return $this->validateClassString($value, $genericNode, $context, $isSensitive);
+        }
+
+        if ($kind === self::KIND_KEY_OF) {
+            return $this->validateKeyOf($value, $genericNode, $context, $registry, $isSensitive);
+        }
+
+        if ($kind === self::KIND_VALUE_OF) {
+            return $this->validateValueOf($value, $genericNode, $context, $registry, $isSensitive);
+        }
+
+        if ($kind === self::KIND_INT_MASK) {
+            return $this->validateIntMask($value, $genericNode, $context, $isSensitive);
+        }
+
+        if ($kind === self::KIND_INT_MASK_OF) {
+            return $this->validateIntMaskOf($value, $genericNode, $context, $isSensitive);
+        }
+
+        return $this->validateObjectGeneric($value, $genericNode, $context, $isSensitive);
+    }
+
+    /**
+     * @return array{0: int, 1: mixed}
+     */
+    private function compileGeneric(GenericTypeNode $node): array
+    {
+        $typeName = $node->type instanceof IdentifierTypeNode
+            ? $node->type->name
+            : (string) $node->type;
         $baseType = strtolower($typeName);
 
         return match ($baseType) {
-            'int', 'integer' => $this->validateIntRange($value, $genericNode, $context, $isSensitive),
-            'class-string' => $this->validateClassString($value, $genericNode, $context, $isSensitive),
-            'list' => $this->validateList($value, $genericNode, $context, $registry, $isSensitive, false),
-            'non-empty-list', 'non-empty-array-list' => $this->validateList($value, $genericNode, $context, $registry, $isSensitive, true),
-            'array', 'iterable', 'traversable', 'generator', 'iterator' => $this->validateArray($value, $genericNode, $context, $registry, $isSensitive, false),
-            'non-empty-array' => $this->validateArray($value, $genericNode, $context, $registry, $isSensitive, true),
-            'key-of' => $this->validateKeyOf($value, $genericNode, $context, $registry, $isSensitive),
-            'value-of' => $this->validateValueOf($value, $genericNode, $context, $registry, $isSensitive),
-            'int-mask' => $this->validateIntMask($value, $genericNode, $context, $isSensitive),
-            'int-mask-of' => $this->validateIntMaskOf($value, $genericNode, $context, $isSensitive),
-            default => $this->validateObjectGeneric($value, $genericNode, $context, $isSensitive),
+            'list' => [self::KIND_LIST, $node->genericTypes[0] ?? null],
+            'non-empty-list', 'non-empty-array-list' => [self::KIND_NON_EMPTY_LIST, $node->genericTypes[0] ?? null],
+            'array', 'iterable', 'traversable', 'generator', 'iterator' => [self::KIND_ARRAY, null],
+            'non-empty-array' => [self::KIND_NON_EMPTY_ARRAY, null],
+            'int', 'integer' => [
+                self::KIND_INT_RANGE,
+                [
+                    isset($node->genericTypes[0]) ? $this->resolveIntBound($node->genericTypes[0]) : null,
+                    isset($node->genericTypes[1]) ? $this->resolveIntBound($node->genericTypes[1]) : null,
+                ],
+            ],
+            'class-string' => [self::KIND_CLASS_STRING, $node->genericTypes[0] ?? null],
+            'key-of' => [self::KIND_KEY_OF, null],
+            'value-of' => [self::KIND_VALUE_OF, null],
+            'int-mask' => [self::KIND_INT_MASK, null],
+            'int-mask-of' => [self::KIND_INT_MASK_OF, null],
+            default => [self::KIND_OBJECT_GENERIC, (string) $node->type],
         };
     }
 
@@ -501,34 +647,6 @@ final class GenericValidator implements TypeValidatorInterface
         return self::$maskOfCache[$cacheKey] = [$allowedMask, $foundFlags];
     }
 
-    private function validateList(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false, bool $requireNonEmpty = false): ?ErrorMessage
-    {
-        if (! \is_array($value) || ($value !== [] && ! array_is_list($value))) {
-            return ErrorFactory::createError($context . ' must be a list, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
-        }
-
-        $count = \count($value);
-
-        if ($requireNonEmpty && $count === 0) {
-            return ErrorFactory::createError($context . ' must be a non-empty list, empty array given');
-        }
-
-        $valueTypeNode = $node->genericTypes[0] ?? null;
-        if ($valueTypeNode === null || $count === 0) {
-            return null;
-        }
-
-        return CollectionElementValidator::validateElements(
-            $value,
-            $valueTypeNode,
-            $context,
-            $registry,
-            isList: true,
-            isSensitive: $isSensitive,
-            count: $count,
-        );
-    }
-
     private function validateArray(mixed $value, GenericTypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false, bool $requireNonEmpty = false): ?ErrorMessage
     {
         if (! \is_array($value) && ! ($value instanceof \Traversable)) {
@@ -708,35 +826,6 @@ final class GenericValidator implements TypeValidatorInterface
         $str = (string) $node;
         if (is_numeric($str)) {
             return (int) $str;
-        }
-
-        return null;
-    }
-
-    private function validateIntRange(mixed $value, GenericTypeNode $node, string $context, bool $isSensitive = false): ?ErrorMessage
-    {
-        if (! \is_int($value)) {
-            return ErrorFactory::createError($context . ' must be of type int, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
-        }
-
-        $minNode = $node->genericTypes[0] ?? null;
-        $maxNode = $node->genericTypes[1] ?? null;
-
-        $minVal = $minNode !== null ? $this->resolveIntBound($minNode) : null;
-        $maxVal = $maxNode !== null ? $this->resolveIntBound($maxNode) : null;
-
-        $redact = $isSensitive || Config::isRedactValuesEnabled();
-
-        if ($minVal !== null && $value < $minVal) {
-            $valDisplay = $redact ? 'int given' : "$value given";
-
-            return ErrorFactory::createError($context . " must be >= $minVal, $valDisplay");
-        }
-
-        if ($maxVal !== null && $value > $maxVal) {
-            $valDisplay = $redact ? 'int given' : "$value given";
-
-            return ErrorFactory::createError($context . " must be <= $maxVal, $valDisplay");
         }
 
         return null;

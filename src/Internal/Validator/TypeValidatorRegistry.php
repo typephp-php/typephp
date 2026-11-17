@@ -42,13 +42,6 @@ final class TypeValidatorRegistry
 
     private CallableValidator $callableValidator;
 
-    /**
-     * Static map for fast validator resolution.
-     *
-     * @var array<string, TypeValidatorInterface>
-     */
-    private array $validatorMap;
-
     public static function reset(): void
     {
         GenericValidator::reset();
@@ -67,19 +60,6 @@ final class TypeValidatorRegistry
         $this->objectShapeValidator = new ObjectShapeValidator();
         $this->constValidator = new ConstValidator();
         $this->callableValidator = new CallableValidator();
-
-        $this->validatorMap = [
-            IdentifierTypeNode::class => $this->identifierValidator,
-            GenericTypeNode::class => $this->genericValidator,
-            UnionTypeNode::class => $this->unionValidator,
-            NullableTypeNode::class => $this->nullableValidator,
-            ArrayTypeNode::class => $this->arrayValidator,
-            ArrayShapeNode::class => $this->arrayShapeValidator,
-            ObjectShapeNode::class => $this->objectShapeValidator,
-            IntersectionTypeNode::class => $this->intersectionValidator,
-            ConstTypeNode::class => $this->constValidator,
-            CallableTypeNode::class => $this->callableValidator,
-        ];
     }
 
     /**
@@ -89,16 +69,26 @@ final class TypeValidatorRegistry
     {
         if ($node instanceof IdentifierTypeNode) {
             $ok = match ($node->name) {
-                'int' => \is_int($value),
+                'int', 'integer' => \is_int($value),
                 'string' => \is_string($value),
                 'positive-int' => \is_int($value) && $value > 0,
                 'non-empty-string' => \is_string($value) && $value !== '',
-                'bool' => \is_bool($value),
-                'float' => \is_float($value) || \is_int($value),
+                'bool', 'boolean' => \is_bool($value),
+                'float', 'double' => \is_float($value) || \is_int($value),
                 'array-key' => \is_int($value) || \is_string($value),
                 'array' => \is_array($value),
+                'list' => \is_array($value) && ($value === [] || array_is_list($value)),
+                'non-empty-array' => \is_array($value) && \count($value) > 0,
+                'non-empty-list' => \is_array($value) && \count($value) > 0 && array_is_list($value),
+                'non-negative-int', 'unsigned-int' => \is_int($value) && $value >= 0,
+                'negative-int' => \is_int($value) && $value < 0,
+                'non-positive-int' => \is_int($value) && $value <= 0,
+                'non-zero-int' => \is_int($value) && $value !== 0,
                 'mixed' => true,
                 'null' => $value === null,
+                'true' => $value === true,
+                'false' => $value === false,
+                'scalar' => \is_scalar($value),
                 default => false,
             };
 
@@ -109,11 +99,42 @@ final class TypeValidatorRegistry
             return $this->identifierValidator->validate($value, $node, $context, $this, $isSensitive);
         }
 
-        $validator = $this->validatorMap[$node::class] ?? null;
-        if ($validator === null) {
-            return null;
+        if ($node instanceof ArrayShapeNode) {
+            return $this->arrayShapeValidator->validate($value, $node, $context, $this, $isSensitive);
         }
 
-        return $validator->validate($value, $node, $context, $this, $isSensitive);
+        if ($node instanceof GenericTypeNode) {
+            return $this->genericValidator->validate($value, $node, $context, $this, $isSensitive);
+        }
+
+        if ($node instanceof UnionTypeNode) {
+            return $this->unionValidator->validate($value, $node, $context, $this, $isSensitive);
+        }
+
+        if ($node instanceof NullableTypeNode) {
+            return $this->nullableValidator->validate($value, $node, $context, $this, $isSensitive);
+        }
+
+        if ($node instanceof ArrayTypeNode) {
+            return $this->arrayValidator->validate($value, $node, $context, $this, $isSensitive);
+        }
+
+        if ($node instanceof ConstTypeNode) {
+            return $this->constValidator->validate($value, $node, $context, $this, $isSensitive);
+        }
+
+        if ($node instanceof ObjectShapeNode) {
+            return $this->objectShapeValidator->validate($value, $node, $context, $this, $isSensitive);
+        }
+
+        if ($node instanceof IntersectionTypeNode) {
+            return $this->intersectionValidator->validate($value, $node, $context, $this, $isSensitive);
+        }
+
+        if ($node instanceof CallableTypeNode) {
+            return $this->callableValidator->validate($value, $node, $context, $this, $isSensitive);
+        }
+
+        return null;
     }
 }

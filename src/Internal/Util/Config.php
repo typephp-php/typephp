@@ -873,6 +873,12 @@ final class Config
         self::$processEnvEnabled = null;
         self::$hasProcessEnvOverride = false;
 
+        RuntimeTypeChecker::$isEnabled = true;
+        RuntimeTypeChecker::$paramsEnabled = true;
+        RuntimeTypeChecker::$returnsEnabled = true;
+        RuntimeTypeChecker::$paramsOutEnabled = true;
+        RuntimeTypeChecker::$selfOutEnabled = true;
+
         DocblockParser::reset();
         ParamChecker::reset();
         ReturnChecker::reset();
@@ -947,6 +953,12 @@ final class Config
         self::$inlineScalars = (bool) ($inline['scalars'] ?? true);
         self::$inlineArrays = (bool) ($inline['arrays'] ?? true);
         self::$inlineObjects = (bool) ($inline['objects'] ?? true);
+
+        RuntimeTypeChecker::$isEnabled = self::$enabled;
+        RuntimeTypeChecker::$paramsEnabled = self::$params;
+        RuntimeTypeChecker::$returnsEnabled = self::$returns;
+        RuntimeTypeChecker::$paramsOutEnabled = self::$params && self::$paramsOut;
+        RuntimeTypeChecker::$selfOutEnabled = self::$selfOut;
     }
 
     private static function probeProcessEnvOverrides(): void

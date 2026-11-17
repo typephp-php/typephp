@@ -344,29 +344,38 @@ final class ParamChecker
         ?array $paramConditionals = null,
         bool $filterUnconstrained = false
     ): ?ErrorMessage {
+        $hasSensitive = $sensitiveParams !== [];
+        $hasConditionals = $paramConditionals !== null && $paramConditionals !== [];
+
         foreach ($types as $paramName => $typeNode) {
-            if (isset($vars[$paramName]) || \array_key_exists($paramName, $vars)) {
-                if ($paramConditionals === null) {
-                    if (! ($typeNode instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($typeNode)) {
-                        $typeNode = ConditionalChecker::resolve($typeNode, $vars, [], $registry, $effectiveFunction);
-                        if (self::isUnconstrained($typeNode)) {
-                            continue;
-                        }
-                    } elseif ($filterUnconstrained && self::isUnconstrained($typeNode)) {
-                        continue;
-                    }
-                } elseif (isset($paramConditionals[$paramName])) {
+            if (isset($vars[$paramName])) {
+                $val = $vars[$paramName];
+            } elseif (\array_key_exists($paramName, $vars)) {
+                $val = null;
+            } else {
+                continue;
+            }
+
+            if ($hasConditionals && isset($paramConditionals[$paramName])) {
+                $typeNode = ConditionalChecker::resolve($typeNode, $vars, [], $registry, $effectiveFunction);
+                if (self::isUnconstrained($typeNode)) {
+                    continue;
+                }
+            } elseif ($paramConditionals === null) {
+                if (! ($typeNode instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($typeNode)) {
                     $typeNode = ConditionalChecker::resolve($typeNode, $vars, [], $registry, $effectiveFunction);
                     if (self::isUnconstrained($typeNode)) {
                         continue;
                     }
+                } elseif ($filterUnconstrained && self::isUnconstrained($typeNode)) {
+                    continue;
                 }
+            }
 
-                $isSensitive = $sensitiveParams[$paramName] ?? false;
-                $err = $registry->validate($vars[$paramName], $typeNode, '', $isSensitive);
-                if ($err !== null) {
-                    return ErrorFactory::createError($effectiveFunction . '(): Argument $' . $paramName . $err->getMessage());
-                }
+            $isSensitive = $hasSensitive && ($sensitiveParams[$paramName] ?? false);
+            $err = $registry->validate($val, $typeNode, '', $isSensitive);
+            if ($err !== null) {
+                return ErrorFactory::createError($effectiveFunction . '(): Argument $' . $paramName . $err->getMessage());
             }
         }
 
@@ -547,28 +556,18 @@ final class ParamChecker
             return $function;
         }
 
-        if (isset(self::$effectiveFunctionCache[$function][$actualClassName])) {
-            return self::$effectiveFunctionCache[$function][$actualClassName];
+        if (isset(self::$effectiveFunctionCache[$actualClassName][$function])) {
+            return self::$effectiveFunctionCache[$actualClassName][$function];
         }
 
         if (! str_contains($function, '::')) {
-            return self::$effectiveFunctionCache[$function][$actualClassName] = $function;
-        }
-
-        $actualClassName = \is_object($thisOrClass) ? $thisOrClass::class : (\is_string($thisOrClass) ? $thisOrClass : '');
-
-        if ($actualClassName === '') {
-            return $function;
-        }
-
-        if (isset(self::$effectiveFunctionCache[$function][$actualClassName])) {
-            return self::$effectiveFunctionCache[$function][$actualClassName];
+            return self::$effectiveFunctionCache[$actualClassName][$function] = $function;
         }
 
         $traitAliases = HierarchyResolver::getTraitAliases($actualClassName);
 
-        if (str_starts_with($function, $actualClassName . '::') && $traitAliases === []) {
-            return self::$effectiveFunctionCache[$function][$actualClassName] = $function;
+        if ($traitAliases === [] && str_starts_with($function, $actualClassName . '::')) {
+            return self::$effectiveFunctionCache[$actualClassName][$function] = $function;
         }
 
         [$classOrTrait, $methodName] = explode('::', $function, 2);
@@ -593,13 +592,13 @@ final class ParamChecker
                     $frameFunc = $frame['function'];
                     $frameClass = $frame['class'] ?? '';
                     if (($frameClass === $actualClassName || $frameClass === $classOrTrait) && isset($traitAliases[$frameFunc])) {
-                        return self::$effectiveFunctionCache[$function][$actualClassName] = $actualClassName . '::' . $frameFunc;
+                        return self::$effectiveFunctionCache[$actualClassName][$function] = $actualClassName . '::' . $frameFunc;
                     }
                 }
             }
         }
 
-        return self::$effectiveFunctionCache[$function][$actualClassName] = $effectiveFunction;
+        return self::$effectiveFunctionCache[$actualClassName][$function] = $effectiveFunction;
     }
 
     /**

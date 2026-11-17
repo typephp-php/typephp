@@ -72,7 +72,7 @@ final class ArrayShapeValidator implements TypeValidatorInterface
     private const CHECK_STRING_MAP = 22;
 
     private const CHECK_INT_MAP = 23;
-    
+
     private const CHECK_CLASS = 24;
 
     /**
