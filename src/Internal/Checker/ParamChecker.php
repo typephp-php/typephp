@@ -372,6 +372,37 @@ final class ParamChecker
                 }
             }
 
+            // Inline fast-path for common scalar identifiers to bypass TypeValidatorRegistry dispatch and Improve performance
+            if ($typeNode instanceof IdentifierTypeNode) {
+                $ok = match ($typeNode->name) {
+                    'int', 'integer' => \is_int($val),
+                    'string' => \is_string($val),
+                    'positive-int' => \is_int($val) && $val > 0,
+                    'non-empty-string' => \is_string($val) && $val !== '',
+                    'bool', 'boolean' => \is_bool($val),
+                    'float', 'double' => \is_float($val) || \is_int($val),
+                    'array-key' => \is_int($val) || \is_string($val),
+                    'array' => \is_array($val),
+                    'list' => \is_array($val) && ($val === [] || array_is_list($val)),
+                    'non-empty-array' => \is_array($val) && \count($val) > 0,
+                    'non-empty-list' => \is_array($val) && \count($val) > 0 && array_is_list($val),
+                    'non-negative-int', 'unsigned-int' => \is_int($val) && $val >= 0,
+                    'negative-int' => \is_int($val) && $val < 0,
+                    'non-positive-int' => \is_int($val) && $val <= 0,
+                    'non-zero-int' => \is_int($val) && $val !== 0,
+                    'mixed' => true,
+                    'null' => $val === null,
+                    'true' => $val === true,
+                    'false' => $val === false,
+                    'scalar' => \is_scalar($val),
+                    default => false,
+                };
+
+                if ($ok) {
+                    continue;
+                }
+            }
+
             $isSensitive = $hasSensitive && ($sensitiveParams[$paramName] ?? false);
             $err = $registry->validate($val, $typeNode, '', $isSensitive);
             if ($err !== null) {
