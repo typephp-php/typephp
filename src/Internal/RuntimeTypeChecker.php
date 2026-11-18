@@ -86,6 +86,10 @@ final class RuntimeTypeChecker
 
     public static bool $selfOutEnabled = true;
 
+    public static bool $inlinePropertiesEnabled = true;
+
+    public static bool $arrayValidationHybrid = false;
+
     private static ?TypeValidatorRegistry $registry = null;
 
     /**
@@ -111,12 +115,18 @@ final class RuntimeTypeChecker
     private static array $checkedStaticProperties = [];
 
     /**
+     * @var array<string, array{class: string, templateName: string}>
+     */
+    private static array $genericReturnPlanCache = [];
+
+    /**
      * Resets runtime caches.
      */
     public static function reset(): void
     {
         self::$simpleScopePlanCache = [];
         self::$simpleReturnPlanCache = [];
+        self::$genericReturnPlanCache = [];
         self::$hasMethodTemplatesCache = [];
         self::$checkedStaticProperties = [];
         IgnoreManager::reset();
@@ -284,7 +294,7 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        if (! self::$isEnabled || ! Config::isInlinePropertiesEnabled()) {
+        if (! self::$isEnabled || ! self::$inlinePropertiesEnabled) {
             return $value;
         }
 
@@ -381,7 +391,7 @@ final class RuntimeTypeChecker
         string $file = '',
         ?int $line = null
     ): mixed {
-        if (! self::$isEnabled || ! Config::isInlinePropertiesEnabled()) {
+        if (! self::$isEnabled || ! self::$inlinePropertiesEnabled) {
             return $value;
         }
 
@@ -890,6 +900,24 @@ final class RuntimeTypeChecker
             return $value;
         }
 
+        // Fast-path: bare class-template return (e.g. @return T on Box::unwrap())
+        if (isset(self::$genericReturnPlanCache[$function]) && \is_object($thisOrClass)) {
+            $genPlan = self::$genericReturnPlanCache[$function];
+            if ($thisOrClass::class === $genPlan['class']) {
+                $boundType = TemplateManager::getInstanceBoundTypeFast($thisOrClass, $genPlan['templateName']);
+                if ($boundType instanceof IdentifierTypeNode) {
+                    $tName = $boundType->name;
+                    if (\is_object($value) && ($value instanceof $tName) && ! ($value instanceof Traversable)) {
+                        return $value;
+                    }
+
+                    if ($tName === 'mixed' || $tName === 'array') {
+                        return $value;
+                    }
+                }
+            }
+        }
+
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
@@ -989,6 +1017,27 @@ final class RuntimeTypeChecker
             }
 
             return $value;
+        }
+
+        if (
+            ! $isDynamicDispatch
+            && $thisObj !== null
+            && $returnTypeNode instanceof IdentifierTypeNode
+            && $contract['templates'] === []
+            && isset($contract['classTemplates'][$returnTypeNode->name])
+            && \count($contract['aliases']) === 0
+            && ! ($contract['returnHasConditional'] ?? true)
+            && ! $contract['returnIsDynamic']
+            && ! ($contract['returnIsThis'] ?? false)
+            && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction])
+        ) {
+            $declaringClass = str_contains($effectiveFunction, '::') ? explode('::', $effectiveFunction, 2)[0] : '';
+            if ($declaringClass !== '' && $function === $effectiveFunction) {
+                self::$genericReturnPlanCache[$function] = [
+                    'class' => $declaringClass,
+                    'templateName' => $returnTypeNode->name,
+                ];
+            }
         }
 
         $vars = $vars !== null ? $vars : [];

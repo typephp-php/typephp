@@ -214,6 +214,24 @@ final class GenericValidator implements TypeValidatorInterface
             return $this->validateIntMaskOf($value, $genericNode, $context, $isSensitive);
         }
 
+        if ($kind === self::KIND_OBJECT_GENERIC) {
+            /** @var class-string|null $targetClass */
+            $targetClass = $compiled[1];
+            if ($targetClass === null) {
+                return null;
+            }
+
+            if (! \is_object($value)) {
+                return ErrorFactory::createError($context . ' must be an object of type ' . $targetClass . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+            }
+
+            if (! ($value instanceof $targetClass)) {
+                return ErrorFactory::createError($context . ' must be an instance of ' . $targetClass . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+            }
+
+            return TemplateManager::bindInstanceFromNode($value, $genericNode, $context);
+        }
+
         return $this->validateObjectGeneric($value, $genericNode, $context, $isSensitive);
     }
 
@@ -244,7 +262,10 @@ final class GenericValidator implements TypeValidatorInterface
             'value-of' => [self::KIND_VALUE_OF, null],
             'int-mask' => [self::KIND_INT_MASK, null],
             'int-mask-of' => [self::KIND_INT_MASK_OF, null],
-            default => [self::KIND_OBJECT_GENERIC, (string) $node->type],
+            default => [
+                self::KIND_OBJECT_GENERIC,
+                ClassNameValidator::isValid($typeName) ? $typeName : null,
+            ],
         };
     }
 

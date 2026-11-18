@@ -482,6 +482,64 @@ final class TemplateManager
     private static array $propagationPlanCache = [];
 
     /**
+     * Compiled binding plan cache per non-relative GenericTypeNode.
+     *
+     * @var WeakMap<GenericTypeNode, array{
+     *     isRelative: bool,
+     *     skip?: bool,
+     *     className?: string,
+     *     templates?: array<string, TemplateTagValueNode>,
+     *     classVariances?: array<string, string>,
+     *     templateList?: list<TemplateTagValueNode>,
+     *     normalizedTypeArgs?: array<TypeNode>,
+     *     hasPropagation?: bool,
+     *     items?: list<array{
+     *         index: int,
+     *         name: string,
+     *         expected: TypeNode,
+     *         identName: ?string,
+     *         usageVariance: string,
+     *         isWildcardOrMixed: bool,
+     *         symbolValid: bool,
+     *         boundSatisfied: bool
+     *     }>
+     * }>|null
+     */
+    private static ?WeakMap $compiledNodeBindPlanCache = null;
+
+    /**
+     * Compiled binding plan cache per relative GenericTypeNode (self/static/$this) keyed by runtime class name.
+     *
+     * @var WeakMap<GenericTypeNode, array<string, array{
+     *     skip: bool,
+     *     className: string,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classVariances: array<string, string>,
+     *     templateList: list<TemplateTagValueNode>,
+     *     normalizedTypeArgs: array<TypeNode>,
+     *     hasPropagation: bool,
+     *     items: list<array{
+     *         index: int,
+     *         name: string,
+     *         expected: TypeNode,
+     *         identName: ?string,
+     *         usageVariance: string,
+     *         isWildcardOrMixed: bool,
+     *         symbolValid: bool,
+     *         boundSatisfied: bool
+     *     }>
+     * }>>|null
+     */
+    private static ?WeakMap $compiledRelativeNodeBindPlanCache = null;
+
+    /**
+     * Fast O(1) cache of class names known to have zero inherited generic bindings or raw mappings.
+     *
+     * @var array<string, true>
+     */
+    private static array $noInheritedBindingsClasses = [];
+
+    /**
      * Resets all static generic template bindings, call stack frames, and method template caches.
      */
     public static function reset(): void
@@ -509,6 +567,9 @@ final class TemplateManager
         self::$callStackThis = [];
         self::$propagationStack = [];
         self::$propagationPlanCache = [];
+        self::$compiledNodeBindPlanCache = null;
+        self::$compiledRelativeNodeBindPlanCache = null;
+        self::$noInheritedBindingsClasses = [];
     }
 
     /**
@@ -902,6 +963,18 @@ final class TemplateManager
     }
 
     /**
+     * Fast O(1) lookup for a single bound template on an instance without merging defaults or copying arrays.
+     */
+    public static function getInstanceBoundTypeFast(object $instance, string $templateName): ?TypeNode
+    {
+        if (self::$instanceTemplateBindings === null) {
+            return null;
+        }
+
+        return self::$instanceTemplateBindings[$instance][$templateName] ?? null;
+    }
+
+    /**
      * Retrieves all declared template variances ('covariant', 'contravariant', or 'invariant') for an object instance.
      *
      * @return array<string, string>
@@ -1089,32 +1162,121 @@ final class TemplateManager
      */
     public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false, bool $refineOnly = false): ?ErrorMessage
     {
-        $className = (string) $typeNode->type;
-        if (isset(self::CONTEXT_SELF_REFERENCES[strtolower($className)])) {
-            $className = $instance::class;
+        self::$compiledNodeBindPlanCache ??= new WeakMap();
+        $plan = self::$compiledNodeBindPlanCache[$typeNode] ?? null;
+
+        if ($plan === null) {
+            $rawClass = (string) $typeNode->type;
+            if (isset(self::CONTEXT_SELF_REFERENCES[strtolower($rawClass)])) {
+                $plan = ['isRelative' => true];
+            } else {
+                $plan = self::compileGenericBindingPlan($typeNode, $rawClass);
+                $plan['isRelative'] = false;
+            }
+            self::$compiledNodeBindPlanCache[$typeNode] = $plan;
         }
 
-        if (! is_a($instance, $className) || ! ClassNameValidator::isValid($className) || ! self::isRealTypeSymbol($className)) {
+        if ($plan['isRelative']) {
+            $actualClass = $instance::class;
+            self::$compiledRelativeNodeBindPlanCache ??= new WeakMap();
+            $relativePlans = self::$compiledRelativeNodeBindPlanCache[$typeNode] ?? [];
+
+            if (! isset($relativePlans[$actualClass])) {
+                $relativePlans[$actualClass] = self::compileGenericBindingPlan($typeNode, $actualClass);
+                self::$compiledRelativeNodeBindPlanCache[$typeNode] = $relativePlans;
+            }
+
+            $plan = $relativePlans[$actualClass];
+        }
+
+        if ($plan['skip']) {
             return null;
         }
 
-        self::resolveInheritedTemplates($instance, $className);
+        /** @var class-string<object> $className */
+        $className = $plan['className'];
+
+        if (! ($instance instanceof $className)) {
+            return null;
+        }
+
+        $actualClass = $instance::class;
+        if (! isset(self::$noInheritedBindingsClasses[$actualClass])) {
+            self::resolveInheritedTemplates($instance, $className);
+        }
+
+        $existingBindings = self::$instanceTemplateBindings !== null
+            ? (self::$instanceTemplateBindings[$instance] ?? null)
+            : null;
+
+        if (
+            $existingBindings !== null
+            && ! $forceBind
+            && ! $refineOnly
+            && ! $plan['hasPropagation']
+            && self::$generatorInferredCallFrames === []
+        ) {
+            $allFastMatched = true;
+
+            foreach ($plan['items'] as $item) {
+                if (! $item['symbolValid']) {
+                    continue;
+                }
+
+                if (! $item['boundSatisfied']) {
+                    $allFastMatched = false;
+
+                    break;
+                }
+
+                $tName = $item['name'];
+                if (! isset($existingBindings[$tName])) {
+                    $allFastMatched = false;
+
+                    break;
+                }
+
+                if ($item['isWildcardOrMixed']) {
+                    continue;
+                }
+
+                $existingTypeNode = $existingBindings[$tName];
+                $expectedTypeNode = $item['expected'];
+
+                if ($existingTypeNode === $expectedTypeNode) {
+                    continue;
+                }
+
+                if (
+                    $item['identName'] !== null
+                    && $existingTypeNode instanceof IdentifierTypeNode
+                    && $existingTypeNode->name === $item['identName']
+                ) {
+                    continue;
+                }
+
+                $allFastMatched = false;
+
+                break;
+            }
+
+            if ($allFastMatched) {
+                return null;
+            }
+        }
 
         try {
-            [$templates, $classVariances] = self::hierarchyTemplatesForClass($className);
+            $templates = $plan['templates'];
+            $classVariances = $plan['classVariances'];
+            $templateList = $plan['templateList'];
+            $normalizedTypeArgs = $plan['normalizedTypeArgs'];
 
             self::$instanceTemplateBindings ??= new WeakMap();
-            $templateList = array_values($templates);
-            $normalizedTypeArgs = self::normalizeGenericArguments($typeNode->genericTypes, $templateList);
-
             $candidateBindings = self::$instanceTemplateBindings[$instance] ?? [];
-            foreach ($templateList as $index => $templateTag) {
-                if (isset($normalizedTypeArgs[$index])) {
-                    $arg = $normalizedTypeArgs[$index];
-                    $isWildcardOrMixed = ($arg instanceof IdentifierTypeNode && ($arg->name === '*' || strtolower($arg->name) === 'mixed'));
-                    if (! $isWildcardOrMixed) {
-                        $candidateBindings[$templateTag->name] = $arg;
-                    }
+
+            foreach ($plan['items'] as $item) {
+                if (! $item['isWildcardOrMixed']) {
+                    $candidateBindings[$item['name']] = $item['expected'];
                 }
             }
 
@@ -1143,9 +1305,124 @@ final class TemplateManager
             // Silently ignore reflection or parsing errors
         }
 
-        self::propagateBindingsToInstanceProperties($instance);
+        if ($plan['hasPropagation']) {
+            self::propagateBindingsToInstanceProperties($instance);
+        }
 
         return null;
+    }
+
+    /**
+     * Pre-compiles static template metadata, argument normalization, symbol validity,
+     * and non-dependent upper bounds for a (GenericTypeNode, className) pair.
+     *
+     * @return array{
+     *     skip: bool,
+     *     className: string,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classVariances: array<string, string>,
+     *     templateList: list<TemplateTagValueNode>,
+     *     normalizedTypeArgs: array<TypeNode>,
+     *     hasPropagation: bool,
+     *     items: list<array{
+     *         index: int,
+     *         name: string,
+     *         expected: TypeNode,
+     *         identName: ?string,
+     *         usageVariance: string,
+     *         isWildcardOrMixed: bool,
+     *         symbolValid: bool,
+     *         boundSatisfied: bool
+     *     }>
+     * }
+     */
+    private static function compileGenericBindingPlan(GenericTypeNode $typeNode, string $className): array
+    {
+        if (! ClassNameValidator::isValid($className) || ! self::isRealTypeSymbol($className)) {
+            return [
+                'skip' => true,
+                'className' => $className,
+                'templates' => [],
+                'classVariances' => [],
+                'templateList' => [],
+                'normalizedTypeArgs' => [],
+                'hasPropagation' => false,
+                'items' => [],
+            ];
+        }
+
+        try {
+            [$templates, $classVariances] = self::hierarchyTemplatesForClass($className);
+            $templateList = array_values($templates);
+            $normalizedTypeArgs = self::normalizeGenericArguments($typeNode->genericTypes, $templateList);
+            $hasPropagation = self::propagationPlan($className) !== [];
+            $items = [];
+
+            foreach ($templateList as $index => $templateTag) {
+                if (! isset($normalizedTypeArgs[$index])) {
+                    continue;
+                }
+
+                $expectedTypeNode = $normalizedTypeArgs[$index];
+                $identName = $expectedTypeNode instanceof IdentifierTypeNode ? $expectedTypeNode->name : null;
+                $isWildcardOrMixed = ($identName !== null && ($identName === '*' || strtolower($identName) === 'mixed'));
+
+                $symbolValid = true;
+                if ($identName !== null) {
+                    if (str_contains($identName, '::')) {
+                        $targetClass = explode('::', $identName, 2)[0];
+                        $symbolValid = self::isRealTypeSymbol($targetClass);
+                    } else {
+                        $symbolValid = SpecialTypeResolver::isBuiltInTypeKeyword($identName)
+                            || self::isRealTypeSymbol($identName);
+                    }
+                } elseif ($expectedTypeNode instanceof ConstTypeNode && $expectedTypeNode->constExpr instanceof ConstFetchNode && $expectedTypeNode->constExpr->className !== '') {
+                    $symbolValid = self::isRealTypeSymbol($expectedTypeNode->constExpr->className);
+                }
+
+                $boundSatisfied = true;
+                if ($symbolValid && $templateTag->bound !== null && ! $isWildcardOrMixed) {
+                    if (self::isFBounded($templateTag, $className) || DocblockParser::typeReferencesTemplate($templateTag->bound, $templates)) {
+                        $boundSatisfied = false;
+                    } else {
+                        $boundSatisfied = self::checkVariance($expectedTypeNode, $templateTag->bound, GenericTypeNode::VARIANCE_COVARIANT);
+                    }
+                }
+
+                $items[] = [
+                    'index' => $index,
+                    'name' => $templateTag->name,
+                    'expected' => $expectedTypeNode,
+                    'identName' => $identName,
+                    'usageVariance' => $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT,
+                    'isWildcardOrMixed' => $isWildcardOrMixed,
+                    'symbolValid' => $symbolValid,
+                    'boundSatisfied' => $boundSatisfied,
+                ];
+            }
+
+            return [
+                'skip' => false,
+                'className' => $className,
+                'templates' => $templates,
+                'classVariances' => $classVariances,
+                'templateList' => $templateList,
+                'normalizedTypeArgs' => $normalizedTypeArgs,
+                'hasPropagation' => $hasPropagation,
+                'items' => $items,
+            ];
+        } catch (\Throwable) {
+            return [
+                'skip' => false,
+                'className' => $className,
+                'templates' => [],
+                'classVariances' => [],
+                'templateList' => [],
+                'normalizedTypeArgs' => [],
+                'hasPropagation' => false,
+                'items' => [],
+            ];
+        }
     }
 
     /**
@@ -1852,6 +2129,10 @@ final class TemplateManager
         $actualClassName = $instance::class;
         self::$instanceTemplateBindings ??= new WeakMap();
 
+        if (isset(self::$noInheritedBindingsClasses[$actualClassName])) {
+            return;
+        }
+
         if (! isset(self::$classInheritedBindingsCache[$actualClassName])) {
             $rawBindings = [];
             $resolvedClassBindings = self::computeClassInheritedBindings($actualClassName, $rawBindings);
@@ -1864,6 +2145,8 @@ final class TemplateManager
         $existing = self::$instanceTemplateBindings[$instance] ?? [];
 
         if ($cachedBindings === [] && $rawMappings === []) {
+            self::$noInheritedBindingsClasses[$actualClassName] = true;
+
             return;
         }
 

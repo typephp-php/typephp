@@ -68,7 +68,8 @@ final class TypeValidatorRegistry
     public function validate(mixed $value, TypeNode $node, string $context = '', bool $isSensitive = false): ?ErrorMessage
     {
         if ($node instanceof IdentifierTypeNode) {
-            $ok = match ($node->name) {
+            $name = $node->name;
+            $ok = match ($name) {
                 'int', 'integer' => \is_int($value),
                 'string' => \is_string($value),
                 'positive-int' => \is_int($value) && $value > 0,
@@ -89,7 +90,8 @@ final class TypeValidatorRegistry
                 'true' => $value === true,
                 'false' => $value === false,
                 'scalar' => \is_scalar($value),
-                default => false,
+                'object' => \is_object($value),
+                default => \is_object($value) && ($value instanceof $name),
             };
 
             if ($ok) {

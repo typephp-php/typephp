@@ -384,20 +384,26 @@ final class ReturnChecker
 
         $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
 
+        $isDynamicReturn = $contract['returnIsDynamic']
+            ?? (str_contains((string) $returnTypeNode, 'static') || str_contains((string) $returnTypeNode, '$this'));
+
         $sig = null;
         $boundCount = \count($boundTemplates);
-        if ($boundCount > 0 && $boundCount <= 2 && ! $hasConditionals && \count($aliases) === 0 && $thisObj === null) {
+        if ($boundCount > 0 && $boundCount <= 2 && ! $hasConditionals && \count($aliases) === 0 && ! $isDynamicReturn) {
             if ($boundCount === 1) {
-                $first = reset($boundTemplates);
-                $sig = $first instanceof IdentifierTypeNode ? $first->name : (string) $first;
+                $firstKey = (string) array_key_first($boundTemplates);
+                $first = $boundTemplates[$firstKey];
+                $sig = $firstKey . '=' . ($first instanceof IdentifierTypeNode ? $first->name : (string) $first);
             } else {
                 $sig = '';
-                foreach ($boundTemplates as $v) {
-                    $sig .= ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
+                foreach ($boundTemplates as $k => $v) {
+                    $sig .= $k . '=' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
                 }
             }
 
-            if (isset(self::$substitutedReturnCache[$function][$sig])) {
+            if (str_contains($sig, 'static') || str_contains($sig, '$this')) {
+                $sig = null;
+            } elseif (isset(self::$substitutedReturnCache[$function][$sig])) {
                 $resolvedType = self::$substitutedReturnCache[$function][$sig];
             }
         }

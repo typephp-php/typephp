@@ -295,13 +295,11 @@ final class FunctionContractInjector
     {
         $unmutated = $candidateNames;
 
-        $visitor = new class ($unmutated) extends NodeVisitorAbstract {
+        $visitor = new class($unmutated) extends NodeVisitorAbstract {
             /**
              * @param array<string, true> $unmutated
              */
-            public function __construct(public array &$unmutated)
-            {
-            }
+            public function __construct(public array &$unmutated) {}
 
             public function enterNode(Node $node): ?int
             {
@@ -325,6 +323,25 @@ final class FunctionContractInjector
                     foreach ($node->vars as $v) {
                         $this->disqualifyTarget($v);
                     }
+                } elseif ($node instanceof Node\Stmt\Foreach_) {
+                    $this->disqualifyTarget($node->valueVar);
+                    if ($node->keyVar !== null) {
+                        $this->disqualifyTarget($node->keyVar);
+                    }
+                } elseif ($node instanceof Node\Stmt\Catch_) {
+                    if ($node->var !== null && \is_string($node->var->name)) {
+                        unset($this->unmutated[$node->var->name]);
+                    }
+                } elseif ($node instanceof Node\Stmt\Static_) {
+                    foreach ($node->vars as $sv) {
+                        if (\is_string($sv->var->name)) {
+                            unset($this->unmutated[$sv->var->name]);
+                        }
+                    }
+                } elseif ($node instanceof Node\Stmt\Global_) {
+                    foreach ($node->vars as $gv) {
+                        $this->disqualifyTarget($gv);
+                    }
                 } elseif ($node instanceof Node\ArrayItem && $node->byRef) {
                     $this->disqualifyTarget($node->value);
                 } elseif ($node instanceof Node\Expr\Closure) {
@@ -334,9 +351,21 @@ final class FunctionContractInjector
                         }
                     }
                 } elseif ($node instanceof Node\Expr\CallLike) {
-                    foreach ($node->getArgs() as $arg) {
-                        if ($arg->value instanceof Node\Expr\Variable && \is_string($arg->value->name)) {
-                            unset($this->unmutated[$arg->value->name]);
+                    if (
+                        $node instanceof Node\Expr\FuncCall
+                        && $node->name instanceof Node\Name
+                        && strtolower($node->name->getLast()) === 'extract'
+                    ) {
+                        $this->unmutated = [];
+
+                        return NodeTraverser::STOP_TRAVERSAL;
+                    }
+
+                    if (! $node->isFirstClassCallable()) {
+                        foreach ($node->getArgs() as $arg) {
+                            if ($arg instanceof Node\Arg && $arg->value instanceof Node\Expr\Variable && \is_string($arg->value->name)) {
+                                unset($this->unmutated[$arg->value->name]);
+                            }
                         }
                     }
                 }
@@ -350,8 +379,12 @@ final class FunctionContractInjector
                     $target = $target->var;
                 }
 
-                if ($target instanceof Node\Expr\Variable && \is_string($target->name)) {
-                    unset($this->unmutated[$target->name]);
+                if ($target instanceof Node\Expr\Variable) {
+                    if (\is_string($target->name)) {
+                        unset($this->unmutated[$target->name]);
+                    } else {
+                        $this->unmutated = [];
+                    }
                 } elseif ($target instanceof Node\Expr\Array_ || $target instanceof Node\Expr\List_) {
                     foreach ($target->items as $item) {
                         if ($item !== null) {
@@ -560,7 +593,7 @@ final class FunctionContractInjector
 
     private static function isGenerator(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): bool
     {
-        $visitor = new class () extends NodeVisitorAbstract {
+        $visitor = new class() extends NodeVisitorAbstract {
             public bool $isGen = false;
 
             public function enterNode(Node $n): ?int
@@ -1109,7 +1142,7 @@ final class FunctionContractInjector
         }
 
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class (
+        $traverser->addVisitor(new class(
             $thisArg,
             $genContract,
             $currentFile,
@@ -1131,8 +1164,7 @@ final class FunctionContractInjector
                 private array $byRefParams,
                 private bool $hasSelfOut,
                 private array $trustedParamTypes
-            ) {
-            }
+            ) {}
 
             public function enterNode(Node $n): int|Node|array|null
             {
@@ -1374,7 +1406,7 @@ final class FunctionContractInjector
         self::tagPrecedingAssignments($stmts);
 
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class (
+        $traverser->addVisitor(new class(
             $thisArg,
             $isNativeVoid,
             $needsReturnVars,
@@ -1406,8 +1438,7 @@ final class FunctionContractInjector
                 private ?TypeNode $returnTypeNode,
                 private string $currentFile,
                 private array $trustedParamTypes
-            ) {
-            }
+            ) {}
 
             public function enterNode(Node $n): int|array|null
             {

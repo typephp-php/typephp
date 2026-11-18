@@ -7,6 +7,50 @@ namespace TypePHP\Tests\Internal\Ast\Elimination;
 use TypePHP\Internal\Io\StreamWrapper;
 
 describe('Compile-Time Return Elimination via Parameter Type Tracking', function () {
+    test('handles PHP 8.1+ first-class callable syntax without VariadicPlaceholder warnings', function () {
+        $source = <<<'PHP'
+<?php
+/**
+ * @param non-empty-string $text
+ * @return non-empty-string
+ */
+function withFirstClassCallable(string $text): string
+{
+    $mapper = strlen(...);
+
+    return $text;
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_first_class_callable.php');
+
+        expect($transformed)->toContain('RuntimeTypeChecker::setupScope')
+            ->and($transformed)->not()->toContain('RuntimeTypeChecker::checkReturn')
+            ->and($transformed)->toContain('return $text;')
+        ;
+    });
+
+    test('retains checkReturn when parameter is overwritten by foreach or catch variable', function () {
+        $source = <<<'PHP'
+<?php
+/**
+ * @param positive-int $id
+ * @return positive-int
+ */
+function overwriteInForeach(int $id, array $items): int
+{
+    foreach ($items as $id) {
+    }
+
+    return $id;
+}
+PHP;
+
+        $transformed = StreamWrapper::transformSource($source, 'test_foreach_overwrite_param.php');
+
+        expect($transformed)->toContain('RuntimeTypeChecker::checkReturn');
+    });
+
     test('eliminates checkReturn when method returns an array shape containing unmutated validated parameters', function () {
         $source = <<<'PHP'
 <?php

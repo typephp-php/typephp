@@ -878,9 +878,12 @@ final class Config
         RuntimeTypeChecker::$returnsEnabled = true;
         RuntimeTypeChecker::$paramsOutEnabled = true;
         RuntimeTypeChecker::$selfOutEnabled = true;
+        RuntimeTypeChecker::$inlinePropertiesEnabled = true;
+        RuntimeTypeChecker::$arrayValidationHybrid = false;
 
         DocblockParser::reset();
         ParamChecker::reset();
+        MemberAssignChecker::reset();
         ReturnChecker::reset();
         TemplateManager::reset();
         HierarchyResolver::reset();
@@ -959,6 +962,8 @@ final class Config
         RuntimeTypeChecker::$returnsEnabled = self::$returns;
         RuntimeTypeChecker::$paramsOutEnabled = self::$params && self::$paramsOut;
         RuntimeTypeChecker::$selfOutEnabled = self::$selfOut;
+        RuntimeTypeChecker::$inlinePropertiesEnabled = self::$inlineProperties;
+        RuntimeTypeChecker::$arrayValidationHybrid = (self::$arrayValidation === 'hybrid');
     }
 
     private static function probeProcessEnvOverrides(): void
