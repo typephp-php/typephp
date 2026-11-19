@@ -64,7 +64,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     private string $currentNamespace = '';
 
     /**
-     * @var list<array{name: ?string, isAnonymous: bool, hasInheritance: bool, hasPropertyWithDoc: bool, isReadonly: bool, isFinal: bool, hasTemplates: bool}>
+     * @var list<array{name: ?string, isAnonymous: bool, hasInheritance: bool, hasRealInheritance: bool, hasPropertyWithDoc: bool, isReadonly: bool, isFinal: bool, hasTemplates: bool, isTrait?: bool}>
      */
     private array $classStack = [];
 
@@ -904,6 +904,7 @@ final class ContractVisitor extends NodeVisitorAbstract
         $hasPropertyWithDoc = false;
         $isReadonly = false;
         $isFinal = false;
+        $isTrait = $node instanceof Node\Stmt\Trait_;
 
         $doc = $node->getDocComment();
         if ($doc === null && $typeName !== null && StubManager::hasClassStub($typeName)) {
@@ -975,6 +976,9 @@ final class ContractVisitor extends NodeVisitorAbstract
         } elseif ($node instanceof Node\Stmt\Enum_) {
             $hasRealInheritance = $node->implements !== [];
             $hasInheritance = $hasRealInheritance;
+        } elseif ($node instanceof Node\Stmt\Trait_) {
+            $hasRealInheritance = true;
+            $hasInheritance = true;
         }
 
         if ($typeName !== null && ($node instanceof Node\Stmt\Class_ || $node instanceof Node\Stmt\Trait_)) {
@@ -1036,6 +1040,7 @@ final class ContractVisitor extends NodeVisitorAbstract
             'isReadonly' => $isReadonly,
             'isFinal' => $isFinal,
             'hasTemplates' => $hasTemplates,
+            'isTrait' => $isTrait,
         ];
     }
 
@@ -1899,6 +1904,15 @@ final class ContractVisitor extends NodeVisitorAbstract
         array $chain,
         int $line
     ): Node\Expr\Ternary {
+        if (\count($chain) === 1 && $chain[0][0] === 'dim') {
+            $dimExpr = $chain[0][1] instanceof Node\Expr
+                ? $chain[0][1]
+                : new Node\Expr\ConstFetch(new Node\Name('null'));
+            $checkCall = NodeBuilder::createPropertyDimAssignCheckCall($targetExpr, $propName, $dimExpr, $valueExpr);
+
+            return NodeBuilder::createTernaryThrowExpr($checkCall, $line);
+        }
+
         $chainAst = $this->buildChainAst($chain);
         $checkCall = NodeBuilder::createPropertyMemberAssignCheckCall($targetExpr, $propName, $chainAst, $valueExpr);
 

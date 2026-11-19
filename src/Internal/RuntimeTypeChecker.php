@@ -447,6 +447,101 @@ final class RuntimeTypeChecker
     }
 
     /**
+     * Fast-path for 1-level property dimension assignments ($obj->prop[$key] = $val or $obj->prop[] = $val),
+     * avoiding per-write [['dim', $key]] array allocations.
+     */
+    public static function checkPropertyDimAssign(
+        mixed $objectOrClass,
+        string $propName,
+        mixed $key,
+        mixed $value,
+        string $file
+    ): mixed {
+        if (! self::$isEnabled || ! self::$inlinePropertiesEnabled) {
+            return $value;
+        }
+
+        if (
+            self::$arrayValidationHybrid
+            && \is_object($objectOrClass)
+            && MemberAssignChecker::$fastObjectContractCache !== null
+        ) {
+            $entry = MemberAssignChecker::$fastObjectContractCache[$objectOrClass] ?? null;
+            if ($entry !== null && isset($entry[1][$propName])) {
+                $rawBindings = TemplateManager::$instanceTemplateBindings !== null
+                    ? (TemplateManager::$instanceTemplateBindings[$objectOrClass] ?? null)
+                    : null;
+
+                if ($entry[0] === $rawBindings) {
+                    $c = $entry[1][$propName];
+
+                    if (! $c[0] || $key === null) {
+                        $keyOk = true;
+                        if (! $c[0] && $key !== null && $c[1] !== MemberAssignChecker::OP_NONE) {
+                            $kExtra = $c[2];
+                            $keyOk = match ($c[1]) {
+                                MemberAssignChecker::OP_INT => \is_int($key),
+                                MemberAssignChecker::OP_STRING => \is_string($key),
+                                MemberAssignChecker::OP_ARRAY_KEY => \is_int($key) || \is_string($key),
+                                MemberAssignChecker::OP_NON_EMPTY_STRING => \is_string($key) && $key !== '',
+                                MemberAssignChecker::OP_POSITIVE_INT => \is_int($key) && $key > 0,
+                                MemberAssignChecker::OP_MASK => \is_int($kExtra) && (
+                                    (\is_string($key) && ($kExtra & MemberAssignChecker::BIT_STRING) !== 0)
+                                    || (\is_int($key) && ($kExtra & (MemberAssignChecker::BIT_INT | MemberAssignChecker::BIT_FLOAT)) !== 0)
+                                    || (\is_object($key) && ($kExtra & MemberAssignChecker::BIT_OBJECT) !== 0)
+                                    || (\is_bool($key) && ($kExtra & MemberAssignChecker::BIT_BOOL) !== 0)
+                                    || (\is_float($key) && ($kExtra & MemberAssignChecker::BIT_FLOAT) !== 0)
+                                    || (\is_array($key) && ($kExtra & MemberAssignChecker::BIT_ARRAY) !== 0)
+                                ),
+                                MemberAssignChecker::OP_OBJECT => \is_object($key),
+                                MemberAssignChecker::OP_CLASS => \is_object($key) && \is_string($kExtra) && ($key instanceof $kExtra),
+                                default => false,
+                            };
+                        }
+
+                        if ($keyOk) {
+                            $vOp = $c[3];
+                            if ($vOp === MemberAssignChecker::OP_NONE) {
+                                return $value;
+                            }
+
+                            $vExtra = $c[4];
+                            $valOk = match ($vOp) {
+                                MemberAssignChecker::OP_INT => \is_int($value),
+                                MemberAssignChecker::OP_STRING => \is_string($value),
+                                MemberAssignChecker::OP_BOOL => \is_bool($value),
+                                MemberAssignChecker::OP_FLOAT => \is_float($value) || \is_int($value),
+                                MemberAssignChecker::OP_POSITIVE_INT => \is_int($value) && $value > 0,
+                                MemberAssignChecker::OP_NON_EMPTY_STRING => \is_string($value) && $value !== '',
+                                MemberAssignChecker::OP_ARRAY_KEY => \is_int($value) || \is_string($value),
+                                MemberAssignChecker::OP_ARRAY => \is_array($value),
+                                MemberAssignChecker::OP_OBJECT => \is_object($value),
+                                MemberAssignChecker::OP_CLASS => \is_object($value) && \is_string($vExtra) && ($value instanceof $vExtra),
+                                MemberAssignChecker::OP_MASK => \is_int($vExtra) && (
+                                    (\is_string($value) && ($vExtra & MemberAssignChecker::BIT_STRING) !== 0)
+                                    || (\is_int($value) && ($vExtra & (MemberAssignChecker::BIT_INT | MemberAssignChecker::BIT_FLOAT)) !== 0)
+                                    || (\is_object($value) && ($vExtra & MemberAssignChecker::BIT_OBJECT) !== 0)
+                                    || (\is_bool($value) && ($vExtra & MemberAssignChecker::BIT_BOOL) !== 0)
+                                    || (\is_float($value) && ($vExtra & MemberAssignChecker::BIT_FLOAT) !== 0)
+                                    || ($value === null && ($vExtra & MemberAssignChecker::BIT_NULL) !== 0)
+                                    || (\is_array($value) && ($vExtra & MemberAssignChecker::BIT_ARRAY) !== 0)
+                                ),
+                                default => false,
+                            };
+
+                            if ($valOk) {
+                                return $value;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return self::checkPropertyMemberAssign($objectOrClass, $propName, [['dim', $key]], $value, $file);
+    }
+
+    /**
      * Pre-binds generic template state on a class before its constructor executes.
      *
      * @param \Closure(mixed ...$args): mixed $factory
