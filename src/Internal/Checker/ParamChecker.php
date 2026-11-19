@@ -270,7 +270,7 @@ final class ParamChecker
         /** @var array<string, TemplateTagValueNode> $allTemplates */
         $allTemplates = [...$classTemplates, ...$methodTemplates];
 
-        if (\count($allTemplates) > 0 && $paramsUseGenerics) {
+        if (\count($allTemplates) > 0 && $paramsUseGenerics && ($contract['paramsNeedPreInference'] ?? true)) {
             self::preInferGenericTemplates($contract['types'], $vars, $effectiveFunction, $thisObj, $allTemplates, $classTemplates);
         }
 
@@ -2028,8 +2028,10 @@ final class ParamChecker
         $shouldSkipTemplateSub = $isBareTemplate || $isClassStringT;
 
         if (! $shouldSkipTemplateSub && (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0)) {
-            $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
-            $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+            $subType = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
+            if ($subType !== $typeNode) {
+                $typeNode = SpecialTypeResolver::resolve($subType, $effectiveFunction, $thisObj);
+            }
         }
 
         if (ConditionalChecker::containsConditional($typeNode)) {

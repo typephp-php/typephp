@@ -299,11 +299,10 @@ final class DocblockParser
     }
 
     /**
-     * Computes pre-optimized flags for a contract to avoid redundant re-parsing.
-     *
      * @param array<string, TypeNode> $types
      * @param array<string, TypeNode> $aliases
      * @param array<string, TemplateTagValueNode> $methodTemplates
+     * @param array<string, TemplateTagValueNode> $allTemplates
      *
      * @return array{
      *     constrainedTypes: array<string, TypeNode>,
@@ -311,7 +310,10 @@ final class DocblockParser
      *     allParamsUnconstrained: bool,
      *     returnUnconstrained: bool,
      *     returnHasConditional: bool,
-     *     isSimple: bool
+     *     isSimple: bool,
+     *     paramsAreSimple: bool,
+     *     hasCrossReferencedBounds: bool,
+     *     paramsNeedPreInference: bool
      * }
      */
     private static function computeContractFlags(
@@ -321,10 +323,12 @@ final class DocblockParser
         bool $returnUsesGenerics,
         array $aliases,
         array $methodTemplates,
-        bool $paramsAreDynamic = false
+        bool $paramsAreDynamic = false,
+        array $allTemplates = []
     ): array {
         $constrainedTypes = [];
         $paramConditionals = [];
+        $paramsNeedPreInference = false;
 
         foreach ($types as $paramName => $tNode) {
             if (! ($tNode instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($tNode)) {
@@ -332,6 +336,16 @@ final class DocblockParser
                 $constrainedTypes[$paramName] = $tNode;
             } elseif (! self::isUnconstrainedType($tNode)) {
                 $constrainedTypes[$paramName] = $tNode;
+            }
+
+            if (! $paramsNeedPreInference) {
+                $inner = $tNode;
+                while ($inner instanceof NullableTypeNode) {
+                    $inner = $inner->type;
+                }
+                if (! ($inner instanceof IdentifierTypeNode)) {
+                    $paramsNeedPreInference = true;
+                }
             }
         }
 
@@ -346,11 +360,23 @@ final class DocblockParser
             $returnHasConditional = ConditionalChecker::containsConditional($returnType);
         }
 
-        $isSimple = ! $paramsUseGenerics
+        $paramsAreSimple = ! $paramsUseGenerics
             && ! $paramsAreDynamic
-            && ! $returnUsesGenerics
             && \count($aliases) === 0
             && \count($methodTemplates) === 0;
+
+        $isSimple = $paramsAreSimple && ! $returnUsesGenerics;
+
+        $hasCrossReferencedBounds = false;
+        if ($allTemplates !== []) {
+            foreach ($allTemplates as $templateNode) {
+                if ($templateNode->bound !== null && self::typeReferencesTemplate($templateNode->bound, $allTemplates)) {
+                    $hasCrossReferencedBounds = true;
+
+                    break;
+                }
+            }
+        }
 
         return [
             'constrainedTypes' => $constrainedTypes,
@@ -359,6 +385,9 @@ final class DocblockParser
             'returnUnconstrained' => $returnUnconstrained,
             'returnHasConditional' => $returnHasConditional,
             'isSimple' => $isSimple,
+            'paramsAreSimple' => $paramsAreSimple,
+            'hasCrossReferencedBounds' => $hasCrossReferencedBounds,
+            'paramsNeedPreInference' => $paramsNeedPreInference,
         ];
     }
 

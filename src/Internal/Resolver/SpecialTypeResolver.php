@@ -234,7 +234,34 @@ final class SpecialTypeResolver
         }
 
         $ref = self::getReflectionContext($context);
-        $declaringClass = $ref instanceof \ReflectionMethod ? $ref->getDeclaringClass()->getName() : ($ref instanceof \ReflectionClass ? $ref->getName() : null);
+        $declaringClass = $ref instanceof \ReflectionMethod
+            ? $ref->getDeclaringClass()->getName()
+            : ($ref instanceof \ReflectionClass ? $ref->getName() : null);
+
+        return self::resolveWithContext($node, $ref, $declaringClass, $context, $thisObj);
+    }
+
+    /**
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod $ref
+     * @param \ReflectionClass<object>|\ReflectionFunction|\ReflectionMethod|string $context
+     */
+    private static function resolveWithContext(
+        TypeNode $node,
+        \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref,
+        ?string $declaringClass,
+        \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context,
+        ?object $thisObj = null
+    ): TypeNode {
+        if ($node instanceof IdentifierTypeNode) {
+            $lower = strtolower($node->name);
+            if (isset(self::BUILTIN_TYPE_KEYWORDS[$lower]) && $lower !== 'self' && $lower !== 'parent' && $lower !== 'static' && $lower !== '$this') {
+                if (! isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) || $node->name === $lower) {
+                    return $node;
+                }
+            }
+
+            return self::resolveIdentifier($node, $declaringClass, $ref, $context, $thisObj);
+        }
 
         if ($node instanceof ThisTypeNode) {
             if ($thisObj !== null) {
@@ -251,19 +278,24 @@ final class SpecialTypeResolver
             return $node;
         }
 
-        if ($node instanceof IdentifierTypeNode) {
-            return self::resolveIdentifier($node, $declaringClass, $ref, $context, $thisObj);
-        }
-
         if ($node instanceof ConstTypeNode) {
             return self::resolveConstType($node, $declaringClass, $ref);
         }
 
         if ($node instanceof GenericTypeNode) {
-            $genericType = self::resolve($node->type, $context, $thisObj);
+            $genericType = self::resolveWithContext($node->type, $ref, $declaringClass, $context, $thisObj);
+            $changed = ($genericType !== $node->type);
             $innerTypes = [];
             foreach ($node->genericTypes as $gt) {
-                $innerTypes[] = self::resolve($gt, $context, $thisObj);
+                $resGt = self::resolveWithContext($gt, $ref, $declaringClass, $context, $thisObj);
+                if ($resGt !== $gt) {
+                    $changed = true;
+                }
+                $innerTypes[] = $resGt;
+            }
+
+            if (! $changed) {
+                return $node;
             }
 
             return new GenericTypeNode(
@@ -291,10 +323,10 @@ final class SpecialTypeResolver
 
         if ($node instanceof ConditionalTypeNode) {
             return new ConditionalTypeNode(
-                self::resolve($node->subjectType, $context, $thisObj),
-                self::resolve($node->targetType, $context, $thisObj),
-                self::resolve($node->if, $context, $thisObj),
-                self::resolve($node->else, $context, $thisObj),
+                self::resolveWithContext($node->subjectType, $ref, $declaringClass, $context, $thisObj),
+                self::resolveWithContext($node->targetType, $ref, $declaringClass, $context, $thisObj),
+                self::resolveWithContext($node->if, $ref, $declaringClass, $context, $thisObj),
+                self::resolveWithContext($node->else, $ref, $declaringClass, $context, $thisObj),
                 $node->negated
             );
         }
@@ -302,37 +334,51 @@ final class SpecialTypeResolver
         if ($node instanceof ConditionalTypeForParameterNode) {
             return new ConditionalTypeForParameterNode(
                 $node->parameterName,
-                self::resolve($node->targetType, $context, $thisObj),
-                self::resolve($node->if, $context, $thisObj),
-                self::resolve($node->else, $context, $thisObj),
+                self::resolveWithContext($node->targetType, $ref, $declaringClass, $context, $thisObj),
+                self::resolveWithContext($node->if, $ref, $declaringClass, $context, $thisObj),
+                self::resolveWithContext($node->else, $ref, $declaringClass, $context, $thisObj),
                 $node->negated
             );
         }
 
         if ($node instanceof NullableTypeNode) {
-            return new NullableTypeNode(self::resolve($node->type, $context, $thisObj));
+            $resInner = self::resolveWithContext($node->type, $ref, $declaringClass, $context, $thisObj);
+
+            return $resInner === $node->type ? $node : new NullableTypeNode($resInner);
         }
 
         if ($node instanceof ArrayTypeNode) {
-            return new ArrayTypeNode(self::resolve($node->type, $context, $thisObj));
+            $resInner = self::resolveWithContext($node->type, $ref, $declaringClass, $context, $thisObj);
+
+            return $resInner === $node->type ? $node : new ArrayTypeNode($resInner);
         }
 
         if ($node instanceof UnionTypeNode) {
             $types = [];
+            $changed = false;
             foreach ($node->types as $t) {
-                $types[] = self::resolve($t, $context, $thisObj);
+                $resT = self::resolveWithContext($t, $ref, $declaringClass, $context, $thisObj);
+                if ($resT !== $t) {
+                    $changed = true;
+                }
+                $types[] = $resT;
             }
 
-            return new UnionTypeNode($types);
+            return $changed ? new UnionTypeNode($types) : $node;
         }
 
         if ($node instanceof IntersectionTypeNode) {
             $types = [];
+            $changed = false;
             foreach ($node->types as $t) {
-                $types[] = self::resolve($t, $context, $thisObj);
+                $resT = self::resolveWithContext($t, $ref, $declaringClass, $context, $thisObj);
+                if ($resT !== $t) {
+                    $changed = true;
+                }
+                $types[] = $resT;
             }
 
-            return new IntersectionTypeNode($types);
+            return $changed ? new IntersectionTypeNode($types) : $node;
         }
 
         return $node;
@@ -1416,10 +1462,13 @@ final class SpecialTypeResolver
             return false;
         }
 
-        return class_exists($symbol)
-            || interface_exists($symbol)
-            || enum_exists($symbol)
-            || trait_exists($symbol);
+        if (class_exists($symbol, true)) {
+            return true;
+        }
+
+        return interface_exists($symbol, false)
+            || enum_exists($symbol, false)
+            || trait_exists($symbol, false);
     }
 
     /**

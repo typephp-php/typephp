@@ -87,6 +87,13 @@ final class InlineChecker
     private static array $resolvedStaticPropertyTypeCache = [];
 
     /**
+     * In-memory cache for resolved instance property generic types: [$className][$propName] => TypeNode.
+     *
+     * @var \WeakMap<string, array<string, TypeNode>>
+     */
+    private static ?\WeakMap $instancePropertyTypeCache = null;
+
+    /**
      * Resets internal type node and function caches. Useful for test isolation.
      */
     public static function reset(): void
@@ -703,7 +710,14 @@ final class InlineChecker
         ?string $methodName,
         ?object $thisObj
     ): TypeNode {
-        if (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className)) {
+        if (
+            ! class_exists($className, false)
+            && ! interface_exists($className, false)
+            && ! trait_exists($className, false)
+            && ! class_exists($className)
+            && ! interface_exists($className)
+            && ! trait_exists($className)
+        ) {
             return $typeNode;
         }
 
@@ -763,8 +777,18 @@ final class InlineChecker
     /**
      * Substitutes generic template types declared on class properties.
      */
-    private static function substitutePropertyGenerics(TypeNode $typeNode, object $object, string $className): TypeNode
+    private static function substitutePropertyGenerics(TypeNode $typeNode, object $object, string $className, string $propName = ''): TypeNode
     {
+        $boundTemplates = TemplateManager::getInstanceBindingsFast($object);
+
+        if ($propName !== '') {
+            self::$instancePropertyTypeCache ??= new \WeakMap();
+            $entry = self::$instancePropertyTypeCache[$object] ?? null;
+            if ($entry !== null && $entry['bindings'] === $boundTemplates && isset($entry['props'][$propName])) {
+                return $entry['props'][$propName];
+            }
+        }
+
         $allTemplates = DocblockParser::parseClassTemplates($className);
 
         if ($allTemplates === []) {
@@ -773,20 +797,33 @@ final class InlineChecker
             $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
         }
 
-        $boundTemplates = TemplateManager::getBoundTemplates('none', $object, $allTemplates);
-        $declaredTemplates = $allTemplates;
+        if ($boundTemplates !== [] || $allTemplates !== []) {
+            $subNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $allTemplates);
 
-        if (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0) {
-            $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
-
-            if (class_exists($className) || interface_exists($className) || trait_exists($className)) {
+            if ($subNode !== $typeNode && (class_exists($className, false) || interface_exists($className, false) || trait_exists($className, false) || class_exists($className))) {
                 try {
                     /** @var class-string<object> $className */
                     $refClass = new \ReflectionClass($className);
-                    $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
+                    $typeNode = SpecialTypeResolver::resolve($subNode, $refClass);
                 } catch (\ReflectionException $e) {
-                    // Silently continue if reflection fails
+                    $typeNode = $subNode;
                 }
+            } else {
+                $typeNode = $subNode;
+            }
+        }
+
+        if ($propName !== '') {
+            self::$instancePropertyTypeCache ??= new \WeakMap();
+            $entry = self::$instancePropertyTypeCache[$object] ?? null;
+            if ($entry === null || $entry['bindings'] !== $boundTemplates) {
+                self::$instancePropertyTypeCache[$object] = [
+                    'bindings' => $boundTemplates,
+                    'props' => [$propName => $typeNode],
+                ];
+            } else {
+                $entry['props'][$propName] = $typeNode;
+                self::$instancePropertyTypeCache[$object] = $entry;
             }
         }
 

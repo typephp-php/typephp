@@ -30,41 +30,25 @@ use WeakMap;
 final class MemberAssignChecker
 {
     private const OP_NONE = 0;
-
     private const OP_INT = 1;
-
     private const OP_STRING = 2;
-
     private const OP_BOOL = 3;
-
     private const OP_FLOAT = 4;
     private const OP_POSITIVE_INT = 5;
-
     private const OP_NON_EMPTY_STRING = 6;
     private const OP_ARRAY_KEY = 7;
-
     private const OP_ARRAY = 8;
-
     private const OP_OBJECT = 9;
-
     private const OP_CLASS = 10;
-
     private const OP_MASK = 11;
-
     private const OP_FALLBACK = 12;
 
     private const BIT_INT = 1;
-
     private const BIT_STRING = 2;
-
     private const BIT_BOOL = 4;
-
     private const BIT_FLOAT = 8;
-
     private const BIT_OBJECT = 16;
-
     private const BIT_NULL = 32;
-
     private const BIT_ARRAY = 64;
 
     /**
@@ -231,7 +215,10 @@ final class MemberAssignChecker
         }
 
         if (\count($chain) === 1 && $chain[0][0] === 'dim') {
-            $propPlan = self::getPropertyMutationPlan($className, $propName);
+            $propPlan = (isset(self::$propertyMutationPlanCache[$className]) && \array_key_exists($propName, self::$propertyMutationPlanCache[$className]))
+                ? self::$propertyMutationPlanCache[$className][$propName]
+                : self::buildPropertyMutationPlan($className, $propName);
+
             if ($propPlan === null) {
                 return $value;
             }
@@ -242,22 +229,42 @@ final class MemberAssignChecker
                 && $propPlan['isNativeNonNullArray']
                 && \is_object($objectOrClass)
             ) {
-                $contract = self::resolveElementContractFromPlan($objectOrClass, $className, $propName, $propPlan);
-                if ($contract !== null && (! $contract['isList'] || $chain[0][1] === null)) {
+                $contract = null;
+
+                if ($propPlan['usesTemplates']) {
+                    $boundTemplates = TemplateManager::getInstanceBindingsFast($objectOrClass);
+                    self::$instanceContractCache ??= new WeakMap();
+                    $entry = self::$instanceContractCache[$objectOrClass] ?? null;
+
+                    if (
+                        $entry !== null
+                        && $entry['rawBindings'] === $boundTemplates
+                        && \array_key_exists($propName, $entry['contracts'])
+                    ) {
+                        $contract = $entry['contracts'][$propName];
+                    } else {
+                        $contract = self::resolveElementContractFromPlan($objectOrClass, $className, $propName, $propPlan, $boundTemplates);
+                    }
+                } elseif (isset(self::$substitutedElementContractCache[$className][$propName]) && \array_key_exists('', self::$substitutedElementContractCache[$className][$propName])) {
+                    $contract = self::$substitutedElementContractCache[$className][$propName][''];
+                } else {
+                    $contract = self::resolveElementContractFromPlan($objectOrClass, $className, $propName, $propPlan);
+                }
+
+                $key = $chain[0][1];
+                if ($contract !== null && (! $contract['isList'] || $key === null)) {
                     $directErr = self::validatePropertyElementMutationWithContract(
                         $className,
                         $propName,
-                        $chain[0][1],
+                        $key,
                         $value,
                         $contract,
                         $registry
                     );
 
-                    if ($directErr instanceof ErrorMessage) {
-                        return $directErr;
+                    if ($directErr === null) {
+                        return $value;
                     }
-
-                    return $value;
                 }
             }
         }
@@ -343,14 +350,22 @@ final class MemberAssignChecker
                     return ErrorFactory::createError("Property {$className}::\${$propName} must be a list, non-integer key '{$keyStr}' given");
                 }
             } elseif ($key !== null && $contract['keyOp'] !== self::OP_NONE) {
+                $keyOp = $contract['keyOp'];
                 $keyExtra = $contract['keyExtra'];
-                $keyOk = match ($contract['keyOp']) {
+                $keyOk = match ($keyOp) {
                     self::OP_INT => \is_int($key),
                     self::OP_STRING => \is_string($key),
                     self::OP_ARRAY_KEY => \is_int($key) || \is_string($key),
                     self::OP_NON_EMPTY_STRING => \is_string($key) && $key !== '',
                     self::OP_POSITIVE_INT => \is_int($key) && $key > 0,
-                    self::OP_MASK => self::matchesMask($key, (int) $keyExtra),
+                    self::OP_MASK => (
+                        (\is_string($key) && (((int) $keyExtra) & self::BIT_STRING) !== 0)
+                        || (\is_int($key) && (((int) $keyExtra) & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
+                        || (\is_object($key) && (((int) $keyExtra) & self::BIT_OBJECT) !== 0)
+                        || (\is_bool($key) && (((int) $keyExtra) & self::BIT_BOOL) !== 0)
+                        || (\is_float($key) && (((int) $keyExtra) & self::BIT_FLOAT) !== 0)
+                        || (\is_array($key) && (((int) $keyExtra) & self::BIT_ARRAY) !== 0)
+                    ),
                     self::OP_OBJECT => \is_object($key),
                     self::OP_CLASS => \is_object($key) && ($key instanceof $keyExtra),
                     default => false,
@@ -379,7 +394,15 @@ final class MemberAssignChecker
                     self::OP_ARRAY => \is_array($value),
                     self::OP_OBJECT => \is_object($value),
                     self::OP_CLASS => \is_object($value) && ($value instanceof $valExtra),
-                    self::OP_MASK => self::matchesMask($value, (int) $valExtra),
+                    self::OP_MASK => (
+                        (\is_string($value) && (((int) $valExtra) & self::BIT_STRING) !== 0)
+                        || (\is_int($value) && (((int) $valExtra) & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
+                        || (\is_object($value) && (((int) $valExtra) & self::BIT_OBJECT) !== 0)
+                        || (\is_bool($value) && (((int) $valExtra) & self::BIT_BOOL) !== 0)
+                        || (\is_float($value) && (((int) $valExtra) & self::BIT_FLOAT) !== 0)
+                        || ($value === null && (((int) $valExtra) & self::BIT_NULL) !== 0)
+                        || (\is_array($value) && (((int) $valExtra) & self::BIT_ARRAY) !== 0)
+                    ),
                     default => false,
                 };
 
@@ -407,12 +430,8 @@ final class MemberAssignChecker
      *     isMagicOrMissing: bool
      * }
      */
-    private static function getPropertyMutationPlan(string $className, string $propName): ?array
+    private static function buildPropertyMutationPlan(string $className, string $propName): ?array
     {
-        if (isset(self::$propertyMutationPlanCache[$className]) && \array_key_exists($propName, self::$propertyMutationPlanCache[$className])) {
-            return self::$propertyMutationPlanCache[$className][$propName];
-        }
-
         $rawTypeNode = DocblockParser::parseProperty($className, $propName);
         if ($rawTypeNode === null) {
             InlineChecker::$nullPropertyCache[$className][$propName] = true;
@@ -460,7 +479,10 @@ final class MemberAssignChecker
      */
     private static function resolveElementContract(mixed $objectOrClass, string $className, string $propName): ?array
     {
-        $propPlan = self::getPropertyMutationPlan($className, $propName);
+        $propPlan = (isset(self::$propertyMutationPlanCache[$className]) && \array_key_exists($propName, self::$propertyMutationPlanCache[$className]))
+            ? self::$propertyMutationPlanCache[$className][$propName]
+            : self::buildPropertyMutationPlan($className, $propName);
+
         if ($propPlan === null) {
             return null;
         }
@@ -476,6 +498,7 @@ final class MemberAssignChecker
      *     isNativeNonNullArray: bool,
      *     isMagicOrMissing: bool
      * } $propPlan
+     * @param array<string, TypeNode>|null $preFetchedBindings
      *
      * @return ?array{
      *     isList: bool,
@@ -488,13 +511,18 @@ final class MemberAssignChecker
      *     valExtra: mixed
      * }
      */
-    private static function resolveElementContractFromPlan(mixed $objectOrClass, string $className, string $propName, array $propPlan): ?array
-    {
+    private static function resolveElementContractFromPlan(
+        mixed $objectOrClass,
+        string $className,
+        string $propName,
+        array $propPlan,
+        ?array $preFetchedBindings = null
+    ): ?array {
         $boundTemplates = [];
         $useInstanceCache = $propPlan['usesTemplates'] && \is_object($objectOrClass);
 
         if ($useInstanceCache) {
-            $boundTemplates = TemplateManager::getInstanceBindingsFast($objectOrClass);
+            $boundTemplates = $preFetchedBindings ?? TemplateManager::getInstanceBindingsFast($objectOrClass);
             self::$instanceContractCache ??= new WeakMap();
             $entry = self::$instanceContractCache[$objectOrClass] ?? null;
 
@@ -518,7 +546,7 @@ final class MemberAssignChecker
             $contract = self::$substitutedElementContractCache[$className][$propName][$sig];
         } else {
             $typeNode = $propPlan['rawType'];
-            if ($sig !== '') {
+            if ($propPlan['usesTemplates']) {
                 $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $propPlan['classTemplates']);
             }
 
@@ -575,29 +603,25 @@ final class MemberAssignChecker
                 ];
             }
 
-            if ($base === 'array' || $base === 'non-empty-array' || $base === 'iterable') {
-                $genericCount = \count($typeNode->genericTypes);
-                $keyType = $genericCount >= 2 ? $typeNode->genericTypes[0] : null;
-                $valueType = $genericCount >= 2
-                    ? $typeNode->genericTypes[1]
-                    : ($typeNode->genericTypes[0] ?? null);
+            $genericCount = \count($typeNode->genericTypes);
+            $keyType = $genericCount >= 2 ? $typeNode->genericTypes[0] : null;
+            $valueType = $genericCount >= 2
+                ? $typeNode->genericTypes[1]
+                : ($typeNode->genericTypes[0] ?? null);
 
-                [$keyOp, $keyExtra] = self::compileCheckOp($keyType);
-                [$valOp, $valExtra] = self::compileCheckOp($valueType);
+            [$keyOp, $keyExtra] = self::compileCheckOp($keyType);
+            [$valOp, $valExtra] = self::compileCheckOp($valueType);
 
-                return [
-                    'isList' => false,
-                    'quoteKey' => true,
-                    'keyType' => $keyType,
-                    'valueType' => $valueType,
-                    'keyOp' => $keyOp,
-                    'keyExtra' => $keyExtra,
-                    'valOp' => $valOp,
-                    'valExtra' => $valExtra,
-                ];
-            }
-
-            return null;
+            return [
+                'isList' => false,
+                'quoteKey' => true,
+                'keyType' => $keyType,
+                'valueType' => $valueType,
+                'keyOp' => $keyOp,
+                'keyExtra' => $keyExtra,
+                'valOp' => $valOp,
+                'valExtra' => $valExtra,
+            ];
         }
 
         if ($typeNode instanceof ArrayTypeNode) {
@@ -679,33 +703,6 @@ final class MemberAssignChecker
         }
 
         return [self::OP_FALLBACK, null];
-    }
-
-    private static function matchesMask(mixed $value, int $mask): bool
-    {
-        if (\is_string($value)) {
-            return ($mask & self::BIT_STRING) !== 0;
-        }
-        if (\is_int($value)) {
-            return ($mask & (self::BIT_INT | self::BIT_FLOAT)) !== 0;
-        }
-        if (\is_object($value)) {
-            return ($mask & self::BIT_OBJECT) !== 0;
-        }
-        if (\is_bool($value)) {
-            return ($mask & self::BIT_BOOL) !== 0;
-        }
-        if (\is_float($value)) {
-            return ($mask & self::BIT_FLOAT) !== 0;
-        }
-        if ($value === null) {
-            return ($mask & self::BIT_NULL) !== 0;
-        }
-        if (\is_array($value)) {
-            return ($mask & self::BIT_ARRAY) !== 0;
-        }
-
-        return false;
     }
 
     /**

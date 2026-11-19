@@ -540,10 +540,22 @@ final class TemplateManager
     private static array $noInheritedBindingsClasses = [];
 
     /**
+     * @var WeakMap<object, array{bindings: array<string, TypeNode>, propIds: list<int>}>|null
+     */
+    private static ?WeakMap $propagatedBindingsCache = null;
+
+    /**
+     * @var array<class-string<object>, \ReflectionClass<object>>
+     */
+    private static array $refClassCache = [];
+
+    /**
      * Resets all static generic template bindings, call stack frames, and method template caches.
      */
     public static function reset(): void
     {
+        self::$propagatedBindingsCache = null;
+        self::$refClassCache = [];
         self::$instanceTemplateBindings = null;
         self::$callStackBindings = [];
         self::$activeCallOrder = [];
@@ -1250,7 +1262,6 @@ final class TemplateManager
             $existingBindings !== null
             && ! $forceBind
             && ! $refineOnly
-            && ! $plan['hasPropagation']
             && self::$generatorInferredCallFrames === []
         ) {
             $allFastMatched = true;
@@ -1298,6 +1309,10 @@ final class TemplateManager
             }
 
             if ($allFastMatched) {
+                if ($plan['hasPropagation']) {
+                    self::propagateBindingsIfNeeded($instance, $existingBindings);
+                }
+
                 return null;
             }
         }
@@ -1343,7 +1358,8 @@ final class TemplateManager
         }
 
         if ($plan['hasPropagation']) {
-            self::propagateBindingsToInstanceProperties($instance);
+            $currentBindings = self::$instanceTemplateBindings[$instance] ?? [];
+            self::propagateBindingsIfNeeded($instance, $currentBindings);
         }
 
         return null;
@@ -1546,21 +1562,77 @@ final class TemplateManager
     }
 
     /**
-     * Propagates resolved class template bindings on an instance to any of its object properties
-     * whose declared types reference those class templates (e.g. $this->store with @var KeyValueStore<K, V>).
+     * @param array<string, TypeNode> $instanceBindings
      */
-    private static function propagateBindingsToInstanceProperties(object $instance): void
+    private static function propagateBindingsIfNeeded(object $instance, array $instanceBindings): void
     {
-        if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$instance])) {
-            return;
-        }
-
-        $instanceBindings = self::$instanceTemplateBindings[$instance];
         if ($instanceBindings === []) {
             return;
         }
 
         $plan = self::propagationPlan($instance::class);
+        if ($plan === []) {
+            return;
+        }
+
+        if (\PHP_VERSION_ID >= 80400) {
+            $className = $instance::class;
+            $refClass = self::$refClassCache[$className] ??= new \ReflectionClass($className);
+            if ($refClass->isUninitializedLazyObject($instance)) {
+                return;
+            }
+        }
+
+        self::$propagatedBindingsCache ??= new WeakMap();
+        $cached = self::$propagatedBindingsCache[$instance] ?? null;
+
+        if ($cached !== null && $cached['bindings'] === $instanceBindings) {
+            $allSameProps = true;
+            foreach ($plan as $idx => $entry) {
+                $prop = $entry['prop'];
+                if ((\PHP_VERSION_ID >= 80400 && $prop->isLazy($instance)) || ! $prop->isInitialized($instance)) {
+                    $propId = -1;
+                } else {
+                    $val = $prop->getValue($instance);
+                    $propId = \is_object($val) ? spl_object_id($val) : 0;
+                }
+
+                if (($cached['propIds'][$idx] ?? null) !== $propId) {
+                    $allSameProps = false;
+
+                    break;
+                }
+            }
+
+            if ($allSameProps) {
+                return;
+            }
+        }
+
+        self::propagateBindingsToInstanceProperties($instance, $instanceBindings, $plan);
+    }
+
+    /**
+     * @param array<string, TypeNode>|null $instanceBindings
+     * @param list<array{prop: \ReflectionProperty, type: GenericTypeNode}>|null $plan
+     */
+    private static function propagateBindingsToInstanceProperties(
+        object $instance,
+        ?array $instanceBindings = null,
+        ?array $plan = null
+    ): void {
+        if ($instanceBindings === null) {
+            if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$instance])) {
+                return;
+            }
+            $instanceBindings = self::$instanceTemplateBindings[$instance];
+        }
+
+        if ($instanceBindings === []) {
+            return;
+        }
+
+        $plan ??= self::propagationPlan($instance::class);
         if ($plan === []) {
             return;
         }
@@ -1571,26 +1643,40 @@ final class TemplateManager
         }
         self::$propagationStack[$oid] = true;
 
+        $propIds = [];
+
         try {
-            if (\PHP_VERSION_ID >= 80400 && (new \ReflectionObject($instance))->isUninitializedLazyObject($instance)) {
-                return;
+            if (\PHP_VERSION_ID >= 80400) {
+                $className = $instance::class;
+                $refClass = self::$refClassCache[$className] ??= new \ReflectionClass($className);
+                if ($refClass->isUninitializedLazyObject($instance)) {
+                    return;
+                }
             }
 
-            foreach ($plan as $entry) {
+            foreach ($plan as $idx => $entry) {
                 $prop = $entry['prop'];
 
                 if (\PHP_VERSION_ID >= 80400 && $prop->isLazy($instance)) {
+                    $propIds[$idx] = -1;
+
                     continue;
                 }
 
                 if (! $prop->isInitialized($instance)) {
+                    $propIds[$idx] = -1;
+
                     continue;
                 }
 
                 $propVal = $prop->getValue($instance);
                 if (! \is_object($propVal)) {
+                    $propIds[$idx] = 0;
+
                     continue;
                 }
+
+                $propIds[$idx] = spl_object_id($propVal);
 
                 if (! DocblockParser::typeReferencesTemplate($entry['type'], $instanceBindings)) {
                     continue;
@@ -1601,6 +1687,12 @@ final class TemplateManager
                     self::bindInstanceFromNode($propVal, $resolvedPropType, forceBind: true, refineOnly: true);
                 }
             }
+
+            self::$propagatedBindingsCache ??= new WeakMap();
+            self::$propagatedBindingsCache[$instance] = [
+                'bindings' => $instanceBindings,
+                'propIds' => $propIds,
+            ];
         } catch (\Throwable) {
         } finally {
             unset(self::$propagationStack[$oid]);
@@ -2477,36 +2569,46 @@ final class TemplateManager
             return false;
         }
 
-        $existingStr = (string) $existing;
-        $expectedStr = (string) $expected;
-
-        if ($existingStr === $expectedStr || $expectedStr === 'mixed' || $expectedStr === '*') {
-            return true;
+        if ($variance === GenericTypeNode::VARIANCE_INVARIANT && $existing::class === $expected::class) {
+            if ((string) $existing === (string) $expected) {
+                return true;
+            }
         }
 
-        $lowerExpected = strtolower($expectedStr);
-        $lowerExisting = strtolower($existingStr);
-
-        if ($lowerExpected === 'object' && ClassNameValidator::isValid($existingStr) && self::isRealTypeSymbol($existingStr)) {
-            return true;
+        if ($expected instanceof UnionTypeNode && $variance !== GenericTypeNode::VARIANCE_INVARIANT) {
+            return self::checkExpectedUnionVariance($existing, $expected, $variance);
         }
 
-        if (self::isScalarSubtype($lowerExisting, $lowerExpected)) {
-            return true;
+        if ($existing instanceof UnionTypeNode && $variance !== GenericTypeNode::VARIANCE_INVARIANT) {
+            return self::checkExistingUnionVariance($existing, $expected, $variance);
         }
 
-        $baseExpected = strtolower($expected instanceof GenericTypeNode ? (string) $expected->type : ($expected instanceof IdentifierTypeNode ? $expected->name : $expectedStr));
-        $baseExisting = strtolower($existing instanceof GenericTypeNode ? (string) $existing->type : ($existing instanceof IdentifierTypeNode ? $existing->name : $existingStr));
+        if ($expected instanceof IntersectionTypeNode && $variance !== GenericTypeNode::VARIANCE_INVARIANT) {
+            return self::checkExpectedIntersectionVariance($existing, $expected, $variance);
+        }
 
-        if ($variance === GenericTypeNode::VARIANCE_COVARIANT && isset(self::COLLECTION_SUBTYPES[$baseExpected])) {
-            $allowedSubtypes = self::COLLECTION_SUBTYPES[$baseExpected];
+        if ($existing instanceof IntersectionTypeNode && $variance !== GenericTypeNode::VARIANCE_INVARIANT) {
+            return self::checkExistingIntersectionVariance($existing, $expected, $variance);
+        }
 
-            if (isset($allowedSubtypes[$baseExisting])) {
-                if ($expected instanceof IdentifierTypeNode) {
-                    return true;
-                }
+        if ($existing instanceof ArrayTypeNode && $expected instanceof ArrayTypeNode) {
+            return self::checkVariance($existing->type, $expected->type, $variance);
+        }
 
-                if ($expected instanceof GenericTypeNode) {
+        if ($existing instanceof ArrayShapeNode && $expected instanceof ArrayShapeNode) {
+            return self::checkNestedArrayShapeVariance($existing, $expected, $variance);
+        }
+
+        if ($existing instanceof GenericTypeNode && $expected instanceof GenericTypeNode) {
+            if (self::checkNestedGenericVariance($existing, $expected)) {
+                return true;
+            }
+
+            if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
+                $baseExpected = strtolower((string) $expected->type);
+                $baseExisting = strtolower((string) $existing->type);
+
+                if (isset(self::COLLECTION_SUBTYPES[$baseExpected][$baseExisting])) {
                     $allUnconstrained = true;
                     foreach ($expected->genericTypes as $gt) {
                         if (! self::isUnspecializedType($gt)) {
@@ -2522,31 +2624,87 @@ final class TemplateManager
                 }
             }
 
-            if ($existing instanceof ArrayTypeNode || $existing instanceof ArrayShapeNode) {
-                if ($baseExpected === 'array' || $baseExpected === 'iterable') {
-                    if ($expected instanceof IdentifierTypeNode) {
-                        return true;
+            return false;
+        }
+
+        if ($existing instanceof IdentifierTypeNode && $expected instanceof GenericTypeNode) {
+            if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
+                $baseExpected = strtolower((string) $expected->type);
+                $baseExisting = strtolower($existing->name);
+                if (isset(self::COLLECTION_SUBTYPES[$baseExpected][$baseExisting])) {
+                    $allUnconstrained = true;
+                    foreach ($expected->genericTypes as $gt) {
+                        if (! self::isUnspecializedType($gt)) {
+                            $allUnconstrained = false;
+
+                            break;
+                        }
                     }
 
-                    if ($expected instanceof GenericTypeNode) {
-                        $allUnconstrained = true;
-                        foreach ($expected->genericTypes as $gt) {
-                            if (! self::isUnspecializedType($gt)) {
-                                $allUnconstrained = false;
-
-                                break;
-                            }
-                        }
-
-                        if ($allUnconstrained) {
-                            return true;
-                        }
+                    if ($allUnconstrained) {
+                        return true;
                     }
                 }
             }
 
-            if ($existing instanceof GenericTypeNode && isset($allowedSubtypes[$baseExisting])) {
-                if ($expected instanceof IdentifierTypeNode) {
+            return self::checkIdentifierAgainstGenericVariance($existing, $expected, $variance);
+        }
+
+        if ($expected instanceof IdentifierTypeNode) {
+            $lowerExpected = strtolower($expected->name);
+
+            if ($lowerExpected === 'mixed' || $lowerExpected === '*') {
+                return true;
+            }
+
+            if ($existing instanceof ArrayTypeNode || $existing instanceof ArrayShapeNode) {
+                if ($variance === GenericTypeNode::VARIANCE_COVARIANT && ($lowerExpected === 'array' || $lowerExpected === 'iterable')) {
+                    return true;
+                }
+
+                return false;
+            }
+
+            if ($existing instanceof GenericTypeNode) {
+                $baseExisting = strtolower((string) $existing->type);
+
+                if ($variance === GenericTypeNode::VARIANCE_COVARIANT && isset(self::COLLECTION_SUBTYPES[$lowerExpected][$baseExisting])) {
+                    return true;
+                }
+
+                if (($baseExisting === 'int' || $baseExisting === 'integer') && isset(self::INT_SUPERTYPES[$lowerExpected])) {
+                    return true;
+                }
+
+                if ($baseExisting === 'class-string' && isset(self::STRING_SUPERTYPES[$lowerExpected])) {
+                    return true;
+                }
+
+                if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
+                    return self::isSubclass((string) $existing->type, $expected->name);
+                }
+
+                if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
+                    return self::isSubclass($expected->name, (string) $existing->type);
+                }
+
+                return false;
+            }
+        }
+
+        if (($existing instanceof ArrayTypeNode || $existing instanceof ArrayShapeNode) && $expected instanceof GenericTypeNode && $variance === GenericTypeNode::VARIANCE_COVARIANT) {
+            $baseExpected = strtolower((string) $expected->type);
+            if ($baseExpected === 'array' || $baseExpected === 'iterable') {
+                $allUnconstrained = true;
+                foreach ($expected->genericTypes as $gt) {
+                    if (! self::isUnspecializedType($gt)) {
+                        $allUnconstrained = false;
+
+                        break;
+                    }
+                }
+
+                if ($allUnconstrained) {
                     return true;
                 }
             }
@@ -2568,20 +2726,22 @@ final class TemplateManager
             return self::checkExistingIntersectionVariance($existing, $expected, $variance);
         }
 
-        if ($existing instanceof ArrayTypeNode && $expected instanceof ArrayTypeNode) {
-            return self::checkVariance($existing->type, $expected->type, $variance);
+        $existingStr = (string) $existing;
+        $expectedStr = (string) $expected;
+
+        if ($existingStr === $expectedStr || $expectedStr === 'mixed' || $expectedStr === '*') {
+            return true;
         }
 
-        if ($existing instanceof ArrayShapeNode && $expected instanceof ArrayShapeNode) {
-            return self::checkNestedArrayShapeVariance($existing, $expected, $variance);
+        $lowerExpected = strtolower($expectedStr);
+        $lowerExisting = strtolower($existingStr);
+
+        if ($lowerExpected === 'object' && ClassNameValidator::isValid($existingStr) && self::isRealTypeSymbol($existingStr)) {
+            return true;
         }
 
-        if ($existing instanceof GenericTypeNode && $expected instanceof GenericTypeNode) {
-            return self::checkNestedGenericVariance($existing, $expected);
-        }
-
-        if ($existing instanceof IdentifierTypeNode && $expected instanceof GenericTypeNode) {
-            return self::checkIdentifierAgainstGenericVariance($existing, $expected, $variance);
+        if (self::isScalarSubtype($lowerExisting, $lowerExpected)) {
+            return true;
         }
 
         if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
