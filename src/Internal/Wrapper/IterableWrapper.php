@@ -295,47 +295,71 @@ final class IterableWrapper
         string $prefix,
         string $function = ''
     ): \Closure {
-        return function (mixed $key, mixed $value) use ($registry, $keyTypeNode, $itemTypeNode, $prefix, $function): void {
+        $keyName = $keyTypeNode instanceof IdentifierTypeNode ? strtolower($keyTypeNode->name) : null;
+        if ($keyName === 'mixed' || $keyName === 'array-key') {
+            $keyTypeNode = null;
+        }
+        $valName = $itemTypeNode instanceof IdentifierTypeNode ? strtolower($itemTypeNode->name) : null;
+        if ($valName === 'mixed') {
+            $itemTypeNode = null;
+        }
+
+        return function (mixed $key, mixed $value) use ($registry, $keyTypeNode, $itemTypeNode, $keyName, $valName, $prefix, $function): void {
             if ($keyTypeNode !== null && $key !== null) {
-                $err = $registry->validate($key, $keyTypeNode, "$prefix key");
-                if ($err !== null) {
-                    if ($function !== '' && CallerBoundaryResolver::shouldBypass($function)) {
-                        return;
-                    }
+                $keyOk = match ($keyName) {
+                    'int', 'integer' => \is_int($key),
+                    'string' => \is_string($key),
+                    default => false,
+                };
 
-                    if (CallerBoundaryResolver::isCallerVendor()) {
-                        return;
-                    }
+                if (! $keyOk) {
+                    $err = $registry->validate($key, $keyTypeNode, '');
+                    if ($err !== null) {
+                        if ($function !== '' && CallerBoundaryResolver::shouldBypass($function)) {
+                            return;
+                        }
+                        if (CallerBoundaryResolver::isCallerVendor()) {
+                            return;
+                        }
+                        if (IgnoreManager::isCallerIgnored()) {
+                            return;
+                        }
 
-                    if (IgnoreManager::isCallerIgnored()) {
-                        return;
-                    }
-
-                    $handled = ViolationCollector::handle($err, 'yield', null, function: $function);
-                    if ($handled instanceof ErrorMessage) {
-                        throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
+                        $fullErr = ErrorFactory::createError("$prefix key" . $err->getMessage());
+                        $handled = ViolationCollector::handle($fullErr, 'yield', null, function: $function);
+                        if ($handled instanceof ErrorMessage) {
+                            throw ErrorFactory::prepareException(new TypePHPTypeError($fullErr->getMessage()));
+                        }
                     }
                 }
             }
 
             if ($itemTypeNode !== null) {
-                $err = $registry->validate($value, $itemTypeNode, "$prefix value");
-                if ($err !== null) {
-                    if ($function !== '' && CallerBoundaryResolver::shouldBypass($function)) {
-                        return;
-                    }
+                $valOk = match ($valName) {
+                    'int', 'integer' => \is_int($value),
+                    'string' => \is_string($value),
+                    'bool', 'boolean' => \is_bool($value),
+                    default => false,
+                };
 
-                    if (CallerBoundaryResolver::isCallerVendor()) {
-                        return;
-                    }
+                if (! $valOk) {
+                    $err = $registry->validate($value, $itemTypeNode, '');
+                    if ($err !== null) {
+                        if ($function !== '' && CallerBoundaryResolver::shouldBypass($function)) {
+                            return;
+                        }
+                        if (CallerBoundaryResolver::isCallerVendor()) {
+                            return;
+                        }
+                        if (IgnoreManager::isCallerIgnored()) {
+                            return;
+                        }
 
-                    if (IgnoreManager::isCallerIgnored()) {
-                        return;
-                    }
-
-                    $handled = ViolationCollector::handle($err, 'yield', null, function: $function);
-                    if ($handled instanceof ErrorMessage) {
-                        throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
+                        $fullErr = ErrorFactory::createError("$prefix value" . $err->getMessage());
+                        $handled = ViolationCollector::handle($fullErr, 'yield', null, function: $function);
+                        if ($handled instanceof ErrorMessage) {
+                            throw ErrorFactory::prepareException(new TypePHPTypeError($fullErr->getMessage()));
+                        }
                     }
                 }
             }

@@ -150,6 +150,14 @@ final class ParamChecker
     private static array $paramDynamicCache = [];
 
     /**
+     * Pre-resolved bound plans for template initial bindings:
+     * [$function][$templateName] => array{hasTemplateRef: bool, isDynamic: bool, hasConst: bool, resolvedBound: TypeNode, mask: int}
+     *
+     * @var array<string, array<string, array{hasTemplateRef: bool, isDynamic: bool, hasConst: bool, resolvedBound: TypeNode, mask: int}>>
+     */
+    private static array $templateBoundPlanCache = [];
+
+    /**
      * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
@@ -165,6 +173,7 @@ final class ParamChecker
         self::$traversablePlanCache = [];
         self::$callableNodesCache = [];
         self::$paramDynamicCache = [];
+        self::$templateBoundPlanCache = [];
     }
 
     /**
@@ -294,7 +303,9 @@ final class ParamChecker
             $registry,
             $classTemplates,
             $thisOrClass,
-            $sensitiveParams
+            $sensitiveParams,
+            $hasMethodTemplates,
+            $functionKind === self::KIND_CONSTRUCT
         );
     }
 
@@ -462,6 +473,10 @@ final class ParamChecker
         array $aliases,
         bool $paramsAreDynamic = false
     ): array {
+        if (! $paramsAreDynamic && isset(self::$baseTypeCache[$effectiveFunction]) && \count(self::$baseTypeCache[$effectiveFunction]) === \count($types)) {
+            return self::$baseTypeCache[$effectiveFunction];
+        }
+
         $baseTypes = [];
         foreach ($types as $paramName => $typeNode) {
             if ($paramsAreDynamic && ! isset(self::$paramDynamicCache[$effectiveFunction][$paramName])) {
@@ -520,7 +535,9 @@ final class ParamChecker
         TypeValidatorRegistry $registry,
         array $classTemplates,
         object|string|null $thisOrClass = null,
-        array $sensitiveParams = []
+        array $sensitiveParams = [],
+        bool $hasMethodTemplates = false,
+        bool $isConstructor = false
     ): ?ErrorMessage {
         foreach ($contractTypes as $paramName => $_) {
             if (! isset($vars[$paramName]) && ! \array_key_exists($paramName, $vars)) {
@@ -528,7 +545,9 @@ final class ParamChecker
             }
 
             $currentBoundTemplates = (\count($allTemplates) > 0)
-                ? TemplateManager::getBoundTemplates($effectiveFunction, $thisOrClass, $allTemplates)
+                ? (($thisObj !== null && ! $hasMethodTemplates && ! $isConstructor)
+                    ? TemplateManager::getInstanceBindingsFast($thisObj)
+                    : TemplateManager::getBoundTemplates($effectiveFunction, $thisOrClass, $allTemplates))
                 : $boundTemplates;
 
             $isSensitive = $sensitiveParams[$paramName] ?? false;
@@ -2015,6 +2034,10 @@ final class ParamChecker
         object|string|null $thisOrClass = null,
         bool $isSensitive = false
     ): ?ErrorMessage {
+        if ($typeNode instanceof IdentifierTypeNode && isset($templates[$typeNode->name])) {
+            return self::resolveTemplateParam($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $registry, $classTemplates, $thisOrClass);
+        }
+
         if (ConditionalChecker::containsConditional($typeNode)) {
             $typeNode = ConditionalChecker::resolve($typeNode, $vars, $boundTemplates, $registry, $effectiveFunction);
         }
@@ -2391,23 +2414,65 @@ final class ParamChecker
         $inferredType = TemplateManager::inferTypeFromValue($sampleVal);
 
         if ($templateNode->bound !== null) {
-            $boundNode = $templateNode->bound;
-            $currentBindings = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
-            $allBindings = [...$currentBindings, $templateName => $inferredType];
+            $bPlan = self::$templateBoundPlanCache[$function][$templateName] ?? null;
+            if ($bPlan === null) {
+                $rawBound = $templateNode->bound;
+                $hasTemplateRef = TemplateManager::isFBounded($templateNode, $function)
+                    || DocblockParser::typeReferencesTemplate($rawBound, $templates);
+                $boundStr = (string) $rawBound;
+                $isDynamic = str_contains($boundStr, 'static') || str_contains($boundStr, '$this');
+                $resolvedBound = (! $hasTemplateRef && ! $isDynamic)
+                    ? SpecialTypeResolver::resolve($rawBound, $function, null)
+                    : $rawBound;
 
-            if (
-                TemplateManager::isFBounded($templateNode, $function)
-                || DocblockParser::typeReferencesTemplate($boundNode, $templates)
-            ) {
-                $boundNode = TemplateSubstitutor::substitute($boundNode, $allBindings);
+                $bPlan = self::$templateBoundPlanCache[$function][$templateName] = [
+                    'hasTemplateRef' => $hasTemplateRef,
+                    'isDynamic' => $isDynamic,
+                    'hasConst' => self::typeContainsConst($resolvedBound),
+                    'resolvedBound' => $resolvedBound,
+                    'mask' => (! $hasTemplateRef && ! $isDynamic) ? self::compilePrimitiveBoundMask($resolvedBound) : 0,
+                ];
             }
 
-            $resolvedBound = SpecialTypeResolver::resolve($boundNode, $function, $thisObj);
-            $inferredType = self::refineInferredTypeFromBound($sampleVal, $resolvedBound, $inferredType);
+            if (! $bPlan['hasTemplateRef'] && ! $bPlan['isDynamic']) {
+                $resolvedBound = $bPlan['resolvedBound'];
+                if ($bPlan['hasConst']) {
+                    $inferredType = self::refineInferredTypeFromBound($sampleVal, $resolvedBound, $inferredType);
+                }
 
-            $err = $registry->validate($sampleVal, $resolvedBound, $function . '(): Argument $' . $paramName . ' (template ' . $templateName . ')');
-            if ($err !== null) {
-                return $err;
+                $mask = $bPlan['mask'];
+                $fastOk = $mask !== 0 && (
+                    (\is_string($sampleVal) && ($mask & 2) !== 0)
+                    || (\is_int($sampleVal) && ($mask & 9) !== 0)
+                    || (\is_object($sampleVal) && ($mask & 16) !== 0)
+                    || (\is_bool($sampleVal) && ($mask & 4) !== 0)
+                    || (\is_float($sampleVal) && ($mask & 8) !== 0)
+                    || ($sampleVal === null && ($mask & 32) !== 0)
+                    || (\is_array($sampleVal) && ($mask & 64) !== 0)
+                );
+
+                if (! $fastOk) {
+                    $err = $registry->validate($sampleVal, $resolvedBound, $function . '(): Argument $' . $paramName . ' (template ' . $templateName . ')');
+                    if ($err !== null) {
+                        return $err;
+                    }
+                }
+            } else {
+                $boundNode = $templateNode->bound;
+                $currentBindings = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+                $allBindings = [...$currentBindings, $templateName => $inferredType];
+
+                if ($bPlan['hasTemplateRef']) {
+                    $boundNode = TemplateSubstitutor::substitute($boundNode, $allBindings);
+                }
+
+                $resolvedBound = SpecialTypeResolver::resolve($boundNode, $function, $thisObj);
+                $inferredType = self::refineInferredTypeFromBound($sampleVal, $resolvedBound, $inferredType);
+
+                $err = $registry->validate($sampleVal, $resolvedBound, $function . '(): Argument $' . $paramName . ' (template ' . $templateName . ')');
+                if ($err !== null) {
+                    return $err;
+                }
             }
         }
 
@@ -2429,6 +2494,58 @@ final class ParamChecker
         }
 
         return null;
+    }
+
+    private static function typeContainsConst(TypeNode $node): bool
+    {
+        if ($node instanceof \PHPStan\PhpDocParser\Ast\Type\ConstTypeNode) {
+            return true;
+        }
+
+        if ($node instanceof UnionTypeNode) {
+            foreach ($node->types as $member) {
+                if (self::typeContainsConst($member)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static function compilePrimitiveBoundMask(TypeNode $node): int
+    {
+        if ($node instanceof IdentifierTypeNode) {
+            return match (strtolower($node->name)) {
+                'int', 'integer' => 1,
+                'string' => 2,
+                'bool', 'boolean' => 4,
+                'float', 'double' => 8,
+                'object' => 16,
+                'null' => 32,
+                'array' => 64,
+                'array-key' => 3,
+                default => 0,
+            };
+        }
+
+        if ($node instanceof UnionTypeNode) {
+            $mask = 0;
+            foreach ($node->types as $member) {
+                if (! ($member instanceof IdentifierTypeNode)) {
+                    return 0;
+                }
+                $bit = self::compilePrimitiveBoundMask($member);
+                if ($bit === 0) {
+                    return 0;
+                }
+                $mask |= $bit;
+            }
+
+            return $mask;
+        }
+
+        return 0;
     }
 
     private static function validateBoundTemplate(

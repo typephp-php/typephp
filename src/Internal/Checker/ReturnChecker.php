@@ -382,7 +382,9 @@ final class ReturnChecker
             return $value;
         }
 
-        $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+        $boundTemplates = ($thisObj !== null && ($contract['templates'] ?? []) === [])
+            ? TemplateManager::getInstanceBindingsFast($thisObj)
+            : TemplateManager::getBoundTemplates($function, $thisObj, $templates);
 
         $isDynamicReturn = $contract['returnIsDynamic']
             ?? (str_contains((string) $returnTypeNode, 'static') || str_contains((string) $returnTypeNode, '$this'));

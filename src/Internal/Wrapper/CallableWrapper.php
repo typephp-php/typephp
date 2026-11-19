@@ -302,6 +302,117 @@ final class CallableWrapper
         }
 
         if (! $hasAnyRef) {
+            if ($typeNode->templateTypes === []) {
+                $hasVariadic = false;
+                $paramChecks = [];
+                foreach ($typeNode->parameters as $idx => $p) {
+                    if ($p->isVariadic) {
+                        $hasVariadic = true;
+
+                        break;
+                    }
+                    if ($p->type instanceof IdentifierTypeNode && strtolower($p->type->name) === 'mixed') {
+                        continue;
+                    }
+                    $rawName = ltrim($p->parameterName ?? '', '$');
+                    $label = $rawName !== '' ? "\$$rawName" : ('argument #' . ($idx + 1));
+                    $pScalar = $p->type instanceof IdentifierTypeNode ? match (strtolower($p->type->name)) {
+                        'int', 'integer' => 'int',
+                        'string' => 'string',
+                        'bool', 'boolean' => 'bool',
+                        default => null,
+                    } : null;
+                    $paramChecks[] = [$idx, $p->type, $label, $pScalar];
+                }
+
+                $retType = $typeNode->returnType;
+                $isVoidOrMixedReturn = $retType instanceof IdentifierTypeNode
+                    && \in_array(strtolower($retType->name), ['void', 'mixed'], true);
+                $retIsCallable = $retType instanceof CallableTypeNode;
+                $retScalar = $retType instanceof IdentifierTypeNode ? match (strtolower($retType->name)) {
+                    'int', 'integer' => 'int',
+                    'string' => 'string',
+                    'bool', 'boolean' => 'bool',
+                    default => null,
+                } : null;
+
+                if (! $hasVariadic) {
+                    if ($paramChecks === [] && $isVoidOrMixedReturn) {
+                        return $callable instanceof Closure ? $callable : $callable(...);
+                    }
+
+                    return function (...$args) use ($callable, $typeNode, $paramChecks, $retType, $isVoidOrMixedReturn, $retIsCallable, $retScalar, $registry, $prefix) {
+                        if ($paramChecks !== []) {
+                            if ($args !== [] && ! array_is_list($args)) {
+                                self::validateCallbackArguments($typeNode, $args, $prefix, $registry, $callable);
+                            } else {
+                                foreach ($paramChecks as $pc) {
+                                    $idx = $pc[0];
+                                    if (isset($args[$idx]) || \array_key_exists($idx, $args)) {
+                                        $argVal = $args[$idx];
+                                        $pScalar = $pc[3];
+                                        if (
+                                            ($pScalar === 'int' && \is_int($argVal))
+                                            || ($pScalar === 'string' && \is_string($argVal))
+                                            || ($pScalar === 'bool' && \is_bool($argVal))
+                                        ) {
+                                            continue;
+                                        }
+
+                                        $err = $registry->validate($argVal, $pc[1], '');
+                                        if ($err !== null) {
+                                            if (CallerBoundaryResolver::shouldBypassCallback($callable, $prefix)) {
+                                                continue;
+                                            }
+                                            if (IgnoreManager::isCallerIgnored()) {
+                                                continue;
+                                            }
+                                            $fullErr = ErrorFactory::createError("$prefix {$pc[2]}" . $err->getMessage());
+                                            $handled = ViolationCollector::handle($fullErr, 'callback', null);
+                                            if ($handled instanceof ErrorMessage) {
+                                                throw ErrorFactory::prepareException(new TypePHPTypeError($fullErr->getMessage()));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        try {
+                            $result = $callable(...$args);
+                        } catch (TypeError $e) {
+                            throw ErrorFactory::prepareException($e);
+                        }
+
+                        if (
+                            ! $isVoidOrMixedReturn
+                            && ! (
+                                ($retScalar === 'string' && \is_string($result))
+                                || ($retScalar === 'int' && \is_int($result))
+                                || ($retScalar === 'bool' && \is_bool($result))
+                            )
+                        ) {
+                            $err = $registry->validate($result, $retType, '');
+                            if ($err !== null) {
+                                if (! CallerBoundaryResolver::shouldBypassCallback($callable, $prefix) && ! IgnoreManager::isCallerIgnored()) {
+                                    $fullErr = ErrorFactory::createError("$prefix return value" . $err->getMessage());
+                                    $handled = ViolationCollector::handle($fullErr, 'callback', $result);
+                                    if ($handled instanceof ErrorMessage) {
+                                        throw ErrorFactory::prepareException(new TypePHPTypeError($fullErr->getMessage()));
+                                    }
+                                }
+                            }
+                        }
+
+                        if ($retIsCallable && self::isCallable($result)) {
+                            $result = self::wrapTypeNode($retType, $result, "$prefix: Returned callback", $registry);
+                        }
+
+                        return $result;
+                    };
+                }
+            }
+
             return function (...$args) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
                 $effectiveTypeNode = self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName);
 

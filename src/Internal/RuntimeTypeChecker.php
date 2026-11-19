@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace TypePHP\Internal;
 
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 use Traversable;
 use TypePHP\Internal\Ast\ScopeCleaner;
@@ -93,12 +95,17 @@ final class RuntimeTypeChecker
     private static ?TypeValidatorRegistry $registry = null;
 
     /**
-     * @var array<string, array{class: ?string, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool}>}>
+     * @var array<string, array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool}>}>
      */
     private static array $simpleScopePlanCache = [];
 
     /**
-     * @var array<string, TypeNode|false>
+     * @var array<string, array{class: string, items: list<array{0: string, 1: string, 2: int}>}>
+     */
+    private static array $simpleCtorTemplatePlanCache = [];
+
+    /**
+     * @var array<string, array{class: ?string, type: TypeNode|false}>
      */
     private static array $simpleReturnPlanCache = [];
 
@@ -125,6 +132,7 @@ final class RuntimeTypeChecker
     public static function reset(): void
     {
         self::$simpleScopePlanCache = [];
+        self::$simpleCtorTemplatePlanCache = [];
         self::$simpleReturnPlanCache = [];
         self::$genericReturnPlanCache = [];
         self::$hasMethodTemplatesCache = [];
@@ -293,6 +301,85 @@ final class RuntimeTypeChecker
     ): mixed {
         if (! self::$isEnabled || ! self::$inlinePropertiesEnabled) {
             return $value;
+        }
+
+        if (
+            self::$arrayValidationHybrid
+            && \is_object($objectOrClass)
+            && MemberAssignChecker::$fastObjectContractCache !== null
+            && isset($chain[0]) && ! isset($chain[1]) && $chain[0][0] === 'dim'
+        ) {
+            $entry = MemberAssignChecker::$fastObjectContractCache[$objectOrClass] ?? null;
+            if ($entry !== null && isset($entry[1][$propName])) {
+                $rawBindings = TemplateManager::$instanceTemplateBindings !== null
+                    ? (TemplateManager::$instanceTemplateBindings[$objectOrClass] ?? null)
+                    : null;
+
+                if ($entry[0] === $rawBindings) {
+                    $c = $entry[1][$propName]; // [0 => isList, 1 => keyOp, 2 => keyExtra, 3 => valOp, 4 => valExtra]
+                    $key = $chain[0][1];
+
+                    if (! $c[0] || $key === null) {
+                        $keyOk = true;
+                        if (! $c[0] && $key !== null && $c[1] !== MemberAssignChecker::OP_NONE) {
+                            $kExtra = $c[2];
+                            $keyOk = match ($c[1]) {
+                                MemberAssignChecker::OP_INT => \is_int($key),
+                                MemberAssignChecker::OP_STRING => \is_string($key),
+                                MemberAssignChecker::OP_ARRAY_KEY => \is_int($key) || \is_string($key),
+                                MemberAssignChecker::OP_NON_EMPTY_STRING => \is_string($key) && $key !== '',
+                                MemberAssignChecker::OP_POSITIVE_INT => \is_int($key) && $key > 0,
+                                MemberAssignChecker::OP_MASK => (
+                                    (\is_string($key) && (((int) $kExtra) & MemberAssignChecker::BIT_STRING) !== 0)
+                                    || (\is_int($key) && (((int) $kExtra) & (MemberAssignChecker::BIT_INT | MemberAssignChecker::BIT_FLOAT)) !== 0)
+                                    || (\is_object($key) && (((int) $kExtra) & MemberAssignChecker::BIT_OBJECT) !== 0)
+                                    || (\is_bool($key) && (((int) $kExtra) & MemberAssignChecker::BIT_BOOL) !== 0)
+                                    || (\is_float($key) && (((int) $kExtra) & MemberAssignChecker::BIT_FLOAT) !== 0)
+                                    || (\is_array($key) && (((int) $kExtra) & MemberAssignChecker::BIT_ARRAY) !== 0)
+                                ),
+                                MemberAssignChecker::OP_OBJECT => \is_object($key),
+                                MemberAssignChecker::OP_CLASS => \is_object($key) && ($key instanceof $kExtra),
+                                default => false,
+                            };
+                        }
+
+                        if ($keyOk) {
+                            $vOp = $c[3];
+                            if ($vOp === MemberAssignChecker::OP_NONE) {
+                                return $value;
+                            }
+
+                            $vExtra = $c[4];
+                            $valOk = match ($vOp) {
+                                MemberAssignChecker::OP_INT => \is_int($value),
+                                MemberAssignChecker::OP_STRING => \is_string($value),
+                                MemberAssignChecker::OP_BOOL => \is_bool($value),
+                                MemberAssignChecker::OP_FLOAT => \is_float($value) || \is_int($value),
+                                MemberAssignChecker::OP_POSITIVE_INT => \is_int($value) && $value > 0,
+                                MemberAssignChecker::OP_NON_EMPTY_STRING => \is_string($value) && $value !== '',
+                                MemberAssignChecker::OP_ARRAY_KEY => \is_int($value) || \is_string($value),
+                                MemberAssignChecker::OP_ARRAY => \is_array($value),
+                                MemberAssignChecker::OP_OBJECT => \is_object($value),
+                                MemberAssignChecker::OP_CLASS => \is_object($value) && ($value instanceof $vExtra),
+                                MemberAssignChecker::OP_MASK => (
+                                    (\is_string($value) && (((int) $vExtra) & MemberAssignChecker::BIT_STRING) !== 0)
+                                    || (\is_int($value) && (((int) $vExtra) & (MemberAssignChecker::BIT_INT | MemberAssignChecker::BIT_FLOAT)) !== 0)
+                                    || (\is_object($value) && (((int) $vExtra) & MemberAssignChecker::BIT_OBJECT) !== 0)
+                                    || (\is_bool($value) && (((int) $vExtra) & MemberAssignChecker::BIT_BOOL) !== 0)
+                                    || (\is_float($value) && (((int) $vExtra) & MemberAssignChecker::BIT_FLOAT) !== 0)
+                                    || ($value === null && (((int) $vExtra) & MemberAssignChecker::BIT_NULL) !== 0)
+                                    || (\is_array($value) && (((int) $vExtra) & MemberAssignChecker::BIT_ARRAY) !== 0)
+                                ),
+                                default => false,
+                            };
+
+                            if ($valOk) {
+                                return $value;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         $res = MemberAssignChecker::checkProperty(
@@ -521,6 +608,66 @@ final class RuntimeTypeChecker
             return null;
         }
 
+        if (
+            isset(self::$simpleCtorTemplatePlanCache[$function])
+            && \is_object($thisOrClass)
+            && ! TemplateManager::$hasPendingInstantiations
+            && (TemplateManager::$instanceTemplateBindings === null || ! isset(TemplateManager::$instanceTemplateBindings[$thisOrClass]))
+        ) {
+            $ctorPlan = self::$simpleCtorTemplatePlanCache[$function];
+            if ($thisOrClass::class === $ctorPlan['class']) {
+                $bindings = [];
+                $fastValid = true;
+
+                foreach ($ctorPlan['items'] as $item) {
+                    $paramName = $item[0];
+                    if (isset($vars[$paramName])) {
+                        $val = $vars[$paramName];
+                    } elseif (\array_key_exists($paramName, $vars)) {
+                        $val = null;
+                    } else {
+                        $fastValid = false;
+
+                        break;
+                    }
+
+                    $mask = $item[2];
+                    if ($mask !== 0) {
+                        $ok = (
+                            (\is_string($val) && ($mask & 2) !== 0)
+                            || (\is_int($val) && ($mask & 9) !== 0)
+                            || (\is_object($val) && ($mask & 16) !== 0)
+                            || (\is_bool($val) && ($mask & 4) !== 0)
+                            || (\is_float($val) && ($mask & 8) !== 0)
+                            || ($val === null && ($mask & 32) !== 0)
+                            || (\is_array($val) && ($mask & 64) !== 0)
+                        );
+                        if (! $ok) {
+                            $fastValid = false;
+
+                            break;
+                        }
+                    }
+
+                    $tName = $item[1];
+                    if (\is_string($val)) {
+                        $bindings[$tName] = TemplateManager::$stringNode ??= new IdentifierTypeNode('string');
+                    } elseif (\is_int($val)) {
+                        $bindings[$tName] = TemplateManager::$intNode ??= new IdentifierTypeNode('int');
+                    } else {
+                        $bindings[$tName] = TemplateManager::inferTypeFromValue($val);
+                    }
+                }
+
+                if ($fastValid) {
+                    TemplateManager::$instanceTemplateBindings ??= new \WeakMap();
+                    TemplateManager::$instanceTemplateBindings[$thisOrClass] = $bindings;
+
+                    return null;
+                }
+            }
+        }
+
         $plan = self::$simpleScopePlanCache[$function] ?? null;
 
         if (
@@ -576,6 +723,33 @@ final class RuntimeTypeChecker
         }
 
         $registry = self::$registry ??= new TypeValidatorRegistry();
+
+        if (
+            $functionKind === ParamChecker::KIND_CONSTRUCT
+            && $thisObj !== null
+            && $effectiveFunction === $function
+            && ! TemplateManager::$hasPendingInstantiations
+            && $contract['templates'] === []
+            && $contract['classTemplates'] !== []
+            && $contract['aliases'] === []
+            && ! $contract['paramsAreDynamic']
+            && ($contract['paramConditionals'] ?? []) === []
+            && ! ($contract['hasCrossReferencedBounds'] ?? false)
+            && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction])
+            && TemplateManager::getClassInheritedBindings($thisObj::class) === []
+        ) {
+            $ctorPlanItems = self::compileSimpleCtorTemplatePlanItems(
+                $contract['types'],
+                $contract['classTemplates'],
+                $effectiveFunction
+            );
+            if ($ctorPlanItems !== null) {
+                self::$simpleCtorTemplatePlanCache[$effectiveFunction] = [
+                    'class' => $thisObj::class,
+                    'items' => $ctorPlanItems,
+                ];
+            }
+        }
 
         $paramsAreSimple = $contract['paramsAreSimple'] ?? $contract['isSimple'];
         if (
@@ -670,6 +844,121 @@ final class RuntimeTypeChecker
         }
 
         return null;
+    }
+
+    /**
+     * Compiles a simple constructor parameter-to-template plan when all parameters are distinct bare class templates
+     * with no defaults or complex/const bounds. Returns null if the constructor is not eligible.
+     *
+     * @param array<string, TypeNode> $types
+     * @param array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode> $classTemplates
+     *
+     * @return list<array{0: string, 1: string, 2: int}>|null
+     */
+    private static function compileSimpleCtorTemplatePlanItems(array $types, array $classTemplates, string $effectiveFunction): ?array
+    {
+        if ($types === []) {
+            return null;
+        }
+
+        foreach ($classTemplates as $tTag) {
+            if ($tTag->default !== null && ! TemplateManager::isUnspecializedDefault($tTag)) {
+                return null;
+            }
+        }
+
+        $seenTemplates = [];
+        $items = [];
+
+        foreach ($types as $paramName => $typeNode) {
+            if (! ($typeNode instanceof IdentifierTypeNode) || ! isset($classTemplates[$typeNode->name])) {
+                return null;
+            }
+
+            $tName = $typeNode->name;
+            if (isset($seenTemplates[$tName])) {
+                return null;
+            }
+            $seenTemplates[$tName] = true;
+
+            $tTag = $classTemplates[$tName];
+            $mask = 0;
+            if ($tTag->bound !== null) {
+                $boundStr = (string) $tTag->bound;
+                if (str_contains($boundStr, 'static') || str_contains($boundStr, '$this')) {
+                    return null;
+                }
+                if (DocblockParser::typeReferencesTemplate($tTag->bound, $classTemplates)) {
+                    return null;
+                }
+
+                $resolvedBound = SpecialTypeResolver::resolve($tTag->bound, $effectiveFunction, null);
+                if (self::typeNodeContainsConst($resolvedBound)) {
+                    return null;
+                }
+
+                $mask = self::compilePrimitiveBoundMask($resolvedBound);
+                if ($mask === 0) {
+                    return null;
+                }
+            }
+
+            $items[] = [$paramName, $tName, $mask];
+        }
+
+        return $items;
+    }
+
+    private static function typeNodeContainsConst(TypeNode $node): bool
+    {
+        if ($node instanceof ConstTypeNode) {
+            return true;
+        }
+
+        if ($node instanceof UnionTypeNode) {
+            foreach ($node->types as $member) {
+                if (self::typeNodeContainsConst($member)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static function compilePrimitiveBoundMask(TypeNode $node): int
+    {
+        if ($node instanceof IdentifierTypeNode) {
+            return match (strtolower($node->name)) {
+                'int', 'integer' => 1,
+                'string' => 2,
+                'bool', 'boolean' => 4,
+                'float', 'double' => 8,
+                'object' => 16,
+                'null' => 32,
+                'array' => 64,
+                'array-key' => 3,
+                default => 0,
+            };
+        }
+
+        if ($node instanceof UnionTypeNode) {
+            $mask = 0;
+            foreach ($node->types as $member) {
+                if (! ($member instanceof IdentifierTypeNode)) {
+                    return 0;
+                }
+                $bit = self::compilePrimitiveBoundMask($member);
+                if ($bit === 0) {
+                    return 0;
+                }
+                $mask |= $bit;
+            }
+
+            return $mask;
+        }
+
+        return 0;
     }
 
     /**

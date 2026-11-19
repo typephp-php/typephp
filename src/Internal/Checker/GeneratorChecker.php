@@ -106,10 +106,10 @@ final class GeneratorChecker
     private static array $genericYieldTypeCache = [];
 
     /**
-     * Per-instance yield contract cache keyed by object identity and TemplateManager's instance bindings version.
+     * Per-instance yield contract cache keyed by object identity and raw instance bindings.
      *
      * @var WeakMap<object, array<string, array{
-     *     version: int,
+     *     rawBindings: ?array<string, TypeNode>,
      *     types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}
      * }>>|null
      */
@@ -140,7 +140,9 @@ final class GeneratorChecker
         }
 
         $targetFunction = $effectiveFunction !== '' ? $effectiveFunction : $function;
-        $types = self::resolveYieldAndSendTypes($targetFunction, $thisOrClass, $registry, $scopeCleaner);
+        $types = ($scopeCleaner !== null && $scopeCleaner->resolvedYieldTypes !== null)
+            ? $scopeCleaner->resolvedYieldTypes
+            : self::resolveYieldAndSendTypes($targetFunction, $thisOrClass, $registry, $scopeCleaner);
         if ($types === null) {
             return $sendValue;
         }
@@ -168,7 +170,9 @@ final class GeneratorChecker
         string $effectiveFunction = ''
     ): mixed {
         $targetFunction = $effectiveFunction !== '' ? $effectiveFunction : $function;
-        $types = self::resolveYieldAndSendTypes($targetFunction, $thisOrClass, $registry, $scopeCleaner);
+        $types = ($scopeCleaner !== null && $scopeCleaner->resolvedYieldTypes !== null)
+            ? $scopeCleaner->resolvedYieldTypes
+            : self::resolveYieldAndSendTypes($targetFunction, $thisOrClass, $registry, $scopeCleaner);
         if ($types === null) {
             return $value;
         }
@@ -186,7 +190,14 @@ final class GeneratorChecker
                 self::OP_FLOAT => \is_float($key) || \is_int($key),
                 self::OP_OBJECT => \is_object($key),
                 self::OP_CLASS => \is_object($key) && ($key instanceof $keyExtra),
-                self::OP_MASK => self::matchesMask($key, (int) $keyExtra),
+                self::OP_MASK => (
+                    (\is_string($key) && (((int) $keyExtra) & self::BIT_STRING) !== 0)
+                    || (\is_int($key) && (((int) $keyExtra) & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
+                    || (\is_object($key) && (((int) $keyExtra) & self::BIT_OBJECT) !== 0)
+                    || (\is_bool($key) && (((int) $keyExtra) & self::BIT_BOOL) !== 0)
+                    || (\is_float($key) && (((int) $keyExtra) & self::BIT_FLOAT) !== 0)
+                    || (\is_array($key) && (((int) $keyExtra) & self::BIT_ARRAY) !== 0)
+                ),
                 default => false,
             };
 
@@ -212,7 +223,15 @@ final class GeneratorChecker
                 self::OP_ARRAY => \is_array($value),
                 self::OP_OBJECT => \is_object($value),
                 self::OP_CLASS => \is_object($value) && ($value instanceof $valExtra),
-                self::OP_MASK => self::matchesMask($value, (int) $valExtra),
+                self::OP_MASK => (
+                    (\is_string($value) && (((int) $valExtra) & self::BIT_STRING) !== 0)
+                    || (\is_int($value) && (((int) $valExtra) & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
+                    || (\is_object($value) && (((int) $valExtra) & self::BIT_OBJECT) !== 0)
+                    || (\is_bool($value) && (((int) $valExtra) & self::BIT_BOOL) !== 0)
+                    || (\is_float($value) && (((int) $valExtra) & self::BIT_FLOAT) !== 0)
+                    || ($value === null && (((int) $valExtra) & self::BIT_NULL) !== 0)
+                    || (\is_array($value) && (((int) $valExtra) & self::BIT_ARRAY) !== 0)
+                ),
                 default => false,
             };
 
@@ -239,7 +258,9 @@ final class GeneratorChecker
         string $effectiveFunction = ''
     ): mixed {
         $targetFunction = $effectiveFunction !== '' ? $effectiveFunction : $function;
-        $types = self::resolveYieldAndSendTypes($targetFunction, $thisOrClass, $registry, $scopeCleaner);
+        $types = ($scopeCleaner !== null && $scopeCleaner->resolvedYieldTypes !== null)
+            ? $scopeCleaner->resolvedYieldTypes
+            : self::resolveYieldAndSendTypes($targetFunction, $thisOrClass, $registry, $scopeCleaner);
         if ($types === null) {
             return $value;
         }
@@ -303,8 +324,12 @@ final class GeneratorChecker
 
             if (! $hasGenerics && ! $hasAliases && ! $hasConditionals && ! $isDynamic) {
                 $resolvedNode = SpecialTypeResolver::resolve($returnTypeNode, $function, null);
+                $types = self::$staticYieldTypeCache[$function] = self::compileYieldTypes($resolvedNode);
+                if ($scopeCleaner !== null) {
+                    $scopeCleaner->resolvedYieldTypes = $types;
+                }
 
-                return self::$staticYieldTypeCache[$function] = self::compileYieldTypes($resolvedNode);
+                return $types;
             }
 
             self::$generatorPlanCache[$function] = [
@@ -334,7 +359,10 @@ final class GeneratorChecker
         if ($canUseInstanceCache) {
             self::$instanceYieldCache ??= new WeakMap();
             $cachedEntry = self::$instanceYieldCache[$thisObj][$function] ?? null;
-            if ($cachedEntry !== null && $cachedEntry['version'] === TemplateManager::$instanceBindingsVersion) {
+            $rawBindings = TemplateManager::$instanceTemplateBindings !== null
+                ? (TemplateManager::$instanceTemplateBindings[$thisObj] ?? null)
+                : null;
+            if ($cachedEntry !== null && $cachedEntry['rawBindings'] === $rawBindings) {
                 return $cachedEntry['types'];
             }
         }
@@ -366,9 +394,12 @@ final class GeneratorChecker
             if ($sig !== null && isset(self::$genericYieldTypeCache[$function][$sig])) {
                 $types = self::$genericYieldTypeCache[$function][$sig];
                 if ($canUseInstanceCache) {
-                    /** @var array<string, array{version: int, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}}> $mapEntry */
+                    $rawBindings = TemplateManager::$instanceTemplateBindings !== null
+                        ? (TemplateManager::$instanceTemplateBindings[$thisObj] ?? null)
+                        : null;
+                    /** @var array<string, array{rawBindings: ?array<string, TypeNode>, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}}> $mapEntry */
                     $mapEntry = self::$instanceYieldCache[$thisObj] ?? [];
-                    $mapEntry[$function] = ['version' => TemplateManager::$instanceBindingsVersion, 'types' => $types];
+                    $mapEntry[$function] = ['rawBindings' => $rawBindings, 'types' => $types];
                     self::$instanceYieldCache[$thisObj] = $mapEntry;
                 }
 
@@ -402,10 +433,17 @@ final class GeneratorChecker
         }
 
         if ($canUseInstanceCache) {
-            /** @var array<string, array{version: int, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}}> $mapEntry */
+            $rawBindings = TemplateManager::$instanceTemplateBindings !== null
+                ? (TemplateManager::$instanceTemplateBindings[$thisObj] ?? null)
+                : null;
+            /** @var array<string, array{rawBindings: ?array<string, TypeNode>, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}}> $mapEntry */
             $mapEntry = self::$instanceYieldCache[$thisObj] ?? [];
-            $mapEntry[$function] = ['version' => TemplateManager::$instanceBindingsVersion, 'types' => $types];
+            $mapEntry[$function] = ['rawBindings' => $rawBindings, 'types' => $types];
             self::$instanceYieldCache[$thisObj] = $mapEntry;
+        }
+
+        if ($scopeCleaner !== null) {
+            $scopeCleaner->resolvedYieldTypes = $types;
         }
 
         return $types;
@@ -518,32 +556,5 @@ final class GeneratorChecker
         }
 
         return [self::OP_FALLBACK, null];
-    }
-
-    private static function matchesMask(mixed $value, int $mask): bool
-    {
-        if (\is_string($value)) {
-            return ($mask & self::BIT_STRING) !== 0;
-        }
-        if (\is_int($value)) {
-            return ($mask & (self::BIT_INT | self::BIT_FLOAT)) !== 0;
-        }
-        if (\is_object($value)) {
-            return ($mask & self::BIT_OBJECT) !== 0;
-        }
-        if (\is_bool($value)) {
-            return ($mask & self::BIT_BOOL) !== 0;
-        }
-        if (\is_float($value)) {
-            return ($mask & self::BIT_FLOAT) !== 0;
-        }
-        if ($value === null) {
-            return ($mask & self::BIT_NULL) !== 0;
-        }
-        if (\is_array($value)) {
-            return ($mask & self::BIT_ARRAY) !== 0;
-        }
-
-        return false;
     }
 }

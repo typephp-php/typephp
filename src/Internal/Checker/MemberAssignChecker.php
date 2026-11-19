@@ -29,27 +29,27 @@ use WeakMap;
  */
 final class MemberAssignChecker
 {
-    private const OP_NONE = 0;
-    private const OP_INT = 1;
-    private const OP_STRING = 2;
-    private const OP_BOOL = 3;
-    private const OP_FLOAT = 4;
-    private const OP_POSITIVE_INT = 5;
-    private const OP_NON_EMPTY_STRING = 6;
-    private const OP_ARRAY_KEY = 7;
-    private const OP_ARRAY = 8;
-    private const OP_OBJECT = 9;
-    private const OP_CLASS = 10;
-    private const OP_MASK = 11;
-    private const OP_FALLBACK = 12;
+    public const OP_NONE = 0;
+    public const OP_INT = 1;
+    public const OP_STRING = 2;
+    public const OP_BOOL = 3;
+    public const OP_FLOAT = 4;
+    public const OP_POSITIVE_INT = 5;
+    public const OP_NON_EMPTY_STRING = 6;
+    public const OP_ARRAY_KEY = 7;
+    public const OP_ARRAY = 8;
+    public const OP_OBJECT = 9;
+    public const OP_CLASS = 10;
+    public const OP_MASK = 11;
+    public const OP_FALLBACK = 12;
 
-    private const BIT_INT = 1;
-    private const BIT_STRING = 2;
-    private const BIT_BOOL = 4;
-    private const BIT_FLOAT = 8;
-    private const BIT_OBJECT = 16;
-    private const BIT_NULL = 32;
-    private const BIT_ARRAY = 64;
+    public const BIT_INT = 1;
+    public const BIT_STRING = 2;
+    public const BIT_BOOL = 4;
+    public const BIT_FLOAT = 8;
+    public const BIT_OBJECT = 16;
+    public const BIT_NULL = 32;
+    public const BIT_ARRAY = 64;
 
     /**
      * In-memory 2D cache for ReflectionProperty instances:
@@ -97,10 +97,10 @@ final class MemberAssignChecker
     private static array $substitutedElementContractCache = [];
 
     /**
-     * Per-instance contract cache keyed by object identity and global bindings version.
+     * Per-instance contract cache keyed by object identity and raw instance bindings.
      *
      * @var WeakMap<object, array{
-     *     version: int,
+     *     rawBindings: ?array<string, TypeNode>,
      *     contracts: array<string, ?array{
      *         isList: bool,
      *         quoteKey: bool,
@@ -116,6 +116,14 @@ final class MemberAssignChecker
     private static ?WeakMap $instanceContractCache = null;
 
     /**
+     * Fast packed per-instance contract cache for direct property-dim mutation fast-path in RuntimeTypeChecker:
+     * [$obj] => array{0: ?array<string, TypeNode>, 1: array<string, array{0: bool, 1: int, 2: mixed, 3: int, 4: mixed}>}
+     *
+     * @var WeakMap<object, array{0: ?array<string, TypeNode>, 1: array<string, array{0: bool, 1: int, 2: mixed, 3: int, 4: mixed}>}>|null
+     */
+    public static ?WeakMap $fastObjectContractCache = null;
+
+    /**
      * Resets the cached reflection property and element contract registries.
      */
     public static function reset(): void
@@ -124,6 +132,7 @@ final class MemberAssignChecker
         self::$propertyMutationPlanCache = [];
         self::$substitutedElementContractCache = [];
         self::$instanceContractCache = null;
+        self::$fastObjectContractCache = null;
     }
 
     /**
@@ -230,6 +239,9 @@ final class MemberAssignChecker
                 && \is_object($objectOrClass)
             ) {
                 $contract = null;
+                $rawBindings = TemplateManager::$instanceTemplateBindings !== null
+                    ? (TemplateManager::$instanceTemplateBindings[$objectOrClass] ?? null)
+                    : null;
 
                 if ($propPlan['usesTemplates']) {
                     self::$instanceContractCache ??= new WeakMap();
@@ -237,17 +249,32 @@ final class MemberAssignChecker
 
                     if (
                         $entry !== null
-                        && $entry['version'] === TemplateManager::$instanceBindingsVersion
+                        && $entry['rawBindings'] === $rawBindings
                         && \array_key_exists($propName, $entry['contracts'])
                     ) {
                         $contract = $entry['contracts'][$propName];
                     } else {
                         $contract = self::resolveElementContractFromPlan($objectOrClass, $className, $propName, $propPlan);
+                        $rawBindings = TemplateManager::$instanceTemplateBindings !== null
+                            ? (TemplateManager::$instanceTemplateBindings[$objectOrClass] ?? null)
+                            : null;
                     }
                 } elseif (isset(self::$substitutedElementContractCache[$className][$propName]) && \array_key_exists('', self::$substitutedElementContractCache[$className][$propName])) {
                     $contract = self::$substitutedElementContractCache[$className][$propName][''];
                 } else {
                     $contract = self::resolveElementContractFromPlan($objectOrClass, $className, $propName, $propPlan);
+                }
+
+                if ($contract !== null) {
+                    self::$fastObjectContractCache ??= new WeakMap();
+                    $fastEntry = self::$fastObjectContractCache[$objectOrClass] ?? null;
+                    $packed = [$contract['isList'], $contract['keyOp'], $contract['keyExtra'], $contract['valOp'], $contract['valExtra']];
+                    if ($fastEntry === null || $fastEntry[0] !== $rawBindings) {
+                        self::$fastObjectContractCache[$objectOrClass] = [$rawBindings, [$propName => $packed]];
+                    } else {
+                        $fastEntry[1][$propName] = $packed;
+                        self::$fastObjectContractCache[$objectOrClass] = $fastEntry;
+                    }
                 }
 
                 $key = $chain[0][1];
@@ -560,22 +587,27 @@ final class MemberAssignChecker
     ): ?array {
         $boundTemplates = [];
         $useInstanceCache = $propPlan['usesTemplates'] && \is_object($objectOrClass);
-        $currentVersion = TemplateManager::$instanceBindingsVersion;
+        $rawBindings = null;
 
         if ($useInstanceCache) {
             self::$instanceContractCache ??= new WeakMap();
             $entry = self::$instanceContractCache[$objectOrClass] ?? null;
+            $rawBindings = TemplateManager::$instanceTemplateBindings !== null
+                ? (TemplateManager::$instanceTemplateBindings[$objectOrClass] ?? null)
+                : null;
 
             if (
                 $entry !== null
-                && $entry['version'] === $currentVersion
+                && $entry['rawBindings'] === $rawBindings
                 && \array_key_exists($propName, $entry['contracts'])
             ) {
                 return $entry['contracts'][$propName];
             }
 
             $boundTemplates = $preFetchedBindings ?? TemplateManager::getInstanceBindingsFast($objectOrClass);
-            $currentVersion = TemplateManager::$instanceBindingsVersion;
+            $rawBindings = TemplateManager::$instanceTemplateBindings !== null
+                ? (TemplateManager::$instanceTemplateBindings[$objectOrClass] ?? null)
+                : null;
         }
 
         $sig = '';
@@ -599,9 +631,9 @@ final class MemberAssignChecker
 
         if ($useInstanceCache) {
             $entry = self::$instanceContractCache[$objectOrClass] ?? null;
-            if ($entry === null || $entry['version'] !== $currentVersion) {
+            if ($entry === null || $entry['rawBindings'] !== $rawBindings) {
                 self::$instanceContractCache[$objectOrClass] = [
-                    'version' => $currentVersion,
+                    'rawBindings' => $rawBindings,
                     'contracts' => [$propName => $contract],
                 ];
             } else {

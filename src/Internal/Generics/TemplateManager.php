@@ -49,7 +49,7 @@ final class TemplateManager
      *
      * @var WeakMap<object, array<string, TypeNode>>|null
      */
-    private static ?WeakMap $instanceTemplateBindings = null;
+    public static ?WeakMap $instanceTemplateBindings = null;
 
     /**
      * Call stack frames storing template bindings per function or method call.
@@ -120,9 +120,9 @@ final class TemplateManager
     public static ?object $pendingCloneSource = null;
 
     /**
-     * Monotonic version bumped whenever any instance's template bindings are written.
+     * Fast boolean flag indicating whether any pending constructor generic instantiations are active.
      */
-    public static int $instanceBindingsVersion = 0;
+    public static bool $hasPendingInstantiations = false;
 
     /**
      * Fast O(1) hashmap for recognized key template names.
@@ -378,13 +378,13 @@ final class TemplateManager
         'scalar' => true,
     ];
 
-    private static ?IdentifierTypeNode $intNode = null;
+    public static ?IdentifierTypeNode $intNode = null;
 
-    private static ?IdentifierTypeNode $stringNode = null;
+    public static ?IdentifierTypeNode $stringNode = null;
 
-    private static ?IdentifierTypeNode $floatNode = null;
+    public static ?IdentifierTypeNode $floatNode = null;
 
-    private static ?IdentifierTypeNode $boolNode = null;
+    public static ?IdentifierTypeNode $boolNode = null;
 
     private static ?IdentifierTypeNode $listNode = null;
 
@@ -498,6 +498,7 @@ final class TemplateManager
      *     templateList?: list<TemplateTagValueNode>,
      *     normalizedTypeArgs?: array<TypeNode>,
      *     hasPropagation?: bool,
+     *     allStaticValid?: bool,
      *     items?: list<array{
      *         index: int,
      *         name: string,
@@ -506,7 +507,8 @@ final class TemplateManager
      *         usageVariance: string,
      *         isWildcardOrMixed: bool,
      *         symbolValid: bool,
-     *         boundSatisfied: bool
+     *         boundSatisfied: bool,
+     *         unionNames: ?array<string, true>
      *     }>
      * }>|null
      */
@@ -523,6 +525,7 @@ final class TemplateManager
      *     templateList: list<TemplateTagValueNode>,
      *     normalizedTypeArgs: array<TypeNode>,
      *     hasPropagation: bool,
+     *     allStaticValid: bool,
      *     items: list<array{
      *         index: int,
      *         name: string,
@@ -531,11 +534,17 @@ final class TemplateManager
      *         usageVariance: string,
      *         isWildcardOrMixed: bool,
      *         symbolValid: bool,
-     *         boundSatisfied: bool
+     *         boundSatisfied: bool,
+     *         unionNames: ?array<string, true>
      *     }>
      * }>>|null
      */
     private static ?WeakMap $compiledRelativeNodeBindPlanCache = null;
+
+    /**
+     * @var WeakMap<UnionTypeNode, array{names: array<string, true>, hasObject: bool}>|null
+     */
+    private static ?WeakMap $compiledUnionMembersCache = null;
 
     /**
      * Fast O(1) cache of class names known to have zero inherited generic bindings or raw mappings.
@@ -573,7 +582,7 @@ final class TemplateManager
         self::$subclassCache = [];
         self::$realTypeSymbolCache = [];
         self::$pendingCloneSource = null;
-        self::$instanceBindingsVersion = 0;
+        self::$hasPendingInstantiations = false;
         self::$methodTemplatesCache = [];
         self::$isMethodTemplateCache = [];
         self::$isFBoundCache = [];
@@ -587,6 +596,7 @@ final class TemplateManager
         self::$propagationPlanCache = [];
         self::$compiledNodeBindPlanCache = null;
         self::$compiledRelativeNodeBindPlanCache = null;
+        self::$compiledUnionMembersCache = null;
         self::$noInheritedBindingsClasses = [];
     }
 
@@ -604,8 +614,6 @@ final class TemplateManager
         } else {
             self::$instanceTemplateBindings[$instance] = $bindings;
         }
-
-        self::$instanceBindingsVersion++;
     }
 
     /**
@@ -635,6 +643,7 @@ final class TemplateManager
             'file' => $file,
             'targetClass' => $targetClass,
         ];
+        self::$hasPendingInstantiations = true;
     }
 
     /**
@@ -643,6 +652,7 @@ final class TemplateManager
     public static function popPendingInstantiation(): void
     {
         array_pop(self::$pendingInstantiations);
+        self::$hasPendingInstantiations = (self::$pendingInstantiations !== []);
     }
 
     /**
@@ -650,7 +660,7 @@ final class TemplateManager
      */
     public static function applyPendingInstantiation(object $instance): void
     {
-        if (! Config::isInlineGenericsEnabled() || self::$pendingInstantiations === []) {
+        if (! self::$hasPendingInstantiations || ! Config::isInlineGenericsEnabled()) {
             return;
         }
 
@@ -702,7 +712,7 @@ final class TemplateManager
             return self::$classInheritedBindingsCache[$className];
         }
 
-        if (! class_exists($className, false) && ! class_exists($className) && ! interface_exists($className) && ! trait_exists($className)) {
+        if (! class_exists($className, false) && ! class_exists($className) && ! interface_exists($className, false) && ! trait_exists($className)) {
             return self::$classInheritedBindingsCache[$className] = [];
         }
 
@@ -778,7 +788,6 @@ final class TemplateManager
             $bindings = self::$instanceTemplateBindings[$source];
             $bindings = self::widenClonedBindingsFromActiveCall($target, $bindings);
             self::$instanceTemplateBindings[$target] = $bindings;
-            self::$instanceBindingsVersion++;
         }
 
         if (self::isGeneratorInferred($source)) {
@@ -913,12 +922,13 @@ final class TemplateManager
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
 
         if ($thisObj !== null) {
-            self::ensureInstanceInherited($thisObj);
-
             $isCtor = str_ends_with(strtolower($function), '::__construct');
-            $bindings = $isCtor
-                ? (self::$instanceTemplateBindings[$thisObj] ?? [])
-                : self::getBoundTemplatesForInstance($thisObj);
+            if ($isCtor) {
+                self::ensureInstanceInherited($thisObj);
+                $bindings = self::$instanceTemplateBindings[$thisObj] ?? [];
+            } else {
+                $bindings = self::getInstanceBindingsFast($thisObj);
+            }
 
             $methodTemplates = self::getMethodTemplates($function);
             if ($methodTemplates !== []) {
@@ -1204,7 +1214,6 @@ final class TemplateManager
             }
 
             self::$instanceTemplateBindings[$thisObj] = $bindings;
-            self::$instanceBindingsVersion++;
         } else {
             if (! self::hasCallFrame($function)) {
                 self::$callStackBindings[$function][] = [];
@@ -1270,23 +1279,13 @@ final class TemplateManager
 
         if (
             $existingBindings !== null
+            && $plan['allStaticValid']
             && ! $forceBind
             && ! $refineOnly
-            && self::$generatorInferredCallFrames === []
         ) {
             $allFastMatched = true;
 
             foreach ($plan['items'] as $item) {
-                if (! $item['symbolValid']) {
-                    continue;
-                }
-
-                if (! $item['boundSatisfied']) {
-                    $allFastMatched = false;
-
-                    break;
-                }
-
                 $tName = $item['name'];
                 if (! isset($existingBindings[$tName])) {
                     $allFastMatched = false;
@@ -1314,6 +1313,14 @@ final class TemplateManager
                 }
 
                 if (
+                    $item['unionNames'] !== null
+                    && $existingTypeNode instanceof IdentifierTypeNode
+                    && isset($item['unionNames'][$existingTypeNode->name])
+                ) {
+                    continue;
+                }
+
+                if (
                     $existingTypeNode::class === $expectedTypeNode::class
                     && (string) $existingTypeNode === (string) $expectedTypeNode
                 ) {
@@ -1326,6 +1333,16 @@ final class TemplateManager
             }
 
             if ($allFastMatched) {
+                if (self::$generatorInferredCallFrames !== [] && self::$activeCallOrder !== []) {
+                    $activeFunc = end(self::$activeCallOrder);
+                    if ($activeFunc !== false && isset(self::$generatorInferredCallFrames[$activeFunc])) {
+                        self::$generatorInferredInstances ??= new WeakMap();
+                        if (! isset(self::$generatorInferredInstances[$instance])) {
+                            self::$generatorInferredInstances[$instance] = true;
+                        }
+                    }
+                }
+
                 if ($plan['hasPropagation']) {
                     self::propagateBindingsIfNeeded($instance, $existingBindings);
                 }
@@ -1343,7 +1360,9 @@ final class TemplateManager
             self::$instanceTemplateBindings ??= new WeakMap();
             $candidateBindings = self::$instanceTemplateBindings[$instance] ?? [];
 
+            $itemsByIndex = [];
             foreach ($plan['items'] as $item) {
+                $itemsByIndex[$item['index']] = $item;
                 if (! $item['isWildcardOrMixed']) {
                     $candidateBindings[$item['name']] = $item['expected'];
                 }
@@ -1353,6 +1372,8 @@ final class TemplateManager
                 if (! isset($normalizedTypeArgs[$index])) {
                     continue;
                 }
+
+                $planItem = $itemsByIndex[$index] ?? null;
 
                 $err = self::bindSingleTemplateArgument(
                     $instance,
@@ -1364,7 +1385,9 @@ final class TemplateManager
                     $context,
                     $forceBind,
                     $candidateBindings,
-                    $refineOnly
+                    $refineOnly,
+                    $planItem !== null && $planItem['symbolValid'],
+                    $planItem !== null && $planItem['boundSatisfied']
                 );
                 if ($err !== null) {
                     return $err;
@@ -1394,6 +1417,7 @@ final class TemplateManager
      *     templateList: list<TemplateTagValueNode>,
      *     normalizedTypeArgs: array<TypeNode>,
      *     hasPropagation: bool,
+     *     allStaticValid: bool,
      *     items: list<array{
      *         index: int,
      *         name: string,
@@ -1402,7 +1426,8 @@ final class TemplateManager
      *         usageVariance: string,
      *         isWildcardOrMixed: bool,
      *         symbolValid: bool,
-     *         boundSatisfied: bool
+     *         boundSatisfied: bool,
+     *         unionNames: ?array<string, true>
      *     }>
      * }
      */
@@ -1417,6 +1442,7 @@ final class TemplateManager
                 'templateList' => [],
                 'normalizedTypeArgs' => [],
                 'hasPropagation' => false,
+                'allStaticValid' => false,
                 'items' => [],
             ];
         }
@@ -1427,6 +1453,7 @@ final class TemplateManager
             $normalizedTypeArgs = self::normalizeGenericArguments($typeNode->genericTypes, $templateList);
             $hasPropagation = self::propagationPlan($className) !== [];
             $items = [];
+            $allStaticValid = true;
 
             foreach ($templateList as $index => $templateTag) {
                 if (! isset($normalizedTypeArgs[$index])) {
@@ -1459,15 +1486,39 @@ final class TemplateManager
                     }
                 }
 
+                if (! $symbolValid || ! $boundSatisfied) {
+                    $allStaticValid = false;
+                }
+
+                $declaredVar = $classVariances[$templateTag->name] ?? GenericTypeNode::VARIANCE_INVARIANT;
+                $usageVar = $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT;
+                $unionNames = null;
+                if (
+                    $expectedTypeNode instanceof UnionTypeNode
+                    && $declaredVar !== GenericTypeNode::VARIANCE_CONTRAVARIANT
+                    && $usageVar !== GenericTypeNode::VARIANCE_CONTRAVARIANT
+                ) {
+                    $uNames = [];
+                    foreach ($expectedTypeNode->types as $uMember) {
+                        if ($uMember instanceof IdentifierTypeNode) {
+                            $uNames[$uMember->name] = true;
+                        }
+                    }
+                    if ($uNames !== []) {
+                        $unionNames = $uNames;
+                    }
+                }
+
                 $items[] = [
                     'index' => $index,
                     'name' => $templateTag->name,
                     'expected' => $expectedTypeNode,
                     'identName' => $identName,
-                    'usageVariance' => $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT,
+                    'usageVariance' => $usageVar,
                     'isWildcardOrMixed' => $isWildcardOrMixed,
                     'symbolValid' => $symbolValid,
                     'boundSatisfied' => $boundSatisfied,
+                    'unionNames' => $unionNames,
                 ];
             }
 
@@ -1479,6 +1530,7 @@ final class TemplateManager
                 'templateList' => $templateList,
                 'normalizedTypeArgs' => $normalizedTypeArgs,
                 'hasPropagation' => $hasPropagation,
+                'allStaticValid' => $allStaticValid,
                 'items' => $items,
             ];
         } catch (\Throwable) {
@@ -1490,6 +1542,7 @@ final class TemplateManager
                 'templateList' => [],
                 'normalizedTypeArgs' => [],
                 'hasPropagation' => false,
+                'allStaticValid' => false,
                 'items' => [],
             ];
         }
@@ -1542,7 +1595,6 @@ final class TemplateManager
 
         if ($changed) {
             self::$instanceTemplateBindings[$instance] = $bindings;
-            self::$instanceBindingsVersion++;
         }
     }
 
@@ -1946,31 +1998,35 @@ final class TemplateManager
         string $context,
         bool $forceBind,
         array $candidateBindings = [],
-        bool $refineOnly = false
+        bool $refineOnly = false,
+        bool $symbolPreVerified = false,
+        bool $boundPreVerified = false
     ): ?ErrorMessage {
-        if ($expectedTypeNode instanceof IdentifierTypeNode) {
-            if (str_contains($expectedTypeNode->name, '::')) {
-                $targetClass = explode('::', $expectedTypeNode->name, 2)[0];
-                if (! self::isRealTypeSymbol($targetClass)) {
-                    return null;
-                }
-            } else {
-                $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($expectedTypeNode->name);
-                $isRealType = self::isRealTypeSymbol($expectedTypeNode->name);
+        if (! $symbolPreVerified) {
+            if ($expectedTypeNode instanceof IdentifierTypeNode) {
+                if (str_contains($expectedTypeNode->name, '::')) {
+                    $targetClass = explode('::', $expectedTypeNode->name, 2)[0];
+                    if (! self::isRealTypeSymbol($targetClass)) {
+                        return null;
+                    }
+                } else {
+                    $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($expectedTypeNode->name);
+                    $isRealType = self::isRealTypeSymbol($expectedTypeNode->name);
 
-                if (! $isBuiltIn && ! $isRealType) {
+                    if (! $isBuiltIn && ! $isRealType) {
+                        return null;
+                    }
+                }
+            } elseif ($expectedTypeNode instanceof ConstTypeNode && $expectedTypeNode->constExpr instanceof ConstFetchNode && $expectedTypeNode->constExpr->className !== '') {
+                if (! self::isRealTypeSymbol($expectedTypeNode->constExpr->className)) {
                     return null;
                 }
-            }
-        } elseif ($expectedTypeNode instanceof ConstTypeNode && $expectedTypeNode->constExpr instanceof ConstFetchNode && $expectedTypeNode->constExpr->className !== '') {
-            if (! self::isRealTypeSymbol($expectedTypeNode->constExpr->className)) {
-                return null;
             }
         }
 
         $isWildcardOrMixed = ($expectedTypeNode instanceof IdentifierTypeNode && ($expectedTypeNode->name === '*' || strtolower($expectedTypeNode->name) === 'mixed'));
 
-        if ($templateTag->bound !== null && ! $isWildcardOrMixed) {
+        if (! $boundPreVerified && $templateTag->bound !== null && ! $isWildcardOrMixed) {
             $boundNode = $templateTag->bound;
             $allBindings = [...$candidateBindings, $templateTag->name => $expectedTypeNode];
             if (self::isFBounded($templateTag, $className) || DocblockParser::typeReferencesTemplate($boundNode, $allBindings)) {
@@ -2028,7 +2084,6 @@ final class TemplateManager
                     }
 
                     self::$instanceTemplateBindings[$instance] = $bindings;
-                    self::$instanceBindingsVersion++;
 
                     if ($isReturnContext && self::isGeneratorInferred($instance)) {
                         self::propagateGeneratorRefinementToProperties($instance, $templateName, $expectedTypeNode);
@@ -2046,7 +2101,6 @@ final class TemplateManager
                         $bindings = self::$instanceTemplateBindings[$instance] ?? [];
                         $bindings[$templateName] = $expectedTypeNode;
                         self::$instanceTemplateBindings[$instance] = $bindings;
-                        self::$instanceBindingsVersion++;
 
                         return null;
                     }
@@ -2063,7 +2117,6 @@ final class TemplateManager
                         $bindings = self::$instanceTemplateBindings[$instance] ?? [];
                         $bindings[$templateName] = $expectedTypeNode;
                         self::$instanceTemplateBindings[$instance] = $bindings;
-                        self::$instanceBindingsVersion++;
 
                         return null;
                     }
@@ -2104,7 +2157,6 @@ final class TemplateManager
             }
 
             $map[$instance] = $bindings;
-            self::$instanceBindingsVersion++;
         }
 
         return null;
@@ -2144,7 +2196,6 @@ final class TemplateManager
                         }
                     }
                     $map[$propVal] = $propBindings;
-                    self::$instanceBindingsVersion++;
                 }
             }
         } catch (\Throwable) {
@@ -2305,7 +2356,6 @@ final class TemplateManager
         if ($existing === []) {
             if ($cachedBindings !== []) {
                 self::$instanceTemplateBindings[$instance] = $cachedBindings;
-                self::$instanceBindingsVersion++;
             }
 
             return;
@@ -2330,7 +2380,6 @@ final class TemplateManager
         $merged = [...$existing, ...$specializedBindings];
         if ($merged !== [] && $merged !== $existing) {
             self::$instanceTemplateBindings[$instance] = $merged;
-            self::$instanceBindingsVersion++;
         }
     }
 
@@ -2575,7 +2624,7 @@ final class TemplateManager
                 return true;
             }
 
-            if (self::isScalarSubtype($lowerExisting, $lowerExpected)) {
+            if (isset(self::SCALAR_SUBTYPES[$lowerExpected][$lowerExisting]) || self::isScalarSubtype($lowerExisting, $lowerExpected)) {
                 return true;
             }
 
@@ -2904,6 +2953,37 @@ final class TemplateManager
             }
 
             return true;
+        }
+
+        if ($existing instanceof IdentifierTypeNode) {
+            self::$compiledUnionMembersCache ??= new WeakMap();
+            $compiled = self::$compiledUnionMembersCache[$expected] ?? null;
+            if ($compiled === null) {
+                $names = [];
+                $hasObject = false;
+                foreach ($expected->types as $uType) {
+                    if ($uType instanceof IdentifierTypeNode) {
+                        $lower = strtolower($uType->name);
+                        $names[$uType->name] = true;
+                        $names[$lower] = true;
+                        if ($lower === 'object') {
+                            $hasObject = true;
+                        }
+                    }
+                }
+                self::$compiledUnionMembersCache[$expected] = $compiled = [
+                    'names' => $names,
+                    'hasObject' => $hasObject,
+                ];
+            }
+
+            if (isset($compiled['names'][$existing->name])) {
+                return true;
+            }
+
+            if ($compiled['hasObject'] && ClassNameValidator::isValid($existing->name) && self::isRealTypeSymbol($existing->name)) {
+                return true;
+            }
         }
 
         if ($existing instanceof UnionTypeNode) {

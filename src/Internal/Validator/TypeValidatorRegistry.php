@@ -101,12 +101,12 @@ final class TypeValidatorRegistry
             return $this->identifierValidator->validate($value, $node, $context, $this, $isSensitive);
         }
 
-        if ($node instanceof ArrayShapeNode) {
-            return $this->arrayShapeValidator->validate($value, $node, $context, $this, $isSensitive);
-        }
-
         if ($node instanceof GenericTypeNode) {
             return $this->genericValidator->validate($value, $node, $context, $this, $isSensitive);
+        }
+
+        if ($node instanceof ArrayShapeNode) {
+            return $this->arrayShapeValidator->validate($value, $node, $context, $this, $isSensitive);
         }
 
         if ($node instanceof UnionTypeNode) {
