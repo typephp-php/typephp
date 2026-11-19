@@ -120,6 +120,11 @@ final class TemplateManager
     public static ?object $pendingCloneSource = null;
 
     /**
+     * Monotonic version bumped whenever any instance's template bindings are written.
+     */
+    public static int $instanceBindingsVersion = 0;
+
+    /**
      * Fast O(1) hashmap for recognized key template names.
      *
      * @var array<string, true>
@@ -568,6 +573,7 @@ final class TemplateManager
         self::$subclassCache = [];
         self::$realTypeSymbolCache = [];
         self::$pendingCloneSource = null;
+        self::$instanceBindingsVersion = 0;
         self::$methodTemplatesCache = [];
         self::$isMethodTemplateCache = [];
         self::$isFBoundCache = [];
@@ -598,6 +604,8 @@ final class TemplateManager
         } else {
             self::$instanceTemplateBindings[$instance] = $bindings;
         }
+
+        self::$instanceBindingsVersion++;
     }
 
     /**
@@ -770,6 +778,7 @@ final class TemplateManager
             $bindings = self::$instanceTemplateBindings[$source];
             $bindings = self::widenClonedBindingsFromActiveCall($target, $bindings);
             self::$instanceTemplateBindings[$target] = $bindings;
+            self::$instanceBindingsVersion++;
         }
 
         if (self::isGeneratorInferred($source)) {
@@ -1011,7 +1020,7 @@ final class TemplateManager
             }
         }
 
-        $defaults = self::classTemplateDefaults($className);
+        $defaults = self::$classTemplateDefaultsCache[$className] ?? self::classTemplateDefaults($className);
         if ($defaults !== []) {
             foreach ($defaults as $tName => $default) {
                 if (! isset($bindings[$tName])) {
@@ -1195,6 +1204,7 @@ final class TemplateManager
             }
 
             self::$instanceTemplateBindings[$thisObj] = $bindings;
+            self::$instanceBindingsVersion++;
         } else {
             if (! self::hasCallFrame($function)) {
                 self::$callStackBindings[$function][] = [];
@@ -1299,6 +1309,13 @@ final class TemplateManager
                     $item['identName'] !== null
                     && $existingTypeNode instanceof IdentifierTypeNode
                     && $existingTypeNode->name === $item['identName']
+                ) {
+                    continue;
+                }
+
+                if (
+                    $existingTypeNode::class === $expectedTypeNode::class
+                    && (string) $existingTypeNode === (string) $expectedTypeNode
                 ) {
                     continue;
                 }
@@ -1525,6 +1542,7 @@ final class TemplateManager
 
         if ($changed) {
             self::$instanceTemplateBindings[$instance] = $bindings;
+            self::$instanceBindingsVersion++;
         }
     }
 
@@ -2010,6 +2028,7 @@ final class TemplateManager
                     }
 
                     self::$instanceTemplateBindings[$instance] = $bindings;
+                    self::$instanceBindingsVersion++;
 
                     if ($isReturnContext && self::isGeneratorInferred($instance)) {
                         self::propagateGeneratorRefinementToProperties($instance, $templateName, $expectedTypeNode);
@@ -2027,6 +2046,7 @@ final class TemplateManager
                         $bindings = self::$instanceTemplateBindings[$instance] ?? [];
                         $bindings[$templateName] = $expectedTypeNode;
                         self::$instanceTemplateBindings[$instance] = $bindings;
+                        self::$instanceBindingsVersion++;
 
                         return null;
                     }
@@ -2043,6 +2063,7 @@ final class TemplateManager
                         $bindings = self::$instanceTemplateBindings[$instance] ?? [];
                         $bindings[$templateName] = $expectedTypeNode;
                         self::$instanceTemplateBindings[$instance] = $bindings;
+                        self::$instanceBindingsVersion++;
 
                         return null;
                     }
@@ -2083,6 +2104,7 @@ final class TemplateManager
             }
 
             $map[$instance] = $bindings;
+            self::$instanceBindingsVersion++;
         }
 
         return null;
@@ -2122,6 +2144,7 @@ final class TemplateManager
                         }
                     }
                     $map[$propVal] = $propBindings;
+                    self::$instanceBindingsVersion++;
                 }
             }
         } catch (\Throwable) {
@@ -2282,6 +2305,7 @@ final class TemplateManager
         if ($existing === []) {
             if ($cachedBindings !== []) {
                 self::$instanceTemplateBindings[$instance] = $cachedBindings;
+                self::$instanceBindingsVersion++;
             }
 
             return;
@@ -2306,6 +2330,7 @@ final class TemplateManager
         $merged = [...$existing, ...$specializedBindings];
         if ($merged !== [] && $merged !== $existing) {
             self::$instanceTemplateBindings[$instance] = $merged;
+            self::$instanceBindingsVersion++;
         }
     }
 

@@ -34,9 +34,32 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
 final class ConditionalChecker
 {
     /**
+     * @var \WeakMap<TypeNode, bool>|null
+     */
+    private static ?\WeakMap $containsConditionalCache = null;
+
+    /**
      * Checks whether a TypeNode AST contains any conditional types.
      */
     public static function containsConditional(TypeNode $node): bool
+    {
+        if ($node instanceof IdentifierTypeNode) {
+            return false;
+        }
+
+        if ($node instanceof ConditionalTypeNode || $node instanceof ConditionalTypeForParameterNode) {
+            return true;
+        }
+
+        self::$containsConditionalCache ??= new \WeakMap();
+        if (isset(self::$containsConditionalCache[$node])) {
+            return self::$containsConditionalCache[$node];
+        }
+
+        return self::$containsConditionalCache[$node] = self::computeContainsConditional($node);
+    }
+
+    private static function computeContainsConditional(TypeNode $node): bool
     {
         while ($node instanceof NullableTypeNode || $node instanceof ArrayTypeNode) {
             $node = $node->type;

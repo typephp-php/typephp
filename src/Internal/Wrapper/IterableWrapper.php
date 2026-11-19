@@ -31,10 +31,38 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
 final class IterableWrapper
 {
     /**
+     * @var array<string, array<string, ?array{
+     *     typeNode: TypeNode,
+     *     aliases: array<string, TypeNode>,
+     *     templates: array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode>,
+     *     hasMethodTemplates: bool,
+     *     hasConditionals: bool,
+     *     isDynamic: bool
+     * }>>
+     */
+    private static array $iterablePlanCache = [];
+
+    /**
+     * @var array<string, array<string, array<string, ?array{0: ?TypeNode, 1: ?TypeNode}>>>
+     */
+    private static array $resolvedIterableCache = [];
+
+    public static function reset(): void
+    {
+        self::$iterablePlanCache = [];
+        self::$resolvedIterableCache = [];
+    }
+
+    /**
      * Wraps Traversable iterators and Generators to lazily validate keys and values during iteration.
      */
-    public static function wrap(string $function, string $paramName, mixed $iterable, TypeValidatorRegistry $registry, object|string|null $thisOrClass = null): mixed
-    {
+    public static function wrap(
+        string $function,
+        string $paramName,
+        mixed $iterable,
+        TypeValidatorRegistry $registry,
+        object|string|null $thisOrClass = null
+    ): mixed {
         if (! is_iterable($iterable)) {
             return $iterable;
         }
@@ -43,54 +71,13 @@ final class IterableWrapper
             return $iterable;
         }
 
-        $contract = DocblockParser::parse($function);
-        $typeNode = ($paramName === 'return') ? ($contract['return'] ?? null) : ($contract['types'][$paramName] ?? null);
-
-        if ($typeNode === null) {
-            return $iterable;
-        }
-
-        $aliases = $contract['aliases'] ?? [];
-        $templates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
-
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
-
-        if (ConditionalChecker::containsConditional($typeNode)) {
-            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $function);
-        }
-
-        if (\count($boundTemplates) > 0 || \count($templates) > 0) {
-            $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
-            $typeNode = SpecialTypeResolver::resolve($typeNode, $function, $thisObj);
-        }
-
-        if (ConditionalChecker::containsConditional($typeNode)) {
-            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $function);
-        }
-
-        if (\count($boundTemplates) > 0 || \count($templates) > 0) {
-            $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
-            $typeNode = SpecialTypeResolver::resolve($typeNode, $function, $thisObj);
-        }
-
-        $baseName = '';
-        if ($typeNode instanceof IdentifierTypeNode) {
-            $baseName = strtolower(ltrim($typeNode->name, '\\'));
-        } elseif ($typeNode instanceof GenericTypeNode) {
-            $baseName = strtolower(ltrim((string) $typeNode->type, '\\'));
-        }
-
-        $standardIterables = ['iterable', 'traversable', 'iterator', 'generator'];
-        if (! \in_array($baseName, $standardIterables, strict: true)) {
+        $keyAndItem = self::resolveKeyAndItemTypes($function, $paramName, $thisObj, $registry);
+        if ($keyAndItem === null) {
             return $iterable;
         }
 
-        [$keyTypeNode, $itemTypeNode] = self::extractKeyAndItemTypeNodes($typeNode, $aliases);
-
-        if (self::isUnconstrainedKey($keyTypeNode) && self::isUnconstrained($itemTypeNode)) {
-            return $iterable;
-        }
+        [$keyTypeNode, $itemTypeNode] = $keyAndItem;
 
         $prefix = ($paramName === 'return') ? "$function(): Return iterator" : "$function(): Iterator \$$paramName";
         $typeCheckCallback = self::createValidationCallback($registry, $keyTypeNode, $itemTypeNode, $prefix, $function);
@@ -106,6 +93,116 @@ final class IterableWrapper
         }
 
         return self::wrapGenerator($iterable, $typeCheckCallback);
+    }
+
+    /**
+     * @return array{0: ?TypeNode, 1: ?TypeNode}|null
+     */
+    private static function resolveKeyAndItemTypes(
+        string $effectiveFunction,
+        string $paramName,
+        ?object $thisObj,
+        TypeValidatorRegistry $registry
+    ): ?array {
+        if (! isset(self::$iterablePlanCache[$effectiveFunction]) || ! \array_key_exists($paramName, self::$iterablePlanCache[$effectiveFunction])) {
+            $contract = DocblockParser::parse($effectiveFunction);
+            $typeNode = ($paramName === 'return') ? ($contract['return'] ?? null) : ($contract['types'][$paramName] ?? null);
+
+            if ($typeNode === null) {
+                self::$iterablePlanCache[$effectiveFunction][$paramName] = null;
+
+                return null;
+            }
+
+            $templates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+
+            self::$iterablePlanCache[$effectiveFunction][$paramName] = [
+                'typeNode' => $typeNode,
+                'aliases' => $contract['aliases'] ?? [],
+                'templates' => $templates,
+                'hasMethodTemplates' => ($contract['templates'] ?? []) !== [],
+                'hasConditionals' => ConditionalChecker::containsConditional($typeNode),
+                'isDynamic' => str_contains((string) $typeNode, 'static') || str_contains((string) $typeNode, '$this'),
+            ];
+        }
+
+        $plan = self::$iterablePlanCache[$effectiveFunction][$paramName];
+        if ($plan === null) {
+            return null;
+        }
+
+        $templates = $plan['templates'];
+        $boundTemplates = [];
+        if ($templates !== []) {
+            $boundTemplates = ($thisObj !== null && ! $plan['hasMethodTemplates'])
+                ? TemplateManager::getInstanceBindingsFast($thisObj)
+                : TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $templates);
+        }
+
+        $sig = null;
+        if (! $plan['hasConditionals'] && ! $plan['isDynamic'] && \count($boundTemplates) <= 2) {
+            if ($boundTemplates === []) {
+                $sig = '';
+            } elseif (\count($boundTemplates) === 1) {
+                $firstKey = (string) array_key_first($boundTemplates);
+                $first = $boundTemplates[$firstKey];
+                $sig = $firstKey . '=' . ($first instanceof IdentifierTypeNode ? $first->name : (string) $first);
+            } else {
+                $sig = '';
+                foreach ($boundTemplates as $k => $v) {
+                    $sig .= $k . '=' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
+                }
+            }
+
+            if (isset(self::$resolvedIterableCache[$effectiveFunction][$paramName]) && \array_key_exists($sig, self::$resolvedIterableCache[$effectiveFunction][$paramName])) {
+                return self::$resolvedIterableCache[$effectiveFunction][$paramName][$sig];
+            }
+        }
+
+        $typeNode = $plan['typeNode'];
+
+        if ($plan['hasConditionals']) {
+            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $effectiveFunction);
+        }
+
+        if ($boundTemplates !== [] || $templates !== []) {
+            $subNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
+            if ($subNode !== $typeNode || $plan['isDynamic']) {
+                $typeNode = SpecialTypeResolver::resolve($subNode, $effectiveFunction, $thisObj);
+            }
+        } elseif ($plan['isDynamic']) {
+            $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+        }
+
+        if (ConditionalChecker::containsConditional($typeNode)) {
+            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $effectiveFunction);
+            if ($boundTemplates !== [] || $templates !== []) {
+                $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
+                $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+            }
+        }
+
+        $baseName = '';
+        if ($typeNode instanceof IdentifierTypeNode) {
+            $baseName = strtolower(ltrim($typeNode->name, '\\'));
+        } elseif ($typeNode instanceof GenericTypeNode) {
+            $baseName = strtolower(ltrim((string) $typeNode->type, '\\'));
+        }
+
+        $result = null;
+        $standardIterables = ['iterable', 'traversable', 'iterator', 'generator'];
+        if (\in_array($baseName, $standardIterables, strict: true)) {
+            [$keyTypeNode, $itemTypeNode] = self::extractKeyAndItemTypeNodes($typeNode, $plan['aliases']);
+            if (! self::isUnconstrainedKey($keyTypeNode) || ! self::isUnconstrained($itemTypeNode)) {
+                $result = [$keyTypeNode, $itemTypeNode];
+            }
+        }
+
+        if ($sig !== null) {
+            self::$resolvedIterableCache[$effectiveFunction][$paramName][$sig] = $result;
+        }
+
+        return $result;
     }
 
     /**

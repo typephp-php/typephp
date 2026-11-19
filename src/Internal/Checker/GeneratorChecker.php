@@ -106,10 +106,10 @@ final class GeneratorChecker
     private static array $genericYieldTypeCache = [];
 
     /**
-     * Per-instance yield contract cache keyed by object identity and raw bindings equality.
+     * Per-instance yield contract cache keyed by object identity and TemplateManager's instance bindings version.
      *
      * @var WeakMap<object, array<string, array{
-     *     bindings: array<string, TypeNode>,
+     *     version: int,
      *     types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}
      * }>>|null
      */
@@ -331,6 +331,14 @@ final class GeneratorChecker
             && ! $plan['hasConditionals']
             && ! $plan['isDynamic'];
 
+        if ($canUseInstanceCache) {
+            self::$instanceYieldCache ??= new WeakMap();
+            $cachedEntry = self::$instanceYieldCache[$thisObj][$function] ?? null;
+            if ($cachedEntry !== null && $cachedEntry['version'] === TemplateManager::$instanceBindingsVersion) {
+                return $cachedEntry['types'];
+            }
+        }
+
         $boundTemplates = [];
         if ($scopeCleaner !== null && $scopeCleaner->boundTemplates !== []) {
             $boundTemplates = $scopeCleaner->boundTemplates;
@@ -338,14 +346,6 @@ final class GeneratorChecker
             $boundTemplates = ($thisObj !== null && ! $plan['hasMethodTemplates'])
                 ? TemplateManager::getInstanceBindingsFast($thisObj)
                 : TemplateManager::getBoundTemplates($function, $thisOrClass, $allTemplates);
-        }
-
-        if ($canUseInstanceCache) {
-            self::$instanceYieldCache ??= new WeakMap();
-            $cachedEntry = self::$instanceYieldCache[$thisObj][$function] ?? null;
-            if ($cachedEntry !== null && $cachedEntry['bindings'] === $boundTemplates) {
-                return $cachedEntry['types'];
-            }
         }
 
         $sig = null;
@@ -366,9 +366,9 @@ final class GeneratorChecker
             if ($sig !== null && isset(self::$genericYieldTypeCache[$function][$sig])) {
                 $types = self::$genericYieldTypeCache[$function][$sig];
                 if ($canUseInstanceCache) {
-                    /** @var array<string, array{bindings: array<string, TypeNode>, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}}> $mapEntry */
+                    /** @var array<string, array{version: int, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}}> $mapEntry */
                     $mapEntry = self::$instanceYieldCache[$thisObj] ?? [];
-                    $mapEntry[$function] = ['bindings' => $boundTemplates, 'types' => $types];
+                    $mapEntry[$function] = ['version' => TemplateManager::$instanceBindingsVersion, 'types' => $types];
                     self::$instanceYieldCache[$thisObj] = $mapEntry;
                 }
 
@@ -402,9 +402,9 @@ final class GeneratorChecker
         }
 
         if ($canUseInstanceCache) {
-            /** @var array<string, array{bindings: array<string, TypeNode>, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}}> $mapEntry */
+            /** @var array<string, array{version: int, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}}> $mapEntry */
             $mapEntry = self::$instanceYieldCache[$thisObj] ?? [];
-            $mapEntry[$function] = ['bindings' => $boundTemplates, 'types' => $types];
+            $mapEntry[$function] = ['version' => TemplateManager::$instanceBindingsVersion, 'types' => $types];
             self::$instanceYieldCache[$thisObj] = $mapEntry;
         }
 

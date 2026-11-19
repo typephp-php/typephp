@@ -136,6 +136,7 @@ final class RuntimeTypeChecker
         GeneratorChecker::reset();
         ViolationCollector::reset();
         CallableWrapper::reset();
+        IterableWrapper::reset();
     }
 
     /**
@@ -294,11 +295,6 @@ final class RuntimeTypeChecker
             return $value;
         }
 
-        $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
-        if ($className !== '' && isset(InlineChecker::$nullPropertyCache[$className][$propName])) {
-            return $value;
-        }
-
         $res = MemberAssignChecker::checkProperty(
             $objectOrClass,
             $propName,
@@ -309,6 +305,7 @@ final class RuntimeTypeChecker
         );
 
         if ($res instanceof ErrorMessage) {
+            $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
             if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName)) {
                 return $value;
             }
@@ -1101,7 +1098,7 @@ final class RuntimeTypeChecker
         object|string|null $thisOrClass = null,
         ?ScopeCleaner $scopeCleaner = null
     ): mixed {
-        if (! self::$isEnabled) {
+        if ($sendValue === null || ! self::$isEnabled) {
             return $sendValue;
         }
 
@@ -1173,13 +1170,17 @@ final class RuntimeTypeChecker
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+        if ($thisObj !== null && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$function]) && str_starts_with($function, $thisObj::class . '::')) {
+            $effectiveFunction = $function;
+        } else {
+            $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
-            return $value;
+            if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+                return $value;
+            }
         }
 
-        $res = GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass, $scopeCleaner, $effectiveFunction);
+        $res = GeneratorChecker::checkYield($function, $key, $value, self::$registry ??= new TypeValidatorRegistry(), $thisOrClass, $scopeCleaner, $effectiveFunction);
 
         if ($res instanceof ErrorMessage) {
             if (IgnoreManager::isCallerIgnored()) {
@@ -1216,18 +1217,18 @@ final class RuntimeTypeChecker
      */
     public static function wrapIterable(string $function, string $paramName, mixed $iterable, object|string|null $thisOrClass = null): mixed
     {
-        if (! self::$isEnabled) {
+        if (! self::$isEnabled || (\is_array($iterable) && $paramName !== 'return') || ! is_iterable($iterable)) {
             return $iterable;
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+        if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return $iterable;
         }
 
-        return IterableWrapper::wrap($function, $paramName, $iterable, self::getRegistry(), $thisOrClass);
+        return IterableWrapper::wrap($function, $paramName, $iterable, self::$registry ??= new TypeValidatorRegistry(), $thisOrClass);
     }
 
     /**

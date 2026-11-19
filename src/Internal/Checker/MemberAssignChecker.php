@@ -97,10 +97,10 @@ final class MemberAssignChecker
     private static array $substitutedElementContractCache = [];
 
     /**
-     * Per-instance contract cache keyed by object identity and raw bindings equality.
+     * Per-instance contract cache keyed by object identity and global bindings version.
      *
      * @var WeakMap<object, array{
-     *     rawBindings: array<string, TypeNode>,
+     *     version: int,
      *     contracts: array<string, ?array{
      *         isList: bool,
      *         quoteKey: bool,
@@ -232,18 +232,17 @@ final class MemberAssignChecker
                 $contract = null;
 
                 if ($propPlan['usesTemplates']) {
-                    $boundTemplates = TemplateManager::getInstanceBindingsFast($objectOrClass);
                     self::$instanceContractCache ??= new WeakMap();
                     $entry = self::$instanceContractCache[$objectOrClass] ?? null;
 
                     if (
                         $entry !== null
-                        && $entry['rawBindings'] === $boundTemplates
+                        && $entry['version'] === TemplateManager::$instanceBindingsVersion
                         && \array_key_exists($propName, $entry['contracts'])
                     ) {
                         $contract = $entry['contracts'][$propName];
                     } else {
-                        $contract = self::resolveElementContractFromPlan($objectOrClass, $className, $propName, $propPlan, $boundTemplates);
+                        $contract = self::resolveElementContractFromPlan($objectOrClass, $className, $propName, $propPlan);
                     }
                 } elseif (isset(self::$substitutedElementContractCache[$className][$propName]) && \array_key_exists('', self::$substitutedElementContractCache[$className][$propName])) {
                     $contract = self::$substitutedElementContractCache[$className][$propName][''];
@@ -253,16 +252,57 @@ final class MemberAssignChecker
 
                 $key = $chain[0][1];
                 if ($contract !== null && (! $contract['isList'] || $key === null)) {
-                    $directErr = self::validatePropertyElementMutationWithContract(
-                        $className,
-                        $propName,
-                        $key,
-                        $value,
-                        $contract,
-                        $registry
-                    );
+                    $keyOk = true;
+                    if (! $contract['isList'] && $key !== null && $contract['keyOp'] !== self::OP_NONE) {
+                        $keyExtra = $contract['keyExtra'];
+                        $keyOk = match ($contract['keyOp']) {
+                            self::OP_INT => \is_int($key),
+                            self::OP_STRING => \is_string($key),
+                            self::OP_ARRAY_KEY => \is_int($key) || \is_string($key),
+                            self::OP_NON_EMPTY_STRING => \is_string($key) && $key !== '',
+                            self::OP_POSITIVE_INT => \is_int($key) && $key > 0,
+                            self::OP_MASK => (
+                                (\is_string($key) && (((int) $keyExtra) & self::BIT_STRING) !== 0)
+                                || (\is_int($key) && (((int) $keyExtra) & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
+                                || (\is_object($key) && (((int) $keyExtra) & self::BIT_OBJECT) !== 0)
+                                || (\is_bool($key) && (((int) $keyExtra) & self::BIT_BOOL) !== 0)
+                                || (\is_float($key) && (((int) $keyExtra) & self::BIT_FLOAT) !== 0)
+                                || (\is_array($key) && (((int) $keyExtra) & self::BIT_ARRAY) !== 0)
+                            ),
+                            self::OP_OBJECT => \is_object($key),
+                            self::OP_CLASS => \is_object($key) && ($key instanceof $keyExtra),
+                            default => false,
+                        };
+                    }
 
-                    if ($directErr === null) {
+                    $valOk = true;
+                    if ($keyOk && $contract['valOp'] !== self::OP_NONE) {
+                        $valExtra = $contract['valExtra'];
+                        $valOk = match ($contract['valOp']) {
+                            self::OP_INT => \is_int($value),
+                            self::OP_STRING => \is_string($value),
+                            self::OP_BOOL => \is_bool($value),
+                            self::OP_FLOAT => \is_float($value) || \is_int($value),
+                            self::OP_POSITIVE_INT => \is_int($value) && $value > 0,
+                            self::OP_NON_EMPTY_STRING => \is_string($value) && $value !== '',
+                            self::OP_ARRAY_KEY => \is_int($value) || \is_string($value),
+                            self::OP_ARRAY => \is_array($value),
+                            self::OP_OBJECT => \is_object($value),
+                            self::OP_CLASS => \is_object($value) && ($value instanceof $valExtra),
+                            self::OP_MASK => (
+                                (\is_string($value) && (((int) $valExtra) & self::BIT_STRING) !== 0)
+                                || (\is_int($value) && (((int) $valExtra) & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
+                                || (\is_object($value) && (((int) $valExtra) & self::BIT_OBJECT) !== 0)
+                                || (\is_bool($value) && (((int) $valExtra) & self::BIT_BOOL) !== 0)
+                                || (\is_float($value) && (((int) $valExtra) & self::BIT_FLOAT) !== 0)
+                                || ($value === null && (((int) $valExtra) & self::BIT_NULL) !== 0)
+                                || (\is_array($value) && (((int) $valExtra) & self::BIT_ARRAY) !== 0)
+                            ),
+                            default => false,
+                        };
+                    }
+
+                    if ($keyOk && $valOk) {
                         return $value;
                     }
                 }
@@ -520,19 +560,22 @@ final class MemberAssignChecker
     ): ?array {
         $boundTemplates = [];
         $useInstanceCache = $propPlan['usesTemplates'] && \is_object($objectOrClass);
+        $currentVersion = TemplateManager::$instanceBindingsVersion;
 
         if ($useInstanceCache) {
-            $boundTemplates = $preFetchedBindings ?? TemplateManager::getInstanceBindingsFast($objectOrClass);
             self::$instanceContractCache ??= new WeakMap();
             $entry = self::$instanceContractCache[$objectOrClass] ?? null;
 
             if (
                 $entry !== null
-                && $entry['rawBindings'] === $boundTemplates
+                && $entry['version'] === $currentVersion
                 && \array_key_exists($propName, $entry['contracts'])
             ) {
                 return $entry['contracts'][$propName];
             }
+
+            $boundTemplates = $preFetchedBindings ?? TemplateManager::getInstanceBindingsFast($objectOrClass);
+            $currentVersion = TemplateManager::$instanceBindingsVersion;
         }
 
         $sig = '';
@@ -556,9 +599,9 @@ final class MemberAssignChecker
 
         if ($useInstanceCache) {
             $entry = self::$instanceContractCache[$objectOrClass] ?? null;
-            if ($entry === null || $entry['rawBindings'] !== $boundTemplates) {
+            if ($entry === null || $entry['version'] !== $currentVersion) {
                 self::$instanceContractCache[$objectOrClass] = [
-                    'rawBindings' => $boundTemplates,
+                    'version' => $currentVersion,
                     'contracts' => [$propName => $contract],
                 ];
             } else {
