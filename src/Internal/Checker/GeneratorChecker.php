@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Checker;
 
+use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Ast\ScopeCleaner;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
@@ -15,13 +17,55 @@ use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
+use WeakMap;
 
 /**
  * @internal Evaluates generator yield, send (TSend), and return (TReturn) type validations.
  */
 final class GeneratorChecker
 {
+    private const OP_NONE = 0;
+
+    private const OP_INT = 1;
+
+    private const OP_STRING = 2;
+
+    private const OP_BOOL = 3;
+
+    private const OP_FLOAT = 4;
+
+    private const OP_POSITIVE_INT = 5;
+
+    private const OP_NON_EMPTY_STRING = 6;
+
+    private const OP_ARRAY_KEY = 7;
+
+    private const OP_ARRAY = 8;
+
+    private const OP_OBJECT = 9;
+
+    private const OP_CLASS = 10;
+
+    private const OP_MASK = 11;
+
+    private const OP_FALLBACK = 12;
+
+    private const BIT_INT = 1;
+
+    private const BIT_STRING = 2;
+
+    private const BIT_BOOL = 4;
+
+    private const BIT_FLOAT = 8;
+
+    private const BIT_OBJECT = 16;
+
+    private const BIT_NULL = 32;
+
+    private const BIT_ARRAY = 64;
+
     /**
      * O(1) Fast-path cache for generators determined to have no return contracts.
      *
@@ -30,26 +74,54 @@ final class GeneratorChecker
     private static array $noContractCache = [];
 
     /**
-     * Cache for resolved yield & send types of static / non-generic generators:
-     * [$function] => array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode}.
+     * Per-function static plan cache avoiding repeated DocblockParser/ConditionalChecker calls.
      *
-     * @var array<string, array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode}>
+     * @var array<string, array{
+     *     returnType: TypeNode,
+     *     allTemplates: array<string, TemplateTagValueNode>,
+     *     aliases: array<string, TypeNode>,
+     *     hasGenerics: bool,
+     *     hasMethodTemplates: bool,
+     *     hasAliases: bool,
+     *     hasConditionals: bool,
+     *     isDynamic: bool
+     * }>
+     */
+    private static array $generatorPlanCache = [];
+
+    /**
+     * Cache for resolved yield & send types of non-generic generators:
+     * [$effectiveFunction] => compiled tuple.
+     *
+     * @var array<string, array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}>
      */
     private static array $staticYieldTypeCache = [];
 
     /**
      * 2D Cache for resolved yield & send types of generic generators:
-     * [$function][$templateSignature] => array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode}.
+     * [$effectiveFunction][$templateSignature] => compiled tuple.
      *
-     * @var array<string, array<string, array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode}>>
+     * @var array<string, array<string, array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}>>
      */
     private static array $genericYieldTypeCache = [];
+
+    /**
+     * Per-instance yield contract cache keyed by object identity and raw bindings equality.
+     *
+     * @var WeakMap<object, array<string, array{
+     *     bindings: array<string, TypeNode>,
+     *     types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}
+     * }>>|null
+     */
+    private static ?WeakMap $instanceYieldCache = null;
 
     public static function reset(): void
     {
         self::$noContractCache = [];
+        self::$generatorPlanCache = [];
         self::$staticYieldTypeCache = [];
         self::$genericYieldTypeCache = [];
+        self::$instanceYieldCache = null;
     }
 
     /**
@@ -60,13 +132,15 @@ final class GeneratorChecker
         mixed $sendValue,
         TypeValidatorRegistry $registry,
         object|string|null $thisOrClass = null,
-        ?ScopeCleaner $scopeCleaner = null
+        ?ScopeCleaner $scopeCleaner = null,
+        string $effectiveFunction = ''
     ): mixed {
         if ($sendValue === null) {
             return null;
         }
 
-        $types = self::resolveYieldAndSendTypes($function, $thisOrClass, $registry, $scopeCleaner);
+        $targetFunction = $effectiveFunction !== '' ? $effectiveFunction : $function;
+        $types = self::resolveYieldAndSendTypes($targetFunction, $thisOrClass, $registry, $scopeCleaner);
         if ($types === null) {
             return $sendValue;
         }
@@ -76,7 +150,7 @@ final class GeneratorChecker
             return $sendValue;
         }
 
-        $err = $registry->validate($sendValue, $sendTypeNode, "$function(): Generator sent value (TSend)");
+        $err = $registry->validate($sendValue, $sendTypeNode, "$targetFunction(): Generator sent value (TSend)");
 
         return $err ?? $sendValue;
     }
@@ -90,26 +164,63 @@ final class GeneratorChecker
         mixed $value,
         TypeValidatorRegistry $registry,
         object|string|null $thisOrClass = null,
-        ?ScopeCleaner $scopeCleaner = null
+        ?ScopeCleaner $scopeCleaner = null,
+        string $effectiveFunction = ''
     ): mixed {
-        $types = self::resolveYieldAndSendTypes($function, $thisOrClass, $registry, $scopeCleaner);
+        $targetFunction = $effectiveFunction !== '' ? $effectiveFunction : $function;
+        $types = self::resolveYieldAndSendTypes($targetFunction, $thisOrClass, $registry, $scopeCleaner);
         if ($types === null) {
             return $value;
         }
 
-        [$keyTypeNode, $itemTypeNode] = $types;
+        $keyOp = $types[4];
+        if ($key !== null && $keyOp !== self::OP_NONE) {
+            $keyExtra = $types[5];
+            $keyOk = match ($keyOp) {
+                self::OP_INT => \is_int($key),
+                self::OP_STRING => \is_string($key),
+                self::OP_ARRAY_KEY => \is_int($key) || \is_string($key),
+                self::OP_POSITIVE_INT => \is_int($key) && $key > 0,
+                self::OP_NON_EMPTY_STRING => \is_string($key) && $key !== '',
+                self::OP_BOOL => \is_bool($key),
+                self::OP_FLOAT => \is_float($key) || \is_int($key),
+                self::OP_OBJECT => \is_object($key),
+                self::OP_CLASS => \is_object($key) && ($key instanceof $keyExtra),
+                self::OP_MASK => self::matchesMask($key, (int) $keyExtra),
+                default => false,
+            };
 
-        if ($key !== null && $keyTypeNode !== null) {
-            $err = $registry->validate($key, $keyTypeNode, "$function(): Return iterator key");
-            if ($err !== null) {
-                return $err;
+            if (! $keyOk && $types[0] !== null) {
+                $err = $registry->validate($key, $types[0], "$targetFunction(): Return iterator key");
+                if ($err !== null) {
+                    return $err;
+                }
             }
         }
 
-        if ($itemTypeNode !== null) {
-            $err = $registry->validate($value, $itemTypeNode, "$function(): Return iterator value");
-            if ($err !== null) {
-                return $err;
+        $valOp = $types[6];
+        if ($valOp !== self::OP_NONE) {
+            $valExtra = $types[7];
+            $valOk = match ($valOp) {
+                self::OP_STRING => \is_string($value),
+                self::OP_INT => \is_int($value),
+                self::OP_BOOL => \is_bool($value),
+                self::OP_FLOAT => \is_float($value) || \is_int($value),
+                self::OP_POSITIVE_INT => \is_int($value) && $value > 0,
+                self::OP_NON_EMPTY_STRING => \is_string($value) && $value !== '',
+                self::OP_ARRAY_KEY => \is_int($value) || \is_string($value),
+                self::OP_ARRAY => \is_array($value),
+                self::OP_OBJECT => \is_object($value),
+                self::OP_CLASS => \is_object($value) && ($value instanceof $valExtra),
+                self::OP_MASK => self::matchesMask($value, (int) $valExtra),
+                default => false,
+            };
+
+            if (! $valOk && $types[1] !== null) {
+                $err = $registry->validate($value, $types[1], "$targetFunction(): Return iterator value");
+                if ($err !== null) {
+                    return $err;
+                }
             }
         }
 
@@ -124,9 +235,11 @@ final class GeneratorChecker
         mixed $value,
         TypeValidatorRegistry $registry,
         object|string|null $thisOrClass = null,
-        ?ScopeCleaner $scopeCleaner = null
+        ?ScopeCleaner $scopeCleaner = null,
+        string $effectiveFunction = ''
     ): mixed {
-        $types = self::resolveYieldAndSendTypes($function, $thisOrClass, $registry, $scopeCleaner);
+        $targetFunction = $effectiveFunction !== '' ? $effectiveFunction : $function;
+        $types = self::resolveYieldAndSendTypes($targetFunction, $thisOrClass, $registry, $scopeCleaner);
         if ($types === null) {
             return $value;
         }
@@ -138,21 +251,21 @@ final class GeneratorChecker
 
         if ($returnTypeNode instanceof IdentifierTypeNode && strtolower($returnTypeNode->name) === 'void') {
             if ($value !== null) {
-                return ErrorFactory::createError("$function(): Generator return value must be of type void, " . TypeFormatter::formatGivenValue($value) . ' returned');
+                return ErrorFactory::createError("$targetFunction(): Generator return value must be of type void, " . TypeFormatter::formatGivenValue($value) . ' returned');
             }
 
             return null;
         }
 
-        $err = $registry->validate($value, $returnTypeNode, "$function(): Generator return value (TReturn)");
+        $err = $registry->validate($value, $returnTypeNode, "$targetFunction(): Generator return value (TReturn)");
 
         return $err ?? $value;
     }
 
     /**
-     * Resolves and caches the generator's yielded key, value, and sent types in memory.
+     * Resolves and caches the generator's yielded key, value, sent, and return types in memory.
      *
-     * @return array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode}|null
+     * @return array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}|null
      */
     private static function resolveYieldAndSendTypes(
         string $function,
@@ -160,7 +273,7 @@ final class GeneratorChecker
         ?TypeValidatorRegistry $registry = null,
         ?ScopeCleaner $scopeCleaner = null
     ): ?array {
-        if ($scopeCleaner === null && isset(self::$noContractCache[$function])) {
+        if (isset(self::$noContractCache[$function])) {
             return null;
         }
 
@@ -168,50 +281,98 @@ final class GeneratorChecker
             return self::$staticYieldTypeCache[$function];
         }
 
-        $contract = DocblockParser::parse($function);
-        $returnTypeNode = $contract['return'] ?? null;
-
-        if ($returnTypeNode === null) {
-            self::$noContractCache[$function] = true;
-
-            return null;
-        }
-
-        $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
-        $aliases = $contract['aliases'] ?? [];
-        $hasGenerics = \count($allTemplates) > 0;
-        $hasAliases = \count($aliases) > 0;
-        $hasConditionals = ConditionalChecker::containsConditional($returnTypeNode);
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
 
-        if (! $hasGenerics && ! $hasAliases && ! $hasConditionals && $thisObj === null && $scopeCleaner === null) {
-            $resolvedNode = SpecialTypeResolver::resolve($returnTypeNode, $function, null);
+        if (! isset(self::$generatorPlanCache[$function])) {
+            $contract = DocblockParser::parse($function);
+            $returnTypeNode = $contract['return'] ?? null;
 
-            return self::$staticYieldTypeCache[$function] = self::extractYieldTypes($resolvedNode);
+            if ($returnTypeNode === null) {
+                self::$noContractCache[$function] = true;
+
+                return null;
+            }
+
+            $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+            $aliases = $contract['aliases'] ?? [];
+            $hasGenerics = $allTemplates !== [];
+            $hasMethodTemplates = ($contract['templates'] ?? []) !== [];
+            $hasAliases = $aliases !== [];
+            $hasConditionals = $contract['returnHasConditional'] ?? ConditionalChecker::containsConditional($returnTypeNode);
+            $isDynamic = $contract['returnIsDynamic'] ?? (str_contains((string) $returnTypeNode, 'static') || str_contains((string) $returnTypeNode, '$this'));
+
+            if (! $hasGenerics && ! $hasAliases && ! $hasConditionals && ! $isDynamic) {
+                $resolvedNode = SpecialTypeResolver::resolve($returnTypeNode, $function, null);
+
+                return self::$staticYieldTypeCache[$function] = self::compileYieldTypes($resolvedNode);
+            }
+
+            self::$generatorPlanCache[$function] = [
+                'returnType' => $returnTypeNode,
+                'allTemplates' => $allTemplates,
+                'aliases' => $aliases,
+                'hasGenerics' => $hasGenerics,
+                'hasMethodTemplates' => $hasMethodTemplates,
+                'hasAliases' => $hasAliases,
+                'hasConditionals' => $hasConditionals,
+                'isDynamic' => $isDynamic,
+            ];
         }
+
+        $plan = self::$generatorPlanCache[$function];
+        $returnTypeNode = $plan['returnType'];
+        $allTemplates = $plan['allTemplates'];
+        $aliases = $plan['aliases'];
+
+        $canUseInstanceCache = $thisObj !== null
+            && $scopeCleaner === null
+            && ! $plan['hasMethodTemplates']
+            && ! $plan['hasAliases']
+            && ! $plan['hasConditionals']
+            && ! $plan['isDynamic'];
 
         $boundTemplates = [];
         if ($scopeCleaner !== null && $scopeCleaner->boundTemplates !== []) {
             $boundTemplates = $scopeCleaner->boundTemplates;
-        } elseif ($hasGenerics) {
-            $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $allTemplates);
+        } elseif ($plan['hasGenerics']) {
+            $boundTemplates = ($thisObj !== null && ! $plan['hasMethodTemplates'])
+                ? TemplateManager::getInstanceBindingsFast($thisObj)
+                : TemplateManager::getBoundTemplates($function, $thisOrClass, $allTemplates);
+        }
+
+        if ($canUseInstanceCache) {
+            self::$instanceYieldCache ??= new WeakMap();
+            $cachedEntry = self::$instanceYieldCache[$thisObj][$function] ?? null;
+            if ($cachedEntry !== null && $cachedEntry['bindings'] === $boundTemplates) {
+                return $cachedEntry['types'];
+            }
         }
 
         $sig = null;
-        $boundCount = \count($boundTemplates);
-        if ($boundCount > 0 && $boundCount <= 2 && ! $hasAliases && ! $hasConditionals && $thisObj === null && $scopeCleaner === null) {
-            if ($boundCount === 1) {
-                $first = reset($boundTemplates);
-                $sig = $first instanceof IdentifierTypeNode ? $first->name : (string) $first;
-            } else {
+        if (! $plan['hasAliases'] && ! $plan['hasConditionals'] && ! $plan['isDynamic'] && $scopeCleaner === null) {
+            if ($boundTemplates === []) {
                 $sig = '';
-                foreach ($boundTemplates as $v) {
-                    $sig .= ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
+            } elseif (\count($boundTemplates) === 1) {
+                $firstKey = (string) array_key_first($boundTemplates);
+                $first = $boundTemplates[$firstKey];
+                $sig = $firstKey . '=' . ($first instanceof IdentifierTypeNode ? $first->name : (string) $first);
+            } elseif (\count($boundTemplates) <= 3) {
+                $sig = '';
+                foreach ($boundTemplates as $k => $v) {
+                    $sig .= $k . '=' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
                 }
             }
 
-            if (isset(self::$genericYieldTypeCache[$function][$sig])) {
-                return self::$genericYieldTypeCache[$function][$sig];
+            if ($sig !== null && isset(self::$genericYieldTypeCache[$function][$sig])) {
+                $types = self::$genericYieldTypeCache[$function][$sig];
+                if ($canUseInstanceCache) {
+                    /** @var array<string, array{bindings: array<string, TypeNode>, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}}> $mapEntry */
+                    $mapEntry = self::$instanceYieldCache[$thisObj] ?? [];
+                    $mapEntry[$function] = ['bindings' => $boundTemplates, 'types' => $types];
+                    self::$instanceYieldCache[$thisObj] = $mapEntry;
+                }
+
+                return $types;
             }
         }
 
@@ -219,12 +380,14 @@ final class GeneratorChecker
             $returnTypeNode = $aliases[$returnTypeNode->name];
         }
 
-        if ($hasConditionals && $registry !== null) {
+        if ($plan['hasConditionals'] && $registry !== null) {
             $returnTypeNode = ConditionalChecker::resolve($returnTypeNode, [], $boundTemplates, $registry, $function);
         }
 
-        if (\count($boundTemplates) > 0 || \count($allTemplates) > 0) {
+        if ($boundTemplates !== [] || $allTemplates !== []) {
             $returnTypeNode = TemplateSubstitutor::substitute($returnTypeNode, $boundTemplates, $allTemplates);
+            $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
+        } elseif ($plan['isDynamic']) {
             $returnTypeNode = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
         }
 
@@ -232,21 +395,28 @@ final class GeneratorChecker
             $returnTypeNode = ConditionalChecker::resolve($returnTypeNode, [], $boundTemplates, $registry, $function);
         }
 
-        $types = self::extractYieldTypes($returnTypeNode);
+        $types = self::compileYieldTypes($returnTypeNode);
 
         if ($sig !== null) {
             self::$genericYieldTypeCache[$function][$sig] = $types;
+        }
+
+        if ($canUseInstanceCache) {
+            /** @var array<string, array{bindings: array<string, TypeNode>, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}}> $mapEntry */
+            $mapEntry = self::$instanceYieldCache[$thisObj] ?? [];
+            $mapEntry[$function] = ['bindings' => $boundTemplates, 'types' => $types];
+            self::$instanceYieldCache[$thisObj] = $mapEntry;
         }
 
         return $types;
     }
 
     /**
-     * Extracts yielded key, item, sent (TSend), and return (TReturn) TypeNodes from a resolved generator/array AST node.
+     * Extracts and precompiles yielded key, item, sent (TSend), and return (TReturn) contracts.
      *
-     * @return array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode}
+     * @return array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}
      */
-    private static function extractYieldTypes(TypeNode $returnTypeNode): array
+    private static function compileYieldTypes(TypeNode $returnTypeNode): array
     {
         $itemTypeNode = null;
         $keyTypeNode = null;
@@ -274,6 +444,106 @@ final class GeneratorChecker
             $itemTypeNode = $returnTypeNode->type;
         }
 
-        return [$keyTypeNode, $itemTypeNode, $sendTypeNode, $generatorReturnTypeNode];
+        if ($keyTypeNode instanceof IdentifierTypeNode && strtolower($keyTypeNode->name) === 'mixed') {
+            $keyTypeNode = null;
+        }
+
+        if ($itemTypeNode instanceof IdentifierTypeNode && strtolower($itemTypeNode->name) === 'mixed') {
+            $itemTypeNode = null;
+        }
+
+        [$keyOp, $keyExtra] = self::compileCheckOp($keyTypeNode);
+        [$valOp, $valExtra] = self::compileCheckOp($itemTypeNode);
+
+        return [$keyTypeNode, $itemTypeNode, $sendTypeNode, $generatorReturnTypeNode, $keyOp, $keyExtra, $valOp, $valExtra];
+    }
+
+    /**
+     * @return array{0: int, 1: mixed}
+     */
+    private static function compileCheckOp(?TypeNode $typeNode): array
+    {
+        if ($typeNode === null) {
+            return [self::OP_NONE, null];
+        }
+
+        if ($typeNode instanceof IdentifierTypeNode) {
+            $name = $typeNode->name;
+            $lower = strtolower($name);
+
+            return match ($lower) {
+                'mixed' => [self::OP_NONE, null],
+                'int', 'integer' => [self::OP_INT, null],
+                'string' => [self::OP_STRING, null],
+                'bool', 'boolean' => [self::OP_BOOL, null],
+                'float', 'double' => [self::OP_FLOAT, null],
+                'positive-int' => [self::OP_POSITIVE_INT, null],
+                'non-empty-string' => [self::OP_NON_EMPTY_STRING, null],
+                'array-key' => [self::OP_ARRAY_KEY, null],
+                'array' => [self::OP_ARRAY, null],
+                'object' => [self::OP_OBJECT, null],
+                default => (ClassNameValidator::isValid($name) && (class_exists($name, false) || interface_exists($name, false)))
+                    ? [self::OP_CLASS, $name]
+                    : [self::OP_FALLBACK, null],
+            };
+        }
+
+        if ($typeNode instanceof UnionTypeNode) {
+            $mask = 0;
+            foreach ($typeNode->types as $member) {
+                if (! ($member instanceof IdentifierTypeNode)) {
+                    return [self::OP_FALLBACK, null];
+                }
+
+                $bit = match (strtolower($member->name)) {
+                    'int', 'integer' => self::BIT_INT,
+                    'string' => self::BIT_STRING,
+                    'bool', 'boolean' => self::BIT_BOOL,
+                    'float', 'double' => self::BIT_FLOAT,
+                    'object' => self::BIT_OBJECT,
+                    'null' => self::BIT_NULL,
+                    'array' => self::BIT_ARRAY,
+                    'array-key' => self::BIT_INT | self::BIT_STRING,
+                    default => 0,
+                };
+
+                if ($bit === 0) {
+                    return [self::OP_FALLBACK, null];
+                }
+
+                $mask |= $bit;
+            }
+
+            return $mask !== 0 ? [self::OP_MASK, $mask] : [self::OP_FALLBACK, null];
+        }
+
+        return [self::OP_FALLBACK, null];
+    }
+
+    private static function matchesMask(mixed $value, int $mask): bool
+    {
+        if (\is_string($value)) {
+            return ($mask & self::BIT_STRING) !== 0;
+        }
+        if (\is_int($value)) {
+            return ($mask & (self::BIT_INT | self::BIT_FLOAT)) !== 0;
+        }
+        if (\is_object($value)) {
+            return ($mask & self::BIT_OBJECT) !== 0;
+        }
+        if (\is_bool($value)) {
+            return ($mask & self::BIT_BOOL) !== 0;
+        }
+        if (\is_float($value)) {
+            return ($mask & self::BIT_FLOAT) !== 0;
+        }
+        if ($value === null) {
+            return ($mask & self::BIT_NULL) !== 0;
+        }
+        if (\is_array($value)) {
+            return ($mask & self::BIT_ARRAY) !== 0;
+        }
+
+        return false;
     }
 }

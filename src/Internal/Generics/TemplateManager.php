@@ -975,6 +975,43 @@ final class TemplateManager
     }
 
     /**
+     * Fast O(1) retrieval of an instance's bound templates, resolving inherited bindings and defaults only when needed.
+     *
+     * @return array<string, TypeNode>
+     */
+    public static function getInstanceBindingsFast(object $instance): array
+    {
+        $bindings = self::$instanceTemplateBindings !== null
+            ? (self::$instanceTemplateBindings[$instance] ?? null)
+            : null;
+
+        $className = $instance::class;
+
+        if ($bindings === null) {
+            if (self::$pendingCloneSource !== null && is_a($instance, self::$pendingCloneSource::class)) {
+                self::copyInstanceBindings(self::$pendingCloneSource, $instance);
+                $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+            } elseif (! isset(self::$noInheritedBindingsClasses[$className])) {
+                self::resolveInheritedTemplates($instance, $className);
+                $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+            } else {
+                $bindings = [];
+            }
+        }
+
+        $defaults = self::classTemplateDefaults($className);
+        if ($defaults !== []) {
+            foreach ($defaults as $tName => $default) {
+                if (! isset($bindings[$tName])) {
+                    $bindings[$tName] = $default;
+                }
+            }
+        }
+
+        return $bindings;
+    }
+
+    /**
      * Retrieves all declared template variances ('covariant', 'contravariant', or 'invariant') for an object instance.
      *
      * @return array<string, string>
@@ -1454,7 +1491,7 @@ final class TemplateManager
      */
     public static function applyClassTemplateDefaults(object $instance, array $classTemplates): void
     {
-        if ($classTemplates === []) {
+        if ($classTemplates === [] || self::classTemplateDefaults($instance::class) === []) {
             return;
         }
 
@@ -3038,14 +3075,22 @@ final class TemplateManager
             return self::$realTypeSymbolCache[$name];
         }
 
-        return self::$realTypeSymbolCache[$name] = class_exists($name, false)
-            || class_exists($name)
+        if (
+            class_exists($name, false)
             || interface_exists($name, false)
-            || interface_exists($name)
             || enum_exists($name, false)
-            || enum_exists($name)
             || trait_exists($name, false)
-            || trait_exists($name);
+        ) {
+            return self::$realTypeSymbolCache[$name] = true;
+        }
+
+        if (class_exists($name, true)) {
+            return self::$realTypeSymbolCache[$name] = true;
+        }
+
+        return self::$realTypeSymbolCache[$name] = interface_exists($name, false)
+            || enum_exists($name, false)
+            || trait_exists($name, false);
     }
 
     /**

@@ -289,12 +289,12 @@ final class RuntimeTypeChecker
         mixed $value,
         string $file
     ): mixed {
-        $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
-        if ($className !== '' && isset(InlineChecker::$nullPropertyCache[$className][$propName])) {
+        if (! self::$isEnabled || ! self::$inlinePropertiesEnabled) {
             return $value;
         }
 
-        if (! self::$isEnabled || ! self::$inlinePropertiesEnabled) {
+        $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
+        if ($className !== '' && isset(InlineChecker::$nullPropertyCache[$className][$propName])) {
             return $value;
         }
 
@@ -304,7 +304,7 @@ final class RuntimeTypeChecker
             $chain,
             $value,
             $file,
-            self::getRegistry()
+            self::$registry
         );
 
         if ($res instanceof ErrorMessage) {
@@ -1080,11 +1080,11 @@ final class RuntimeTypeChecker
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+        if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return $sendValue;
         }
 
-        $res = GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass, $scopeCleaner);
+        $res = GeneratorChecker::checkSend($function, $sendValue, self::getRegistry(), $thisOrClass, $scopeCleaner, $effectiveFunction);
 
         if ($res instanceof ErrorMessage) {
             if (IgnoreManager::isCallerIgnored()) {
@@ -1113,11 +1113,11 @@ final class RuntimeTypeChecker
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+        if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return $value;
         }
 
-        $res = GeneratorChecker::checkReturn($function, $value, self::getRegistry(), $thisOrClass, $scopeCleaner);
+        $res = GeneratorChecker::checkReturn($function, $value, self::getRegistry(), $thisOrClass, $scopeCleaner, $effectiveFunction);
 
         if ($res instanceof ErrorMessage) {
             if (IgnoreManager::isCallerIgnored()) {
@@ -1147,11 +1147,11 @@ final class RuntimeTypeChecker
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
-        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+        if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return $value;
         }
 
-        $res = GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass, $scopeCleaner);
+        $res = GeneratorChecker::checkYield($function, $key, $value, self::getRegistry(), $thisOrClass, $scopeCleaner, $effectiveFunction);
 
         if ($res instanceof ErrorMessage) {
             if (IgnoreManager::isCallerIgnored()) {

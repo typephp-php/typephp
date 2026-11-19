@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Checker;
 
+use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
+use ReflectionNamedType;
 use ReflectionProperty;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
@@ -16,15 +18,55 @@ use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
 use TypePHP\Internal\RuntimeTypeChecker;
+use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\StructureMutator;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
+use WeakMap;
 
 /**
  * @internal Evaluates array key/dimension and object shape property member assignments.
  */
 final class MemberAssignChecker
 {
+    private const OP_NONE = 0;
+
+    private const OP_INT = 1;
+
+    private const OP_STRING = 2;
+
+    private const OP_BOOL = 3;
+
+    private const OP_FLOAT = 4;
+    private const OP_POSITIVE_INT = 5;
+
+    private const OP_NON_EMPTY_STRING = 6;
+    private const OP_ARRAY_KEY = 7;
+
+    private const OP_ARRAY = 8;
+
+    private const OP_OBJECT = 9;
+
+    private const OP_CLASS = 10;
+
+    private const OP_MASK = 11;
+
+    private const OP_FALLBACK = 12;
+
+    private const BIT_INT = 1;
+
+    private const BIT_STRING = 2;
+
+    private const BIT_BOOL = 4;
+
+    private const BIT_FLOAT = 8;
+
+    private const BIT_OBJECT = 16;
+
+    private const BIT_NULL = 32;
+
+    private const BIT_ARRAY = 64;
+
     /**
      * In-memory 2D cache for ReflectionProperty instances:
      * [$className][$propName] => ?ReflectionProperty (null = non-declared/dynamic property)
@@ -35,30 +77,59 @@ final class MemberAssignChecker
 
     /**
      * Per-property raw contract cache:
-     * [$className][$propName] => ?array{rawType: TypeNode, classTemplates: array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode>, usesTemplates: bool}
+     * [$className][$propName] => ?array{
+     *     rawType: TypeNode,
+     *     classTemplates: array<string, TemplateTagValueNode>,
+     *     usesTemplates: bool,
+     *     isNativeNonNullArray: bool,
+     *     isMagicOrMissing: bool
+     * }
      *
      * @var array<string, array<string, ?array{
      *     rawType: TypeNode,
-     *     classTemplates: array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode>,
-     *     usesTemplates: bool
+     *     classTemplates: array<string, TemplateTagValueNode>,
+     *     usesTemplates: bool,
+     *     isNativeNonNullArray: bool,
+     *     isMagicOrMissing: bool
      * }>>
      */
     private static array $propertyMutationPlanCache = [];
 
     /**
      * Substituted element contract cache keyed by template binding signature:
-     * [$className][$propName][$sig] => ?array{isList: bool, keyType: ?TypeNode, valueType: ?TypeNode, keyIsMixed: bool, keyIsArrayKey: bool, valueIsMixed: bool}
+     * [$className][$propName][$sig] => ?array{...}
      *
      * @var array<string, array<string, array<string, ?array{
      *     isList: bool,
+     *     quoteKey: bool,
      *     keyType: ?TypeNode,
      *     valueType: ?TypeNode,
-     *     keyIsMixed: bool,
-     *     keyIsArrayKey: bool,
-     *     valueIsMixed: bool
+     *     keyOp: int,
+     *     keyExtra: mixed,
+     *     valOp: int,
+     *     valExtra: mixed
      * }>>>
      */
     private static array $substitutedElementContractCache = [];
+
+    /**
+     * Per-instance contract cache keyed by object identity and raw bindings equality.
+     *
+     * @var WeakMap<object, array{
+     *     rawBindings: array<string, TypeNode>,
+     *     contracts: array<string, ?array{
+     *         isList: bool,
+     *         quoteKey: bool,
+     *         keyType: ?TypeNode,
+     *         valueType: ?TypeNode,
+     *         keyOp: int,
+     *         keyExtra: mixed,
+     *         valOp: int,
+     *         valExtra: mixed
+     *     }>
+     * }>|null
+     */
+    private static ?WeakMap $instanceContractCache = null;
 
     /**
      * Resets the cached reflection property and element contract registries.
@@ -68,6 +139,7 @@ final class MemberAssignChecker
         self::$refPropertyCache = [];
         self::$propertyMutationPlanCache = [];
         self::$substitutedElementContractCache = [];
+        self::$instanceContractCache = null;
     }
 
     /**
@@ -146,7 +218,7 @@ final class MemberAssignChecker
         array $chain,
         mixed $value,
         string $file,
-        TypeValidatorRegistry $registry
+        ?TypeValidatorRegistry $registry = null
     ): mixed {
         if (! \is_object($objectOrClass) && ! \is_string($objectOrClass)) {
             return $value;
@@ -156,6 +228,38 @@ final class MemberAssignChecker
 
         if (isset(InlineChecker::$nullPropertyCache[$className][$propName]) || ! RuntimeTypeChecker::$inlinePropertiesEnabled) {
             return $value;
+        }
+
+        if (\count($chain) === 1 && $chain[0][0] === 'dim') {
+            $propPlan = self::getPropertyMutationPlan($className, $propName);
+            if ($propPlan === null) {
+                return $value;
+            }
+
+            if (
+                RuntimeTypeChecker::$arrayValidationHybrid
+                && ! $propPlan['isMagicOrMissing']
+                && $propPlan['isNativeNonNullArray']
+                && \is_object($objectOrClass)
+            ) {
+                $contract = self::resolveElementContractFromPlan($objectOrClass, $className, $propName, $propPlan);
+                if ($contract !== null && (! $contract['isList'] || $chain[0][1] === null)) {
+                    $directErr = self::validatePropertyElementMutationWithContract(
+                        $className,
+                        $propName,
+                        $chain[0][1],
+                        $value,
+                        $contract,
+                        $registry
+                    );
+
+                    if ($directErr instanceof ErrorMessage) {
+                        return $directErr;
+                    }
+
+                    return $value;
+                }
+            }
         }
 
         $currentVal = self::readPropertyValue($objectOrClass, $className, $propName);
@@ -169,17 +273,20 @@ final class MemberAssignChecker
             && \count($chain) === 1
             && $chain[0][0] === 'dim'
         ) {
-            $directErr = self::validatePropertyElementMutation(
-                $objectOrClass,
-                $className,
-                $propName,
-                $chain,
-                $value,
-                $registry
-            );
+            $contract = self::resolveElementContract($objectOrClass, $className, $propName);
+            if ($contract !== null) {
+                $directErr = self::validatePropertyElementMutationWithContract(
+                    $className,
+                    $propName,
+                    $chain[0][1],
+                    $value,
+                    $contract,
+                    $registry
+                );
 
-            if ($directErr instanceof ErrorMessage) {
-                return $directErr;
+                if ($directErr instanceof ErrorMessage) {
+                    return $directErr;
+                }
             }
 
             return $value;
@@ -191,7 +298,13 @@ final class MemberAssignChecker
 
         $copy = StructureMutator::mutateCopy($currentVal, $chain, $value);
 
-        $res = InlineChecker::checkProperty($copy, $objectOrClass, $propName, $file, $registry);
+        $res = InlineChecker::checkProperty(
+            $copy,
+            $objectOrClass,
+            $propName,
+            $file,
+            $registry ?? RuntimeTypeChecker::getRegistry()
+        );
 
         if ($res instanceof ErrorMessage) {
             return $res;
@@ -201,107 +314,134 @@ final class MemberAssignChecker
     }
 
     /**
-     * Directly validates a single element appended/assigned to a large property array or generic ArrayAccess object in O(1).
+     * Directly validates a single element appended/assigned to a property array or generic ArrayAccess object in O(1).
      *
-     * @param list<array{0: 'dim'|'prop', 1: mixed}> $chain
+     * @param array{
+     *     isList: bool,
+     *     quoteKey: bool,
+     *     keyType: ?TypeNode,
+     *     valueType: ?TypeNode,
+     *     keyOp: int,
+     *     keyExtra: mixed,
+     *     valOp: int,
+     *     valExtra: mixed
+     * } $contract
      */
-    private static function validatePropertyElementMutation(
-        mixed $objectOrClass,
+    private static function validatePropertyElementMutationWithContract(
         string $className,
         string $propName,
-        array $chain,
+        mixed $key,
         mixed $value,
-        TypeValidatorRegistry $registry
+        array $contract,
+        ?TypeValidatorRegistry $registry
     ): ?ErrorMessage {
         try {
-            $contract = self::resolveElementContract($objectOrClass, $className, $propName);
-            if ($contract === null) {
-                return null;
-            }
-
-            $key = $chain[0][1];
-
             if ($contract['isList']) {
                 if ($key !== null && ! \is_int($key)) {
                     $keyStr = \is_string($key) ? $key : '';
 
                     return ErrorFactory::createError("Property {$className}::\${$propName} must be a list, non-integer key '{$keyStr}' given");
                 }
+            } elseif ($key !== null && $contract['keyOp'] !== self::OP_NONE) {
+                $keyExtra = $contract['keyExtra'];
+                $keyOk = match ($contract['keyOp']) {
+                    self::OP_INT => \is_int($key),
+                    self::OP_STRING => \is_string($key),
+                    self::OP_ARRAY_KEY => \is_int($key) || \is_string($key),
+                    self::OP_NON_EMPTY_STRING => \is_string($key) && $key !== '',
+                    self::OP_POSITIVE_INT => \is_int($key) && $key > 0,
+                    self::OP_MASK => self::matchesMask($key, (int) $keyExtra),
+                    self::OP_OBJECT => \is_object($key),
+                    self::OP_CLASS => \is_object($key) && ($key instanceof $keyExtra),
+                    default => false,
+                };
 
-                $valueType = $contract['valueType'];
-                if ($valueType !== null && ! $contract['valueIsMixed']) {
-                    $valOk = $valueType instanceof IdentifierTypeNode && match ($valueType->name) {
-                        'int', 'integer' => \is_int($value),
-                        'string' => \is_string($value),
-                        'bool', 'boolean' => \is_bool($value),
-                        'float', 'double' => \is_float($value) || \is_int($value),
-                        'positive-int' => \is_int($value) && $value > 0,
-                        'non-empty-string' => \is_string($value) && $value !== '',
-                        'array-key' => \is_int($value) || \is_string($value),
-                        'array' => \is_array($value),
-                        'object' => \is_object($value),
-                        default => \is_object($value) && ($value instanceof $valueType->name),
-                    };
-
-                    if (! $valOk) {
-                        $keyStr = \is_string($key) ? $key : (\is_int($key) ? (string) $key : '');
-                        $formattedKey = $key !== null ? ($contract['quoteKey'] ? "['{$keyStr}']" : "[{$keyStr}]") : '[]';
-                        $context = "Property {$className}::\${$propName}" . $formattedKey;
-
-                        return $registry->validate($value, $valueType, $context);
-                    }
-                }
-
-                return null;
-            }
-
-            $keyType = $contract['keyType'];
-            if ($key !== null && $keyType !== null && ! $contract['keyIsMixed']) {
-                $keyOk = $contract['keyIsArrayKey']
-                    ? (\is_int($key) || \is_string($key))
-                    : ($keyType instanceof IdentifierTypeNode && match ($keyType->name) {
-                        'int', 'integer' => \is_int($key),
-                        'string' => \is_string($key),
-                        'non-empty-string' => \is_string($key) && $key !== '',
-                        'positive-int' => \is_int($key) && $key > 0,
-                        default => false,
-                    });
-
-                if (! $keyOk) {
-                    $keyErr = $registry->validate($key, $keyType, "Property {$className}::\${$propName} key");
+                if (! $keyOk && $contract['keyType'] !== null) {
+                    $registry ??= RuntimeTypeChecker::getRegistry();
+                    $keyErr = $registry->validate($key, $contract['keyType'], "Property {$className}::\${$propName} key");
                     if ($keyErr !== null) {
                         return $keyErr;
                     }
                 }
             }
 
-            $valueType = $contract['valueType'];
-            if ($valueType !== null && ! $contract['valueIsMixed']) {
-                $valOk = $valueType instanceof IdentifierTypeNode && match ($valueType->name) {
-                    'int', 'integer' => \is_int($value),
-                    'string' => \is_string($value),
-                    'bool', 'boolean' => \is_bool($value),
-                    'float', 'double' => \is_float($value) || \is_int($value),
-                    'positive-int' => \is_int($value) && $value > 0,
-                    'non-empty-string' => \is_string($value) && $value !== '',
-                    'array-key' => \is_int($value) || \is_string($value),
-                    'array' => \is_array($value),
-                    'object' => \is_object($value),
-                    default => \is_object($value) && ($value instanceof $valueType->name),
+            $valOp = $contract['valOp'];
+            if ($valOp !== self::OP_NONE) {
+                $valExtra = $contract['valExtra'];
+                $valOk = match ($valOp) {
+                    self::OP_INT => \is_int($value),
+                    self::OP_STRING => \is_string($value),
+                    self::OP_BOOL => \is_bool($value),
+                    self::OP_FLOAT => \is_float($value) || \is_int($value),
+                    self::OP_POSITIVE_INT => \is_int($value) && $value > 0,
+                    self::OP_NON_EMPTY_STRING => \is_string($value) && $value !== '',
+                    self::OP_ARRAY_KEY => \is_int($value) || \is_string($value),
+                    self::OP_ARRAY => \is_array($value),
+                    self::OP_OBJECT => \is_object($value),
+                    self::OP_CLASS => \is_object($value) && ($value instanceof $valExtra),
+                    self::OP_MASK => self::matchesMask($value, (int) $valExtra),
+                    default => false,
                 };
 
-                if (! $valOk) {
+                if (! $valOk && $contract['valueType'] !== null) {
                     $keyStr = \is_string($key) ? $key : (\is_int($key) ? (string) $key : '');
                     $formattedKey = $key !== null ? ($contract['quoteKey'] ? "['{$keyStr}']" : "[{$keyStr}]") : '[]';
                     $context = "Property {$className}::\${$propName}" . $formattedKey;
+                    $registry ??= RuntimeTypeChecker::getRegistry();
 
-                    return $registry->validate($value, $valueType, $context);
+                    return $registry->validate($value, $contract['valueType'], $context);
                 }
             }
         } catch (\Throwable) {
         }
 
         return null;
+    }
+
+    /**
+     * @return ?array{
+     *     rawType: TypeNode,
+     *     classTemplates: array<string, TemplateTagValueNode>,
+     *     usesTemplates: bool,
+     *     isNativeNonNullArray: bool,
+     *     isMagicOrMissing: bool
+     * }
+     */
+    private static function getPropertyMutationPlan(string $className, string $propName): ?array
+    {
+        if (isset(self::$propertyMutationPlanCache[$className]) && \array_key_exists($propName, self::$propertyMutationPlanCache[$className])) {
+            return self::$propertyMutationPlanCache[$className][$propName];
+        }
+
+        $rawTypeNode = DocblockParser::parseProperty($className, $propName);
+        if ($rawTypeNode === null) {
+            InlineChecker::$nullPropertyCache[$className][$propName] = true;
+
+            return self::$propertyMutationPlanCache[$className][$propName] = null;
+        }
+
+        $classTemplates = DocblockParser::parseClassTemplates($className);
+        $usesTemplates = $classTemplates !== [] && DocblockParser::typeReferencesTemplate($rawTypeNode, $classTemplates);
+
+        $isMagicOrMissing = ! property_exists($className, $propName);
+        $isNativeNonNullArray = false;
+        if (! $isMagicOrMissing) {
+            $refProp = self::getReflectionProperty($className, $propName);
+            if ($refProp !== null && ! $refProp->isStatic()) {
+                $refType = $refProp->getType();
+                $isNativeNonNullArray = $refType instanceof ReflectionNamedType
+                    && $refType->getName() === 'array'
+                    && ! $refType->allowsNull();
+            }
+        }
+
+        return self::$propertyMutationPlanCache[$className][$propName] = [
+            'rawType' => $rawTypeNode,
+            'classTemplates' => $classTemplates,
+            'usesTemplates' => $usesTemplates,
+            'isNativeNonNullArray' => $isNativeNonNullArray,
+            'isMagicOrMissing' => $isMagicOrMissing,
+        ];
     }
 
     /**
@@ -312,121 +452,257 @@ final class MemberAssignChecker
      *     quoteKey: bool,
      *     keyType: ?TypeNode,
      *     valueType: ?TypeNode,
-     *     keyIsMixed: bool,
-     *     keyIsArrayKey: bool,
-     *     valueIsMixed: bool
+     *     keyOp: int,
+     *     keyExtra: mixed,
+     *     valOp: int,
+     *     valExtra: mixed
      * }
      */
     private static function resolveElementContract(mixed $objectOrClass, string $className, string $propName): ?array
     {
-        if (! isset(self::$propertyMutationPlanCache[$className]) || ! \array_key_exists($propName, self::$propertyMutationPlanCache[$className])) {
-            $rawTypeNode = DocblockParser::parseProperty($className, $propName);
-            if ($rawTypeNode === null) {
-                InlineChecker::$nullPropertyCache[$className][$propName] = true;
-                self::$propertyMutationPlanCache[$className][$propName] = null;
-
-                return null;
-            }
-
-            $classTemplates = DocblockParser::parseClassTemplates($className);
-            $usesTemplates = $classTemplates !== [] && DocblockParser::typeReferencesTemplate($rawTypeNode, $classTemplates);
-
-            self::$propertyMutationPlanCache[$className][$propName] = [
-                'rawType' => $rawTypeNode,
-                'classTemplates' => $classTemplates,
-                'usesTemplates' => $usesTemplates,
-            ];
-        }
-
-        $propPlan = self::$propertyMutationPlanCache[$className][$propName];
+        $propPlan = self::getPropertyMutationPlan($className, $propName);
         if ($propPlan === null) {
             return null;
         }
 
-        $sig = '';
+        return self::resolveElementContractFromPlan($objectOrClass, $className, $propName, $propPlan);
+    }
+
+    /**
+     * @param array{
+     *     rawType: TypeNode,
+     *     classTemplates: array<string, TemplateTagValueNode>,
+     *     usesTemplates: bool,
+     *     isNativeNonNullArray: bool,
+     *     isMagicOrMissing: bool
+     * } $propPlan
+     *
+     * @return ?array{
+     *     isList: bool,
+     *     quoteKey: bool,
+     *     keyType: ?TypeNode,
+     *     valueType: ?TypeNode,
+     *     keyOp: int,
+     *     keyExtra: mixed,
+     *     valOp: int,
+     *     valExtra: mixed
+     * }
+     */
+    private static function resolveElementContractFromPlan(mixed $objectOrClass, string $className, string $propName, array $propPlan): ?array
+    {
         $boundTemplates = [];
-        if ($propPlan['usesTemplates'] && \is_object($objectOrClass)) {
-            $boundTemplates = TemplateManager::getBoundTemplatesForInstance($objectOrClass);
-            if ($boundTemplates !== []) {
-                foreach ($boundTemplates as $k => $v) {
-                    $sig .= $k . '=' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
-                }
+        $useInstanceCache = $propPlan['usesTemplates'] && \is_object($objectOrClass);
+
+        if ($useInstanceCache) {
+            $boundTemplates = TemplateManager::getInstanceBindingsFast($objectOrClass);
+            self::$instanceContractCache ??= new WeakMap();
+            $entry = self::$instanceContractCache[$objectOrClass] ?? null;
+
+            if (
+                $entry !== null
+                && $entry['rawBindings'] === $boundTemplates
+                && \array_key_exists($propName, $entry['contracts'])
+            ) {
+                return $entry['contracts'][$propName];
+            }
+        }
+
+        $sig = '';
+        if ($boundTemplates !== []) {
+            foreach ($boundTemplates as $k => $v) {
+                $sig .= $k . '=' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
             }
         }
 
         if (isset(self::$substitutedElementContractCache[$className][$propName]) && \array_key_exists($sig, self::$substitutedElementContractCache[$className][$propName])) {
-            return self::$substitutedElementContractCache[$className][$propName][$sig];
+            $contract = self::$substitutedElementContractCache[$className][$propName][$sig];
+        } else {
+            $typeNode = $propPlan['rawType'];
+            if ($sig !== '') {
+                $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $propPlan['classTemplates']);
+            }
+
+            $contract = self::buildElementContract($typeNode);
+            self::$substitutedElementContractCache[$className][$propName][$sig] = $contract;
         }
 
-        $typeNode = $propPlan['rawType'];
-        if ($sig !== '') {
-            $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $propPlan['classTemplates']);
+        if ($useInstanceCache) {
+            $entry = self::$instanceContractCache[$objectOrClass] ?? null;
+            if ($entry === null || $entry['rawBindings'] !== $boundTemplates) {
+                self::$instanceContractCache[$objectOrClass] = [
+                    'rawBindings' => $boundTemplates,
+                    'contracts' => [$propName => $contract],
+                ];
+            } else {
+                $entry['contracts'][$propName] = $contract;
+                self::$instanceContractCache[$objectOrClass] = $entry;
+            }
         }
 
-        $contract = null;
+        return $contract;
+    }
 
+    /**
+     * @return ?array{
+     *     isList: bool,
+     *     quoteKey: bool,
+     *     keyType: ?TypeNode,
+     *     valueType: ?TypeNode,
+     *     keyOp: int,
+     *     keyExtra: mixed,
+     *     valOp: int,
+     *     valExtra: mixed
+     * }
+     */
+    private static function buildElementContract(TypeNode $typeNode): ?array
+    {
         if ($typeNode instanceof GenericTypeNode) {
             $base = strtolower((string) $typeNode->type);
 
             if ($base === 'list' || $base === 'non-empty-list') {
                 $valueType = $typeNode->genericTypes[0] ?? null;
-                $contract = [
+                [$valOp, $valExtra] = self::compileCheckOp($valueType);
+
+                return [
                     'isList' => true,
                     'quoteKey' => false,
                     'keyType' => null,
                     'valueType' => $valueType,
-                    'keyIsMixed' => false,
-                    'keyIsArrayKey' => false,
-                    'valueIsMixed' => $valueType instanceof IdentifierTypeNode && strtolower($valueType->name) === 'mixed',
+                    'keyOp' => self::OP_NONE,
+                    'keyExtra' => null,
+                    'valOp' => $valOp,
+                    'valExtra' => $valExtra,
                 ];
-            } else {
+            }
+
+            if ($base === 'array' || $base === 'non-empty-array' || $base === 'iterable') {
                 $genericCount = \count($typeNode->genericTypes);
                 $keyType = $genericCount >= 2 ? $typeNode->genericTypes[0] : null;
                 $valueType = $genericCount >= 2
                     ? $typeNode->genericTypes[1]
                     : ($typeNode->genericTypes[0] ?? null);
 
-                $contract = [
+                [$keyOp, $keyExtra] = self::compileCheckOp($keyType);
+                [$valOp, $valExtra] = self::compileCheckOp($valueType);
+
+                return [
                     'isList' => false,
                     'quoteKey' => true,
                     'keyType' => $keyType,
                     'valueType' => $valueType,
-                    'keyIsMixed' => $keyType instanceof IdentifierTypeNode && strtolower($keyType->name) === 'mixed',
-                    'keyIsArrayKey' => self::isArrayKeyType($keyType),
-                    'valueIsMixed' => $valueType instanceof IdentifierTypeNode && strtolower($valueType->name) === 'mixed',
+                    'keyOp' => $keyOp,
+                    'keyExtra' => $keyExtra,
+                    'valOp' => $valOp,
+                    'valExtra' => $valExtra,
                 ];
             }
-        } elseif ($typeNode instanceof ArrayTypeNode) {
+
+            return null;
+        }
+
+        if ($typeNode instanceof ArrayTypeNode) {
             $valueType = $typeNode->type;
-            $contract = [
+            [$valOp, $valExtra] = self::compileCheckOp($valueType);
+
+            return [
                 'isList' => false,
                 'quoteKey' => false,
                 'keyType' => null,
                 'valueType' => $valueType,
-                'keyIsMixed' => false,
-                'keyIsArrayKey' => false,
-                'valueIsMixed' => $valueType instanceof IdentifierTypeNode && strtolower($valueType->name) === 'mixed',
+                'keyOp' => self::OP_NONE,
+                'keyExtra' => null,
+                'valOp' => $valOp,
+                'valExtra' => $valExtra,
             ];
         }
 
-        return self::$substitutedElementContractCache[$className][$propName][$sig] = $contract;
+        return null;
     }
 
-    private static function isArrayKeyType(?TypeNode $node): bool
+    /**
+     * @return array{0: int, 1: mixed}
+     */
+    private static function compileCheckOp(?TypeNode $typeNode): array
     {
-        if ($node instanceof IdentifierTypeNode) {
-            return strtolower($node->name) === 'array-key';
+        if ($typeNode === null) {
+            return [self::OP_NONE, null];
         }
 
-        if ($node instanceof UnionTypeNode && \count($node->types) === 2) {
-            $t0 = $node->types[0];
-            $t1 = $node->types[1];
-            if ($t0 instanceof IdentifierTypeNode && $t1 instanceof IdentifierTypeNode) {
-                $n0 = strtolower($t0->name);
-                $n1 = strtolower($t1->name);
+        if ($typeNode instanceof IdentifierTypeNode) {
+            $name = $typeNode->name;
+            $lower = strtolower($name);
 
-                return ($n0 === 'int' && $n1 === 'string') || ($n0 === 'string' && $n1 === 'int');
+            return match ($lower) {
+                'mixed' => [self::OP_NONE, null],
+                'int', 'integer' => [self::OP_INT, null],
+                'string' => [self::OP_STRING, null],
+                'bool', 'boolean' => [self::OP_BOOL, null],
+                'float', 'double' => [self::OP_FLOAT, null],
+                'positive-int' => [self::OP_POSITIVE_INT, null],
+                'non-empty-string' => [self::OP_NON_EMPTY_STRING, null],
+                'array-key' => [self::OP_ARRAY_KEY, null],
+                'array' => [self::OP_ARRAY, null],
+                'object' => [self::OP_OBJECT, null],
+                default => (ClassNameValidator::isValid($name) && (class_exists($name, false) || interface_exists($name, false)))
+                    ? [self::OP_CLASS, $name]
+                    : [self::OP_FALLBACK, null],
+            };
+        }
+
+        if ($typeNode instanceof UnionTypeNode) {
+            $mask = 0;
+            foreach ($typeNode->types as $member) {
+                if (! ($member instanceof IdentifierTypeNode)) {
+                    return [self::OP_FALLBACK, null];
+                }
+
+                $bit = match (strtolower($member->name)) {
+                    'int', 'integer' => self::BIT_INT,
+                    'string' => self::BIT_STRING,
+                    'bool', 'boolean' => self::BIT_BOOL,
+                    'float', 'double' => self::BIT_FLOAT,
+                    'object' => self::BIT_OBJECT,
+                    'null' => self::BIT_NULL,
+                    'array' => self::BIT_ARRAY,
+                    'array-key' => self::BIT_INT | self::BIT_STRING,
+                    default => 0,
+                };
+
+                if ($bit === 0) {
+                    return [self::OP_FALLBACK, null];
+                }
+
+                $mask |= $bit;
             }
+
+            return $mask !== 0 ? [self::OP_MASK, $mask] : [self::OP_FALLBACK, null];
+        }
+
+        return [self::OP_FALLBACK, null];
+    }
+
+    private static function matchesMask(mixed $value, int $mask): bool
+    {
+        if (\is_string($value)) {
+            return ($mask & self::BIT_STRING) !== 0;
+        }
+        if (\is_int($value)) {
+            return ($mask & (self::BIT_INT | self::BIT_FLOAT)) !== 0;
+        }
+        if (\is_object($value)) {
+            return ($mask & self::BIT_OBJECT) !== 0;
+        }
+        if (\is_bool($value)) {
+            return ($mask & self::BIT_BOOL) !== 0;
+        }
+        if (\is_float($value)) {
+            return ($mask & self::BIT_FLOAT) !== 0;
+        }
+        if ($value === null) {
+            return ($mask & self::BIT_NULL) !== 0;
+        }
+        if (\is_array($value)) {
+            return ($mask & self::BIT_ARRAY) !== 0;
         }
 
         return false;
