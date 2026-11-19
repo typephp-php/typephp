@@ -565,6 +565,43 @@ final class TemplateManager
     private static array $refClassCache = [];
 
     /**
+     * Secondary string-keyed binding plan cache for freshly substituted GenericTypeNode instances:
+     * [$className][$nodeString] => compiled plan.
+     *
+     * @var array<string, array<string, array{
+     *     isRelative: false,
+     *     skip: bool,
+     *     className: string,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classVariances: array<string, string>,
+     *     templateList: list<TemplateTagValueNode>,
+     *     normalizedTypeArgs: array<TypeNode>,
+     *     hasPropagation: bool,
+     *     allStaticValid: bool,
+     *     items: list<array{
+     *         index: int,
+     *         name: string,
+     *         expected: TypeNode,
+     *         identName: ?string,
+     *         usageVariance: string,
+     *         isWildcardOrMixed: bool,
+     *         symbolValid: bool,
+     *         boundSatisfied: bool,
+     *         unionNames: ?array<string, true>
+     *     }>
+     * }>>
+     */
+    private static array $compiledBindPlanBySigCache = [];
+
+    /**
+     * Memoized substituted GenericTypeNode for property binding propagation:
+     * [$className][$propIndex][$bindingsSig] => ?GenericTypeNode.
+     *
+     * @var array<string, array<int, array<string, ?GenericTypeNode>>>
+     */
+    private static array $propagatedPropTypeCache = [];
+
+    /**
      * Resets all static generic template bindings, call stack frames, and method template caches.
      */
     public static function reset(): void
@@ -1434,8 +1471,13 @@ final class TemplateManager
      */
     private static function compileGenericBindingPlan(GenericTypeNode $typeNode, string $className): array
     {
+        $sigKey = (string) $typeNode;
+        if (isset(self::$compiledBindPlanBySigCache[$className][$sigKey])) {
+            return self::$compiledBindPlanBySigCache[$className][$sigKey];
+        }
+
         if (! ClassNameValidator::isValid($className) || ! self::isRealTypeSymbol($className)) {
-            return [
+            return self::$compiledBindPlanBySigCache[$className][$sigKey] = [
                 'isRelative' => false,
                 'skip' => true,
                 'className' => $className,
@@ -1524,7 +1566,7 @@ final class TemplateManager
                 ];
             }
 
-            return [
+            return self::$compiledBindPlanBySigCache[$className][$sigKey] = [
                 'isRelative' => false,
                 'skip' => false,
                 'className' => $className,
@@ -1615,21 +1657,24 @@ final class TemplateManager
         }
 
         $plan = [];
+        $classTemplates = DocblockParser::parseClassTemplates($className);
 
-        try {
-            /** @var class-string<object> $className */
-            $ref = new \ReflectionClass($className);
-            foreach ($ref->getProperties() as $prop) {
-                if ($prop->isStatic()) {
-                    continue;
-                }
+        if ($classTemplates !== []) {
+            try {
+                /** @var class-string<object> $className */
+                $ref = new \ReflectionClass($className);
+                foreach ($ref->getProperties() as $prop) {
+                    if ($prop->isStatic()) {
+                        continue;
+                    }
 
-                $propType = DocblockParser::parseProperty($className, $prop->getName());
-                if ($propType instanceof GenericTypeNode) {
-                    $plan[] = ['prop' => $prop, 'type' => $propType];
+                    $propType = DocblockParser::parseProperty($className, $prop->getName());
+                    if ($propType instanceof GenericTypeNode && DocblockParser::typeReferencesTemplate($propType, $classTemplates)) {
+                        $plan[] = ['prop' => $prop, 'type' => $propType];
+                    }
                 }
+            } catch (\Throwable) {
             }
-        } catch (\Throwable) {
         }
 
         return self::$propagationPlanCache[$className] = $plan;
@@ -1720,15 +1765,18 @@ final class TemplateManager
         $propIds = [];
 
         try {
+            $className = $instance::class;
+
             if (\PHP_VERSION_ID >= 80400) {
-                $className = $instance::class;
                 $refClass = self::$refClassCache[$className] ??= new \ReflectionClass($className);
                 if ($refClass->isUninitializedLazyObject($instance)) {
                     return;
                 }
             }
 
-            foreach ($plan as $entry) {
+            $bindingsSig = null;
+
+            foreach ($plan as $idx => $entry) {
                 $prop = $entry['prop'];
 
                 if (\PHP_VERSION_ID >= 80400 && $prop->isLazy($instance)) {
@@ -1752,12 +1800,27 @@ final class TemplateManager
 
                 $propIds[] = spl_object_id($propVal);
 
-                if (! DocblockParser::typeReferencesTemplate($entry['type'], $instanceBindings)) {
-                    continue;
+                if ($bindingsSig === null) {
+                    $bindingsSig = '';
+                    foreach ($instanceBindings as $k => $v) {
+                        $bindingsSig .= $k . '=' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
+                    }
                 }
 
-                $resolvedPropType = TemplateSubstitutor::substitute($entry['type'], $instanceBindings);
-                if ($resolvedPropType instanceof GenericTypeNode) {
+                if (isset(self::$propagatedPropTypeCache[$className][$idx]) && \array_key_exists($bindingsSig, self::$propagatedPropTypeCache[$className][$idx])) {
+                    $resolvedPropType = self::$propagatedPropTypeCache[$className][$idx][$bindingsSig];
+                } else {
+                    $resolvedPropType = null;
+                    if (DocblockParser::typeReferencesTemplate($entry['type'], $instanceBindings)) {
+                        $sub = TemplateSubstitutor::substitute($entry['type'], $instanceBindings);
+                        if ($sub instanceof GenericTypeNode) {
+                            $resolvedPropType = $sub;
+                        }
+                    }
+                    self::$propagatedPropTypeCache[$className][$idx][$bindingsSig] = $resolvedPropType;
+                }
+
+                if ($resolvedPropType !== null) {
                     self::bindInstanceFromNode($propVal, $resolvedPropType, forceBind: true, refineOnly: true);
                 }
             }
