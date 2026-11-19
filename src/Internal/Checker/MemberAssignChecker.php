@@ -89,9 +89,9 @@ final class MemberAssignChecker
      *     keyType: ?TypeNode,
      *     valueType: ?TypeNode,
      *     keyOp: int,
-     *     keyExtra: mixed,
+     *     keyExtra: string|int|null,
      *     valOp: int,
-     *     valExtra: mixed
+     *     valExtra: string|int|null
      * }>>>
      */
     private static array $substitutedElementContractCache = [];
@@ -107,9 +107,9 @@ final class MemberAssignChecker
      *         keyType: ?TypeNode,
      *         valueType: ?TypeNode,
      *         keyOp: int,
-     *         keyExtra: mixed,
+     *         keyExtra: string|int|null,
      *         valOp: int,
-     *         valExtra: mixed
+     *         valExtra: string|int|null
      *     }>
      * }>|null
      */
@@ -117,9 +117,9 @@ final class MemberAssignChecker
 
     /**
      * Fast packed per-instance contract cache for direct property-dim mutation fast-path in RuntimeTypeChecker:
-     * [$obj] => array{0: ?array<string, TypeNode>, 1: array<string, array{0: bool, 1: int, 2: mixed, 3: int, 4: mixed}>}
+     * [$obj] => array{0: ?array<string, TypeNode>, 1: array<string, array{0: bool, 1: int, 2: string|int|null, 3: int, 4: string|int|null}>}
      *
-     * @var WeakMap<object, array{0: ?array<string, TypeNode>, 1: array<string, array{0: bool, 1: int, 2: mixed, 3: int, 4: mixed}>}>|null
+     * @var WeakMap<object, array{0: ?array<string, TypeNode>, 1: array<string, array{0: bool, 1: int, 2: string|int|null, 3: int, 4: string|int|null}>}>|null
      */
     public static ?WeakMap $fastObjectContractCache = null;
 
@@ -288,16 +288,16 @@ final class MemberAssignChecker
                             self::OP_ARRAY_KEY => \is_int($key) || \is_string($key),
                             self::OP_NON_EMPTY_STRING => \is_string($key) && $key !== '',
                             self::OP_POSITIVE_INT => \is_int($key) && $key > 0,
-                            self::OP_MASK => (
-                                (\is_string($key) && (((int) $keyExtra) & self::BIT_STRING) !== 0)
-                                || (\is_int($key) && (((int) $keyExtra) & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
-                                || (\is_object($key) && (((int) $keyExtra) & self::BIT_OBJECT) !== 0)
-                                || (\is_bool($key) && (((int) $keyExtra) & self::BIT_BOOL) !== 0)
-                                || (\is_float($key) && (((int) $keyExtra) & self::BIT_FLOAT) !== 0)
-                                || (\is_array($key) && (((int) $keyExtra) & self::BIT_ARRAY) !== 0)
+                            self::OP_MASK => \is_int($keyExtra) && (
+                                (\is_string($key) && ($keyExtra & self::BIT_STRING) !== 0)
+                                || (\is_int($key) && ($keyExtra & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
+                                || (\is_object($key) && ($keyExtra & self::BIT_OBJECT) !== 0)
+                                || (\is_bool($key) && ($keyExtra & self::BIT_BOOL) !== 0)
+                                || (\is_float($key) && ($keyExtra & self::BIT_FLOAT) !== 0)
+                                || (\is_array($key) && ($keyExtra & self::BIT_ARRAY) !== 0)
                             ),
                             self::OP_OBJECT => \is_object($key),
-                            self::OP_CLASS => \is_object($key) && ($key instanceof $keyExtra),
+                            self::OP_CLASS => \is_object($key) && \is_string($keyExtra) && ($key instanceof $keyExtra),
                             default => false,
                         };
                     }
@@ -315,15 +315,15 @@ final class MemberAssignChecker
                             self::OP_ARRAY_KEY => \is_int($value) || \is_string($value),
                             self::OP_ARRAY => \is_array($value),
                             self::OP_OBJECT => \is_object($value),
-                            self::OP_CLASS => \is_object($value) && ($value instanceof $valExtra),
-                            self::OP_MASK => (
-                                (\is_string($value) && (((int) $valExtra) & self::BIT_STRING) !== 0)
-                                || (\is_int($value) && (((int) $valExtra) & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
-                                || (\is_object($value) && (((int) $valExtra) & self::BIT_OBJECT) !== 0)
-                                || (\is_bool($value) && (((int) $valExtra) & self::BIT_BOOL) !== 0)
-                                || (\is_float($value) && (((int) $valExtra) & self::BIT_FLOAT) !== 0)
-                                || ($value === null && (((int) $valExtra) & self::BIT_NULL) !== 0)
-                                || (\is_array($value) && (((int) $valExtra) & self::BIT_ARRAY) !== 0)
+                            self::OP_CLASS => \is_object($value) && \is_string($valExtra) && ($value instanceof $valExtra),
+                            self::OP_MASK => \is_int($valExtra) && (
+                                (\is_string($value) && ($valExtra & self::BIT_STRING) !== 0)
+                                || (\is_int($value) && ($valExtra & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
+                                || (\is_object($value) && ($valExtra & self::BIT_OBJECT) !== 0)
+                                || (\is_bool($value) && ($valExtra & self::BIT_BOOL) !== 0)
+                                || (\is_float($value) && ($valExtra & self::BIT_FLOAT) !== 0)
+                                || ($value === null && ($valExtra & self::BIT_NULL) !== 0)
+                                || (\is_array($value) && ($valExtra & self::BIT_ARRAY) !== 0)
                             ),
                             default => false,
                         };
@@ -396,9 +396,9 @@ final class MemberAssignChecker
      *     keyType: ?TypeNode,
      *     valueType: ?TypeNode,
      *     keyOp: int,
-     *     keyExtra: mixed,
+     *     keyExtra: string|int|null,
      *     valOp: int,
-     *     valExtra: mixed
+     *     valExtra: string|int|null
      * } $contract
      */
     private static function validatePropertyElementMutationWithContract(
@@ -425,16 +425,16 @@ final class MemberAssignChecker
                     self::OP_ARRAY_KEY => \is_int($key) || \is_string($key),
                     self::OP_NON_EMPTY_STRING => \is_string($key) && $key !== '',
                     self::OP_POSITIVE_INT => \is_int($key) && $key > 0,
-                    self::OP_MASK => (
-                        (\is_string($key) && (((int) $keyExtra) & self::BIT_STRING) !== 0)
-                        || (\is_int($key) && (((int) $keyExtra) & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
-                        || (\is_object($key) && (((int) $keyExtra) & self::BIT_OBJECT) !== 0)
-                        || (\is_bool($key) && (((int) $keyExtra) & self::BIT_BOOL) !== 0)
-                        || (\is_float($key) && (((int) $keyExtra) & self::BIT_FLOAT) !== 0)
-                        || (\is_array($key) && (((int) $keyExtra) & self::BIT_ARRAY) !== 0)
+                    self::OP_MASK => \is_int($keyExtra) && (
+                        (\is_string($key) && ($keyExtra & self::BIT_STRING) !== 0)
+                        || (\is_int($key) && ($keyExtra & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
+                        || (\is_object($key) && ($keyExtra & self::BIT_OBJECT) !== 0)
+                        || (\is_bool($key) && ($keyExtra & self::BIT_BOOL) !== 0)
+                        || (\is_float($key) && ($keyExtra & self::BIT_FLOAT) !== 0)
+                        || (\is_array($key) && ($keyExtra & self::BIT_ARRAY) !== 0)
                     ),
                     self::OP_OBJECT => \is_object($key),
-                    self::OP_CLASS => \is_object($key) && ($key instanceof $keyExtra),
+                    self::OP_CLASS => \is_object($key) && \is_string($keyExtra) && ($key instanceof $keyExtra),
                     default => false,
                 };
 
@@ -460,15 +460,15 @@ final class MemberAssignChecker
                     self::OP_ARRAY_KEY => \is_int($value) || \is_string($value),
                     self::OP_ARRAY => \is_array($value),
                     self::OP_OBJECT => \is_object($value),
-                    self::OP_CLASS => \is_object($value) && ($value instanceof $valExtra),
-                    self::OP_MASK => (
-                        (\is_string($value) && (((int) $valExtra) & self::BIT_STRING) !== 0)
-                        || (\is_int($value) && (((int) $valExtra) & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
-                        || (\is_object($value) && (((int) $valExtra) & self::BIT_OBJECT) !== 0)
-                        || (\is_bool($value) && (((int) $valExtra) & self::BIT_BOOL) !== 0)
-                        || (\is_float($value) && (((int) $valExtra) & self::BIT_FLOAT) !== 0)
-                        || ($value === null && (((int) $valExtra) & self::BIT_NULL) !== 0)
-                        || (\is_array($value) && (((int) $valExtra) & self::BIT_ARRAY) !== 0)
+                    self::OP_CLASS => \is_object($value) && \is_string($valExtra) && ($value instanceof $valExtra),
+                    self::OP_MASK => \is_int($valExtra) && (
+                        (\is_string($value) && ($valExtra & self::BIT_STRING) !== 0)
+                        || (\is_int($value) && ($valExtra & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
+                        || (\is_object($value) && ($valExtra & self::BIT_OBJECT) !== 0)
+                        || (\is_bool($value) && ($valExtra & self::BIT_BOOL) !== 0)
+                        || (\is_float($value) && ($valExtra & self::BIT_FLOAT) !== 0)
+                        || ($value === null && ($valExtra & self::BIT_NULL) !== 0)
+                        || (\is_array($value) && ($valExtra & self::BIT_ARRAY) !== 0)
                     ),
                     default => false,
                 };
@@ -539,9 +539,9 @@ final class MemberAssignChecker
      *     keyType: ?TypeNode,
      *     valueType: ?TypeNode,
      *     keyOp: int,
-     *     keyExtra: mixed,
+     *     keyExtra: string|int|null,
      *     valOp: int,
-     *     valExtra: mixed
+     *     valExtra: string|int|null
      * }
      */
     private static function resolveElementContract(mixed $objectOrClass, string $className, string $propName): ?array
@@ -573,9 +573,9 @@ final class MemberAssignChecker
      *     keyType: ?TypeNode,
      *     valueType: ?TypeNode,
      *     keyOp: int,
-     *     keyExtra: mixed,
+     *     keyExtra: string|int|null,
      *     valOp: int,
-     *     valExtra: mixed
+     *     valExtra: string|int|null
      * }
      */
     private static function resolveElementContractFromPlan(
@@ -652,9 +652,9 @@ final class MemberAssignChecker
      *     keyType: ?TypeNode,
      *     valueType: ?TypeNode,
      *     keyOp: int,
-     *     keyExtra: mixed,
+     *     keyExtra: string|int|null,
      *     valOp: int,
-     *     valExtra: mixed
+     *     valExtra: string|int|null
      * }
      */
     private static function buildElementContract(TypeNode $typeNode): ?array
@@ -719,7 +719,7 @@ final class MemberAssignChecker
     }
 
     /**
-     * @return array{0: int, 1: mixed}
+     * @return array{0: int, 1: string|int|null}
      */
     private static function compileCheckOp(?TypeNode $typeNode): array
     {

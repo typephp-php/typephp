@@ -29,7 +29,6 @@ use WeakMap;
  */
 final class GenericValidator implements TypeValidatorInterface
 {
-    private const KIND_FALLBACK = 0;
     private const KIND_LIST = 1;
     private const KIND_NON_EMPTY_LIST = 2;
     private const KIND_ARRAY = 3;
@@ -62,7 +61,7 @@ final class GenericValidator implements TypeValidatorInterface
     ];
 
     /**
-     * @var WeakMap<GenericTypeNode, array{0: int, 1: mixed}>|null
+     * @var WeakMap<GenericTypeNode, array{0: int, 1: TypeNode|array{0: ?int, 1: ?int}|string|null}>|null
      */
     private static ?WeakMap $compiledGenericCache = null;
 
@@ -122,7 +121,7 @@ final class GenericValidator implements TypeValidatorInterface
             $count = \count($value);
             $valueTypeNode = $compiled[1];
 
-            if ($valueTypeNode === null || $count === 0) {
+            if (! ($valueTypeNode instanceof TypeNode) || $count === 0) {
                 return null;
             }
 
@@ -148,7 +147,7 @@ final class GenericValidator implements TypeValidatorInterface
             }
 
             $valueTypeNode = $compiled[1];
-            if ($valueTypeNode === null) {
+            if (! ($valueTypeNode instanceof TypeNode)) {
                 return null;
             }
 
@@ -176,7 +175,9 @@ final class GenericValidator implements TypeValidatorInterface
                 return ErrorFactory::createError($context . ' must be of type int, ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
             }
 
-            [$minVal, $maxVal] = $compiled[1];
+            /** @var array{0: ?int, 1: ?int} $bounds */
+            $bounds = $compiled[1];
+            [$minVal, $maxVal] = $bounds;
             $redact = $isSensitive || Config::isRedactValuesEnabled();
 
             if ($minVal !== null && $value < $minVal) {
@@ -215,9 +216,8 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         if ($kind === self::KIND_OBJECT_GENERIC) {
-            /** @var class-string|null $targetClass */
             $targetClass = $compiled[1];
-            if ($targetClass === null) {
+            if (! \is_string($targetClass)) {
                 return null;
             }
 
@@ -236,7 +236,7 @@ final class GenericValidator implements TypeValidatorInterface
     }
 
     /**
-     * @return array{0: int, 1: mixed}
+     * @return array{0: int, 1: TypeNode|array{0: ?int, 1: ?int}|string|null}
      */
     private function compileGeneric(GenericTypeNode $node): array
     {

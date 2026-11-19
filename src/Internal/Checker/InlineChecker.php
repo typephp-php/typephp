@@ -87,9 +87,9 @@ final class InlineChecker
     private static array $resolvedStaticPropertyTypeCache = [];
 
     /**
-     * In-memory cache for resolved instance property generic types: [$className][$propName] => TypeNode.
+     * In-memory cache for resolved instance property generic types per object instance.
      *
-     * @var \WeakMap<string, array<string, TypeNode>>
+     * @var \WeakMap<object, array{bindings: array<string, TypeNode>, props: array<string, TypeNode>}>|null
      */
     private static ?\WeakMap $instancePropertyTypeCache = null;
 

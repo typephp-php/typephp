@@ -1466,6 +1466,11 @@ final class SpecialTypeResolver
             return true;
         }
 
+        return self::nonClassSymbolExistsNoAutoload($symbol);
+    }
+
+    private static function nonClassSymbolExistsNoAutoload(string $symbol): bool
+    {
         return interface_exists($symbol, false)
             || enum_exists($symbol, false)
             || trait_exists($symbol, false);

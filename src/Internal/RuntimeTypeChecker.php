@@ -329,16 +329,16 @@ final class RuntimeTypeChecker
                                 MemberAssignChecker::OP_ARRAY_KEY => \is_int($key) || \is_string($key),
                                 MemberAssignChecker::OP_NON_EMPTY_STRING => \is_string($key) && $key !== '',
                                 MemberAssignChecker::OP_POSITIVE_INT => \is_int($key) && $key > 0,
-                                MemberAssignChecker::OP_MASK => (
-                                    (\is_string($key) && (((int) $kExtra) & MemberAssignChecker::BIT_STRING) !== 0)
-                                    || (\is_int($key) && (((int) $kExtra) & (MemberAssignChecker::BIT_INT | MemberAssignChecker::BIT_FLOAT)) !== 0)
-                                    || (\is_object($key) && (((int) $kExtra) & MemberAssignChecker::BIT_OBJECT) !== 0)
-                                    || (\is_bool($key) && (((int) $kExtra) & MemberAssignChecker::BIT_BOOL) !== 0)
-                                    || (\is_float($key) && (((int) $kExtra) & MemberAssignChecker::BIT_FLOAT) !== 0)
-                                    || (\is_array($key) && (((int) $kExtra) & MemberAssignChecker::BIT_ARRAY) !== 0)
+                                MemberAssignChecker::OP_MASK => \is_int($kExtra) && (
+                                    (\is_string($key) && ($kExtra & MemberAssignChecker::BIT_STRING) !== 0)
+                                    || (\is_int($key) && ($kExtra & (MemberAssignChecker::BIT_INT | MemberAssignChecker::BIT_FLOAT)) !== 0)
+                                    || (\is_object($key) && ($kExtra & MemberAssignChecker::BIT_OBJECT) !== 0)
+                                    || (\is_bool($key) && ($kExtra & MemberAssignChecker::BIT_BOOL) !== 0)
+                                    || (\is_float($key) && ($kExtra & MemberAssignChecker::BIT_FLOAT) !== 0)
+                                    || (\is_array($key) && ($kExtra & MemberAssignChecker::BIT_ARRAY) !== 0)
                                 ),
                                 MemberAssignChecker::OP_OBJECT => \is_object($key),
-                                MemberAssignChecker::OP_CLASS => \is_object($key) && ($key instanceof $kExtra),
+                                MemberAssignChecker::OP_CLASS => \is_object($key) && \is_string($kExtra) && ($key instanceof $kExtra),
                                 default => false,
                             };
                         }
@@ -360,15 +360,15 @@ final class RuntimeTypeChecker
                                 MemberAssignChecker::OP_ARRAY_KEY => \is_int($value) || \is_string($value),
                                 MemberAssignChecker::OP_ARRAY => \is_array($value),
                                 MemberAssignChecker::OP_OBJECT => \is_object($value),
-                                MemberAssignChecker::OP_CLASS => \is_object($value) && ($value instanceof $vExtra),
-                                MemberAssignChecker::OP_MASK => (
-                                    (\is_string($value) && (((int) $vExtra) & MemberAssignChecker::BIT_STRING) !== 0)
-                                    || (\is_int($value) && (((int) $vExtra) & (MemberAssignChecker::BIT_INT | MemberAssignChecker::BIT_FLOAT)) !== 0)
-                                    || (\is_object($value) && (((int) $vExtra) & MemberAssignChecker::BIT_OBJECT) !== 0)
-                                    || (\is_bool($value) && (((int) $vExtra) & MemberAssignChecker::BIT_BOOL) !== 0)
-                                    || (\is_float($value) && (((int) $vExtra) & MemberAssignChecker::BIT_FLOAT) !== 0)
-                                    || ($value === null && (((int) $vExtra) & MemberAssignChecker::BIT_NULL) !== 0)
-                                    || (\is_array($value) && (((int) $vExtra) & MemberAssignChecker::BIT_ARRAY) !== 0)
+                                MemberAssignChecker::OP_CLASS => \is_object($value) && \is_string($vExtra) && ($value instanceof $vExtra),
+                                MemberAssignChecker::OP_MASK => \is_int($vExtra) && (
+                                    (\is_string($value) && ($vExtra & MemberAssignChecker::BIT_STRING) !== 0)
+                                    || (\is_int($value) && ($vExtra & (MemberAssignChecker::BIT_INT | MemberAssignChecker::BIT_FLOAT)) !== 0)
+                                    || (\is_object($value) && ($vExtra & MemberAssignChecker::BIT_OBJECT) !== 0)
+                                    || (\is_bool($value) && ($vExtra & MemberAssignChecker::BIT_BOOL) !== 0)
+                                    || (\is_float($value) && ($vExtra & MemberAssignChecker::BIT_FLOAT) !== 0)
+                                    || ($value === null && ($vExtra & MemberAssignChecker::BIT_NULL) !== 0)
+                                    || (\is_array($value) && ($vExtra & MemberAssignChecker::BIT_ARRAY) !== 0)
                                 ),
                                 default => false,
                             };

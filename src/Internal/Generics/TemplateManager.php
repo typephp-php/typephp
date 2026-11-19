@@ -489,17 +489,17 @@ final class TemplateManager
     /**
      * Compiled binding plan cache per non-relative GenericTypeNode.
      *
-     * @var WeakMap<GenericTypeNode, array{
-     *     isRelative: bool,
-     *     skip?: bool,
-     *     className?: string,
-     *     templates?: array<string, TemplateTagValueNode>,
-     *     classVariances?: array<string, string>,
-     *     templateList?: list<TemplateTagValueNode>,
-     *     normalizedTypeArgs?: array<TypeNode>,
-     *     hasPropagation?: bool,
-     *     allStaticValid?: bool,
-     *     items?: list<array{
+     * @var WeakMap<GenericTypeNode, array{isRelative: true}|array{
+     *     isRelative: false,
+     *     skip: bool,
+     *     className: string,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classVariances: array<string, string>,
+     *     templateList: list<TemplateTagValueNode>,
+     *     normalizedTypeArgs: array<TypeNode>,
+     *     hasPropagation: bool,
+     *     allStaticValid: bool,
+     *     items: list<array{
      *         index: int,
      *         name: string,
      *         expected: TypeNode,
@@ -518,6 +518,7 @@ final class TemplateManager
      * Compiled binding plan cache per relative GenericTypeNode (self/static/$this) keyed by runtime class name.
      *
      * @var WeakMap<GenericTypeNode, array<string, array{
+     *     isRelative: false,
      *     skip: bool,
      *     className: string,
      *     templates: array<string, TemplateTagValueNode>,
@@ -1239,7 +1240,6 @@ final class TemplateManager
                 $plan = ['isRelative' => true];
             } else {
                 $plan = self::compileGenericBindingPlan($typeNode, $rawClass);
-                $plan['isRelative'] = false;
             }
             self::$compiledNodeBindPlanCache[$typeNode] = $plan;
         }
@@ -1410,6 +1410,7 @@ final class TemplateManager
      * and non-dependent upper bounds for a (GenericTypeNode, className) pair.
      *
      * @return array{
+     *     isRelative: false,
      *     skip: bool,
      *     className: string,
      *     templates: array<string, TemplateTagValueNode>,
@@ -1435,6 +1436,7 @@ final class TemplateManager
     {
         if (! ClassNameValidator::isValid($className) || ! self::isRealTypeSymbol($className)) {
             return [
+                'isRelative' => false,
                 'skip' => true,
                 'className' => $className,
                 'templates' => [],
@@ -1523,6 +1525,7 @@ final class TemplateManager
             }
 
             return [
+                'isRelative' => false,
                 'skip' => false,
                 'className' => $className,
                 'templates' => $templates,
@@ -1535,6 +1538,7 @@ final class TemplateManager
             ];
         } catch (\Throwable) {
             return [
+                'isRelative' => false,
                 'skip' => false,
                 'className' => $className,
                 'templates' => [],
@@ -1724,29 +1728,29 @@ final class TemplateManager
                 }
             }
 
-            foreach ($plan as $idx => $entry) {
+            foreach ($plan as $entry) {
                 $prop = $entry['prop'];
 
                 if (\PHP_VERSION_ID >= 80400 && $prop->isLazy($instance)) {
-                    $propIds[$idx] = -1;
+                    $propIds[] = -1;
 
                     continue;
                 }
 
                 if (! $prop->isInitialized($instance)) {
-                    $propIds[$idx] = -1;
+                    $propIds[] = -1;
 
                     continue;
                 }
 
                 $propVal = $prop->getValue($instance);
                 if (! \is_object($propVal)) {
-                    $propIds[$idx] = 0;
+                    $propIds[] = 0;
 
                     continue;
                 }
 
-                $propIds[$idx] = spl_object_id($propVal);
+                $propIds[] = spl_object_id($propVal);
 
                 if (! DocblockParser::typeReferencesTemplate($entry['type'], $instanceBindings)) {
                     continue;
@@ -3353,7 +3357,12 @@ final class TemplateManager
             return self::$realTypeSymbolCache[$name] = true;
         }
 
-        return self::$realTypeSymbolCache[$name] = interface_exists($name, false)
+        return self::$realTypeSymbolCache[$name] = self::nonClassSymbolExistsNoAutoload($name);
+    }
+
+    private static function nonClassSymbolExistsNoAutoload(string $name): bool
+    {
+        return interface_exists($name, false)
             || enum_exists($name, false)
             || trait_exists($name, false);
     }

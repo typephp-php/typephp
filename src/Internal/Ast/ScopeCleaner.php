@@ -22,7 +22,7 @@ final class ScopeCleaner
     /**
      * Cached resolved yield, send, and return contract tuple for the current generator execution scope.
      *
-     * @var array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}|null
+     * @var array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: string|int|null, 6: int, 7: string|int|null}|null
      */
     public ?array $resolvedYieldTypes = null;
 

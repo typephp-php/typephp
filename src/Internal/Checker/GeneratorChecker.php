@@ -93,7 +93,7 @@ final class GeneratorChecker
      * Cache for resolved yield & send types of non-generic generators:
      * [$effectiveFunction] => compiled tuple.
      *
-     * @var array<string, array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}>
+     * @var array<string, array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: string|int|null, 6: int, 7: string|int|null}>
      */
     private static array $staticYieldTypeCache = [];
 
@@ -101,7 +101,7 @@ final class GeneratorChecker
      * 2D Cache for resolved yield & send types of generic generators:
      * [$effectiveFunction][$templateSignature] => compiled tuple.
      *
-     * @var array<string, array<string, array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}>>
+     * @var array<string, array<string, array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: string|int|null, 6: int, 7: string|int|null}>>
      */
     private static array $genericYieldTypeCache = [];
 
@@ -110,7 +110,7 @@ final class GeneratorChecker
      *
      * @var WeakMap<object, array<string, array{
      *     rawBindings: ?array<string, TypeNode>,
-     *     types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}
+     *     types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: string|int|null, 6: int, 7: string|int|null}
      * }>>|null
      */
     private static ?WeakMap $instanceYieldCache = null;
@@ -189,14 +189,14 @@ final class GeneratorChecker
                 self::OP_BOOL => \is_bool($key),
                 self::OP_FLOAT => \is_float($key) || \is_int($key),
                 self::OP_OBJECT => \is_object($key),
-                self::OP_CLASS => \is_object($key) && ($key instanceof $keyExtra),
-                self::OP_MASK => (
-                    (\is_string($key) && (((int) $keyExtra) & self::BIT_STRING) !== 0)
-                    || (\is_int($key) && (((int) $keyExtra) & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
-                    || (\is_object($key) && (((int) $keyExtra) & self::BIT_OBJECT) !== 0)
-                    || (\is_bool($key) && (((int) $keyExtra) & self::BIT_BOOL) !== 0)
-                    || (\is_float($key) && (((int) $keyExtra) & self::BIT_FLOAT) !== 0)
-                    || (\is_array($key) && (((int) $keyExtra) & self::BIT_ARRAY) !== 0)
+                self::OP_CLASS => \is_object($key) && \is_string($keyExtra) && ($key instanceof $keyExtra),
+                self::OP_MASK => \is_int($keyExtra) && (
+                    (\is_string($key) && ($keyExtra & self::BIT_STRING) !== 0)
+                    || (\is_int($key) && ($keyExtra & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
+                    || (\is_object($key) && ($keyExtra & self::BIT_OBJECT) !== 0)
+                    || (\is_bool($key) && ($keyExtra & self::BIT_BOOL) !== 0)
+                    || (\is_float($key) && ($keyExtra & self::BIT_FLOAT) !== 0)
+                    || (\is_array($key) && ($keyExtra & self::BIT_ARRAY) !== 0)
                 ),
                 default => false,
             };
@@ -222,15 +222,15 @@ final class GeneratorChecker
                 self::OP_ARRAY_KEY => \is_int($value) || \is_string($value),
                 self::OP_ARRAY => \is_array($value),
                 self::OP_OBJECT => \is_object($value),
-                self::OP_CLASS => \is_object($value) && ($value instanceof $valExtra),
-                self::OP_MASK => (
-                    (\is_string($value) && (((int) $valExtra) & self::BIT_STRING) !== 0)
-                    || (\is_int($value) && (((int) $valExtra) & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
-                    || (\is_object($value) && (((int) $valExtra) & self::BIT_OBJECT) !== 0)
-                    || (\is_bool($value) && (((int) $valExtra) & self::BIT_BOOL) !== 0)
-                    || (\is_float($value) && (((int) $valExtra) & self::BIT_FLOAT) !== 0)
-                    || ($value === null && (((int) $valExtra) & self::BIT_NULL) !== 0)
-                    || (\is_array($value) && (((int) $valExtra) & self::BIT_ARRAY) !== 0)
+                self::OP_CLASS => \is_object($value) && \is_string($valExtra) && ($value instanceof $valExtra),
+                self::OP_MASK => \is_int($valExtra) && (
+                    (\is_string($value) && ($valExtra & self::BIT_STRING) !== 0)
+                    || (\is_int($value) && ($valExtra & (self::BIT_INT | self::BIT_FLOAT)) !== 0)
+                    || (\is_object($value) && ($valExtra & self::BIT_OBJECT) !== 0)
+                    || (\is_bool($value) && ($valExtra & self::BIT_BOOL) !== 0)
+                    || (\is_float($value) && ($valExtra & self::BIT_FLOAT) !== 0)
+                    || ($value === null && ($valExtra & self::BIT_NULL) !== 0)
+                    || (\is_array($value) && ($valExtra & self::BIT_ARRAY) !== 0)
                 ),
                 default => false,
             };
@@ -286,7 +286,7 @@ final class GeneratorChecker
     /**
      * Resolves and caches the generator's yielded key, value, sent, and return types in memory.
      *
-     * @return array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}|null
+     * @return array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: string|int|null, 6: int, 7: string|int|null}|null
      */
     private static function resolveYieldAndSendTypes(
         string $function,
@@ -397,7 +397,7 @@ final class GeneratorChecker
                     $rawBindings = TemplateManager::$instanceTemplateBindings !== null
                         ? (TemplateManager::$instanceTemplateBindings[$thisObj] ?? null)
                         : null;
-                    /** @var array<string, array{rawBindings: ?array<string, TypeNode>, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}}> $mapEntry */
+                    /** @var array<string, array{rawBindings: ?array<string, TypeNode>, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: string|int|null, 6: int, 7: string|int|null}}> $mapEntry */
                     $mapEntry = self::$instanceYieldCache[$thisObj] ?? [];
                     $mapEntry[$function] = ['rawBindings' => $rawBindings, 'types' => $types];
                     self::$instanceYieldCache[$thisObj] = $mapEntry;
@@ -436,7 +436,7 @@ final class GeneratorChecker
             $rawBindings = TemplateManager::$instanceTemplateBindings !== null
                 ? (TemplateManager::$instanceTemplateBindings[$thisObj] ?? null)
                 : null;
-            /** @var array<string, array{rawBindings: ?array<string, TypeNode>, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}}> $mapEntry */
+            /** @var array<string, array{rawBindings: ?array<string, TypeNode>, types: array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: string|int|null, 6: int, 7: string|int|null}}> $mapEntry */
             $mapEntry = self::$instanceYieldCache[$thisObj] ?? [];
             $mapEntry[$function] = ['rawBindings' => $rawBindings, 'types' => $types];
             self::$instanceYieldCache[$thisObj] = $mapEntry;
@@ -452,7 +452,7 @@ final class GeneratorChecker
     /**
      * Extracts and precompiles yielded key, item, sent (TSend), and return (TReturn) contracts.
      *
-     * @return array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: mixed, 6: int, 7: mixed}
+     * @return array{0: ?TypeNode, 1: ?TypeNode, 2: ?TypeNode, 3: ?TypeNode, 4: int, 5: string|int|null, 6: int, 7: string|int|null}
      */
     private static function compileYieldTypes(TypeNode $returnTypeNode): array
     {
@@ -497,7 +497,7 @@ final class GeneratorChecker
     }
 
     /**
-     * @return array{0: int, 1: mixed}
+     * @return array{0: int, 1: string|int|null}
      */
     private static function compileCheckOp(?TypeNode $typeNode): array
     {

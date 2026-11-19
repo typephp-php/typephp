@@ -81,7 +81,7 @@ final class ArrayShapeValidator implements TypeValidatorInterface
      * @var WeakMap<ArrayShapeNode, array{
      *     isList: bool,
      *     sealed: bool,
-     *     items: list<array{0: string|int, 1: bool, 2: TypeNode, 3: int, 4: mixed, 5: bool}>,
+     *     items: list<array{0: string|int, 1: bool, 2: TypeNode, 3: int, 4: string|int|array<int|string, true>|null, 5: bool}>,
      *     knownKeys: array<string|int, true>,
      *     unsealedKeyType: ?TypeNode,
      *     unsealedValueType: ?TypeNode
@@ -150,16 +150,16 @@ final class ArrayShapeValidator implements TypeValidatorInterface
                 self::CHECK_ARRAY => \is_array($v),
                 self::CHECK_LIST => \is_array($v) && ($v === [] || array_is_list($v)),
                 self::CHECK_EXACT_STRING => \is_string($v) && $v === $item[4],
-                self::CHECK_STRING_MAP => \is_string($v) && isset($item[4][$v]),
+                self::CHECK_STRING_MAP => \is_string($v) && \is_array($item[4]) && isset($item[4][$v]),
                 self::CHECK_EXACT_INT => \is_int($v) && $v === $item[4],
-                self::CHECK_INT_MAP => \is_int($v) && isset($item[4][$v]),
+                self::CHECK_INT_MAP => \is_int($v) && \is_array($item[4]) && isset($item[4][$v]),
                 self::CHECK_INT_OR_STRING => \is_int($v) || \is_string($v),
                 self::CHECK_TRUE => $v === true,
                 self::CHECK_FALSE => $v === false,
                 self::CHECK_NULL => $v === null,
                 self::CHECK_MIXED => true,
                 self::CHECK_SCALAR => \is_scalar($v),
-                self::CHECK_CLASS => \is_object($v) && is_a($v, $item[4]),
+                self::CHECK_CLASS => \is_object($v) && \is_string($item[4]) && is_a($v, $item[4]),
                 self::CHECK_NEGATIVE_INT => \is_int($v) && $v < 0,
                 self::CHECK_NON_NEGATIVE_INT => \is_int($v) && $v >= 0,
                 self::CHECK_NON_POSITIVE_INT => \is_int($v) && $v <= 0,
@@ -223,7 +223,7 @@ final class ArrayShapeValidator implements TypeValidatorInterface
      * @return array{
      *     isList: bool,
      *     sealed: bool,
-     *     items: list<array{0: string|int, 1: bool, 2: TypeNode, 3: int, 4: mixed, 5: bool}>,
+     *     items: list<array{0: string|int, 1: bool, 2: TypeNode, 3: int, 4: string|int|array<int|string, true>|null, 5: bool}>,
      *     knownKeys: array<string|int, true>,
      *     unsealedKeyType: ?TypeNode,
      *     unsealedValueType: ?TypeNode
@@ -266,7 +266,7 @@ final class ArrayShapeValidator implements TypeValidatorInterface
     }
 
     /**
-     * @return array{0: int, 1: mixed, 2: bool} [checkKind, checkData, nullable]
+     * @return array{0: int, 1: string|int|array<int|string, true>|null, 2: bool} [checkKind, checkData, nullable]
      */
     private static function compileItemType(TypeNode $typeNode): array
     {
