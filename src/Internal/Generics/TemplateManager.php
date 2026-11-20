@@ -602,6 +602,21 @@ final class TemplateManager
     private static array $propagatedPropTypeCache = [];
 
     /**
+     * Cache of properties whose @var type references a given template name:
+     * [$className][$templateName] => list<array{prop: \ReflectionProperty, type: TypeNode}>
+     *
+     * @var array<string, array<string, list<array{prop: \ReflectionProperty, type: TypeNode}>>>
+     */
+    private static array $templatePropertyPlanCache = [];
+
+    /**
+     * WeakMap caching verified (templateName, expectedTypeString) pairs for shallow 'list'/'array' instances.
+     *
+     * @var WeakMap<object, array<string, array<string, bool>>>|null
+     */
+    private static ?WeakMap $verifiedShallowRefinements = null;
+
+    /**
      * Resets all static generic template bindings, call stack frames, and method template caches.
      */
     public static function reset(): void
@@ -636,6 +651,8 @@ final class TemplateManager
         self::$compiledRelativeNodeBindPlanCache = null;
         self::$compiledUnionMembersCache = null;
         self::$noInheritedBindingsClasses = [];
+        self::$templatePropertyPlanCache = [];
+        self::$verifiedShallowRefinements = null;
     }
 
     /**
@@ -2189,6 +2206,15 @@ final class TemplateManager
                     }
                 }
 
+                if (
+                    $existingTypeNode instanceof IdentifierTypeNode
+                    && ($existingTypeNode->name === 'list' || $existingTypeNode->name === 'array')
+                    && self::isSpecializedCollectionType($expectedTypeNode)
+                    && self::verifyShallowCollectionRefinement($instance, $templateName, $existingTypeNode->name, $expectedTypeNode, $existingBindings)
+                ) {
+                    return null;
+                }
+
                 $contextPrefix = $context !== '' ? (str_ends_with($context, ':') ? $context . ' ' : $context . ' ') : ' ';
 
                 return ErrorFactory::createError(
@@ -2672,6 +2698,10 @@ final class TemplateManager
             return true;
         }
 
+        if (self::isArrayKeyEquivalent($existing) && self::isArrayKeyEquivalent($expected)) {
+            return true;
+        }
+
         if ($existing instanceof IdentifierTypeNode && $expected instanceof IdentifierTypeNode) {
             $existingName = $existing->name;
             $expectedName = $expected->name;
@@ -3150,7 +3180,27 @@ final class TemplateManager
             if (! isset(self::COLLECTION_SUBTYPES[$lowerExpected][$lowerExisting])) {
                 return false;
             }
-        } elseif (! is_a((string) $existing->type, $expectedClassName, true)) {
+
+            $existingArgs = self::normalizeCollectionTypeArgs($existing->genericTypes);
+            $expectedArgs = self::normalizeCollectionTypeArgs($expected->genericTypes);
+
+            if (\count($existingArgs) === 2 && \count($expectedArgs) === 1) {
+                $expectedArgs = self::expandCollectionTypeArgs($lowerExpected, $expectedArgs);
+            } elseif (\count($existingArgs) === 1 && \count($expectedArgs) === 2) {
+                $existingArgs = self::expandCollectionTypeArgs($lowerExisting, $existingArgs);
+            }
+
+            foreach ($expectedArgs as $idx => $expectedInner) {
+                $existingInner = $existingArgs[$idx] ?? (self::$mixedNode ??= new IdentifierTypeNode('mixed'));
+                if (! self::checkVariance($existingInner, $expectedInner, GenericTypeNode::VARIANCE_COVARIANT)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        if (! is_a((string) $existing->type, $expectedClassName, true)) {
             return false;
         }
 
@@ -3169,16 +3219,191 @@ final class TemplateManager
             $useSiteVariance = $expected->variances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
             $declaredVariance = $declaredVariances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
 
-            $defaultVariance = $isCollection ? GenericTypeNode::VARIANCE_COVARIANT : GenericTypeNode::VARIANCE_INVARIANT;
-
             $innerVariance = ($useSiteVariance !== GenericTypeNode::VARIANCE_INVARIANT)
                 ? $useSiteVariance
-                : ($declaredVariance !== GenericTypeNode::VARIANCE_INVARIANT ? $declaredVariance : $defaultVariance);
+                : ($declaredVariance !== GenericTypeNode::VARIANCE_INVARIANT ? $declaredVariance : GenericTypeNode::VARIANCE_INVARIANT);
 
             if (! self::checkVariance($existingInner, $expectedInner, $innerVariance)) {
                 return false;
             }
         }
+
+        return true;
+    }
+
+    /**
+     * @param array<TypeNode> $args
+     *
+     * @return list<TypeNode>
+     */
+    private static function normalizeCollectionTypeArgs(array $args): array
+    {
+        $args = array_values($args);
+        if ($args === []) {
+            return [self::$mixedNode ??= new IdentifierTypeNode('mixed')];
+        }
+
+        if (\count($args) >= 2) {
+            return [$args[0], $args[1]];
+        }
+
+        return [$args[0]];
+    }
+
+    /**
+     * Expands a 1-arg collection generic [V] into [K, V] using its implicit key type.
+     *
+     * @param list<TypeNode> $args
+     *
+     * @return array{0: TypeNode, 1: TypeNode}
+     */
+    private static function expandCollectionTypeArgs(string $lowerBase, array $args): array
+    {
+        $keyNode = ($lowerBase === 'list' || $lowerBase === 'non-empty-list')
+            ? (self::$intNode ??= new IdentifierTypeNode('int'))
+            : new IdentifierTypeNode('array-key');
+
+        return [$keyNode, $args[0]];
+    }
+
+    private static function isArrayKeyEquivalent(TypeNode $node): bool
+    {
+        if ($node instanceof IdentifierTypeNode) {
+            return strtolower($node->name) === 'array-key';
+        }
+
+        if ($node instanceof UnionTypeNode && \count($node->types) === 2) {
+            $hasInt = false;
+            $hasString = false;
+
+            foreach ($node->types as $member) {
+                if (! ($member instanceof IdentifierTypeNode)) {
+                    return false;
+                }
+
+                $lower = strtolower($member->name);
+                if ($lower === 'int' || $lower === 'integer') {
+                    $hasInt = true;
+                } elseif ($lower === 'string') {
+                    $hasString = true;
+                } else {
+                    return false;
+                }
+            }
+
+            return $hasInt && $hasString;
+        }
+
+        return false;
+    }
+
+    private static function isSpecializedCollectionType(TypeNode $node): bool
+    {
+        if ($node instanceof ArrayTypeNode) {
+            return true;
+        }
+
+        if ($node instanceof GenericTypeNode) {
+            return isset(self::COLLECTION_SUBTYPES[strtolower((string) $node->type)]);
+        }
+
+        return false;
+    }
+
+    /**
+     * Lazily verifies an instance's runtime array properties when a shallow 'list'/'array'
+     * binding is checked against a specialized collection type (e.g. list<bool>, array<int|string, string>).
+     *
+     * @param array<string, TypeNode> $existingBindings
+     */
+    private static function verifyShallowCollectionRefinement(
+        object $instance,
+        string $templateName,
+        string $existingShallowName,
+        TypeNode $expectedTypeNode,
+        array $existingBindings
+    ): bool {
+        if ($existingShallowName === 'array') {
+            $expectedBase = $expectedTypeNode instanceof GenericTypeNode
+                ? strtolower((string) $expectedTypeNode->type)
+                : '';
+
+            if ($expectedBase === 'list' || $expectedBase === 'non-empty-list') {
+                return false;
+            }
+        }
+
+        $expectedKey = (string) $expectedTypeNode;
+        self::$verifiedShallowRefinements ??= new WeakMap();
+        $cached = self::$verifiedShallowRefinements[$instance][$templateName][$expectedKey] ?? null;
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $actualClass = $instance::class;
+        if (! isset(self::$templatePropertyPlanCache[$actualClass][$templateName])) {
+            $plan = [];
+
+            try {
+                $ref = new \ReflectionClass($actualClass);
+                $needle = [$templateName => true];
+
+                foreach ($ref->getProperties() as $prop) {
+                    if ($prop->isStatic()) {
+                        continue;
+                    }
+
+                    $propType = DocblockParser::parseProperty($actualClass, $prop->getName());
+                    if ($propType !== null && DocblockParser::typeReferencesTemplate($propType, $needle)) {
+                        $plan[] = ['prop' => $prop, 'type' => $propType];
+                    }
+                }
+            } catch (\Throwable) {
+            }
+
+            self::$templatePropertyPlanCache[$actualClass][$templateName] = $plan;
+        }
+
+        $propPlan = self::$templatePropertyPlanCache[$actualClass][$templateName];
+        if ($propPlan === []) {
+            return false;
+        }
+
+        [$classTemplates] = self::hierarchyTemplatesForClass($actualClass);
+        $testBindings = $existingBindings;
+        $testBindings[$templateName] = $expectedTypeNode;
+        $registry = \TypePHP\Internal\RuntimeTypeChecker::getRegistry();
+        $checkedAny = false;
+
+        foreach ($propPlan as $entry) {
+            $prop = $entry['prop'];
+            if ((\PHP_VERSION_ID >= 80400 && $prop->isLazy($instance)) || ! $prop->isInitialized($instance)) {
+                continue;
+            }
+
+            $checkedAny = true;
+            $val = $prop->getValue($instance);
+            $substitutedType = TemplateSubstitutor::substitute($entry['type'], $testBindings, $classTemplates);
+            $err = $registry->validate($val, $substitutedType, '');
+
+            if ($err !== null) {
+                /** @var array<string, array<string, bool>> $instMap */
+                $instMap = self::$verifiedShallowRefinements[$instance] ?? [];
+                $instMap[$templateName][$expectedKey] = false;
+                self::$verifiedShallowRefinements[$instance] = $instMap;
+
+                return false;
+            }
+        }
+
+        if (! $checkedAny) {
+            return false;
+        }
+
+        /** @var array<string, array<string, bool>> $instMap */
+        $instMap = self::$verifiedShallowRefinements[$instance] ?? [];
+        $instMap[$templateName][$expectedKey] = true;
+        self::$verifiedShallowRefinements[$instance] = $instMap;
 
         return true;
     }

@@ -761,6 +761,13 @@ final class ParamChecker
                         $inferredCandidate = self::extractTypeFromClosureParameter($closureParams[$idx]);
 
                         if ($inferredCandidate !== null) {
+                            if ($targetObj !== null) {
+                                $existingType = TemplateManager::getInstanceBoundTypeFast($targetObj, $tName);
+                                if ($existingType !== null && TemplateManager::checkVariance($existingType, $inferredCandidate, GenericTypeNode::VARIANCE_COVARIANT)) {
+                                    continue;
+                                }
+                            }
+
                             $templateTag = $templates[$tName];
                             $satisfiesBound = true;
 
@@ -1319,6 +1326,7 @@ final class ParamChecker
 
                 $inferredKeyType = null;
                 $inferredValType = null;
+                $hasEmptyValArray = false;
 
                 foreach ($sampleItems as $key => $item) {
                     if ($keyTName !== null) {
@@ -1326,8 +1334,22 @@ final class ParamChecker
                         $inferredKeyType = ($inferredKeyType === null) ? $keyType : self::unifyTypes($inferredKeyType, $keyType);
                     }
                     if ($valTName !== null) {
+                        if ($item === []) {
+                            $hasEmptyValArray = true;
+
+                            continue;
+                        }
                         $valType = TemplateManager::inferTypeFromValue($item);
                         $inferredValType = ($inferredValType === null) ? $valType : self::unifyTypes($inferredValType, $valType);
+                    }
+                }
+
+                if ($valTName !== null && $hasEmptyValArray) {
+                    $emptyListNode = TemplateManager::inferTypeFromValue([]);
+                    if ($inferredValType === null) {
+                        $inferredValType = $emptyListNode;
+                    } elseif (! self::isCollectionTypeNode($inferredValType)) {
+                        $inferredValType = self::unifyTypes($inferredValType, $emptyListNode);
                     }
                 }
 
@@ -1502,14 +1524,55 @@ final class ParamChecker
         array $classTemplates = []
     ): void {
         $inferredType = null;
+        $hasEmptyArray = false;
+
         foreach ($sampleItems as $item) {
+            if ($item === []) {
+                $hasEmptyArray = true;
+
+                continue;
+            }
             $itemType = TemplateManager::inferTypeFromValue($item);
             $inferredType = ($inferredType === null) ? $itemType : self::unifyTypes($inferredType, $itemType);
+        }
+
+        if ($hasEmptyArray) {
+            $emptyListNode = TemplateManager::inferTypeFromValue([]);
+            if ($inferredType === null) {
+                $inferredType = $emptyListNode;
+            } elseif (! self::isCollectionTypeNode($inferredType)) {
+                $inferredType = self::unifyTypes($inferredType, $emptyListNode);
+            }
         }
 
         if ($inferredType !== null) {
             self::bindTemplateIfUnbound($templateName, $inferredType, $effectiveFunction, $thisObj, $templates, $classTemplates);
         }
+    }
+
+    private static function isCollectionTypeNode(TypeNode $node): bool
+    {
+        if ($node instanceof IdentifierTypeNode) {
+            return isset(self::COLLECTION_TYPES[strtolower($node->name)]);
+        }
+
+        if ($node instanceof GenericTypeNode) {
+            return isset(self::COLLECTION_TYPES[strtolower((string) $node->type)]);
+        }
+
+        if ($node instanceof ArrayTypeNode) {
+            return true;
+        }
+
+        if ($node instanceof UnionTypeNode) {
+            foreach ($node->types as $member) {
+                if (self::isCollectionTypeNode($member)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
