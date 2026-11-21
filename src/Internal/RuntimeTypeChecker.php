@@ -932,8 +932,12 @@ final class RuntimeTypeChecker
 
         if ($hasMethodTemplates) {
             $cleaner = new ScopeCleaner($effectiveFunction);
-            $allTemplates = [...$contract['classTemplates'], ...$contract['templates']];
-            $cleaner->boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates);
+            if ($thisObj !== null && $contract['classTemplates'] === []) {
+                $cleaner->boundTemplates = TemplateManager::getTopCallFrame($effectiveFunction) ?? [];
+            } else {
+                $allTemplates = [...$contract['classTemplates'], ...$contract['templates']];
+                $cleaner->boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates);
+            }
 
             return $cleaner;
         }

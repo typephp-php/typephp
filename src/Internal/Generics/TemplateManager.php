@@ -977,18 +977,23 @@ final class TemplateManager
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
 
         if ($thisObj !== null) {
-            $isCtor = str_ends_with(strtolower($function), '::__construct');
-            if ($isCtor) {
-                self::ensureInstanceInherited($thisObj);
-                $bindings = self::$instanceTemplateBindings[$thisObj] ?? [];
-            } else {
-                $bindings = self::getInstanceBindingsFast($thisObj);
-            }
+            $className = $thisObj::class;
+            [$classHierarchyTemplates] = self::hierarchyTemplatesForClass($className);
 
-            $methodTemplates = self::getMethodTemplates($function);
-            if ($methodTemplates !== []) {
-                foreach ($methodTemplates as $methodTName => $_) {
-                    unset($bindings[$methodTName]);
+            if ($classHierarchyTemplates !== []) {
+                $isCtor = \strlen($function) > 13 && substr_compare($function, '::__construct', -13, 13, true) === 0;
+                if ($isCtor) {
+                    self::ensureInstanceInherited($thisObj);
+                    $bindings = self::$instanceTemplateBindings[$thisObj] ?? [];
+                } else {
+                    $bindings = self::getInstanceBindingsFast($thisObj);
+                }
+
+                $methodTemplates = self::getMethodTemplates($function);
+                if ($methodTemplates !== []) {
+                    foreach ($methodTemplates as $methodTName => $_) {
+                        unset($bindings[$methodTName]);
+                    }
                 }
             }
         } else {
@@ -3601,7 +3606,7 @@ final class TemplateManager
     /**
      * @return array<string, TypeNode>|null
      */
-    private static function getTopCallFrame(string $function): ?array
+    public static function getTopCallFrame(string $function): ?array
     {
         if (! isset(self::$callStackBindings[$function]) || self::$callStackBindings[$function] === []) {
             return null;

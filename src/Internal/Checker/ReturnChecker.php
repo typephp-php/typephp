@@ -338,6 +338,16 @@ final class ReturnChecker
             if ($err !== null) {
                 return $err;
             }
+
+            if ($thisObj !== null) {
+                return $value;
+            }
+        }
+
+        if ($thisObj !== null && $returnTypeNode instanceof IdentifierTypeNode && strtolower($returnTypeNode->name) === 'static') {
+            if ($value instanceof $thisObj) {
+                return $value;
+            }
         }
 
         $hasGenerics = (\count($templates) > 0);
@@ -382,17 +392,30 @@ final class ReturnChecker
             return $value;
         }
 
-        $boundTemplates = ($thisObj !== null && ($contract['templates'] ?? []) === [])
-            ? TemplateManager::getInstanceBindingsFast($thisObj)
-            : TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+        $hasClassTemplates = ($contract['classTemplates'] ?? []) !== [];
+        $hasMethodTemplates = ($contract['templates'] ?? []) !== [];
+
+        if ($thisObj !== null && ! $hasMethodTemplates) {
+            $boundTemplates = $hasClassTemplates ? TemplateManager::getInstanceBindingsFast($thisObj) : [];
+        } elseif ($thisObj !== null && ! $hasClassTemplates) {
+            $boundTemplates = TemplateManager::getTopCallFrame($function) ?? [];
+        } else {
+            $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+        }
 
         $isDynamicReturn = $contract['returnIsDynamic']
             ?? (str_contains((string) $returnTypeNode, 'static') || str_contains((string) $returnTypeNode, '$this'));
 
         $sig = null;
+        $cacheFunc = null;
         $boundCount = \count($boundTemplates);
-        if ($boundCount > 0 && $boundCount <= 2 && ! $hasConditionals && \count($aliases) === 0 && ! $isDynamicReturn) {
-            if ($boundCount === 1) {
+
+        if ($boundCount <= 5 && ! $hasConditionals && ($thisObj !== null || ! $isDynamicReturn)) {
+            $cacheFunc = ($isDynamicReturn && $thisObj !== null) ? ($function . '@' . $thisObj::class) : $function;
+
+            if ($boundCount === 0) {
+                $sig = '';
+            } elseif ($boundCount === 1) {
                 $firstKey = (string) array_key_first($boundTemplates);
                 $first = $boundTemplates[$firstKey];
                 $sig = $firstKey . '=' . ($first instanceof IdentifierTypeNode ? $first->name : (string) $first);
@@ -405,13 +428,15 @@ final class ReturnChecker
 
             if (str_contains($sig, 'static') || str_contains($sig, '$this')) {
                 $sig = null;
-            } elseif (isset(self::$substitutedReturnCache[$function][$sig])) {
-                $resolvedType = self::$substitutedReturnCache[$function][$sig];
+            } elseif (isset(self::$substitutedReturnCache[$cacheFunc][$sig])) {
+                $resolvedType = self::$substitutedReturnCache[$cacheFunc][$sig];
             }
         }
 
         if (! isset($resolvedType)) {
-            $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
+            $resolvedType = $isDynamicReturn
+                ? SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj)
+                : $returnTypeNode;
 
             if ($resolvedType instanceof IdentifierTypeNode && isset($aliases[$resolvedType->name])) {
                 $resolvedType = $aliases[$resolvedType->name];
@@ -421,23 +446,25 @@ final class ReturnChecker
                 $resolvedType = ConditionalChecker::resolve($resolvedType, $vars, $boundTemplates, $registry, $function);
             }
 
-            if (\count($boundTemplates) === 0 && \count($templates) > 0 && ! $hasConditionals && $thisObj === null) {
+            if ($boundCount === 0 && \count($templates) > 0 && ! $hasConditionals && $thisObj === null) {
                 $resolvedType = self::$unboundReturnCache[$function] ??= SpecialTypeResolver::resolve(
                     TemplateSubstitutor::substitute($returnTypeNode, [], $templates),
                     $function,
                     null
                 );
-            } elseif (\count($boundTemplates) > 0 || \count($templates) > 0) {
-                $resolvedType = TemplateSubstitutor::substitute($resolvedType, $boundTemplates, $templates);
-                $resolvedType = SpecialTypeResolver::resolve($resolvedType, $function, $thisObj);
+            } elseif ($boundCount > 0 || \count($templates) > 0) {
+                $subType = TemplateSubstitutor::substitute($resolvedType, $boundTemplates, $templates);
+                $resolvedType = ($isDynamicReturn || $subType !== $resolvedType)
+                    ? SpecialTypeResolver::resolve($subType, $function, $thisObj)
+                    : $subType;
             }
 
             if (ConditionalChecker::containsConditional($resolvedType)) {
                 $resolvedType = ConditionalChecker::resolve($resolvedType, $vars, $boundTemplates, $registry, $function);
             }
 
-            if ($sig !== null) {
-                self::$substitutedReturnCache[$function][$sig] = $resolvedType;
+            if ($sig !== null && $cacheFunc !== null) {
+                self::$substitutedReturnCache[$cacheFunc][$sig] = $resolvedType;
             }
         }
 

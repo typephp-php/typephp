@@ -158,10 +158,19 @@ final class ParamChecker
     private static array $templateBoundPlanCache = [];
 
     /**
+     * In-memory 3D cache for substituted non-conditional parameter types:
+     * [$cacheKey][$sig] => TypeNode
+     *
+     * @var array<string, array<string, TypeNode>>
+     */
+    private static array $substitutedParamCache = [];
+
+    /**
      * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
     {
+        self::$substitutedParamCache = [];
         self::$effectiveFunctionCache = [];
         self::$noParamContractCache = [];
         self::$functionKindCache = [];
@@ -283,9 +292,12 @@ final class ParamChecker
             self::preInferGenericTemplates($contract['types'], $vars, $effectiveFunction, $thisObj, $allTemplates, $classTemplates);
         }
 
-        $boundTemplates = (\count($allTemplates) > 0)
-            ? TemplateManager::getBoundTemplates($effectiveFunction, $thisOrClass, $allTemplates)
-            : [];
+        $boundTemplates = [];
+        if (\count($allTemplates) > 0) {
+            $boundTemplates = ($thisObj !== null && \count($classTemplates) === 0)
+                ? (TemplateManager::getTopCallFrame($effectiveFunction) ?? [])
+                : TemplateManager::getBoundTemplates($effectiveFunction, $thisOrClass, $allTemplates);
+        }
         $declaredTemplates = $allTemplates;
 
         $baseTypes = self::resolveBaseTypes($contract['types'], $effectiveFunction, $thisObj, $aliases, $paramsAreDynamic);
@@ -305,7 +317,8 @@ final class ParamChecker
             $thisOrClass,
             $sensitiveParams,
             $hasMethodTemplates,
-            $functionKind === self::KIND_CONSTRUCT
+            $functionKind === self::KIND_CONSTRUCT,
+            $contract['hasCrossReferencedBounds'] ?? true
         );
     }
 
@@ -537,18 +550,32 @@ final class ParamChecker
         object|string|null $thisOrClass = null,
         array $sensitiveParams = [],
         bool $hasMethodTemplates = false,
-        bool $isConstructor = false
+        bool $isConstructor = false,
+        bool $hasCrossReferencedBounds = true
     ): ?ErrorMessage {
+        $templateCount = \count($allTemplates);
+        $hasClassTemplates = \count($classTemplates) > 0;
+        $isFirstParam = true;
+
         foreach ($contractTypes as $paramName => $_) {
             if (! isset($vars[$paramName]) && ! \array_key_exists($paramName, $vars)) {
                 continue;
             }
 
-            $currentBoundTemplates = (\count($allTemplates) > 0)
-                ? (($thisObj !== null && ! $hasMethodTemplates && ! $isConstructor)
-                    ? TemplateManager::getInstanceBindingsFast($thisObj)
-                    : TemplateManager::getBoundTemplates($effectiveFunction, $thisOrClass, $allTemplates))
-                : $boundTemplates;
+            if ($isFirstParam) {
+                $currentBoundTemplates = $boundTemplates;
+                $isFirstParam = false;
+            } elseif ($templateCount > 0) {
+                if ($thisObj !== null && ! $hasMethodTemplates && ! $isConstructor) {
+                    $currentBoundTemplates = TemplateManager::getInstanceBindingsFast($thisObj);
+                } elseif ($thisObj !== null && ! $hasClassTemplates) {
+                    $currentBoundTemplates = TemplateManager::getTopCallFrame($effectiveFunction) ?? [];
+                } else {
+                    $currentBoundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisOrClass, $allTemplates);
+                }
+            } else {
+                $currentBoundTemplates = $boundTemplates;
+            }
 
             $isSensitive = $sensitiveParams[$paramName] ?? false;
 
@@ -574,7 +601,7 @@ final class ParamChecker
             }
         }
 
-        if (\count($allTemplates) > 0) {
+        if ($hasCrossReferencedBounds && $templateCount > 0) {
             return self::validateCrossReferencedTemplateBounds(
                 $contractTypes,
                 $baseTypes,
@@ -1122,7 +1149,7 @@ final class ParamChecker
         array $classTemplates = []
     ): void {
         foreach ($types as $paramName => $typeNode) {
-            if (isset($vars[$paramName])) {
+            if (isset($vars[$paramName]) && (\is_array($vars[$paramName]) || \is_object($vars[$paramName]))) {
                 self::inferShapeNodeTemplates($typeNode, $vars[$paramName], $effectiveFunction, $thisObj, $templates, $classTemplates);
             }
         }
@@ -1326,30 +1353,23 @@ final class ParamChecker
 
                 $inferredKeyType = null;
                 $inferredValType = null;
-                $hasEmptyValArray = false;
 
                 foreach ($sampleItems as $key => $item) {
                     if ($keyTName !== null) {
                         $keyType = TemplateManager::inferTypeFromValue($key);
-                        $inferredKeyType = ($inferredKeyType === null) ? $keyType : self::unifyTypes($inferredKeyType, $keyType);
+                        if ($inferredKeyType === null) {
+                            $inferredKeyType = $keyType;
+                        } elseif ($keyType !== $inferredKeyType) {
+                            $inferredKeyType = self::unifyTypes($inferredKeyType, $keyType);
+                        }
                     }
                     if ($valTName !== null) {
-                        if ($item === []) {
-                            $hasEmptyValArray = true;
-
-                            continue;
-                        }
                         $valType = TemplateManager::inferTypeFromValue($item);
-                        $inferredValType = ($inferredValType === null) ? $valType : self::unifyTypes($inferredValType, $valType);
-                    }
-                }
-
-                if ($valTName !== null && $hasEmptyValArray) {
-                    $emptyListNode = TemplateManager::inferTypeFromValue([]);
-                    if ($inferredValType === null) {
-                        $inferredValType = $emptyListNode;
-                    } elseif (! self::isCollectionTypeNode($inferredValType)) {
-                        $inferredValType = self::unifyTypes($inferredValType, $emptyListNode);
+                        if ($inferredValType === null) {
+                            $inferredValType = $valType;
+                        } elseif ($valType !== $inferredValType) {
+                            $inferredValType = self::unifyTypes($inferredValType, $valType);
+                        }
                     }
                 }
 
@@ -1650,12 +1670,9 @@ final class ParamChecker
         array $classTemplates = []
     ): void {
         foreach ($types as $paramName => $typeNode) {
-            if (! isset($vars[$paramName])) {
-                continue;
+            if (isset($vars[$paramName]) && (\is_object($vars[$paramName]) || \is_array($vars[$paramName]))) {
+                self::inferGenericObjectNode($typeNode, $vars[$paramName], $effectiveFunction, $thisObj, $templates, $classTemplates);
             }
-
-            $value = $vars[$paramName];
-            self::inferGenericObjectNode($typeNode, $value, $effectiveFunction, $thisObj, $templates, $classTemplates);
         }
     }
 
@@ -2101,7 +2118,9 @@ final class ParamChecker
             return self::resolveTemplateParam($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $registry, $classTemplates, $thisOrClass);
         }
 
+        $hadConditional = false;
         if (ConditionalChecker::containsConditional($typeNode)) {
+            $hadConditional = true;
             $typeNode = ConditionalChecker::resolve($typeNode, $vars, $boundTemplates, $registry, $effectiveFunction);
         }
 
@@ -2114,9 +2133,41 @@ final class ParamChecker
         $shouldSkipTemplateSub = $isBareTemplate || $isClassStringT;
 
         if (! $shouldSkipTemplateSub && (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0)) {
-            $subType = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
-            if ($subType !== $typeNode) {
-                $typeNode = SpecialTypeResolver::resolve($subType, $effectiveFunction, $thisObj);
+            $boundCount = \count($boundTemplates);
+            $sig = null;
+            $cacheKey = null;
+
+            if (! $hadConditional && $boundCount <= 5 && ! ($typeNode instanceof IdentifierTypeNode)) {
+                $cacheKey = $effectiveFunction . '::' . $paramName . ($thisObj !== null ? '@' . $thisObj::class : '');
+                if ($boundCount === 0) {
+                    $sig = '';
+                } elseif ($boundCount === 1) {
+                    $firstKey = (string) array_key_first($boundTemplates);
+                    $first = $boundTemplates[$firstKey];
+                    $sig = $firstKey . '=' . ($first instanceof IdentifierTypeNode ? $first->name : (string) $first);
+                } else {
+                    $sig = '';
+                    foreach ($boundTemplates as $k => $v) {
+                        $sig .= $k . '=' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
+                    }
+                }
+
+                if (str_contains($sig, 'static') || str_contains($sig, '$this')) {
+                    $sig = null;
+                }
+            }
+
+            if ($sig !== null && isset(self::$substitutedParamCache[$cacheKey][$sig])) {
+                $typeNode = self::$substitutedParamCache[$cacheKey][$sig];
+            } else {
+                $subType = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
+                if ($subType !== $typeNode) {
+                    $typeNode = SpecialTypeResolver::resolve($subType, $effectiveFunction, $thisObj);
+                }
+
+                if ($sig !== null && $cacheKey !== null) {
+                    self::$substitutedParamCache[$cacheKey][$sig] = $typeNode;
+                }
             }
         }
 
@@ -2276,6 +2327,8 @@ final class ParamChecker
 
         if (! TemplateManager::isBound($function, $targetObj, $templateName)) {
             if (! \is_string($val) || ! ClassNameValidator::isValidClassString($val)) {
+                $redact = $isSensitive || Config::isRedactValuesEnabled();
+
                 return ErrorFactory::createError($function . '(): Argument $' . $paramName . ' must be a valid class-string, ' . TypeFormatter::formatGivenValue($val, $redact) . ' given');
             }
 
@@ -2296,6 +2349,7 @@ final class ParamChecker
 
                     $resolvedBound = SpecialTypeResolver::resolve($boundNode, $function, $thisObj);
                     if (! self::checkClassStringSatisfiesBound($val, $resolvedBound)) {
+                        $redact = $isSensitive || Config::isRedactValuesEnabled();
                         $boundDisplay = (string) $resolvedBound;
                         $displayVal = $redact ? 'string given' : "'" . $val . "' given";
 
@@ -2310,6 +2364,7 @@ final class ParamChecker
             $expectedTypeNode = TemplateManager::getBoundType($function, $targetObj, $templateName);
             if ($expectedTypeNode !== null) {
                 if (! \is_string($val) || ! self::checkClassStringSatisfiesBound($val, $expectedTypeNode)) {
+                    $redact = $isSensitive || Config::isRedactValuesEnabled();
                     $valStr = TypeFormatter::formatGivenValue($val, $redact);
                     $targetDisplay = (string) $expectedTypeNode;
 
@@ -2753,6 +2808,23 @@ final class ParamChecker
      */
     private static function unifyTypes(TypeNode $type1, TypeNode $type2): TypeNode
     {
+        if ($type1 === $type2) {
+            return $type1;
+        }
+
+        if ($type1 instanceof IdentifierTypeNode && $type2 instanceof IdentifierTypeNode && $type1->name === $type2->name) {
+            return $type1;
+        }
+
+        if ($type1 instanceof UnionTypeNode && $type2 instanceof IdentifierTypeNode) {
+            $t2Name = $type2->name;
+            foreach ($type1->types as $member) {
+                if ($member instanceof IdentifierTypeNode && $member->name === $t2Name) {
+                    return $type1;
+                }
+            }
+        }
+
         if ((string) $type1 === (string) $type2) {
             return $type1;
         }

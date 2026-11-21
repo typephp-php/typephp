@@ -85,6 +85,11 @@ final class GenericValidator implements TypeValidatorInterface
      */
     private static array $maskOfCache = [];
 
+    /**
+     * @var array<string, array<string, true>>
+     */
+    private static array $classStringBoundCache = [];
+
     public static function reset(): void
     {
         self::$compiledGenericCache = null;
@@ -92,6 +97,7 @@ final class GenericValidator implements TypeValidatorInterface
         self::$enumKeyCache = [];
         self::$enumValueCache = [];
         self::$maskOfCache = [];
+        self::$classStringBoundCache = [];
     }
 
     /**
@@ -744,6 +750,33 @@ final class GenericValidator implements TypeValidatorInterface
 
         $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower((string) $valTypeNode->type)]));
 
+        if ($keyIsArrayKey && ! $isComplexObjectGeneric) {
+            return CollectionElementValidator::validateElements(
+                $value,
+                $valTypeNode,
+                $context,
+                $registry,
+                isList: false,
+                isSensitive: $isSensitive,
+                count: $count,
+            );
+        }
+
+        $keyFast = $keyIsArrayKey ? 3 : ($keyTypeNode instanceof IdentifierTypeNode ? match ($keyTypeNode->name) {
+            'int', 'integer' => 1,
+            'string' => 2,
+            default => 0,
+        } : 0);
+
+        $valFast = $valIsMixed ? 6 : ($valTypeNode instanceof IdentifierTypeNode ? match ($valTypeNode->name) {
+            'int', 'integer' => 1,
+            'string' => 2,
+            'bool', 'boolean' => 3,
+            'float', 'double' => 4,
+            'object' => 5,
+            default => 0,
+        } : 0);
+
         if ($count > Config::HYBRID_SAMPLE_THRESHOLD && Config::isArrayValidationHybrid()) {
             $keys = array_keys($value);
             $sampleKeys = [$keys[0], $keys[$count - 1]];
@@ -753,15 +786,30 @@ final class GenericValidator implements TypeValidatorInterface
             }
 
             foreach ($sampleKeys as $k) {
-                if (! $keyIsArrayKey) {
+                $keyOk = match ($keyFast) {
+                    3 => true,
+                    1 => \is_int($k),
+                    2 => \is_string($k),
+                    default => false,
+                };
+                if (! $keyOk) {
                     $err = $registry->validate($k, $keyTypeNode, '');
                     if ($err !== null) {
                         return ErrorFactory::createError($context . ' key' . $err->getMessage());
                     }
                 }
 
-                if (! $valIsMixed) {
-                    $v = $value[$k];
+                $v = $value[$k];
+                $valOk = match ($valFast) {
+                    6 => true,
+                    1 => \is_int($v),
+                    2 => \is_string($v),
+                    3 => \is_bool($v),
+                    4 => \is_float($v) || \is_int($v),
+                    5 => \is_object($v),
+                    default => false,
+                };
+                if (! $valOk) {
                     $err = $isComplexObjectGeneric
                         ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
                         : $registry->validate($v, $valTypeNode, '', $isSensitive);
@@ -776,15 +824,29 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         foreach ($value as $k => $v) {
-            if (! $keyIsArrayKey) {
+            $keyOk = match ($keyFast) {
+                3 => true,
+                1 => \is_int($k),
+                2 => \is_string($k),
+                default => false,
+            };
+            if (! $keyOk) {
                 $err = $registry->validate($k, $keyTypeNode, '');
                 if ($err !== null) {
                     return ErrorFactory::createError($context . ' key' . $err->getMessage());
                 }
             }
 
-            if (! $valIsMixed) {
-                $v = $value[$k];
+            $valOk = match ($valFast) {
+                6 => true,
+                1 => \is_int($v),
+                2 => \is_string($v),
+                3 => \is_bool($v),
+                4 => \is_float($v) || \is_int($v),
+                5 => \is_object($v),
+                default => false,
+            };
+            if (! $valOk) {
                 $err = $isComplexObjectGeneric
                     ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
                     : $registry->validate($v, $valTypeNode, '', $isSensitive);
@@ -868,10 +930,12 @@ final class GenericValidator implements TypeValidatorInterface
 
     private function validateClassStringBound(string $value, TypeNode $targetNode, string $context, bool $isSensitive = false): ?ErrorMessage
     {
-        $redact = $isSensitive || Config::isRedactValuesEnabled();
-
         if ($targetNode instanceof IdentifierTypeNode) {
             $targetName = $targetNode->name;
+            if (isset(self::$classStringBoundCache[$targetName][$value])) {
+                return null;
+            }
+
             $lower = strtolower($targetName);
             if ($lower === 'object' || $lower === 'mixed') {
                 return null;
@@ -879,10 +943,13 @@ final class GenericValidator implements TypeValidatorInterface
 
             if (class_exists($targetName) || interface_exists($targetName) || trait_exists($targetName) || enum_exists($targetName)) {
                 if (! is_a($value, $targetName, allow_string: true)) {
+                    $redact = $isSensitive || Config::isRedactValuesEnabled();
                     $valDisplay = $redact ? 'string given' : "'$value' given";
 
                     return ErrorFactory::createError($context . ' must be a class-string of ' . $targetName . ", $valDisplay");
                 }
+
+                self::$classStringBoundCache[$targetName][$value] = true;
             }
 
             return null;
@@ -895,6 +962,7 @@ final class GenericValidator implements TypeValidatorInterface
                 }
             }
 
+            $redact = $isSensitive || Config::isRedactValuesEnabled();
             $valDisplay = $redact ? 'string given' : "'$value' given";
 
             return ErrorFactory::createError($context . ' must be a class-string of ' . (string) $targetNode . ", $valDisplay");
