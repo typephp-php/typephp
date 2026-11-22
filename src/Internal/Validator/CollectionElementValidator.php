@@ -9,7 +9,6 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
-use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\RuntimeTypeChecker;
 use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Util\Config;
@@ -153,13 +152,30 @@ final class CollectionElementValidator
                 return null;
             }
 
+            if ($elemName === 'array') {
+                if ($count > Config::HYBRID_SAMPLE_THRESHOLD && RuntimeTypeChecker::$arrayValidationHybrid) {
+                    return self::validateHybrid($items, $elementTypeNode, $context, $registry, $count, $isList, $isSensitive);
+                }
+
+                foreach ($items as $k => $v) {
+                    if (! \is_array($v)) {
+                        return ErrorFactory::createError($context . self::formatKey($k, $isList) . ' must be of type array, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
+                    }
+                }
+
+                return null;
+            }
+
             if ($elemName === 'class-string') {
                 if ($count > Config::HYBRID_SAMPLE_THRESHOLD && RuntimeTypeChecker::$arrayValidationHybrid) {
                     return self::validateHybrid($items, $elementTypeNode, $context, $registry, $count, $isList, $isSensitive);
                 }
 
                 foreach ($items as $k => $v) {
-                    if (! \is_string($v) || ! ClassNameValidator::isValidClassString($v)) {
+                    if (
+                        ! \is_string($v)
+                        || ! (ClassNameValidator::$validClassStringCache[$v] ?? ClassNameValidator::isValidClassString($v))
+                    ) {
                         return ErrorFactory::createError($context . self::formatKey($k, $isList) . ' must be of type class-string, ' . TypeFormatter::formatGivenValue($v, $isSensitive) . ' given');
                     }
                 }
@@ -171,7 +187,7 @@ final class CollectionElementValidator
                 return null;
             }
 
-            if (! SpecialTypeResolver::isBuiltInTypeKeyword($elemName) && (class_exists($elemName, false) || interface_exists($elemName, false))) {
+            if (class_exists($elemName, false) || interface_exists($elemName, false)) {
                 if ($count > Config::HYBRID_SAMPLE_THRESHOLD && RuntimeTypeChecker::$arrayValidationHybrid) {
                     return self::validateHybrid($items, $elementTypeNode, $context, $registry, $count, $isList, $isSensitive);
                 }

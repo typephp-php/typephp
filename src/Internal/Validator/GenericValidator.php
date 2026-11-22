@@ -20,7 +20,6 @@ use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
 use TypePHP\Internal\Generics\TemplateManager;
-use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\RuntimeTypeChecker;
 use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Util\Config;
@@ -63,17 +62,7 @@ final class GenericValidator implements TypeValidatorInterface
     ];
 
     /**
-     * @var WeakMap<GenericTypeNode, array{0: int, 1: TypeNode|array{0: ?int, 1: ?int}|array{
-     *     mode: int,
-     *     valType?: TypeNode,
-     *     keyType?: TypeNode,
-     *     keyIsArrayKey?: bool,
-     *     valIsMixed?: bool,
-     *     isComplexObjectGeneric?: bool,
-     *     keyFast?: int,
-     *     valFast?: int,
-     *     valExtra?: ?string
-     * }|string|null}>|null
+     * @var WeakMap<GenericTypeNode, array{0: int, 1: mixed}>|null
      */
     private static ?WeakMap $compiledGenericCache = null;
 
@@ -181,17 +170,17 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         if ($kind === self::KIND_ARRAY) {
-            /** @var array{mode: int, valType?: TypeNode, keyType?: TypeNode, keyIsArrayKey?: bool, valIsMixed?: bool, isComplexObjectGeneric?: bool, keyFast?: int, valFast?: int, valExtra?: ?string}|null $arrayPlan */
-            $arrayPlan = \is_array($compiled[1]) ? $compiled[1] : null;
+            /** @var array{requireNonEmpty: bool, typesCount: int, baseName: string, keyNode: ?TypeNode, valNode: ?TypeNode, keyIsArrayKey: bool, valIsMixed: bool, keyFast: int, valFast: int, valExtra: ?string, isComplexObjectGeneric: bool} $plan */
+            $plan = $compiled[1];
 
-            return $this->validateArray($value, $genericNode, $context, $registry, $isSensitive, false, $arrayPlan);
+            return $this->validateArrayWithPlan($value, $plan, $context, $registry, $isSensitive);
         }
 
         if ($kind === self::KIND_NON_EMPTY_ARRAY) {
-            /** @var array{mode: int, valType?: TypeNode, keyType?: TypeNode, keyIsArrayKey?: bool, valIsMixed?: bool, isComplexObjectGeneric?: bool, keyFast?: int, valFast?: int, valExtra?: ?string}|null $arrayPlan */
-            $arrayPlan = \is_array($compiled[1]) ? $compiled[1] : null;
+            /** @var array{requireNonEmpty: bool, typesCount: int, baseName: string, keyNode: ?TypeNode, valNode: ?TypeNode, keyIsArrayKey: bool, valIsMixed: bool, keyFast: int, valFast: int, valExtra: ?string, isComplexObjectGeneric: bool} $plan */
+            $plan = $compiled[1];
 
-            return $this->validateArray($value, $genericNode, $context, $registry, $isSensitive, true, $arrayPlan);
+            return $this->validateArrayWithPlan($value, $plan, $context, $registry, $isSensitive);
         }
 
         if ($kind === self::KIND_INT_RANGE) {
@@ -260,17 +249,7 @@ final class GenericValidator implements TypeValidatorInterface
     }
 
     /**
-     * @return array{0: int, 1: TypeNode|array{0: ?int, 1: ?int}|array{
-     *     mode: int,
-     *     valType?: TypeNode,
-     *     keyType?: TypeNode,
-     *     keyIsArrayKey?: bool,
-     *     valIsMixed?: bool,
-     *     isComplexObjectGeneric?: bool,
-     *     keyFast?: int,
-     *     valFast?: int,
-     *     valExtra?: ?string
-     * }|string|null}
+     * @return array{0: int, 1: mixed}
      */
     private function compileGeneric(GenericTypeNode $node): array
     {
@@ -282,8 +261,8 @@ final class GenericValidator implements TypeValidatorInterface
         return match ($baseType) {
             'list' => [self::KIND_LIST, $node->genericTypes[0] ?? null],
             'non-empty-list', 'non-empty-array-list' => [self::KIND_NON_EMPTY_LIST, $node->genericTypes[0] ?? null],
-            'array', 'iterable', 'traversable', 'generator', 'iterator' => [self::KIND_ARRAY, self::compileArrayPlan($node)],
-            'non-empty-array' => [self::KIND_NON_EMPTY_ARRAY, self::compileArrayPlan($node)],
+            'array', 'iterable', 'traversable', 'generator', 'iterator' => [self::KIND_ARRAY, $this->compileArrayPlan($node, $typeName, false)],
+            'non-empty-array' => [self::KIND_NON_EMPTY_ARRAY, $this->compileArrayPlan($node, $typeName, true)],
             'int', 'integer' => [
                 self::KIND_INT_RANGE,
                 [
@@ -305,85 +284,153 @@ final class GenericValidator implements TypeValidatorInterface
 
     /**
      * @return array{
-     *     mode: int,
-     *     valType?: TypeNode,
-     *     keyType?: TypeNode,
-     *     keyIsArrayKey?: bool,
-     *     valIsMixed?: bool,
-     *     isComplexObjectGeneric?: bool,
-     *     keyFast?: int,
-     *     valFast?: int,
-     *     valExtra?: ?string
-     * }|null
+     *     requireNonEmpty: bool,
+     *     typesCount: int,
+     *     baseName: string,
+     *     keyNode: ?TypeNode,
+     *     valNode: ?TypeNode,
+     *     keyIsArrayKey: bool,
+     *     valIsMixed: bool,
+     *     keyFast: int,
+     *     valFast: int,
+     *     valExtra: ?string,
+     *     isComplexObjectGeneric: bool
+     * }
      */
-    private static function compileArrayPlan(GenericTypeNode $node): ?array
+    private function compileArrayPlan(GenericTypeNode $node, string $baseName, bool $requireNonEmpty): array
     {
         $typesCount = \count($node->genericTypes);
         if ($typesCount === 0) {
-            return null;
-        }
-
-        if ($typesCount === 1) {
             return [
-                'mode' => 1,
-                'valType' => $node->genericTypes[0],
+                'requireNonEmpty' => $requireNonEmpty,
+                'typesCount' => 0,
+                'baseName' => $baseName,
+                'keyNode' => null,
+                'valNode' => null,
+                'keyIsArrayKey' => true,
+                'valIsMixed' => true,
+                'keyFast' => 3,
+                'valFast' => 6,
+                'valExtra' => null,
+                'isComplexObjectGeneric' => false,
             ];
         }
 
-        $keyTypeNode = $node->genericTypes[0];
-        $valTypeNode = $node->genericTypes[1];
+        if ($typesCount === 1) {
+            $valNode = $node->genericTypes[0];
+            $valIsMixed = $valNode instanceof IdentifierTypeNode
+                && \in_array(strtolower($valNode->name), ['mixed', 'tvalue', 'v', 'value', 't', 'telement'], true);
 
-        $keyIsArrayKey = ($keyTypeNode instanceof IdentifierTypeNode && \in_array(strtolower($keyTypeNode->name), ['array-key', 'mixed', 'tkey', 'key', 'k'], true))
-            || ($keyTypeNode instanceof UnionTypeNode && \count($keyTypeNode->types) === 2 && self::isIntStringUnion($keyTypeNode));
+            return [
+                'requireNonEmpty' => $requireNonEmpty,
+                'typesCount' => 1,
+                'baseName' => $baseName,
+                'keyNode' => null,
+                'valNode' => $valNode,
+                'keyIsArrayKey' => true,
+                'valIsMixed' => $valIsMixed,
+                'keyFast' => 3,
+                'valFast' => 0,
+                'valExtra' => null,
+                'isComplexObjectGeneric' => false,
+            ];
+        }
 
-        $valIsMixed = ($valTypeNode instanceof IdentifierTypeNode) && \in_array(strtolower($valTypeNode->name), ['mixed', 'tvalue', 'v', 'value', 't'], true);
+        $keyNode = $node->genericTypes[0];
+        $valNode = $node->genericTypes[1];
 
-        $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower((string) $valTypeNode->type)]));
+        $keyIsArrayKey = ($keyNode instanceof IdentifierTypeNode && \in_array(strtolower($keyNode->name), ['array-key', 'mixed', 'tkey', 'key', 'k'], true))
+            || ($keyNode instanceof UnionTypeNode && self::isIntStringUnion($keyNode));
 
-        $keyFast = $keyIsArrayKey ? 3 : ($keyTypeNode instanceof IdentifierTypeNode ? match (strtolower($keyTypeNode->name)) {
-            'int', 'integer' => 1,
-            'string' => 2,
-            default => 0,
-        } : 0);
+        $keyFast = 0;
+        if ($keyIsArrayKey) {
+            $keyFast = 3;
+        } elseif ($keyNode instanceof IdentifierTypeNode) {
+            $keyFast = match (strtolower($keyNode->name)) {
+                'int', 'integer' => 1,
+                'string' => 2,
+                default => 0,
+            };
+        }
+
+        $valIsMixed = $valNode instanceof IdentifierTypeNode
+            && \in_array(strtolower($valNode->name), ['mixed', 'tvalue', 'v', 'value', 't', 'telement'], true);
 
         $valFast = 0;
         $valExtra = null;
+
         if ($valIsMixed) {
             $valFast = 6;
-        } elseif ($valTypeNode instanceof IdentifierTypeNode) {
-            $valName = $valTypeNode->name;
-            $valLower = strtolower($valName);
-            $valFast = match ($valLower) {
+        } elseif ($valNode instanceof IdentifierTypeNode) {
+            $vName = $valNode->name;
+            $vLower = strtolower($vName);
+            $valFast = match ($vLower) {
                 'int', 'integer' => 1,
                 'string' => 2,
                 'bool', 'boolean' => 3,
                 'float', 'double' => 4,
                 'object' => 5,
-                'class-string' => 8,
-                default => (! SpecialTypeResolver::isBuiltInTypeKeyword($valName) && ClassNameValidator::isValid($valName) && (class_exists($valName, false) || interface_exists($valName, false)))
-                    ? 7
-                    : 0,
+                'array' => 7,
+                'class-string' => 9,
+                default => 0,
             };
-            if ($valFast === 7) {
-                $valExtra = $valName;
+
+            if ($valFast === 0 && ClassNameValidator::isValid($vName) && (class_exists($vName, false) || interface_exists($vName, false))) {
+                $valFast = 8;
+                $valExtra = $vName;
+            }
+        } elseif ($valNode instanceof UnionTypeNode) {
+            if (self::isIntStringUnion($valNode)) {
+                $valFast = 10;
+            } elseif (\count($valNode->types) === 2) {
+                $hasNull = false;
+                $other = null;
+                foreach ($valNode->types as $m) {
+                    if ($m instanceof IdentifierTypeNode && strtolower($m->name) === 'null') {
+                        $hasNull = true;
+                    } else {
+                        $other = $m;
+                    }
+                }
+                if ($hasNull && $other instanceof IdentifierTypeNode) {
+                    $oLower = strtolower($other->name);
+                    if ($oLower === 'string') {
+                        $valFast = 12;
+                    } elseif ($oLower === 'int' || $oLower === 'integer') {
+                        $valFast = 11;
+                    } elseif ($oLower === 'bool' || $oLower === 'boolean') {
+                        $valFast = 13;
+                    } elseif (ClassNameValidator::isValid($other->name) && (class_exists($other->name, false) || interface_exists($other->name, false))) {
+                        $valFast = 14;
+                        $valExtra = $other->name;
+                    }
+                }
             }
         }
 
+        $isComplexObjectGeneric = ($valNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower((string) $valNode->type)]));
+
         return [
-            'mode' => 2,
-            'keyType' => $keyTypeNode,
-            'valType' => $valTypeNode,
+            'requireNonEmpty' => $requireNonEmpty,
+            'typesCount' => $typesCount,
+            'baseName' => $baseName,
+            'keyNode' => $keyNode,
+            'valNode' => $valNode,
             'keyIsArrayKey' => $keyIsArrayKey,
             'valIsMixed' => $valIsMixed,
-            'isComplexObjectGeneric' => $isComplexObjectGeneric,
             'keyFast' => $keyFast,
             'valFast' => $valFast,
             'valExtra' => $valExtra,
+            'isComplexObjectGeneric' => $isComplexObjectGeneric,
         ];
     }
 
     private static function isIntStringUnion(UnionTypeNode $node): bool
     {
+        if (\count($node->types) !== 2) {
+            return false;
+        }
+
         $hasInt = false;
         $hasString = false;
 
@@ -391,7 +438,6 @@ final class GenericValidator implements TypeValidatorInterface
             if (! ($member instanceof IdentifierTypeNode)) {
                 return false;
             }
-
             $lower = strtolower($member->name);
             if ($lower === 'int' || $lower === 'integer') {
                 $hasInt = true;
@@ -403,6 +449,192 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         return $hasInt && $hasString;
+    }
+
+    /**
+     * @param array{
+     *     requireNonEmpty: bool,
+     *     typesCount: int,
+     *     baseName: string,
+     *     keyNode: ?TypeNode,
+     *     valNode: ?TypeNode,
+     *     keyIsArrayKey: bool,
+     *     valIsMixed: bool,
+     *     keyFast: int,
+     *     valFast: int,
+     *     valExtra: ?string,
+     *     isComplexObjectGeneric: bool
+     * } $plan
+     */
+    private function validateArrayWithPlan(
+        mixed $value,
+        array $plan,
+        string $context,
+        TypeValidatorRegistry $registry,
+        bool $isSensitive = false
+    ): ?ErrorMessage {
+        if (! \is_array($value) && ! ($value instanceof \Traversable)) {
+            return ErrorFactory::createError($context . ' must be of type ' . $plan['baseName'] . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+        }
+
+        if (! \is_array($value)) {
+            return null;
+        }
+
+        $count = \count($value);
+
+        if ($plan['requireNonEmpty'] && $count === 0) {
+            return ErrorFactory::createError($context . ' must be a non-empty array, empty array given');
+        }
+
+        if ($count === 0 || $plan['typesCount'] === 0) {
+            return null;
+        }
+
+        if ($plan['typesCount'] === 1) {
+            if ($plan['valIsMixed'] || $plan['valNode'] === null) {
+                return null;
+            }
+
+            return CollectionElementValidator::validateElements(
+                $value,
+                $plan['valNode'],
+                $context,
+                $registry,
+                isList: false,
+                isSensitive: $isSensitive,
+                count: $count,
+            );
+        }
+
+        $keyFast = $plan['keyFast'];
+        $valFast = $plan['valFast'];
+
+        if ($keyFast === 3 && $valFast === 6) {
+            return null;
+        }
+
+        /** @var TypeNode $valNode */
+        $valNode = $plan['valNode'];
+        /** @var TypeNode $keyNode */
+        $keyNode = $plan['keyNode'];
+
+        if ($keyFast === 3 && ! $plan['isComplexObjectGeneric'] && $valFast < 8) {
+            return CollectionElementValidator::validateElements(
+                $value,
+                $valNode,
+                $context,
+                $registry,
+                isList: false,
+                isSensitive: $isSensitive,
+                count: $count,
+            );
+        }
+
+        $valExtra = $plan['valExtra'];
+        $isComplexObjectGeneric = $plan['isComplexObjectGeneric'];
+
+        if ($count > Config::HYBRID_SAMPLE_THRESHOLD && RuntimeTypeChecker::$arrayValidationHybrid) {
+            $keys = array_keys($value);
+            $sampleKeys = [$keys[0], $keys[$count - 1]];
+            $samplesToTake = min(3, $count - 2);
+            for ($i = 0; $i < $samplesToTake; $i++) {
+                $sampleKeys[] = $keys[mt_rand(1, $count - 2)];
+            }
+
+            foreach ($sampleKeys as $k) {
+                if ($keyFast !== 3) {
+                    $keyOk = match ($keyFast) {
+                        1 => \is_int($k),
+                        2 => \is_string($k),
+                        default => false,
+                    };
+                    if (! $keyOk) {
+                        $err = $registry->validate($k, $keyNode, '');
+                        if ($err !== null) {
+                            return ErrorFactory::createError($context . ' key' . $err->getMessage());
+                        }
+                    }
+                }
+
+                $v = $value[$k];
+                if ($valFast !== 6) {
+                    $valOk = match ($valFast) {
+                        1 => \is_int($v),
+                        2 => \is_string($v),
+                        3 => \is_bool($v),
+                        4 => \is_float($v) || \is_int($v),
+                        5 => \is_object($v),
+                        7 => \is_array($v),
+                        8 => \is_object($v) && $valExtra !== null && ($v instanceof $valExtra),
+                        9 => \is_string($v) && (ClassNameValidator::$validClassStringCache[$v] ?? ClassNameValidator::isValidClassString($v)),
+                        10 => \is_int($v) || \is_string($v),
+                        11 => $v === null || \is_int($v),
+                        12 => $v === null || \is_string($v),
+                        13 => $v === null || \is_bool($v),
+                        14 => $v === null || (\is_object($v) && $valExtra !== null && ($v instanceof $valExtra)),
+                        default => false,
+                    };
+                    if (! $valOk) {
+                        $err = ($isComplexObjectGeneric && $valNode instanceof GenericTypeNode)
+                            ? $this->validateObjectGeneric($v, $valNode, '', $isSensitive)
+                            : $registry->validate($v, $valNode, '', $isSensitive);
+
+                        if ($err !== null) {
+                            return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
+                        }
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        foreach ($value as $k => $v) {
+            if ($keyFast !== 3) {
+                $keyOk = match ($keyFast) {
+                    1 => \is_int($k),
+                    2 => \is_string($k),
+                    default => false,
+                };
+                if (! $keyOk) {
+                    $err = $registry->validate($k, $keyNode, '');
+                    if ($err !== null) {
+                        return ErrorFactory::createError($context . ' key' . $err->getMessage());
+                    }
+                }
+            }
+
+            if ($valFast !== 6) {
+                $valOk = match ($valFast) {
+                    1 => \is_int($v),
+                    2 => \is_string($v),
+                    3 => \is_bool($v),
+                    4 => \is_float($v) || \is_int($v),
+                    5 => \is_object($v),
+                    7 => \is_array($v),
+                    8 => \is_object($v) && $valExtra !== null && ($v instanceof $valExtra),
+                    9 => \is_string($v) && (ClassNameValidator::$validClassStringCache[$v] ?? ClassNameValidator::isValidClassString($v)),
+                    10 => \is_int($v) || \is_string($v),
+                    11 => $v === null || \is_int($v),
+                    12 => $v === null || \is_string($v),
+                    13 => $v === null || \is_bool($v),
+                    14 => $v === null || (\is_object($v) && $valExtra !== null && ($v instanceof $valExtra)),
+                    default => false,
+                };
+                if (! $valOk) {
+                    $err = ($isComplexObjectGeneric && $valNode instanceof GenericTypeNode)
+                        ? $this->validateObjectGeneric($v, $valNode, '', $isSensitive)
+                        : $registry->validate($v, $valNode, '', $isSensitive);
+
+                    if ($err !== null) {
+                        return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -802,270 +1034,6 @@ final class GenericValidator implements TypeValidatorInterface
         }
 
         return self::$maskOfCache[$cacheKey] = [$allowedMask, $foundFlags];
-    }
-
-    /**
-     * @param array{
-     *     mode: int,
-     *     valType?: TypeNode,
-     *     keyType?: TypeNode,
-     *     keyIsArrayKey?: bool,
-     *     valIsMixed?: bool,
-     *     isComplexObjectGeneric?: bool,
-     *     keyFast?: int,
-     *     valFast?: int,
-     *     valExtra?: ?string
-     * }|null $arrayPlan
-     */
-    private function validateArray(
-        mixed $value,
-        GenericTypeNode $node,
-        string $context,
-        TypeValidatorRegistry $registry,
-        bool $isSensitive = false,
-        bool $requireNonEmpty = false,
-        ?array $arrayPlan = null
-    ): ?ErrorMessage {
-        if (! \is_array($value) && ! ($value instanceof \Traversable)) {
-            return ErrorFactory::createError($context . ' must be of type ' . (string) $node->type . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
-        }
-
-        if (! \is_array($value)) {
-            return null;
-        }
-
-        $count = \count($value);
-
-        if ($requireNonEmpty && $count === 0) {
-            return ErrorFactory::createError($context . ' must be a non-empty array, empty array given');
-        }
-
-        if ($count === 0) {
-            return null;
-        }
-
-        if ($arrayPlan !== null) {
-            if ($arrayPlan['mode'] === 1 && isset($arrayPlan['valType'])) {
-                return $this->validateSingleTypeArray($value, $arrayPlan['valType'], $context, $registry, $isSensitive, $count);
-            }
-
-            if ($arrayPlan['mode'] === 2 && isset($arrayPlan['keyType'], $arrayPlan['valType'])) {
-                return $this->validateKeyValueTypeArray(
-                    $value,
-                    $arrayPlan['keyType'],
-                    $arrayPlan['valType'],
-                    $context,
-                    $registry,
-                    $isSensitive,
-                    $count,
-                    $arrayPlan
-                );
-            }
-
-            return null;
-        }
-
-        $typesCount = \count($node->genericTypes);
-
-        if ($typesCount === 1) {
-            return $this->validateSingleTypeArray($value, $node->genericTypes[0], $context, $registry, $isSensitive, $count);
-        }
-
-        if ($typesCount >= 2) {
-            return $this->validateKeyValueTypeArray($value, $node->genericTypes[0], $node->genericTypes[1], $context, $registry, $isSensitive, $count);
-        }
-
-        return null;
-    }
-
-    /**
-     * @param array<mixed> $value
-     */
-    private function validateSingleTypeArray(
-        array $value,
-        TypeNode $valTypeNode,
-        string $context,
-        TypeValidatorRegistry $registry,
-        bool $isSensitive,
-        int $count,
-    ): ?ErrorMessage {
-        return CollectionElementValidator::validateElements(
-            $value,
-            $valTypeNode,
-            $context,
-            $registry,
-            isList: false,
-            isSensitive: $isSensitive,
-            count: $count,
-        );
-    }
-
-    /**
-     * @param array<mixed> $value
-     * @param array{
-     *     mode: int,
-     *     valType?: TypeNode,
-     *     keyType?: TypeNode,
-     *     keyIsArrayKey?: bool,
-     *     valIsMixed?: bool,
-     *     isComplexObjectGeneric?: bool,
-     *     keyFast?: int,
-     *     valFast?: int,
-     *     valExtra?: ?string
-     * }|null $arrayPlan
-     */
-    private function validateKeyValueTypeArray(
-        array $value,
-        TypeNode $keyTypeNode,
-        TypeNode $valTypeNode,
-        string $context,
-        TypeValidatorRegistry $registry,
-        bool $isSensitive,
-        int $count,
-        ?array $arrayPlan = null
-    ): ?ErrorMessage {
-        if ($arrayPlan !== null) {
-            $keyIsArrayKey = $arrayPlan['keyIsArrayKey'] ?? false;
-            $valIsMixed = $arrayPlan['valIsMixed'] ?? false;
-            $isComplexObjectGeneric = $arrayPlan['isComplexObjectGeneric'] ?? false;
-            $keyFast = $arrayPlan['keyFast'] ?? 0;
-            $valFast = $arrayPlan['valFast'] ?? 0;
-            $valExtra = $arrayPlan['valExtra'] ?? null;
-        } else {
-            $keyIsArrayKey = ($keyTypeNode instanceof IdentifierTypeNode && \in_array(strtolower($keyTypeNode->name), ['array-key', 'mixed', 'tkey', 'key', 'k'], true))
-                || ($keyTypeNode instanceof UnionTypeNode && \count($keyTypeNode->types) === 2 && self::isIntStringUnion($keyTypeNode));
-            $valIsMixed = ($valTypeNode instanceof IdentifierTypeNode) && \in_array(strtolower($valTypeNode->name), ['mixed', 'tvalue', 'v', 'value', 't'], true);
-            $isComplexObjectGeneric = ($valTypeNode instanceof GenericTypeNode && ! isset(self::BUILTIN_GENERICS[strtolower((string) $valTypeNode->type)]));
-            $keyFast = $keyIsArrayKey ? 3 : ($keyTypeNode instanceof IdentifierTypeNode ? match (strtolower($keyTypeNode->name)) {
-                'int', 'integer' => 1,
-                'string' => 2,
-                default => 0,
-            } : 0);
-
-            $valFast = 0;
-            $valExtra = null;
-            if ($valIsMixed) {
-                $valFast = 6;
-            } elseif ($valTypeNode instanceof IdentifierTypeNode) {
-                $valName = $valTypeNode->name;
-                $valFast = match (strtolower($valName)) {
-                    'int', 'integer' => 1,
-                    'string' => 2,
-                    'bool', 'boolean' => 3,
-                    'float', 'double' => 4,
-                    'object' => 5,
-                    'class-string' => 8,
-                    default => (! SpecialTypeResolver::isBuiltInTypeKeyword($valName) && ClassNameValidator::isValid($valName) && (class_exists($valName, false) || interface_exists($valName, false)))
-                        ? 7
-                        : 0,
-                };
-                if ($valFast === 7) {
-                    $valExtra = $valName;
-                }
-            }
-        }
-
-        if ($keyIsArrayKey && $valIsMixed) {
-            return null;
-        }
-
-        if ($keyIsArrayKey && ! $isComplexObjectGeneric) {
-            return CollectionElementValidator::validateElements(
-                $value,
-                $valTypeNode,
-                $context,
-                $registry,
-                isList: false,
-                isSensitive: $isSensitive,
-                count: $count,
-            );
-        }
-
-        if ($count > Config::HYBRID_SAMPLE_THRESHOLD && RuntimeTypeChecker::$arrayValidationHybrid) {
-            $keys = array_keys($value);
-            $sampleKeys = [$keys[0], $keys[$count - 1]];
-            $samplesToTake = min(3, $count - 2);
-            for ($i = 0; $i < $samplesToTake; $i++) {
-                $sampleKeys[] = $keys[mt_rand(1, $count - 2)];
-            }
-
-            foreach ($sampleKeys as $k) {
-                $keyOk = match ($keyFast) {
-                    3 => true,
-                    1 => \is_int($k),
-                    2 => \is_string($k),
-                    default => false,
-                };
-                if (! $keyOk) {
-                    $err = $registry->validate($k, $keyTypeNode, '');
-                    if ($err !== null) {
-                        return ErrorFactory::createError($context . ' key' . $err->getMessage());
-                    }
-                }
-
-                $v = $value[$k];
-                $valOk = match ($valFast) {
-                    6 => true,
-                    1 => \is_int($v),
-                    2 => \is_string($v),
-                    3 => \is_bool($v),
-                    4 => \is_float($v) || \is_int($v),
-                    5 => \is_object($v),
-                    7 => \is_object($v) && $valExtra !== null && ($v instanceof $valExtra),
-                    8 => \is_string($v) && ClassNameValidator::isValidClassString($v),
-                    default => false,
-                };
-                if (! $valOk) {
-                    $err = ($isComplexObjectGeneric && $valTypeNode instanceof GenericTypeNode)
-                        ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
-                        : $registry->validate($v, $valTypeNode, '', $isSensitive);
-
-                    if ($err !== null) {
-                        return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
-                    }
-                }
-            }
-
-            return null;
-        }
-
-        foreach ($value as $k => $v) {
-            $keyOk = match ($keyFast) {
-                3 => true,
-                1 => \is_int($k),
-                2 => \is_string($k),
-                default => false,
-            };
-            if (! $keyOk) {
-                $err = $registry->validate($k, $keyTypeNode, '');
-                if ($err !== null) {
-                    return ErrorFactory::createError($context . ' key' . $err->getMessage());
-                }
-            }
-
-            $valOk = match ($valFast) {
-                6 => true,
-                1 => \is_int($v),
-                2 => \is_string($v),
-                3 => \is_bool($v),
-                4 => \is_float($v) || \is_int($v),
-                5 => \is_object($v),
-                7 => \is_object($v) && $valExtra !== null && ($v instanceof $valExtra),
-                8 => \is_string($v) && ClassNameValidator::isValidClassString($v),
-                default => false,
-            };
-            if (! $valOk) {
-                $err = ($isComplexObjectGeneric && $valTypeNode instanceof GenericTypeNode)
-                    ? $this->validateObjectGeneric($v, $valTypeNode, '', $isSensitive)
-                    : $registry->validate($v, $valTypeNode, '', $isSensitive);
-
-                if ($err !== null) {
-                    return ErrorFactory::createError($context . "['" . $k . "']" . $err->getMessage());
-                }
-            }
-        }
-
-        return null;
     }
 
     private function resolveIntBound(PhpDocNode $node): ?int
