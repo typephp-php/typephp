@@ -139,7 +139,8 @@ describe('CRLF (\r\n) Windows Line-Drift Stress Test', function () {
             $actualPath = realpath($e->getFile()) !== false ? realpath($e->getFile()) : $e->getFile();
 
             expect(strtolower(str_replace('\\', '/', (string) $actualPath)))
-                ->toBe(strtolower(str_replace('\\', '/', (string) $expectedPath)));
+                ->toBe(strtolower(str_replace('\\', '/', (string) $expectedPath)))
+            ;
         } finally {
             @unlink($crlfScriptPath);
             @rmdir($tempDir);

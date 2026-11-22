@@ -441,7 +441,7 @@ final class FunctionContractInjector
             }
 
             if ($currentFile !== '') {
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $currentFile);
+                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $currentFile, null, false);
             }
 
             if ($declaredTemplates !== [] && DocblockParser::typeReferencesTemplate($typeNode, $declaredTemplates)) {

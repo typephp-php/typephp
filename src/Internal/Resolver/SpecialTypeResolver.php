@@ -397,7 +397,7 @@ final class SpecialTypeResolver
     /**
      * Recursively resolves type identifiers in a TypeNode AST using file context (use imports and namespace).
      */
-    public static function resolveForFile(TypeNode $node, string $file, ?string $namespace = null): TypeNode
+    public static function resolveForFile(TypeNode $node, string $file, ?string $namespace = null, bool $autoload = true): TypeNode
     {
         $file = str_replace('\\', '/', $file);
 
@@ -422,12 +422,12 @@ final class SpecialTypeResolver
                     return clone $node;
                 }
 
-                $resolvedClass = self::resolveFqcnForFile($className, $file, true, $namespace);
+                $resolvedClass = self::resolveFqcnForFile($className, $file, $autoload, $namespace);
 
                 if (
                     str_starts_with($className, '\\')
                     || $resolvedClass !== $className
-                    || (! self::isBuiltInTypeKeyword($resolvedClass) && self::symbolExists($resolvedClass, true))
+                    || (! self::isBuiltInTypeKeyword($resolvedClass) && self::symbolExists($resolvedClass, $autoload))
                 ) {
                     return self::createResolvedIdentifier($resolvedClass . '::' . $member);
                 }
@@ -435,12 +435,12 @@ final class SpecialTypeResolver
                 return clone $node;
             }
 
-            $fqcn = self::resolveFqcnForFile($node->name, $file, true, $namespace);
+            $fqcn = self::resolveFqcnForFile($node->name, $file, $autoload, $namespace);
 
             if (
                 str_starts_with($node->name, '\\')
                 || $fqcn !== $node->name
-                || (! self::isBuiltInTypeKeyword($fqcn) && self::symbolExists($fqcn, true))
+                || (! self::isBuiltInTypeKeyword($fqcn) && self::symbolExists($fqcn, $autoload))
             ) {
                 return self::createResolvedIdentifier($fqcn);
             }
@@ -449,14 +449,14 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof ConstTypeNode) {
-            return self::resolveConstTypeForFile($node, $file, $namespace);
+            return self::resolveConstTypeForFile($node, $file, $namespace, $autoload);
         }
 
         if ($node instanceof GenericTypeNode) {
-            $genericType = self::resolveForFile($node->type, $file, $namespace);
+            $genericType = self::resolveForFile($node->type, $file, $namespace, $autoload);
             $innerTypes = [];
             foreach ($node->genericTypes as $gt) {
-                $innerTypes[] = self::resolveForFile($gt, $file, $namespace);
+                $innerTypes[] = self::resolveForFile($gt, $file, $namespace, $autoload);
             }
 
             return new GenericTypeNode(
@@ -467,27 +467,27 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof OffsetAccessTypeNode) {
-            return self::resolveOffsetAccessForFile($node, $file, $namespace);
+            return self::resolveOffsetAccessForFile($node, $file, $namespace, $autoload);
         }
 
         if ($node instanceof ArrayShapeNode) {
-            return self::resolveArrayShapeForFile($node, $file, $namespace);
+            return self::resolveArrayShapeForFile($node, $file, $namespace, $autoload);
         }
 
         if ($node instanceof ObjectShapeNode) {
-            return self::resolveObjectShapeForFile($node, $file, $namespace);
+            return self::resolveObjectShapeForFile($node, $file, $namespace, $autoload);
         }
 
         if ($node instanceof CallableTypeNode) {
-            return self::resolveCallableForFile($node, $file, $namespace);
+            return self::resolveCallableForFile($node, $file, $namespace, $autoload);
         }
 
         if ($node instanceof ConditionalTypeNode) {
             return new ConditionalTypeNode(
-                self::resolveForFile($node->subjectType, $file, $namespace),
-                self::resolveForFile($node->targetType, $file, $namespace),
-                self::resolveForFile($node->if, $file, $namespace),
-                self::resolveForFile($node->else, $file, $namespace),
+                self::resolveForFile($node->subjectType, $file, $namespace, $autoload),
+                self::resolveForFile($node->targetType, $file, $namespace, $autoload),
+                self::resolveForFile($node->if, $file, $namespace, $autoload),
+                self::resolveForFile($node->else, $file, $namespace, $autoload),
                 $node->negated
             );
         }
@@ -495,25 +495,25 @@ final class SpecialTypeResolver
         if ($node instanceof ConditionalTypeForParameterNode) {
             return new ConditionalTypeForParameterNode(
                 $node->parameterName,
-                self::resolveForFile($node->targetType, $file, $namespace),
-                self::resolveForFile($node->if, $file, $namespace),
-                self::resolveForFile($node->else, $file, $namespace),
+                self::resolveForFile($node->targetType, $file, $namespace, $autoload),
+                self::resolveForFile($node->if, $file, $namespace, $autoload),
+                self::resolveForFile($node->else, $file, $namespace, $autoload),
                 $node->negated
             );
         }
 
         if ($node instanceof NullableTypeNode) {
-            return new NullableTypeNode(self::resolveForFile($node->type, $file, $namespace));
+            return new NullableTypeNode(self::resolveForFile($node->type, $file, $namespace, $autoload));
         }
 
         if ($node instanceof ArrayTypeNode) {
-            return new ArrayTypeNode(self::resolveForFile($node->type, $file, $namespace));
+            return new ArrayTypeNode(self::resolveForFile($node->type, $file, $namespace, $autoload));
         }
 
         if ($node instanceof UnionTypeNode) {
             $types = [];
             foreach ($node->types as $t) {
-                $types[] = self::resolveForFile($t, $file, $namespace);
+                $types[] = self::resolveForFile($t, $file, $namespace, $autoload);
             }
 
             return new UnionTypeNode($types);
@@ -522,7 +522,7 @@ final class SpecialTypeResolver
         if ($node instanceof IntersectionTypeNode) {
             $types = [];
             foreach ($node->types as $t) {
-                $types[] = self::resolveForFile($t, $file, $namespace);
+                $types[] = self::resolveForFile($t, $file, $namespace, $autoload);
             }
 
             return new IntersectionTypeNode($types);
@@ -890,7 +890,7 @@ final class SpecialTypeResolver
         return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $resolvedTemplateTypes);
     }
 
-    private static function resolveConstTypeForFile(ConstTypeNode $node, string $file, ?string $namespace = null): ConstTypeNode
+    private static function resolveConstTypeForFile(ConstTypeNode $node, string $file, ?string $namespace = null, bool $autoload = true): ConstTypeNode
     {
         if ($node->getAttribute(self::RESOLVED_ATTRIBUTE) === true) {
             return clone $node;
@@ -903,14 +903,14 @@ final class SpecialTypeResolver
             if ($lowerClassName === 'self' || $lowerClassName === 'parent') {
                 $resolvedClass = $className;
             } else {
-                $resolvedClass = self::resolveFqcnForFile($className, $file, true, $namespace);
+                $resolvedClass = self::resolveFqcnForFile($className, $file, $autoload, $namespace);
             }
 
             $resolvedNode = new ConstTypeNode(new ConstFetchNode($resolvedClass, $node->constExpr->name));
             if (
                 str_starts_with($className, '\\')
                 || $resolvedClass !== $className
-                || (! self::isBuiltInTypeKeyword($resolvedClass) && self::symbolExists($resolvedClass, true))
+                || (! self::isBuiltInTypeKeyword($resolvedClass) && self::symbolExists($resolvedClass, $autoload))
             ) {
                 $resolvedNode->setAttribute(self::RESOLVED_ATTRIBUTE, true);
             }
@@ -921,10 +921,10 @@ final class SpecialTypeResolver
         return clone $node;
     }
 
-    private static function resolveOffsetAccessForFile(OffsetAccessTypeNode $node, string $file, ?string $namespace = null): TypeNode
+    private static function resolveOffsetAccessForFile(OffsetAccessTypeNode $node, string $file, ?string $namespace = null, bool $autoload = true): TypeNode
     {
-        $baseType = self::resolveForFile($node->type, $file, $namespace);
-        $offsetType = self::resolveForFile($node->offset, $file, $namespace);
+        $baseType = self::resolveForFile($node->type, $file, $namespace, $autoload);
+        $offsetType = self::resolveForFile($node->offset, $file, $namespace, $autoload);
 
         $offsetKey = self::extractOffsetKey($offsetType);
 
@@ -939,7 +939,7 @@ final class SpecialTypeResolver
             }
 
             if ($baseType instanceof ConstTypeNode && $baseType->constExpr instanceof ConstFetchNode) {
-                $resolvedNode = self::resolveConstantOffsetValue($baseType->constExpr->className, $baseType->constExpr->name, $offsetKey);
+                $resolvedNode = self::resolveConstantOffsetValue($baseType->constExpr->className, $baseType->constExpr->name, $offsetKey, $autoload);
                 if ($resolvedNode !== null) {
                     return $resolvedNode;
                 }
@@ -949,7 +949,7 @@ final class SpecialTypeResolver
         return new OffsetAccessTypeNode($baseType, $offsetType);
     }
 
-    private static function resolveArrayShapeForFile(ArrayShapeNode $node, string $file, ?string $namespace = null): ArrayShapeNode
+    private static function resolveArrayShapeForFile(ArrayShapeNode $node, string $file, ?string $namespace = null, bool $autoload = true): ArrayShapeNode
     {
         $items = [];
         foreach ($node->items as $item) {
@@ -972,8 +972,8 @@ final class SpecialTypeResolver
                 $lowerClassName = strtolower($className);
 
                 if ($lowerClassName !== 'self' && $lowerClassName !== 'parent') {
-                    $resolvedClass = self::resolveFqcnForFile($className, $file, true, $namespace);
-                    $resolvedKeyNode = self::resolveConstantKeyValue($resolvedClass, $constName);
+                    $resolvedClass = self::resolveFqcnForFile($className, $file, $autoload, $namespace);
+                    $resolvedKeyNode = self::resolveConstantKeyValue($resolvedClass, $constName, $autoload);
                     if ($resolvedKeyNode !== null) {
                         $keyName = $resolvedKeyNode;
                     }
@@ -983,7 +983,7 @@ final class SpecialTypeResolver
             $items[] = new ArrayShapeItemNode(
                 $keyName,
                 $item->optional,
-                self::resolveForFile($item->valueType, $file, $namespace)
+                self::resolveForFile($item->valueType, $file, $namespace, $autoload)
             );
         }
 
@@ -993,39 +993,39 @@ final class SpecialTypeResolver
 
         $unsealedType = null;
         if ($node->unsealedType !== null) {
-            $unsealedKey = $node->unsealedType->keyType !== null ? self::resolveForFile($node->unsealedType->keyType, $file, $namespace) : null;
-            $unsealedValue = self::resolveForFile($node->unsealedType->valueType, $file, $namespace);
+            $unsealedKey = $node->unsealedType->keyType !== null ? self::resolveForFile($node->unsealedType->keyType, $file, $namespace, $autoload) : null;
+            $unsealedValue = self::resolveForFile($node->unsealedType->valueType, $file, $namespace, $autoload);
             $unsealedType = new ArrayShapeUnsealedTypeNode($unsealedValue, $unsealedKey);
         }
 
         return ArrayShapeNode::createUnsealed($items, $unsealedType, $node->kind);
     }
 
-    private static function resolveObjectShapeForFile(ObjectShapeNode $node, string $file, ?string $namespace = null): ObjectShapeNode
+    private static function resolveObjectShapeForFile(ObjectShapeNode $node, string $file, ?string $namespace = null, bool $autoload = true): ObjectShapeNode
     {
         $items = [];
         foreach ($node->items as $item) {
             $items[] = new ObjectShapeItemNode(
                 $item->keyName,
                 $item->optional,
-                self::resolveForFile($item->valueType, $file, $namespace)
+                self::resolveForFile($item->valueType, $file, $namespace, $autoload)
             );
         }
 
         return new ObjectShapeNode($items);
     }
 
-    private static function resolveCallableForFile(CallableTypeNode $node, string $file, ?string $namespace = null): CallableTypeNode
+    private static function resolveCallableForFile(CallableTypeNode $node, string $file, ?string $namespace = null, bool $autoload = true): CallableTypeNode
     {
         $localTemplates = [];
         $resolvedTemplateTypes = [];
         foreach ($node->templateTypes as $tTag) {
             $localTemplates[$tTag->name] = true;
             $resolvedBound = $tTag->bound !== null
-                ? self::resolveForFile($tTag->bound, $file, $namespace)
+                ? self::resolveForFile($tTag->bound, $file, $namespace, $autoload)
                 : null;
             $resolvedDefault = $tTag->default !== null
-                ? self::resolveForFile($tTag->default, $file, $namespace)
+                ? self::resolveForFile($tTag->default, $file, $namespace, $autoload)
                 : null;
             $resolvedTemplateTypes[] = new \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode(
                 $tTag->name,
@@ -1039,7 +1039,7 @@ final class SpecialTypeResolver
         foreach ($node->parameters as $param) {
             $paramType = ($param->type instanceof IdentifierTypeNode && isset($localTemplates[(string) $param->type]))
                 ? clone $param->type
-                : self::resolveForFile($param->type, $file, $namespace);
+                : self::resolveForFile($param->type, $file, $namespace, $autoload);
 
             $resolvedParameters[] = new CallableTypeParameterNode(
                 $paramType,
@@ -1052,7 +1052,7 @@ final class SpecialTypeResolver
 
         $resolvedReturnType = ($node->returnType instanceof IdentifierTypeNode && isset($localTemplates[$node->returnType->name]))
             ? clone $node->returnType
-            : self::resolveForFile($node->returnType, $file, $namespace);
+            : self::resolveForFile($node->returnType, $file, $namespace, $autoload);
 
         return new CallableTypeNode($node->identifier, $resolvedParameters, $resolvedReturnType, $resolvedTemplateTypes);
     }
@@ -1093,11 +1093,15 @@ final class SpecialTypeResolver
     /**
      * Resolves and caches class constant values in memory.
      */
-    private static function getClassConstant(string $fqcn, string $constName): mixed
+    private static function getClassConstant(string $fqcn, string $constName, bool $autoload = true): mixed
     {
         if (! isset(self::$classConstantCache[$fqcn][$constName]) && ! \array_key_exists($constName, self::$classConstantCache[$fqcn] ?? [])) {
+            if (! $autoload && ! self::symbolExists($fqcn, false)) {
+                return null;
+            }
+
             $val = null;
-            if ($fqcn !== '' && self::symbolExists($fqcn)) {
+            if ($fqcn !== '' && self::symbolExists($fqcn, $autoload)) {
                 try {
                     /** @var class-string<object> $fqcn */
                     $refClass = new \ReflectionClass($fqcn);
@@ -1113,9 +1117,9 @@ final class SpecialTypeResolver
         return self::$classConstantCache[$fqcn][$constName];
     }
 
-    private static function resolveConstantOffsetValue(string $fqcn, string $constName, string|int $offsetKey): ?TypeNode
+    private static function resolveConstantOffsetValue(string $fqcn, string $constName, string|int $offsetKey, bool $autoload = true): ?TypeNode
     {
-        $constValue = self::getClassConstant($fqcn, $constName);
+        $constValue = self::getClassConstant($fqcn, $constName, $autoload);
         if (\is_array($constValue) && \array_key_exists($offsetKey, $constValue)) {
             $val = $constValue[$offsetKey];
             if (\is_string($val)) {
@@ -1129,9 +1133,9 @@ final class SpecialTypeResolver
         return null;
     }
 
-    public static function resolveConstantKeyValue(string $fqcn, string $constName): ConstExprStringNode|ConstExprIntegerNode|null
+    public static function resolveConstantKeyValue(string $fqcn, string $constName, bool $autoload = true): ConstExprStringNode|ConstExprIntegerNode|null
     {
-        $val = self::getClassConstant($fqcn, $constName);
+        $val = self::getClassConstant($fqcn, $constName, $autoload);
         if (\is_string($val)) {
             return new ConstExprStringNode($val, ConstExprStringNode::SINGLE_QUOTED);
         }
