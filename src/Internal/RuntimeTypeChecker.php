@@ -296,6 +296,32 @@ final class RuntimeTypeChecker
     }
 
     /**
+     * Validates non-public (protected/private) class constants via reflection without triggering visibility errors.
+     *
+     * @param class-string $className
+     */
+    public static function checkClassConstant(
+        string $className,
+        string $constName,
+        string $typeString,
+        string $file = '',
+        ?int $line = null
+    ): mixed {
+        if (! self::$isEnabled || ! class_exists($className, false)) {
+            return null;
+        }
+
+        try {
+            $refConst = new \ReflectionClassConstant($className, $constName);
+            $value = $refConst->getValue();
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return self::checkConstant($className . '::' . $constName, $value, $typeString, $file, $line);
+    }
+
+    /**
      * Validates a return value from a constant closure against its return type contract.
      */
     public static function checkConstantClosureReturn(

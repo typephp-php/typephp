@@ -368,14 +368,19 @@ final class ContractVisitor extends NodeVisitorAbstract
                         continue;
                     }
 
-                    $classConstFetch = new Node\Expr\ClassConstFetch(new Node\Name\FullyQualified($className), $constName);
-
-                    $checkCall = NodeBuilder::createConstantCheckCall(
-                        $fullTarget,
-                        $classConstFetch,
-                        $typeString,
-                        $const->getStartLine()
-                    );
+                    $checkCall = $stmt->isPublic()
+                        ? NodeBuilder::createConstantCheckCall(
+                            $fullTarget,
+                            new Node\Expr\ClassConstFetch(new Node\Name\FullyQualified($className), $constName),
+                            $typeString,
+                            $const->getStartLine()
+                        )
+                        : NodeBuilder::createClassConstantCheckCall(
+                            $className,
+                            $constName,
+                            $typeString,
+                            $const->getStartLine()
+                        );
 
                     $checkStmt = new Node\Stmt\Expression(NodeBuilder::createTernaryThrowExpr($checkCall, $const->getStartLine()));
                     $checkStmt->setAttribute('typephp_injected', true);
@@ -1468,6 +1473,10 @@ final class ContractVisitor extends NodeVisitorAbstract
                 return null;
             }
 
+            if (self::rhsNeedsParensInBinaryOp($node->expr)) {
+                $node->expr->setAttribute('typephp_needs_parens', true);
+            }
+
             $this->markWriteContext($cleanTarget);
 
             return $this->wrapWithPreEvaluations($preAssignments, new Node\Expr\Assign($cleanTarget, $wrapped));
@@ -1476,7 +1485,37 @@ final class ContractVisitor extends NodeVisitorAbstract
         $binaryExpr = new $binaryOpClass($node->var, $node->expr);
         $wrapped = $this->wrapTargetMutation($node->var, $binaryExpr, $node->var->getStartLine());
 
-        return $wrapped !== null ? new Node\Expr\Assign($node->var, $wrapped) : null;
+        if ($wrapped === null) {
+            return null;
+        }
+
+        if (self::rhsNeedsParensInBinaryOp($node->expr)) {
+            $node->expr->setAttribute('typephp_needs_parens', true);
+        }
+
+        return new Node\Expr\Assign($node->var, $wrapped);
+    }
+
+    private static function rhsNeedsParensInBinaryOp(Node\Expr $expr): bool
+    {
+        return $expr instanceof Node\Expr\BinaryOp
+            || $expr instanceof Node\Expr\Ternary
+            || $expr instanceof Node\Expr\Assign
+            || $expr instanceof Node\Expr\AssignOp
+            || $expr instanceof Node\Expr\AssignRef
+            || $expr instanceof Node\Expr\Instanceof_
+            || $expr instanceof Node\Expr\Cast
+            || $expr instanceof Node\Expr\UnaryMinus
+            || $expr instanceof Node\Expr\UnaryPlus
+            || $expr instanceof Node\Expr\BooleanNot
+            || $expr instanceof Node\Expr\BitwiseNot
+            || $expr instanceof Node\Expr\ErrorSuppress
+            || $expr instanceof Node\Expr\Throw_
+            || $expr instanceof Node\Expr\Yield_
+            || $expr instanceof Node\Expr\YieldFrom
+            || $expr instanceof Node\Expr\Print_
+            || $expr instanceof Node\Expr\Include_
+            || $expr instanceof Node\Expr\ArrowFunction;
     }
 
     private function handleIncDec(Node\Expr\PreInc|Node\Expr\PostInc|Node\Expr\PreDec|Node\Expr\PostDec $node): ?Node\Expr

@@ -143,4 +143,19 @@ describe('NodeBuilder Unit Tests', function () {
             ->and($call->args[4]->value->value)->toBe(20)
         ;
     });
+
+    test('createClassConstantCheckCall creates FuncCall node for RuntimeTypeChecker::checkClassConstant', function () {
+        $call = NodeBuilder::createClassConstantCheckCall('App\Example', 'PROTECTED_MAP', 'array<string, class-string>', 10);
+
+        expect($call)->toBeInstanceOf(Node\Expr\FuncCall::class)
+            ->and($call->name->toString())->toBe('TypePHP\Internal\RuntimeTypeChecker::checkClassConstant')
+            ->and($call->args)->toHaveCount(5)
+            ->and($call->args[0]->value)->toBeInstanceOf(Node\Expr\ClassConstFetch::class)
+            ->and($call->args[0]->value->class->toString())->toBe('App\Example')
+            ->and($call->args[1]->value->value)->toBe('PROTECTED_MAP')
+            ->and($call->args[2]->value->value)->toBe('array<string, class-string>')
+            ->and($call->args[3]->value)->toBeInstanceOf(Node\Scalar\MagicConst\File::class)
+            ->and($call->args[4]->value->value)->toBe(10)
+        ;
+    });
 });

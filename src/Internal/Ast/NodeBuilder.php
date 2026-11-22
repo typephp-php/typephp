@@ -159,6 +159,24 @@ final class NodeBuilder
         );
     }
 
+    public static function createClassConstantCheckCall(
+        string $className,
+        string $constName,
+        string $typeString,
+        int $line
+    ): Node\Expr\FuncCall {
+        return new Node\Expr\FuncCall(
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkClassConstant'),
+            [
+                new Node\Arg(new Node\Expr\ClassConstFetch(new Node\Name\FullyQualified($className), 'class')),
+                new Node\Arg(new Node\Scalar\String_($constName)),
+                new Node\Arg(new Node\Scalar\String_($typeString)),
+                new Node\Arg(new Node\Scalar\MagicConst\File()),
+                new Node\Arg(new Node\Scalar\LNumber($line)),
+            ]
+        );
+    }
+
     public static function createConstantCheckCall(
         string $constantName,
         Node\Expr $valueExpr,
