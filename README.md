@@ -17,7 +17,7 @@
 
 ---
 
-TypePHP is a transparent, pure-PHP runtime type checker. You don't have to refactor a single line of your codebase, set up complex build toolchains, or compile C-extensions. Simply run your existing code, and TypePHP will enforce your extended PHPDoc contracts (generics, array shapes, `key-of`/`value-of` extractions, and scalar refinements) dynamically at runtime.
+TypePHP is a Fast transparent, pure-PHP runtime type checker. You don't have to refactor a single line of your codebase, set up complex build toolchains, or compile C-extensions. Simply run your existing code, and TypePHP will enforce your extended PHPDoc contracts (generics, array shapes, `key-of`/`value-of` extractions, and scalar refinements) dynamically at runtime.
 
 Run in **Strict Mode** to throw immediate `TypeError` exceptions, or switch to **Audit Report Mode** to collect all runtime type violations across your test suites and legacy codebases into structured JSON reports without interrupting execution.
 
@@ -260,6 +260,29 @@ Supports parallel test runners (**ParaTest**, **Pest Parallel**) with automatic 
 
 ---
 
+## Performance: Unbearably Fast Runtime Enforcement
+
+Runtime type checking in pure PHP shouldn't force you to choose between strictness and speed. TypePHP combines **compile-time AST elimination**, **AST-inlined fast-path guards**, **precompiled opcode plans**, **bitmask template inference**, and **optional O(1) hybrid array sampling** and delivering blazing-fast execution even on the heaviest generic codebases.
+
+### Real-World Stress Benchmark ([`noctud/collection`](https://github.com/noctud/collection))
+
+Tested against `noctud/collection` (**6,928 tests, 12,510 assertions**) this a worst-case, pure-CPU benchmark packed with `@template` inference, variance rules, `WeakMap` reified generics, conditional return types, fluent `self<T>` chains, iterables, and closures:
+
+| Mode | Native PHP (`TYPEPHP_DISABLE=true`) | Early TypePHP | TypePHP Now | Wall-Time Speedup | Overhead Eliminated |
+| --- | --- | --- | --- | --- | --- |
+| **Sequential (`phpunit`)** | `00:06.554` (`82 MB`) | `02:41.013` (`108 MB`) | `00:29.440` (`128 MB`) | **5.47× faster** | **−85.2%** (`154.5s` → `22.9s`) |
+| **Parallel (`paratest -p4`)** | `00:02.001` (`62 MB`) | `01:26.168` (`62 MB`) | `00:07.780` (`62 MB`) | **11.08× faster** | **−93.1%** (`84.2s` → `5.8s`) |
+
+Running full runtime generics and PHPDoc contract enforcement across nearly 7,000 collection tests completes in **under 8 seconds** in parallel and adding less than **6 seconds** over raw native PHP.
+
+### How TypePHP Stays Fast
+* **Compile-Time Static Elimination:** Provably satisfied contracts (literals, trusted unmutated parameters, constants, exact non-generic instantiations) are eliminated during AST transformation and costing **0 ns** at runtime.
+* **AST-Inlined Guards & Disk Caching:** Transformed files are cached to disk (and OPcache-ready) with inline `isset()` short-circuits so unconstrained or non-contracted methods skip runtime calls entirely.
+* **Precompiled Opcode Plans & Flat Call Frames:** Parameter, return, `class-string<T>`, and generic iterable checks execute against precompiled integer opcodes, bitmasks, and flat O(1) frame arrays rather than re-interpreting DocBlock ASTs.
+* **Configurable Array Strategy (`full` vs `hybrid`):** Use `'array_validation' => 'full'` for 100% exhaustive O(n) scans, or switch to `'hybrid'` for Beartype-inspired O(1) boundary + random sampling on massive arrays (`> 128` items).
+
+---
+
 ## Documentation
 
 All the documentation lives on the **[typephp.dev](https://typephp.dev/)** website:
@@ -281,12 +304,16 @@ All the documentation lives on the **[typephp.dev](https://typephp.dev/)** websi
 
 ## Credits & Special Thanks
 
-TypePHP stands on the shoulders of giants. It simply would not exist without two foundational cornerstones of the PHP ecosystem:
+TypePHP stands on the shoulders of giants. It simply would not exist without these foundational tools and supporters of the PHP ecosystem:
 
 * **[PHPStan](https://phpstan.org/) & [`phpstan/phpdoc-parser`](https://github.com/phpstan/phpdoc-parser)** (created by [Ondřej Mirtes](https://github.com/ondrejmirtes) and contributors):
-  A massive and sincere debt of gratitude is owed to the PHPStan team. Beyond establishing the modern type standard in PHP, `phpstan/phpdoc-parser` is the parsing powerhouse behind TypePHP. It enables TypePHP to tokenize, parse, and evaluate complex type theory and including reified generics (`@template`), conditional types, intersection/union types, DNF, array shapes, and variance directly at runtime.
+  A massive and sincere debt of gratitude is owed to the PHPStan team. Beyond establishing the modern type standard in PHP, `phpstan/phpdoc-parser` is the parsing powerhouse behind TypePHP. It enables TypePHP to tokenize, parse, and evaluate complex type theory including reified generics (`@template`), conditional types, intersection/union types, DNF, array shapes, and variance directly at runtime.
 * **[`nikic/php-parser`](https://github.com/nikic/PHP-Parser)** (created by [Nikita Popov](https://github.com/nikic)):
   The gold standard for PHP abstract syntax tree (AST) parsing and code manipulation. It powers TypePHP's transparent stream wrapper interception, format-preserving AST transformations, and zero line-drift instrumentation.
+* **[Blackfire](https://www.blackfire.io/)**:
+  A huge thank you to **Blackfire** for generously providing a **free 1-year open-source subscription** for TypePHP. Blackfire's deterministic call-graph and memory profiling made it possible to hunt down hot-path bottlenecks and achieve up to an **11× speedup** on generics-heavy workloads.
+* **[`php-spx`](https://github.com/NoiseByNorthwest/php-spx)**:
+  Many thanks to the `php-spx` PHP profiling extension—its lightweight flamegraphs, flat execution profiles, and built-in web UI were instrumental in pinpointing tight-loop overhead and tuning TypePHP's runtime engine.
 
 ---
 
