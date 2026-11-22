@@ -16,7 +16,7 @@ describe('CRLF (\r\n) Windows Line-Drift Stress Test', function () {
             . "\r\n"
             . "/**\r\n"
             . " * @param positive-int \$id\r\n"
-            . " * @param non-empty-string \$name\r\n"
+            . " * @param string \$name\r\n"
             . " * @return non-empty-string\r\n"
             . " */\r\n"
             . "function formatUserData(int \$id, string \$name): string\r\n"

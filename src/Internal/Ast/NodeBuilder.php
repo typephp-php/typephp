@@ -141,6 +141,42 @@ final class NodeBuilder
         );
     }
 
+    public static function createPropertyDimAssignCheckCall(
+        Node\Expr $objectOrClassExpr,
+        string $propertyName,
+        Node\Expr $dimExpr,
+        Node\Expr $valueExpr
+    ): Node\Expr\FuncCall {
+        return new Node\Expr\FuncCall(
+            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkPropertyDimAssign'),
+            [
+                new Node\Arg($objectOrClassExpr),
+                new Node\Arg(new Node\Scalar\String_($propertyName)),
+                new Node\Arg($dimExpr),
+                new Node\Arg($valueExpr),
+                new Node\Arg(new Node\Scalar\MagicConst\File()),
+            ]
+        );
+    }
+
+    public static function createClassConstantCheckCall(
+        string $className,
+        string $constName,
+        string $typeString,
+        int $line
+    ): Node\Expr\FuncCall {
+        return new Node\Expr\FuncCall(
+            new Node\Name\FullyQualified('TypePHP\Internal\RuntimeTypeChecker::checkClassConstant'),
+            [
+                new Node\Arg(new Node\Expr\ClassConstFetch(new Node\Name\FullyQualified($className), 'class')),
+                new Node\Arg(new Node\Scalar\String_($constName)),
+                new Node\Arg(new Node\Scalar\String_($typeString)),
+                new Node\Arg(new Node\Scalar\MagicConst\File()),
+                new Node\Arg(new Node\Scalar\LNumber($line)),
+            ]
+        );
+    }
+
     public static function createConstantCheckCall(
         string $constantName,
         Node\Expr $valueExpr,

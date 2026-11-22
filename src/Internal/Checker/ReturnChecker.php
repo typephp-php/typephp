@@ -29,7 +29,7 @@ final class ReturnChecker
     /**
      * Fast O(1) lookup set for generic iterable return types.
      */
-    private const GENERIC_ITERABLES = [
+    public const GENERIC_ITERABLES = [
         'iterable' => true,
         'traversable' => true,
         'iterator' => true,
@@ -55,7 +55,7 @@ final class ReturnChecker
      *
      * @var array<string, TypeNode>
      */
-    private static array $resolvedStaticReturnCache = [];
+    public static array $resolvedStaticReturnCache = [];
 
     /**
      * In-memory 2D cache for concrete substituted generic return types: [$function][$templateSignature] => TypeNode.
@@ -65,10 +65,18 @@ final class ReturnChecker
     public static array $substitutedReturnCache = [];
 
     /**
+     * Cache for substituted conditional return branches: [$cacheFunc][$branchStr][$sig] => TypeNode.
+     *
+     * @var array<string, array<string, array<string, TypeNode>>>
+     */
+    public static array $substitutedConditionalReturnCache = [];
+
+    /**
      * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
     {
+        self::$substitutedConditionalReturnCache = [];
         self::$noReturnContractCache = [];
         self::$resolvedStaticReturnCache = [];
         self::$unboundReturnCache = [];
@@ -81,7 +89,7 @@ final class ReturnChecker
      */
     public static function isReturnUnconstrained(string $effectiveFunction): bool
     {
-        if (str_contains($effectiveFunction, '__call') || str_ends_with($effectiveFunction, '::__get')) {
+        if ((ParamChecker::$functionKindCache[$effectiveFunction] ??= ParamChecker::detectFunctionKind($effectiveFunction)) >= ParamChecker::KIND_MAGIC_CALL) {
             return false;
         }
 
@@ -114,31 +122,26 @@ final class ReturnChecker
             $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
         }
 
-        $isMagicCall = str_contains($effectiveFunction, '__call');
-        $isMagicGet = str_ends_with($effectiveFunction, '::__get');
+        $functionKind = ParamChecker::$functionKindCache[$effectiveFunction] ??= ParamChecker::detectFunctionKind($effectiveFunction);
 
-        if (! $isMagicCall && ! $isMagicGet) {
-            if (isset(self::$noReturnContractCache[$effectiveFunction])) {
-                return $value;
+        if ($functionKind === ParamChecker::KIND_MAGIC_CALL) {
+            $magicResult = self::handleMagicReturn(
+                $effectiveFunction,
+                $value,
+                $thisObj,
+                $vars,
+                $registry,
+                $wrapIterableCallback
+            );
+
+            if ($magicResult !== null) {
+                return $magicResult;
             }
-        }
 
-        $magicResult = self::handleMagicReturn(
-            $effectiveFunction,
-            $value,
-            $thisObj,
-            $vars,
-            $registry,
-            $wrapIterableCallback
-        );
-        if ($magicResult !== null) {
-            return $magicResult;
-        }
-        if ($isMagicCall) {
             return $value;
         }
 
-        if ($isMagicGet) {
+        if ($functionKind === ParamChecker::KIND_MAGIC_GET) {
             return self::handleMagicPropertyRead(
                 $effectiveFunction,
                 $value,
@@ -147,6 +150,10 @@ final class ReturnChecker
                 $registry,
                 $wrapIterableCallback
             );
+        }
+
+        if (isset(self::$noReturnContractCache[$effectiveFunction])) {
+            return $value;
         }
 
         $contract ??= DocblockParser::parse($effectiveFunction);
@@ -339,11 +346,22 @@ final class ReturnChecker
             if ($err !== null) {
                 return $err;
             }
+
+            if ($thisObj !== null) {
+                return $value;
+            }
+        }
+
+        if ($thisObj !== null && $returnTypeNode instanceof IdentifierTypeNode && strtolower($returnTypeNode->name) === 'static') {
+            if ($value instanceof $thisObj) {
+                return $value;
+            }
         }
 
         $hasGenerics = (\count($templates) > 0);
         $hasAliases = (\count($aliases) > 0);
-        $hasConditionals = ! ($returnTypeNode instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($returnTypeNode);
+        $hasConditionals = $contract['returnHasConditional']
+            ?? (! ($returnTypeNode instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($returnTypeNode));
 
         if (! $hasGenerics && ! $hasAliases && ! $hasConditionals && ! ($returnTypeNode instanceof CallableTypeNode)) {
             $isDynamic = $contract['returnIsDynamic'] ?? (str_contains((string) $returnTypeNode, 'static') || str_contains((string) $returnTypeNode, '$this'));
@@ -382,54 +400,95 @@ final class ReturnChecker
             return $value;
         }
 
-        $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+        $hasClassTemplates = ($contract['classTemplates'] ?? []) !== [];
+        $hasMethodTemplates = ($contract['templates'] ?? []) !== [];
+
+        if ($thisObj !== null && ! $hasMethodTemplates) {
+            $boundTemplates = $hasClassTemplates ? TemplateManager::getInstanceBindingsFast($thisObj) : [];
+        } elseif ($thisObj !== null && ! $hasClassTemplates) {
+            $boundTemplates = TemplateManager::$topCallFrame[$function] ?? [];
+        } else {
+            $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+        }
+
+        $isDynamicReturn = $contract['returnIsDynamic']
+            ?? (str_contains((string) $returnTypeNode, 'static') || str_contains((string) $returnTypeNode, '$this'));
 
         $sig = null;
+        $cacheFunc = null;
         $boundCount = \count($boundTemplates);
-        if ($boundCount > 0 && $boundCount <= 2 && ! $hasConditionals && \count($aliases) === 0 && $thisObj === null) {
-            if ($boundCount === 1) {
-                $first = reset($boundTemplates);
-                $sig = $first instanceof IdentifierTypeNode ? $first->name : (string) $first;
+
+        if ($boundCount <= 5 && ($thisObj !== null || ! $isDynamicReturn)) {
+            $cacheFunc = ($isDynamicReturn && $thisObj !== null) ? ($function . '@' . $thisObj::class) : $function;
+
+            if ($boundCount === 0) {
+                $sig = '';
+            } elseif ($boundCount === 1) {
+                $firstKey = (string) array_key_first($boundTemplates);
+                $first = $boundTemplates[$firstKey];
+                $sig = $firstKey . '=' . ($first instanceof IdentifierTypeNode ? $first->name : (string) $first);
             } else {
                 $sig = '';
-                foreach ($boundTemplates as $v) {
-                    $sig .= ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
+                foreach ($boundTemplates as $k => $v) {
+                    $sig .= $k . '=' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
                 }
             }
 
-            if (isset(self::$substitutedReturnCache[$function][$sig])) {
-                $resolvedType = self::$substitutedReturnCache[$function][$sig];
+            if (str_contains($sig, 'static') || str_contains($sig, '$this')) {
+                $sig = null;
+            } elseif (! $hasConditionals && isset(self::$substitutedReturnCache[$cacheFunc][$sig])) {
+                $resolvedType = self::$substitutedReturnCache[$cacheFunc][$sig];
             }
         }
 
         if (! isset($resolvedType)) {
-            $resolvedType = SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj);
+            $resolvedType = $isDynamicReturn
+                ? SpecialTypeResolver::resolve($returnTypeNode, $function, $thisObj)
+                : $returnTypeNode;
 
             if ($resolvedType instanceof IdentifierTypeNode && isset($aliases[$resolvedType->name])) {
                 $resolvedType = $aliases[$resolvedType->name];
             }
 
-            if (ConditionalChecker::containsConditional($resolvedType)) {
+            if ($hasConditionals || (! ($resolvedType instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($resolvedType))) {
                 $resolvedType = ConditionalChecker::resolve($resolvedType, $vars, $boundTemplates, $registry, $function);
             }
 
-            if (\count($boundTemplates) === 0 && \count($templates) > 0 && ! $hasConditionals && $thisObj === null) {
-                $resolvedType = self::$unboundReturnCache[$function] ??= SpecialTypeResolver::resolve(
-                    TemplateSubstitutor::substitute($returnTypeNode, [], $templates),
-                    $function,
-                    null
-                );
-            } elseif (\count($boundTemplates) > 0 || \count($templates) > 0) {
-                $resolvedType = TemplateSubstitutor::substitute($resolvedType, $boundTemplates, $templates);
-                $resolvedType = SpecialTypeResolver::resolve($resolvedType, $function, $thisObj);
+            $condBranchKey = null;
+            $condCacheHit = false;
+            if ($hasConditionals && $sig !== null && $cacheFunc !== null) {
+                $condBranchKey = (string) $resolvedType;
+                if (isset(self::$substitutedConditionalReturnCache[$cacheFunc][$condBranchKey][$sig])) {
+                    $resolvedType = self::$substitutedConditionalReturnCache[$cacheFunc][$condBranchKey][$sig];
+                    $condCacheHit = true;
+                }
             }
 
-            if (ConditionalChecker::containsConditional($resolvedType)) {
-                $resolvedType = ConditionalChecker::resolve($resolvedType, $vars, $boundTemplates, $registry, $function);
-            }
+            if (! $condCacheHit) {
+                if ($boundCount === 0 && \count($templates) > 0 && ! $hasConditionals && $thisObj === null) {
+                    $resolvedType = self::$unboundReturnCache[$function] ??= SpecialTypeResolver::resolve(
+                        TemplateSubstitutor::substitute($returnTypeNode, [], $templates),
+                        $function,
+                        null
+                    );
+                } elseif ($boundCount > 0 || \count($templates) > 0) {
+                    $subType = TemplateSubstitutor::substitute($resolvedType, $boundTemplates, $templates);
+                    $resolvedType = $isDynamicReturn
+                        ? SpecialTypeResolver::resolve($subType, $function, $thisObj)
+                        : $subType;
+                }
 
-            if ($sig !== null) {
-                self::$substitutedReturnCache[$function][$sig] = $resolvedType;
+                if (! ($resolvedType instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($resolvedType)) {
+                    $resolvedType = ConditionalChecker::resolve($resolvedType, $vars, $boundTemplates, $registry, $function);
+                }
+
+                if ($sig !== null && $cacheFunc !== null) {
+                    if ($hasConditionals && $condBranchKey !== null) {
+                        self::$substitutedConditionalReturnCache[$cacheFunc][$condBranchKey][$sig] = $resolvedType;
+                    } elseif (! $hasConditionals) {
+                        self::$substitutedReturnCache[$cacheFunc][$sig] = $resolvedType;
+                    }
+                }
             }
         }
 

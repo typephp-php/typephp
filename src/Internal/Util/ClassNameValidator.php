@@ -17,7 +17,7 @@ final class ClassNameValidator
     /**
      * @var array<string, bool>
      */
-    private static array $validClassStringCache = [];
+    public static array $validClassStringCache = [];
 
     public static function reset(): void
     {

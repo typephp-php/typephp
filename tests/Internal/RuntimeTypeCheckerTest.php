@@ -891,4 +891,24 @@ PHP
             ->and($violations[0]->kind)->toBe('property')
         ;
     });
+
+    test('checkClassConstant validates protected and private constants via reflection and respects disabled switch', function () {
+        $class = new class () {
+            protected const PROT_NUM = 100;
+            private const PRIV_NUM = -50;
+        };
+
+        $className = $class::class;
+
+        $valid = RuntimeTypeChecker::checkClassConstant($className, 'PROT_NUM', 'positive-int', __FILE__, 1);
+        expect($valid)->toBe(100);
+
+        $invalid = RuntimeTypeChecker::checkClassConstant($className, 'PRIV_NUM', 'positive-int', __FILE__, 2);
+        expect($invalid)->toBeInstanceOf(ErrorMessage::class)
+            ->and($invalid->getMessage())->toContain('must be of type positive-int')
+        ;
+
+        Config::set(['enabled' => false]);
+        expect(RuntimeTypeChecker::checkClassConstant($className, 'PRIV_NUM', 'positive-int', __FILE__, 2))->toBeNull();
+    });
 });

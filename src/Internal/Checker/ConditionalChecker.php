@@ -23,9 +23,12 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use ReflectionClass;
 use Throwable;
+use Traversable;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Resolver\HierarchyResolver;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
@@ -34,9 +37,32 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
 final class ConditionalChecker
 {
     /**
+     * @var \WeakMap<TypeNode, bool>|null
+     */
+    private static ?\WeakMap $containsConditionalCache = null;
+
+    /**
      * Checks whether a TypeNode AST contains any conditional types.
      */
     public static function containsConditional(TypeNode $node): bool
+    {
+        if ($node instanceof IdentifierTypeNode) {
+            return false;
+        }
+
+        if ($node instanceof ConditionalTypeNode || $node instanceof ConditionalTypeForParameterNode) {
+            return true;
+        }
+
+        self::$containsConditionalCache ??= new \WeakMap();
+        if (isset(self::$containsConditionalCache[$node])) {
+            return self::$containsConditionalCache[$node];
+        }
+
+        return self::$containsConditionalCache[$node] = self::computeContainsConditional($node);
+    }
+
+    private static function computeContainsConditional(TypeNode $node): bool
     {
         while ($node instanceof NullableTypeNode || $node instanceof ArrayTypeNode) {
             $node = $node->type;
@@ -268,8 +294,83 @@ final class ConditionalChecker
             $paramValue = self::resolveRenamedParamValue($function, $paramName, $vars);
         }
 
-        $targetErr = $registry->validate($paramValue, $node->targetType, 'condition');
-        $isTargetMatch = ($targetErr === null);
+        $targetType = $node->targetType;
+        $isTargetMatch = null;
+
+        if ($targetType instanceof IdentifierTypeNode) {
+            $tName = $targetType->name;
+            $tLower = strtolower($tName);
+            $isTargetMatch = match ($tLower) {
+                'null' => $paramValue === null,
+                'int', 'integer' => \is_int($paramValue),
+                'string' => \is_string($paramValue),
+                'bool', 'boolean' => \is_bool($paramValue),
+                'true' => $paramValue === true,
+                'false' => $paramValue === false,
+                'float', 'double' => \is_float($paramValue) || \is_int($paramValue),
+                'array' => \is_array($paramValue),
+                'list' => \is_array($paramValue) && ($paramValue === [] || array_is_list($paramValue)),
+                'object' => \is_object($paramValue),
+                'iterable' => is_iterable($paramValue),
+                'scalar' => \is_scalar($paramValue),
+                'array-key' => \is_int($paramValue) || \is_string($paramValue),
+                'mixed' => true,
+                default => (! SpecialTypeResolver::isBuiltInTypeKeyword($tName) && ClassNameValidator::isValid($tName) && (class_exists($tName, false) || interface_exists($tName, false)))
+                    ? (\is_object($paramValue) && ($paramValue instanceof $tName))
+                    : null,
+            };
+        } elseif ($targetType instanceof GenericTypeNode) {
+            $gBase = strtolower((string) $targetType->type);
+            if ($gBase === 'list' || $gBase === 'non-empty-list') {
+                if (! \is_array($paramValue)) {
+                    $isTargetMatch = false;
+                }
+            } elseif ($gBase === 'array' || $gBase === 'non-empty-array' || $gBase === 'iterable' || $gBase === 'traversable' || $gBase === 'iterator' || $gBase === 'generator') {
+                if (! \is_array($paramValue) && ! ($paramValue instanceof Traversable)) {
+                    $isTargetMatch = false;
+                } elseif ($gBase === 'array' && \is_array($paramValue)) {
+                    $genericCount = \count($targetType->genericTypes);
+                    if ($genericCount === 0) {
+                        $isTargetMatch = true;
+                    } elseif ($genericCount === 1) {
+                        $gt0 = $targetType->genericTypes[0];
+                        if ($gt0 instanceof IdentifierTypeNode && \in_array(strtolower($gt0->name), ['mixed', 't', 'tvalue', 'v', 'value', 'telement'], true)) {
+                            $isTargetMatch = true;
+                        }
+                    } else {
+                        $gt0 = $targetType->genericTypes[0];
+                        $gt1 = $targetType->genericTypes[1];
+                        if (
+                            $gt0 instanceof IdentifierTypeNode
+                            && $gt1 instanceof IdentifierTypeNode
+                            && \in_array(strtolower($gt0->name), ['array-key', 'mixed', 'tkey', 'key', 'k'], true)
+                            && \in_array(strtolower($gt1->name), ['mixed', 'tvalue', 'v', 'value', 't'], true)
+                        ) {
+                            $isTargetMatch = true;
+                        }
+                    }
+                }
+            } elseif ($gBase === 'int' || $gBase === 'integer' || $gBase === 'int-mask' || $gBase === 'int-mask-of') {
+                if (! \is_int($paramValue)) {
+                    $isTargetMatch = false;
+                }
+            } elseif ($gBase === 'class-string') {
+                if (! \is_string($paramValue)) {
+                    $isTargetMatch = false;
+                }
+            } elseif ($gBase !== 'key-of' && $gBase !== 'value-of') {
+                $gClass = (string) $targetType->type;
+                if (! \is_object($paramValue) || ! ($paramValue instanceof $gClass)) {
+                    $isTargetMatch = false;
+                }
+            }
+        }
+
+        if ($isTargetMatch === null) {
+            $targetErr = $registry->validate($paramValue, $targetType, 'condition');
+            $isTargetMatch = ($targetErr === null);
+        }
+
         if ($node->negated) {
             $isTargetMatch = ! $isTargetMatch;
         }

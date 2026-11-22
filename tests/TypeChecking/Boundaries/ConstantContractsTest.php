@@ -612,4 +612,144 @@ PHP;
             }
         });
     });
+
+    describe('6. Protected and Private Class Constant Visibility', function () {
+        test('accepts valid protected and private constants without visibility fatal error (User Reproduction)', function () {
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace TypePHP\Tests\TypeChecking\Boundaries;
+
+class FixtureValidVisibilityConst
+{
+    /** @var array<string, class-string> */
+    protected const PROTECTED_MAP = ['key' => \stdClass::class];
+
+    /** @var array<string, class-string> */
+    private const PRIVATE_MAP = ['key' => \stdClass::class];
+
+    public static function map(): array
+    {
+        return [
+            'protected' => self::PROTECTED_MAP,
+            'private' => self::PRIVATE_MAP,
+        ];
+    }
+}
+
+return FixtureValidVisibilityConst::map();
+PHP;
+
+            $tempDir = sys_get_temp_dir() . '/typephp_vis_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $filePath = $tempDir . '/FixtureValidVisibilityConst.php';
+            file_put_contents($filePath, $source);
+
+            try {
+                StreamWrapper::register();
+
+                $result = require $filePath;
+                expect($result)->toBe([
+                    'protected' => ['key' => \stdClass::class],
+                    'private' => ['key' => \stdClass::class],
+                ]);
+            } finally {
+                @unlink($filePath);
+                @rmdir($tempDir);
+            }
+        });
+
+        test('throws TypeError on invalid protected constant without visibility fatal error', function () {
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace TypePHP\Tests\TypeChecking\Boundaries;
+
+class FixtureBadProtectedConst
+{
+    /** @var positive-int */
+    protected const RETRIES = -10;
+}
+PHP;
+
+            $tempDir = sys_get_temp_dir() . '/typephp_vis_bad_prot_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $filePath = $tempDir . '/FixtureBadProtectedConst.php';
+            file_put_contents($filePath, $source);
+
+            try {
+                StreamWrapper::register();
+
+                expect(fn () => require $filePath)
+                    ->toThrow(TypeError::class, 'Constant TypePHP\Tests\TypeChecking\Boundaries\FixtureBadProtectedConst::RETRIES must be of type positive-int, negative int (-10) given')
+                ;
+            } finally {
+                @unlink($filePath);
+                @rmdir($tempDir);
+            }
+        });
+
+        test('throws TypeError on invalid private constant without visibility fatal error', function () {
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace TypePHP\Tests\TypeChecking\Boundaries;
+
+class FixtureBadPrivateConst
+{
+    /** @var non-empty-string */
+    private const SECRET = '';
+}
+PHP;
+
+            $tempDir = sys_get_temp_dir() . '/typephp_vis_bad_priv_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $filePath = $tempDir . '/FixtureBadPrivateConst.php';
+            file_put_contents($filePath, $source);
+
+            try {
+                StreamWrapper::register();
+
+                expect(fn () => require $filePath)
+                    ->toThrow(TypeError::class, 'Constant TypePHP\Tests\TypeChecking\Boundaries\FixtureBadPrivateConst::SECRET must be of type non-empty-string')
+                ;
+            } finally {
+                @unlink($filePath);
+                @rmdir($tempDir);
+            }
+        });
+
+        test('transforms protected and private constants using checkClassConstant instead of direct fetch', function () {
+            $source = <<<'PHP'
+<?php
+
+namespace App;
+
+class ConstTransformVisibilityCheck
+{
+    /** @var list<string> */
+    public const PUBLIC_DATA = ['bad_key' => 'user'];
+
+    /** @var list<string> */
+    protected const PROTECTED_DATA = ['bad' => 'val'];
+
+    /** @var list<string> */
+    private const PRIVATE_DATA = ['bad' => 'val'];
+}
+PHP;
+
+            $transformed = StreamWrapper::transformSource($source, 'ConstTransformVisibilityCheck.php');
+
+            expect($transformed)->toContain('RuntimeTypeChecker::checkConstant')
+                ->and($transformed)->toContain('RuntimeTypeChecker::checkClassConstant(\App\ConstTransformVisibilityCheck::class, \'PROTECTED_DATA\'')
+                ->and($transformed)->toContain('RuntimeTypeChecker::checkClassConstant(\App\ConstTransformVisibilityCheck::class, \'PRIVATE_DATA\'')
+            ;
+        });
+    });
 });

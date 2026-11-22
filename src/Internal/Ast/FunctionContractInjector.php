@@ -8,11 +8,19 @@ use PhpParser\Comment\Doc;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
+use PHPStan\PhpDocParser\Ast\PhpDoc\PhpDocNode;
+use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
+use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Ast\Elimination\EliminationSafetyPolicy;
 use TypePHP\Internal\Ast\Elimination\Evaluator\GeneratorEvaluator;
 use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
+use TypePHP\Internal\Checker\ConditionalChecker;
 use TypePHP\Internal\Docblock\DocblockExtractor;
+use TypePHP\Internal\Docblock\DocblockParser;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\StubManager;
 
 /**
@@ -134,13 +142,10 @@ final class FunctionContractInjector
 
         $useDynamicMethodKey = $isClassMethod && ! $isPrivate && ! $isFinalClass;
 
-        $injectedStmts = [];
-        if ($hasParam) {
-            $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg, $isReadonlyClass, $needsReturnVars, $useDynamicMethodKey);
-        }
-
+        $phpDocNode = null;
         $returnTypeNode = null;
         $hasMethodTemplates = false;
+        $declaredTemplates = [];
         if ($doc !== null) {
             try {
                 $phpDocNode = DocblockExtractor::parseDocString($doc->getText());
@@ -148,10 +153,49 @@ final class FunctionContractInjector
                 if ($returnTag !== null) {
                     $returnTypeNode = $returnTag->type;
                 }
-                $hasMethodTemplates = DocblockExtractor::extractTemplates($phpDocNode) !== [];
+                $declaredTemplates = DocblockExtractor::extractTemplates($phpDocNode);
+                $hasMethodTemplates = $declaredTemplates !== [];
             } catch (\Throwable) {
             }
         }
+
+        $isTrait = $classContext['isTrait'] ?? false;
+
+        if (
+            $hasParam
+            && ! $isConstructor
+            && ! $isMagicGet
+            && ! $isMagicCall
+            && ! $hasMethodTemplates
+            && ! $hasParamOut
+            && ! $hasSelfOut
+            && ! $isTrait
+            && ! ($isClassMethod && $node->isStatic() && $hasClassTemplates)
+            && self::canEliminateSetupScope(
+                $node,
+                $phpDocNode,
+                $docText,
+                $isClassMethod,
+                $isPrivate,
+                $hasRealInheritance,
+                $returnTypeNode,
+                $hasReturn
+            )
+        ) {
+            $hasParam = false;
+            $needsReturnVars = false;
+        }
+
+        if (! $hasParam && ! $hasReturn && ! $hasParamOut && ! $hasSelfOut) {
+            return;
+        }
+
+        $injectedStmts = [];
+        if ($hasParam) {
+            $injectedStmts = self::buildParamInjections($node->params, $docText, $thisArg, $isReadonlyClass, $needsReturnVars, $useDynamicMethodKey);
+        }
+
+        $trustedParamTypes = self::collectTrustedParamTypes($node, $doc, $declaredTemplates, $currentFile);
 
         if ($hasReturn || $hasParamOut || $hasSelfOut) {
             $node->stmts = self::isGenerator($node)
@@ -166,7 +210,9 @@ final class FunctionContractInjector
                     $needsReturnVars,
                     $hasParamOut ? $byRefParams : [],
                     $hasSelfOut,
-                    $hasParam
+                    $hasParam,
+                    $trustedParamTypes,
+                    $useDynamicMethodKey
                 )
                 : self::wrapNonGeneratorReturns(
                     $node->stmts,
@@ -180,15 +226,364 @@ final class FunctionContractInjector
                     $node,
                     $classContext,
                     $returnTypeNode,
-                    $currentFile
+                    $currentFile,
+                    $trustedParamTypes,
+                    $useDynamicMethodKey,
+                    ! $isMagicGet && ! $isMagicCall
                 );
         }
 
         $node->stmts = [...$injectedStmts, ...$node->stmts];
     }
 
-    public static function buildSelfOutCheckStmt(Node\Expr $thisArg, bool $needsReturnVars = false): Node\Stmt\Expression
+    private static function canEliminateSetupScope(
+        Node\Stmt\Function_|Node\Stmt\ClassMethod $node,
+        ?PhpDocNode $phpDocNode,
+        string $docText,
+        bool $isClassMethod,
+        bool $isPrivate,
+        bool $hasRealInheritance,
+        ?TypeNode $returnTypeNode,
+        bool $hasReturn
+    ): bool {
+        if (! Config::isEliminateStaticallyProvenChecksEnabled()) {
+            return false;
+        }
+
+        if ($node->attrGroups !== [] || str_contains($docText, ' is ')) {
+            return false;
+        }
+
+        if ($isClassMethod && ! $isPrivate && $hasRealInheritance) {
+            return false;
+        }
+
+        if ($hasReturn && ($returnTypeNode !== null && ConditionalChecker::containsConditional($returnTypeNode))) {
+            return false;
+        }
+
+        $paramTags = $phpDocNode !== null ? DocblockExtractor::getParamTags($phpDocNode) : [];
+
+        foreach ($node->params as $param) {
+            if ($param->variadic || ! ($param->var instanceof Node\Expr\Variable) || ! \is_string($param->var->name)) {
+                return false;
+            }
+
+            $paramDoc = $param->getDocComment() !== null ? $param->getDocComment()->getText() : '';
+            $effectiveDoc = $docText . ' ' . $paramDoc;
+            if (self::isCallableCandidate($param, $effectiveDoc) || self::isIterableCandidate($param, $effectiveDoc)) {
+                return false;
+            }
+
+            $pName = $param->var->name;
+            $paramTag = $paramTags[$pName] ?? null;
+
+            if ($paramTag === null) {
+                if ($hasRealInheritance) {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (! self::nativeParamSatisfiesDocType($param->type, $paramTag->type)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static function nativeParamSatisfiesDocType(
+        Node\Identifier|Node\Name|Node\ComplexType|null $nativeType,
+        TypeNode $docType
+    ): bool {
+        if ($docType instanceof IdentifierTypeNode && strtolower($docType->name) === 'mixed') {
+            return true;
+        }
+
+        if ($nativeType === null) {
+            return false;
+        }
+
+        if ($nativeType instanceof Node\NullableType) {
+            if ($docType instanceof NullableTypeNode) {
+                return self::nativeParamSatisfiesDocType($nativeType->type, $docType->type);
+            }
+
+            if ($docType instanceof UnionTypeNode) {
+                $hasNull = false;
+                foreach ($docType->types as $member) {
+                    if ($member instanceof IdentifierTypeNode && strtolower($member->name) === 'null') {
+                        $hasNull = true;
+
+                        break;
+                    }
+                }
+
+                return $hasNull && self::nativeParamSatisfiesDocType($nativeType->type, $docType);
+            }
+
+            return false;
+        }
+
+        if ($nativeType instanceof Node\UnionType) {
+            foreach ($nativeType->types as $t) {
+                if (! self::nativeParamSatisfiesDocType($t, $docType)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        if ($docType instanceof NullableTypeNode) {
+            return self::nativeParamSatisfiesDocType($nativeType, $docType->type);
+        }
+
+        if ($docType instanceof UnionTypeNode) {
+            foreach ($docType->types as $member) {
+                if (self::nativeParamSatisfiesDocType($nativeType, $member)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if ($nativeType instanceof Node\Identifier && $docType instanceof IdentifierTypeNode) {
+            $native = strtolower($nativeType->name);
+            $doc = strtolower($docType->name);
+
+            if ($native === $doc) {
+                return true;
+            }
+
+            return match ($native) {
+                'int' => \in_array($doc, ['integer', 'float', 'double', 'array-key', 'scalar', 'numeric', 'number'], true),
+                'string' => \in_array($doc, ['array-key', 'scalar'], true),
+                'bool' => \in_array($doc, ['boolean', 'scalar'], true),
+                'float' => \in_array($doc, ['double', 'scalar', 'numeric', 'number'], true),
+                'array' => $doc === 'iterable',
+                default => false,
+            };
+        }
+
+        return false;
+    }
+
+    /**
+     * Extracts concrete parameter contracts and verifies they are never mutated in the body.
+     *
+     * @param array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode> $declaredTemplates
+     *
+     * @return array<string, TypeNode>
+     */
+    private static function collectTrustedParamTypes(
+        Node\Stmt\Function_|Node\Stmt\ClassMethod $node,
+        ?Doc $doc,
+        array $declaredTemplates,
+        string $currentFile
+    ): array {
+        if ($node->stmts === null || $node->stmts === [] || $node->params === []) {
+            return [];
+        }
+
+        $candidateNames = [];
+        foreach ($node->params as $p) {
+            if (! $p->byRef && $p->var instanceof Node\Expr\Variable && \is_string($p->var->name)) {
+                $candidateNames[$p->var->name] = true;
+            }
+        }
+
+        if ($candidateNames === []) {
+            return [];
+        }
+
+        $unmutatedNames = self::findUnmutatedVariables($node->stmts, $candidateNames);
+        if ($unmutatedNames === []) {
+            return [];
+        }
+
+        $paramTags = [];
+        if ($doc !== null) {
+            try {
+                $phpDocNode = DocblockExtractor::parseDocString($doc->getText());
+                $paramTags = DocblockExtractor::getParamTags($phpDocNode);
+            } catch (\Throwable) {
+            }
+        }
+
+        $trustedTypes = [];
+        foreach ($node->params as $p) {
+            if (! ($p->var instanceof Node\Expr\Variable) || ! \is_string($p->var->name)) {
+                continue;
+            }
+
+            $pName = $p->var->name;
+            if (! isset($unmutatedNames[$pName])) {
+                continue;
+            }
+
+            $typeNode = null;
+            if (isset($paramTags[$pName])) {
+                $typeNode = $paramTags[$pName]->type;
+            } elseif ($p->type !== null) {
+                if ($p->type instanceof Node\Identifier) {
+                    $typeNode = new IdentifierTypeNode($p->type->name);
+                } elseif ($p->type instanceof Node\NullableType && $p->type->type instanceof Node\Identifier) {
+                    $typeNode = new NullableTypeNode(new IdentifierTypeNode($p->type->type->name));
+                }
+            }
+
+            if ($typeNode === null) {
+                continue;
+            }
+
+            if ($currentFile !== '') {
+                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $currentFile, null, false);
+            }
+
+            if ($declaredTemplates !== [] && DocblockParser::typeReferencesTemplate($typeNode, $declaredTemplates)) {
+                continue;
+            }
+
+            if ($typeNode instanceof IdentifierTypeNode && strtolower($typeNode->name) === 'mixed') {
+                continue;
+            }
+
+            $trustedTypes[$pName] = $typeNode;
+        }
+
+        return $trustedTypes;
+    }
+
+    /**
+     * Traverses statements to identify parameters that are never mutated or passed by reference.
+     *
+     * @param array<Node\Stmt> $stmts
+     * @param array<string, true> $candidateNames
+     *
+     * @return array<string, true>
+     */
+    private static function findUnmutatedVariables(array $stmts, array $candidateNames): array
     {
+        $unmutated = $candidateNames;
+
+        $visitor = new class ($unmutated) extends NodeVisitorAbstract {
+            /**
+             * @param array<string, true> $unmutated
+             */
+            public function __construct(public array &$unmutated)
+            {
+            }
+
+            public function enterNode(Node $node): ?int
+            {
+                if ($this->unmutated === []) {
+                    return NodeTraverser::STOP_TRAVERSAL;
+                }
+
+                if ($node instanceof Node\Expr\Assign || $node instanceof Node\Expr\AssignOp) {
+                    $this->disqualifyTarget($node->var);
+                } elseif ($node instanceof Node\Expr\AssignRef) {
+                    $this->disqualifyTarget($node->var);
+                    $this->disqualifyTarget($node->expr);
+                } elseif (
+                    $node instanceof Node\Expr\PreInc
+                    || $node instanceof Node\Expr\PostInc
+                    || $node instanceof Node\Expr\PreDec
+                    || $node instanceof Node\Expr\PostDec
+                ) {
+                    $this->disqualifyTarget($node->var);
+                } elseif ($node instanceof Node\Stmt\Unset_) {
+                    foreach ($node->vars as $v) {
+                        $this->disqualifyTarget($v);
+                    }
+                } elseif ($node instanceof Node\Stmt\Foreach_) {
+                    $this->disqualifyTarget($node->valueVar);
+                    if ($node->keyVar !== null) {
+                        $this->disqualifyTarget($node->keyVar);
+                    }
+                } elseif ($node instanceof Node\Stmt\Catch_) {
+                    if ($node->var !== null && \is_string($node->var->name)) {
+                        unset($this->unmutated[$node->var->name]);
+                    }
+                } elseif ($node instanceof Node\Stmt\Static_) {
+                    foreach ($node->vars as $sv) {
+                        if (\is_string($sv->var->name)) {
+                            unset($this->unmutated[$sv->var->name]);
+                        }
+                    }
+                } elseif ($node instanceof Node\Stmt\Global_) {
+                    foreach ($node->vars as $gv) {
+                        $this->disqualifyTarget($gv);
+                    }
+                } elseif ($node instanceof Node\ArrayItem && $node->byRef) {
+                    $this->disqualifyTarget($node->value);
+                } elseif ($node instanceof Node\Expr\Closure) {
+                    foreach ($node->uses as $u) {
+                        if ($u->byRef && $u->var instanceof Node\Expr\Variable && \is_string($u->var->name)) {
+                            unset($this->unmutated[$u->var->name]);
+                        }
+                    }
+                } elseif ($node instanceof Node\Expr\CallLike) {
+                    if (
+                        $node instanceof Node\Expr\FuncCall
+                        && $node->name instanceof Node\Name
+                        && strtolower($node->name->getLast()) === 'extract'
+                    ) {
+                        $this->unmutated = [];
+
+                        return NodeTraverser::STOP_TRAVERSAL;
+                    }
+
+                    if (! $node->isFirstClassCallable()) {
+                        foreach ($node->getArgs() as $arg) {
+                            if ($arg instanceof Node\Arg && $arg->value instanceof Node\Expr\Variable && \is_string($arg->value->name)) {
+                                unset($this->unmutated[$arg->value->name]);
+                            }
+                        }
+                    }
+                }
+
+                return null;
+            }
+
+            private function disqualifyTarget(Node $target): void
+            {
+                while ($target instanceof Node\Expr\ArrayDimFetch || $target instanceof Node\Expr\PropertyFetch) {
+                    $target = $target->var;
+                }
+
+                if ($target instanceof Node\Expr\Variable) {
+                    if (\is_string($target->name)) {
+                        unset($this->unmutated[$target->name]);
+                    } else {
+                        $this->unmutated = [];
+                    }
+                } elseif ($target instanceof Node\Expr\Array_ || $target instanceof Node\Expr\List_) {
+                    foreach ($target->items as $item) {
+                        if ($item !== null) {
+                            $this->disqualifyTarget($item->value);
+                        }
+                    }
+                }
+            }
+        };
+
+        $traverser = new NodeTraverser();
+        $traverser->addVisitor($visitor);
+        $traverser->traverse($stmts);
+
+        return $visitor->unmutated;
+    }
+
+    public static function buildSelfOutCheckStmt(
+        Node\Expr $thisArg,
+        bool $needsReturnVars = false,
+        bool $useDynamicMethodKey = false
+    ): Node\Stmt\If_ {
         $varsArg = $needsReturnVars
             ? new Node\Expr\Variable('_typephpArgs')
             : new Node\Expr\Array_();
@@ -202,10 +597,73 @@ final class FunctionContractInjector
             ]
         );
 
-        $stmt = new Node\Stmt\Expression($checkCall);
-        $stmt->setAttribute('typephp_injected', true);
+        $cacheKeyExpr = $useDynamicMethodKey
+            ? new Node\Expr\BinaryOp\Concat(
+                new Node\Expr\BinaryOp\Concat(
+                    new Node\Expr\ClassConstFetch(new Node\Name('static'), 'class'),
+                    new Node\Scalar\String_('::')
+                ),
+                new Node\Scalar\MagicConst\Function_()
+            )
+            : new Node\Scalar\MagicConst\Method();
 
-        return $stmt;
+        $noSelfOutFetch = new Node\Expr\StaticPropertyFetch(
+            new Node\Name\FullyQualified('TypePHP\Internal\Checker\SelfOutChecker'),
+            'noSelfOutContractCache'
+        );
+        $noSelfOutFetch->setAttribute('typephp_checked', true);
+
+        $ifStmt = new Node\Stmt\If_(
+            new Node\Expr\BooleanNot(
+                new Node\Expr\Isset_([
+                    new Node\Expr\ArrayDimFetch($noSelfOutFetch, $cacheKeyExpr),
+                ])
+            ),
+            ['stmts' => [new Node\Stmt\Expression($checkCall)]]
+        );
+        $ifStmt->setAttribute('typephp_injected', true);
+
+        return $ifStmt;
+    }
+
+    public static function buildGuardedTernaryReturnExpr(
+        Node\Expr $exprToWrap,
+        Node\Expr $thisArg,
+        bool $needsReturnVars = false,
+        bool $useDynamicMethodKey = false,
+        ?int $line = null
+    ): Node\Expr\Ternary {
+        $cacheKeyExpr = $useDynamicMethodKey
+            ? new Node\Expr\BinaryOp\Concat(
+                new Node\Expr\BinaryOp\Concat(
+                    new Node\Expr\ClassConstFetch(new Node\Name('static'), 'class'),
+                    new Node\Scalar\String_('::')
+                ),
+                new Node\Scalar\MagicConst\Function_()
+            )
+            : new Node\Scalar\MagicConst\Method();
+
+        $noReturnFetch = new Node\Expr\StaticPropertyFetch(
+            new Node\Name\FullyQualified('TypePHP\Internal\Checker\ReturnChecker'),
+            'noReturnContractCache'
+        );
+        $noReturnFetch->setAttribute('typephp_checked', true);
+
+        $retVar = new Node\Expr\Variable('__typephpRet');
+        $assignAndFalse = new Node\Expr\BinaryOp\BooleanAnd(
+            new Node\Expr\Assign($retVar, $exprToWrap),
+            new Node\Expr\ConstFetch(new Node\Name('false'))
+        );
+
+        $fastSkipCond = new Node\Expr\BinaryOp\BooleanOr(
+            $assignAndFalse,
+            new Node\Expr\Isset_([new Node\Expr\ArrayDimFetch($noReturnFetch, $cacheKeyExpr)])
+        );
+
+        $checkCall = self::buildReturnCheckCall(new Node\Expr\Variable('__typephpRet'), $thisArg, $needsReturnVars);
+        $slowPath = self::buildTernaryReturnExpr($checkCall, $line);
+
+        return new Node\Expr\Ternary($fastSkipCond, new Node\Expr\Variable('__typephpRet'), $slowPath);
     }
 
     /**
@@ -610,7 +1068,8 @@ final class FunctionContractInjector
 
                 $expr = new Node\Stmt\Expression($assignExpr);
                 $expr->setAttribute('typephp_injected', true);
-                $wrappers[] = $expr;
+
+                $bodyStmts = [$expr];
 
                 $isReadonlyParam = ($param->flags & Node\Stmt\Class_::MODIFIER_READONLY) !== 0;
                 $isReadonly = $isReadonlyParam || $isReadonlyClass;
@@ -623,12 +1082,87 @@ final class FunctionContractInjector
                         )
                     );
                     $propAssign->setAttribute('typephp_injected', true);
-                    $wrappers[] = $propAssign;
+                    $bodyStmts[] = $propAssign;
+                }
+
+                $guardCond = null;
+                if ($wrapperMethod === 'wrapIterable' && self::paramMayBeArray($param)) {
+                    $guardCond = new Node\Expr\Instanceof_(
+                        new Node\Expr\Variable($paramName),
+                        new Node\Name\FullyQualified('Traversable')
+                    );
+                } elseif ($wrapperMethod === 'wrapCallable' && self::paramMayBeNull($param)) {
+                    $guardCond = new Node\Expr\BinaryOp\NotIdentical(
+                        new Node\Expr\Variable($paramName),
+                        new Node\Expr\ConstFetch(new Node\Name('null'))
+                    );
+                }
+
+                if ($guardCond !== null) {
+                    $ifStmt = new Node\Stmt\If_($guardCond, ['stmts' => $bodyStmts]);
+                    $ifStmt->setAttribute('typephp_injected', true);
+                    $wrappers[] = $ifStmt;
+                } else {
+                    foreach ($bodyStmts as $stmt) {
+                        $wrappers[] = $stmt;
+                    }
                 }
             }
         }
 
         return $wrappers;
+    }
+
+    private static function paramMayBeNull(Node\Param $param): bool
+    {
+        if ($param->default instanceof Node\Expr\ConstFetch && strtolower($param->default->name->toString()) === 'null') {
+            return true;
+        }
+
+        $type = $param->type;
+        if ($type === null || $type instanceof Node\NullableType) {
+            return true;
+        }
+
+        if ($type instanceof Node\Identifier) {
+            return \in_array(strtolower($type->name), ['mixed', 'null'], true);
+        }
+
+        if ($type instanceof Node\UnionType) {
+            foreach ($type->types as $t) {
+                if ($t instanceof Node\Identifier && \in_array(strtolower($t->name), ['mixed', 'null'], true)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static function paramMayBeArray(Node\Param $param): bool
+    {
+        $type = $param->type;
+        if ($type === null) {
+            return true;
+        }
+
+        while ($type instanceof Node\NullableType) {
+            $type = $type->type;
+        }
+
+        if ($type instanceof Node\Identifier) {
+            return \in_array(strtolower($type->name), ['array', 'iterable', 'mixed'], true);
+        }
+
+        if ($type instanceof Node\UnionType) {
+            foreach ($type->types as $t) {
+                if ($t instanceof Node\Identifier && \in_array(strtolower($t->name), ['array', 'iterable', 'mixed'], true)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static function isCallableCandidate(Node\Param $param, string $docText): bool
@@ -895,6 +1429,7 @@ final class FunctionContractInjector
      * @param array<Node\Stmt> $stmts
      * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
      * @param array<string> $byRefParams
+     * @param array<string, TypeNode> $trustedParamTypes
      *
      * @return array<Node\Stmt>
      */
@@ -909,7 +1444,9 @@ final class FunctionContractInjector
         bool $needsReturnVars = false,
         array $byRefParams = [],
         bool $hasSelfOut = false,
-        bool $hasScope = false
+        bool $hasScope = false,
+        array $trustedParamTypes = [],
+        bool $useDynamicMethodKey = false
     ): array {
         $canEliminate = $functionNode !== null
             && ! $hasMethodTemplates
@@ -917,6 +1454,10 @@ final class FunctionContractInjector
             && EliminationSafetyPolicy::isGeneratorEliminationSafe($functionNode, $classContext, $returnTypeNode);
 
         $genContract = ($canEliminate && $returnTypeNode !== null)
+            ? GeneratorEvaluator::extractContract($returnTypeNode)
+            : null;
+
+        $explicitGenContract = ($returnTypeNode !== null && Config::isEliminateStaticallyProvenChecksEnabled())
             ? GeneratorEvaluator::extractContract($returnTypeNode)
             : null;
 
@@ -928,22 +1469,30 @@ final class FunctionContractInjector
         $traverser->addVisitor(new class (
             $thisArg,
             $genContract,
+            $explicitGenContract,
             $currentFile,
             $needsReturnVars,
             $byRefParams,
             $hasSelfOut,
+            $trustedParamTypes,
+            $useDynamicMethodKey
         ) extends NodeVisitorAbstract {
             /**
              * @param array{key: ?TypeNode, value: ?TypeNode, send: ?TypeNode, return: ?TypeNode}|null $genContract
+             * @param array{key: ?TypeNode, value: ?TypeNode, send: ?TypeNode, return: ?TypeNode}|null $explicitGenContract
              * @param array<string> $byRefParams
+             * @param array<string, TypeNode> $trustedParamTypes
              */
             public function __construct(
                 private Node\Expr $thisArg,
                 private ?array $genContract,
+                private ?array $explicitGenContract,
                 private string $currentFile,
                 private bool $needsReturnVars,
                 private array $byRefParams,
                 private bool $hasSelfOut,
+                private array $trustedParamTypes,
+                private bool $useDynamicMethodKey
             ) {
             }
 
@@ -992,8 +1541,9 @@ final class FunctionContractInjector
                             $precedingValueExpr
                         );
 
-                    $wrapSend = $this->genContract === null
-                        || ! GeneratorEvaluator::canEliminateSend($this->genContract['send']);
+                    $sendContract = $this->genContract ?? $this->explicitGenContract;
+                    $wrapSend = $sendContract === null
+                        || ! GeneratorEvaluator::canEliminateSend($sendContract['send']);
 
                     if (! $wrapYield && ! $wrapSend && $this->byRefParams === []) {
                         return null;
@@ -1056,7 +1606,7 @@ final class FunctionContractInjector
 
                     $exitStmts = [];
                     if ($this->hasSelfOut) {
-                        $exitStmts[] = FunctionContractInjector::buildSelfOutCheckStmt($this->thisArg, $this->needsReturnVars);
+                        $exitStmts[] = FunctionContractInjector::buildSelfOutCheckStmt($this->thisArg, $this->needsReturnVars, $this->useDynamicMethodKey);
                     }
 
                     $paramOutStmts = $this->byRefParams !== []
@@ -1072,12 +1622,14 @@ final class FunctionContractInjector
                     $candidateExpr = ($assignedExpr instanceof Node\Expr) ? $assignedExpr : $exprToWrap;
 
                     if (
-                        $this->genContract !== null
-                        && GeneratorEvaluator::canEliminateGeneratorReturn(
-                            $candidateExpr,
-                            $this->genContract['return'],
-                            $this->currentFile
-                        )
+                        ($this->genContract !== null
+                            && GeneratorEvaluator::canEliminateGeneratorReturn(
+                                $candidateExpr,
+                                $this->genContract['return'],
+                                $this->currentFile,
+                                $this->trustedParamTypes
+                            ))
+                        || ($this->explicitGenContract !== null && $this->explicitGenContract['return'] === null)
                     ) {
                         return $exitStmts !== [] ? [...$exitStmts, $n] : $n;
                     }
@@ -1113,7 +1665,7 @@ final class FunctionContractInjector
         if (! $lastStmt instanceof Node\Stmt\Return_ && ! ($lastStmt instanceof Node\Stmt\Expression && $lastStmt->expr instanceof Node\Expr\Throw_)) {
             $exitStmts = [];
             if ($hasSelfOut) {
-                $exitStmts[] = self::buildSelfOutCheckStmt($thisArg, $needsReturnVars);
+                $exitStmts[] = self::buildSelfOutCheckStmt($thisArg, $needsReturnVars, $useDynamicMethodKey);
             }
 
             $paramOutStmts = $byRefParams !== []
@@ -1128,10 +1680,11 @@ final class FunctionContractInjector
                 $newStmts = [...$newStmts, ...$exitStmts];
             }
 
-            if (
-                $genContract === null
-                || ! GeneratorEvaluator::canEliminateGeneratorReturn(null, $genContract['return'], $currentFile)
-            ) {
+            $canSkipImplicitGenReturn = ($genContract !== null
+                && GeneratorEvaluator::canEliminateGeneratorReturn(null, $genContract['return'], $currentFile, $trustedParamTypes))
+                || ($explicitGenContract !== null && $explicitGenContract['return'] === null);
+
+            if (! $canSkipImplicitGenReturn) {
                 $scopeArg = new Node\Expr\BinaryOp\Coalesce(
                     new Node\Expr\Variable('__typephpScope'),
                     new Node\Expr\ConstFetch(new Node\Name('null'))
@@ -1164,6 +1717,7 @@ final class FunctionContractInjector
      * @param array<Node\Stmt> $stmts
      * @param array<string> $byRefParams
      * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
+     * @param array<string, TypeNode> $trustedParamTypes
      *
      * @return array<Node\Stmt>
      */
@@ -1179,7 +1733,10 @@ final class FunctionContractInjector
         Node\Stmt\Function_|Node\Stmt\ClassMethod|null $functionNode = null,
         ?array $classContext = null,
         ?TypeNode $returnTypeNode = null,
-        string $currentFile = ''
+        string $currentFile = '',
+        array $trustedParamTypes = [],
+        bool $useDynamicMethodKey = false,
+        bool $canGuardReturnCache = true
     ): array {
         self::tagPrecedingAssignments($stmts);
 
@@ -1195,11 +1752,15 @@ final class FunctionContractInjector
             $functionNode,
             $classContext,
             $returnTypeNode,
-            $currentFile
+            $currentFile,
+            $trustedParamTypes,
+            $useDynamicMethodKey,
+            $canGuardReturnCache
         ) extends NodeVisitorAbstract {
             /**
              * @param array<string> $byRefParams
              * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
+             * @param array<string, TypeNode> $trustedParamTypes
              */
             public function __construct(
                 private Node\Expr $thisArg,
@@ -1212,7 +1773,10 @@ final class FunctionContractInjector
                 private Node\Stmt\Function_|Node\Stmt\ClassMethod|null $functionNode,
                 private ?array $classContext,
                 private ?TypeNode $returnTypeNode,
-                private string $currentFile
+                private string $currentFile,
+                private array $trustedParamTypes,
+                private bool $useDynamicMethodKey,
+                private bool $canGuardReturnCache
             ) {
             }
 
@@ -1248,7 +1812,7 @@ final class FunctionContractInjector
 
                     $exitStmts = [];
                     if ($this->hasSelfOut) {
-                        $exitStmts[] = FunctionContractInjector::buildSelfOutCheckStmt($this->thisArg, $this->needsReturnVars);
+                        $exitStmts[] = FunctionContractInjector::buildSelfOutCheckStmt($this->thisArg, $this->needsReturnVars, $this->useDynamicMethodKey);
                     }
 
                     $paramOutStmts = $this->byRefParams !== []
@@ -1274,7 +1838,7 @@ final class FunctionContractInjector
                         && $this->functionNode !== null
                         && $this->returnTypeNode !== null
                         && EliminationSafetyPolicy::isReturnEliminationSafe($this->functionNode, $this->classContext, $this->returnTypeNode)
-                        && StaticTypeEvaluator::satisfies($candidateExpr, $this->returnTypeNode, $this->currentFile)
+                        && StaticTypeEvaluator::satisfies($candidateExpr, $this->returnTypeNode, $this->currentFile, $this->trustedParamTypes)
                     ) {
                         return $exitStmts !== [] ? [...$exitStmts, $n] : null;
                     }
@@ -1286,15 +1850,25 @@ final class FunctionContractInjector
                         return [...$exitStmts, ...$voidGuardStmts];
                     }
 
-                    $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
-
                     if ($this->isByRefReturn) {
+                        $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
                         $byRefGuardStmts = FunctionContractInjector::buildByRefReturnGuard($checkCall, $n, $n->getStartLine());
 
                         return [...$exitStmts, ...$byRefGuardStmts];
                     }
 
-                    $n->expr = FunctionContractInjector::buildTernaryReturnExpr($checkCall, $n->getStartLine());
+                    if ($this->canGuardReturnCache) {
+                        $n->expr = FunctionContractInjector::buildGuardedTernaryReturnExpr(
+                            $exprToWrap,
+                            $this->thisArg,
+                            $this->needsReturnVars,
+                            $this->useDynamicMethodKey,
+                            $n->getStartLine()
+                        );
+                    } else {
+                        $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
+                        $n->expr = FunctionContractInjector::buildTernaryReturnExpr($checkCall, $n->getStartLine());
+                    }
 
                     return $exitStmts !== [] ? [...$exitStmts, $n] : null;
                 }
@@ -1310,7 +1884,7 @@ final class FunctionContractInjector
         if (! $lastStmt instanceof Node\Stmt\Return_ && ! ($lastStmt instanceof Node\Stmt\Expression && $lastStmt->expr instanceof Node\Expr\Throw_)) {
             $exitStmts = [];
             if ($hasSelfOut) {
-                $exitStmts[] = self::buildSelfOutCheckStmt($thisArg, $needsReturnVars);
+                $exitStmts[] = self::buildSelfOutCheckStmt($thisArg, $needsReturnVars, $useDynamicMethodKey);
             }
 
             $paramOutStmts = $byRefParams !== []
@@ -1338,7 +1912,15 @@ final class FunctionContractInjector
                     $newStmts = [...$newStmts, ...$exitStmts, ...$byRefGuardStmts];
                 } else {
                     $fallbackLine = $lastStmt instanceof Node\Stmt ? $lastStmt->getStartLine() : null;
-                    $ternaryExpr = self::buildTernaryReturnExpr($checkCall, $fallbackLine);
+                    $ternaryExpr = $canGuardReturnCache
+                        ? self::buildGuardedTernaryReturnExpr(
+                            new Node\Expr\ConstFetch(new Node\Name('null')),
+                            $thisArg,
+                            $needsReturnVars,
+                            $useDynamicMethodKey,
+                            $fallbackLine
+                        )
+                        : self::buildTernaryReturnExpr($checkCall, $fallbackLine);
 
                     $retStmt = new Node\Stmt\Return_($ternaryExpr);
                     $retStmt->setAttribute('typephp_injected', true);

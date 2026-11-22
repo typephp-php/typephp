@@ -557,6 +557,7 @@ final class DocblockExtractor
         array &$aliases,
         \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref
     ): void {
+        /** @var array<string, TypeNode> $currentDocAliases */
         $currentDocAliases = [];
 
         foreach ($phpDocNode->getTagsByName('@psalm-type') as $tag) {
@@ -571,12 +572,8 @@ final class DocblockExtractor
             }
         }
 
-        foreach ($currentDocAliases as $name => $type) {
-            if (! isset($aliases[$name])) {
-                $aliases[$name] = $type;
-            }
-        }
-
+        /** @var array<string, TypeNode> $currentDocImports */
+        $currentDocImports = [];
         $importTags = [
             ...$phpDocNode->getTagsByName('@psalm-import-type'),
             ...$phpDocNode->getTagsByName('@phpstan-import-type'),
@@ -587,24 +584,33 @@ final class DocblockExtractor
                 $importTag = $tag->value;
                 $localName = $importTag->importedAs ?? $importTag->importedAlias;
 
-                if (! isset($aliases[$localName])) {
+                if (! isset($aliases[$localName]) && ! isset($currentDocAliases[$localName])) {
                     $fqcnSource = SpecialTypeResolver::resolveFqcn((string) $importTag->importedFrom, $ref);
                     $resolvedType = self::resolveImportedTypeAlias($fqcnSource, $importTag->importedAlias);
                     if ($resolvedType !== null) {
-                        $aliases[$localName] = $resolvedType;
+                        $currentDocImports[$localName] = $resolvedType;
                     }
                 }
             }
         }
 
-        foreach ($aliases as $name => $type) {
-            $aliases[$name] = DocblockParser::substituteAliases($type, $aliases);
+        $docScopeAliases = [...$currentDocImports, ...$currentDocAliases];
+        foreach ($currentDocAliases as $name => $type) {
+            $currentDocAliases[$name] = DocblockParser::substituteAliases($type, $docScopeAliases);
         }
 
-        foreach ($currentDocAliases as $name => $_) {
-            if (isset($aliases[$name])) {
-                $aliases[$name] = SpecialTypeResolver::resolve($aliases[$name], $ref);
+        foreach ($currentDocAliases as $name => $type) {
+            $currentDocAliases[$name] = SpecialTypeResolver::resolve($type, $ref);
+        }
+
+        foreach ([...$currentDocImports, ...$currentDocAliases] as $name => $type) {
+            if (! isset($aliases[$name])) {
+                $aliases[$name] = $type;
             }
+        }
+
+        foreach ($aliases as $name => $type) {
+            $aliases[$name] = DocblockParser::substituteAliases($type, $aliases);
         }
     }
 

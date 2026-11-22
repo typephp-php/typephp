@@ -52,15 +52,14 @@ final class ArrayLiteralEvaluator
     /**
      * Determines whether an AST array expression satisfies a target type contract.
      *
-     * Flow of logic:
-     * 1. Empty arrays ([]) are checked against types that permit empty collections.
-     * 2. Bare array/iterable identifiers (array, iterable, list) are evaluated.
-     * 3. Sequential lists (list<T>, non-empty-list<T>, T[]) verify keys are 0..n-1 and all values satisfy T.
-     * 4. Typed key-value maps (array<K, V>) verify all keys satisfy K and all values satisfy V.
-     * 5. Array shapes (array{id: int, ...}) verify required keys, unexpected keys, and field types.
+     * @param array<string, TypeNode> $trustedVariableTypes
      */
-    public static function satisfies(Array_ $arrayExpr, TypeNode $typeNode, string $currentFile = ''): bool
-    {
+    public static function satisfies(
+        Array_ $arrayExpr,
+        TypeNode $typeNode,
+        string $currentFile = '',
+        array $trustedVariableTypes = []
+    ): bool {
         $count = \count($arrayExpr->items);
 
         if ($count === 0) {
@@ -72,15 +71,15 @@ final class ArrayLiteralEvaluator
         }
 
         if ($typeNode instanceof ArrayTypeNode) {
-            return self::satisfiesList($arrayExpr, $typeNode->type, false, $currentFile);
+            return self::satisfiesList($arrayExpr, $typeNode->type, false, $currentFile, $trustedVariableTypes);
         }
 
         if ($typeNode instanceof GenericTypeNode) {
-            return self::satisfiesGenericArray($arrayExpr, $typeNode, $currentFile);
+            return self::satisfiesGenericArray($arrayExpr, $typeNode, $currentFile, $trustedVariableTypes);
         }
 
         if ($typeNode instanceof ArrayShapeNode) {
-            return self::satisfiesArrayShape($arrayExpr, $typeNode, $currentFile);
+            return self::satisfiesArrayShape($arrayExpr, $typeNode, $currentFile, $trustedVariableTypes);
         }
 
         return false;
@@ -88,8 +87,6 @@ final class ArrayLiteralEvaluator
 
     /**
      * Checks if a type contract permits an empty array ([]).
-     * Returns true for unbounded array/list/iterable, T[], and shapes with only optional keys.
-     * Returns false for non-empty-array, non-empty-list, and shapes with required keys.
      */
     public static function satisfiesEmptyArray(TypeNode $typeNode): bool
     {
@@ -135,48 +132,54 @@ final class ArrayLiteralEvaluator
     }
 
     /**
-     * Evaluates an array expression against generic array containers:
-     * - Single template argument: list<T>, non-empty-list<T>, array<T>
-     * - Double template argument: array<K, V>, non-empty-array<K, V>
+     * @param array<string, TypeNode> $trustedVariableTypes
      */
-    private static function satisfiesGenericArray(Array_ $arrayExpr, GenericTypeNode $node, string $currentFile): bool
-    {
+    private static function satisfiesGenericArray(
+        Array_ $arrayExpr,
+        GenericTypeNode $node,
+        string $currentFile,
+        array $trustedVariableTypes = []
+    ): bool {
         $base = strtolower((string) $node->type);
         $genericCount = \count($node->genericTypes);
 
         if ($base === 'list' && $genericCount >= 1) {
-            return self::satisfiesList($arrayExpr, $node->genericTypes[0], false, $currentFile);
+            return self::satisfiesList($arrayExpr, $node->genericTypes[0], false, $currentFile, $trustedVariableTypes);
         }
 
         if ($base === 'non-empty-list' && $genericCount >= 1) {
-            return self::satisfiesList($arrayExpr, $node->genericTypes[0], true, $currentFile);
+            return self::satisfiesList($arrayExpr, $node->genericTypes[0], true, $currentFile, $trustedVariableTypes);
         }
 
         if (($base === 'array' || $base === 'iterable') && $genericCount === 1) {
-            return self::satisfiesList($arrayExpr, $node->genericTypes[0], false, $currentFile);
+            return self::satisfiesList($arrayExpr, $node->genericTypes[0], false, $currentFile, $trustedVariableTypes);
         }
 
         if (($base === 'array' || $base === 'iterable') && $genericCount >= 2) {
-            return self::satisfiesKeyValueArray($arrayExpr, $node->genericTypes[0], $node->genericTypes[1], false, $currentFile);
+            return self::satisfiesKeyValueArray($arrayExpr, $node->genericTypes[0], $node->genericTypes[1], false, $currentFile, $trustedVariableTypes);
         }
 
         if ($base === 'non-empty-array' && $genericCount === 1) {
-            return self::satisfiesList($arrayExpr, $node->genericTypes[0], true, $currentFile);
+            return self::satisfiesList($arrayExpr, $node->genericTypes[0], true, $currentFile, $trustedVariableTypes);
         }
 
         if ($base === 'non-empty-array' && $genericCount >= 2) {
-            return self::satisfiesKeyValueArray($arrayExpr, $node->genericTypes[0], $node->genericTypes[1], true, $currentFile);
+            return self::satisfiesKeyValueArray($arrayExpr, $node->genericTypes[0], $node->genericTypes[1], true, $currentFile, $trustedVariableTypes);
         }
 
         return false;
     }
 
     /**
-     * Verifies that all array items have sequential integer keys (0..n-1)
-     * and every item value statically satisfies the element contract T.
+     * @param array<string, TypeNode> $trustedVariableTypes
      */
-    private static function satisfiesList(Array_ $arrayExpr, TypeNode $itemType, bool $requireNonEmpty, string $currentFile): bool
-    {
+    private static function satisfiesList(
+        Array_ $arrayExpr,
+        TypeNode $itemType,
+        bool $requireNonEmpty,
+        string $currentFile,
+        array $trustedVariableTypes = []
+    ): bool {
         $count = \count($arrayExpr->items);
         if ($requireNonEmpty && $count === 0) {
             return false;
@@ -195,7 +198,7 @@ final class ArrayLiteralEvaluator
             }
             $expectedIdx++;
 
-            if (! StaticTypeEvaluator::satisfies($item->value, $itemType, $currentFile)) {
+            if (! StaticTypeEvaluator::satisfies($item->value, $itemType, $currentFile, $trustedVariableTypes)) {
                 return false;
             }
         }
@@ -204,11 +207,16 @@ final class ArrayLiteralEvaluator
     }
 
     /**
-     * Verifies that every key in the array expression satisfies key contract K
-     * and every corresponding value satisfies value contract V.
+     * @param array<string, TypeNode> $trustedVariableTypes
      */
-    private static function satisfiesKeyValueArray(Array_ $arrayExpr, TypeNode $keyType, TypeNode $valueType, bool $requireNonEmpty, string $currentFile): bool
-    {
+    private static function satisfiesKeyValueArray(
+        Array_ $arrayExpr,
+        TypeNode $keyType,
+        TypeNode $valueType,
+        bool $requireNonEmpty,
+        string $currentFile,
+        array $trustedVariableTypes = []
+    ): bool {
         $count = \count($arrayExpr->items);
         if ($requireNonEmpty && $count === 0) {
             return false;
@@ -232,11 +240,11 @@ final class ArrayLiteralEvaluator
                 return false;
             }
 
-            if (! StaticTypeEvaluator::satisfies($keyExpr, $keyType, $currentFile)) {
+            if (! StaticTypeEvaluator::satisfies($keyExpr, $keyType, $currentFile, $trustedVariableTypes)) {
                 return false;
             }
 
-            if (! StaticTypeEvaluator::satisfies($item->value, $valueType, $currentFile)) {
+            if (! StaticTypeEvaluator::satisfies($item->value, $valueType, $currentFile, $trustedVariableTypes)) {
                 return false;
             }
         }
@@ -245,12 +253,14 @@ final class ArrayLiteralEvaluator
     }
 
     /**
-     * Evaluates an array expression against a sealed or unsealed ArrayShapeNode.
-     * Guarantees all required keys exist, no unsealed keys intrude in sealed shapes,
-     * and all value expressions satisfy their corresponding shape property contracts.
+     * @param array<string, TypeNode> $trustedVariableTypes
      */
-    private static function satisfiesArrayShape(Array_ $arrayExpr, ArrayShapeNode $shapeNode, string $currentFile): bool
-    {
+    private static function satisfiesArrayShape(
+        Array_ $arrayExpr,
+        ArrayShapeNode $shapeNode,
+        string $currentFile,
+        array $trustedVariableTypes = []
+    ): bool {
         if ($shapeNode->kind === ArrayShapeNode::KIND_LIST && ! self::isSequentialList($arrayExpr)) {
             return false;
         }
@@ -304,7 +314,7 @@ final class ArrayLiteralEvaluator
                 continue;
             }
 
-            if (! StaticTypeEvaluator::satisfies($actualItems[$expectedKey], $shapeItem->valueType, $currentFile)) {
+            if (! StaticTypeEvaluator::satisfies($actualItems[$expectedKey], $shapeItem->valueType, $currentFile, $trustedVariableTypes)) {
                 return false;
             }
         }
@@ -321,12 +331,12 @@ final class ArrayLiteralEvaluator
             if ($shapeNode->unsealedType !== null) {
                 if ($shapeNode->unsealedType->keyType !== null) {
                     $keyExpr = \is_int($actualKey) ? new LNumber($actualKey) : new String_($actualKey);
-                    if (! StaticTypeEvaluator::satisfies($keyExpr, $shapeNode->unsealedType->keyType, $currentFile)) {
+                    if (! StaticTypeEvaluator::satisfies($keyExpr, $shapeNode->unsealedType->keyType, $currentFile, $trustedVariableTypes)) {
                         return false;
                     }
                 }
 
-                if (! StaticTypeEvaluator::satisfies($actualValueExpr, $shapeNode->unsealedType->valueType, $currentFile)) {
+                if (! StaticTypeEvaluator::satisfies($actualValueExpr, $shapeNode->unsealedType->valueType, $currentFile, $trustedVariableTypes)) {
                     return false;
                 }
             }

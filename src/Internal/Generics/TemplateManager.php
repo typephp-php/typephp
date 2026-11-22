@@ -49,7 +49,7 @@ final class TemplateManager
      *
      * @var WeakMap<object, array<string, TypeNode>>|null
      */
-    private static ?WeakMap $instanceTemplateBindings = null;
+    public static ?WeakMap $instanceTemplateBindings = null;
 
     /**
      * Call stack frames storing template bindings per function or method call.
@@ -57,13 +57,6 @@ final class TemplateManager
      * @var array<string, list<array<string, TypeNode>>>
      */
     private static array $callStackBindings = [];
-
-    /**
-     * Sequential execution order of active function call frames on the stack.
-     *
-     * @var list<string>
-     */
-    private static array $activeCallOrder = [];
 
     /**
      * Cache for resolved hierarchy templates and variances per class name.
@@ -118,6 +111,11 @@ final class TemplateManager
      * Temporary storage for an original object instance being cloned.
      */
     public static ?object $pendingCloneSource = null;
+
+    /**
+     * Fast boolean flag indicating whether any pending constructor generic instantiations are active.
+     */
+    public static bool $hasPendingInstantiations = false;
 
     /**
      * Fast O(1) hashmap for recognized key template names.
@@ -373,13 +371,13 @@ final class TemplateManager
         'scalar' => true,
     ];
 
-    private static ?IdentifierTypeNode $intNode = null;
+    public static ?IdentifierTypeNode $intNode = null;
 
-    private static ?IdentifierTypeNode $stringNode = null;
+    public static ?IdentifierTypeNode $stringNode = null;
 
-    private static ?IdentifierTypeNode $floatNode = null;
+    public static ?IdentifierTypeNode $floatNode = null;
 
-    private static ?IdentifierTypeNode $boolNode = null;
+    public static ?IdentifierTypeNode $boolNode = null;
 
     private static ?IdentifierTypeNode $listNode = null;
 
@@ -482,10 +480,165 @@ final class TemplateManager
     private static array $propagationPlanCache = [];
 
     /**
+     * Compiled binding plan cache per non-relative GenericTypeNode.
+     *
+     * @var WeakMap<GenericTypeNode, array{isRelative: true}|array{
+     *     isRelative: false,
+     *     skip: bool,
+     *     className: string,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classVariances: array<string, string>,
+     *     templateList: list<TemplateTagValueNode>,
+     *     normalizedTypeArgs: array<TypeNode>,
+     *     hasPropagation: bool,
+     *     allStaticValid: bool,
+     *     items: list<array{
+     *         index: int,
+     *         name: string,
+     *         expected: TypeNode,
+     *         identName: ?string,
+     *         usageVariance: string,
+     *         isWildcardOrMixed: bool,
+     *         symbolValid: bool,
+     *         boundSatisfied: bool,
+     *         unionNames: ?array<string, true>
+     *     }>
+     * }>|null
+     */
+    private static ?WeakMap $compiledNodeBindPlanCache = null;
+
+    /**
+     * Compiled binding plan cache per relative GenericTypeNode (self/static/$this) keyed by runtime class name.
+     *
+     * @var WeakMap<GenericTypeNode, array<string, array{
+     *     isRelative: false,
+     *     skip: bool,
+     *     className: string,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classVariances: array<string, string>,
+     *     templateList: list<TemplateTagValueNode>,
+     *     normalizedTypeArgs: array<TypeNode>,
+     *     hasPropagation: bool,
+     *     allStaticValid: bool,
+     *     items: list<array{
+     *         index: int,
+     *         name: string,
+     *         expected: TypeNode,
+     *         identName: ?string,
+     *         usageVariance: string,
+     *         isWildcardOrMixed: bool,
+     *         symbolValid: bool,
+     *         boundSatisfied: bool,
+     *         unionNames: ?array<string, true>
+     *     }>
+     * }>>|null
+     */
+    private static ?WeakMap $compiledRelativeNodeBindPlanCache = null;
+
+    /**
+     * @var WeakMap<UnionTypeNode, array{names: array<string, true>, hasObject: bool}>|null
+     */
+    private static ?WeakMap $compiledUnionMembersCache = null;
+
+    /**
+     * Fast O(1) cache of class names known to have zero inherited generic bindings or raw mappings.
+     *
+     * @var array<string, true>
+     */
+    private static array $noInheritedBindingsClasses = [];
+
+    /**
+     * @var WeakMap<object, array{bindings: array<string, TypeNode>, propIds: list<int>}>|null
+     */
+    private static ?WeakMap $propagatedBindingsCache = null;
+
+    /**
+     * @var array<class-string<object>, \ReflectionClass<object>>
+     */
+    private static array $refClassCache = [];
+
+    /**
+     * Secondary string-keyed binding plan cache for freshly substituted GenericTypeNode instances:
+     * [$className][$nodeString] => compiled plan.
+     *
+     * @var array<string, array<string, array{
+     *     isRelative: false,
+     *     skip: bool,
+     *     className: string,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classVariances: array<string, string>,
+     *     templateList: list<TemplateTagValueNode>,
+     *     normalizedTypeArgs: array<TypeNode>,
+     *     hasPropagation: bool,
+     *     allStaticValid: bool,
+     *     items: list<array{
+     *         index: int,
+     *         name: string,
+     *         expected: TypeNode,
+     *         identName: ?string,
+     *         usageVariance: string,
+     *         isWildcardOrMixed: bool,
+     *         symbolValid: bool,
+     *         boundSatisfied: bool,
+     *         unionNames: ?array<string, true>
+     *     }>
+     * }>>
+     */
+    private static array $compiledBindPlanBySigCache = [];
+
+    /**
+     * Memoized substituted GenericTypeNode for property binding propagation:
+     * [$className][$propIndex][$bindingsSig] => ?GenericTypeNode.
+     *
+     * @var array<string, array<int, array<string, ?GenericTypeNode>>>
+     */
+    private static array $propagatedPropTypeCache = [];
+
+    /**
+     * Cache of properties whose @var type references a given template name:
+     * [$className][$templateName] => list<array{prop: \ReflectionProperty, type: TypeNode}>
+     *
+     * @var array<string, array<string, list<array{prop: \ReflectionProperty, type: TypeNode}>>>
+     */
+    private static array $templatePropertyPlanCache = [];
+
+    /**
+     * WeakMap caching verified (templateName, expectedTypeString) pairs for shallow 'list'/'array' instances.
+     *
+     * @var WeakMap<object, array<string, array<string, bool>>>|null
+     */
+    private static ?WeakMap $verifiedShallowRefinements = null;
+
+    /**
+     * Direct O(1) active top call frame per function (eliminates nested stack access on non-recursive calls).
+     *
+     * @var array<string, array<string, TypeNode>>
+     */
+    public static array $topCallFrame = [];
+
+    /**
+     * Sequential execution order of active function call frames on the stack.
+     *
+     * @var list<string>
+     */
+    public static array $activeCallOrder = [];
+
+    /**
+     * Direct O(1) active $this object per function.
+     *
+     * @var array<string, ?object>
+     */
+    public static array $topCallThis = [];
+
+    /**
      * Resets all static generic template bindings, call stack frames, and method template caches.
      */
     public static function reset(): void
     {
+        self::$topCallFrame = [];
+        self::$topCallThis = [];
+        self::$propagatedBindingsCache = null;
+        self::$refClassCache = [];
         self::$instanceTemplateBindings = null;
         self::$callStackBindings = [];
         self::$activeCallOrder = [];
@@ -498,6 +651,7 @@ final class TemplateManager
         self::$subclassCache = [];
         self::$realTypeSymbolCache = [];
         self::$pendingCloneSource = null;
+        self::$hasPendingInstantiations = false;
         self::$methodTemplatesCache = [];
         self::$isMethodTemplateCache = [];
         self::$isFBoundCache = [];
@@ -509,6 +663,12 @@ final class TemplateManager
         self::$callStackThis = [];
         self::$propagationStack = [];
         self::$propagationPlanCache = [];
+        self::$compiledNodeBindPlanCache = null;
+        self::$compiledRelativeNodeBindPlanCache = null;
+        self::$compiledUnionMembersCache = null;
+        self::$noInheritedBindingsClasses = [];
+        self::$templatePropertyPlanCache = [];
+        self::$verifiedShallowRefinements = null;
     }
 
     /**
@@ -525,6 +685,21 @@ final class TemplateManager
         } else {
             self::$instanceTemplateBindings[$instance] = $bindings;
         }
+    }
+
+    /**
+     * Pushes a pre-bound single-template call frame onto the stack in O(1).
+     */
+    public static function pushSingleTemplateFrame(string $function, string $templateName, TypeNode $type, ?object $thisObj = null): void
+    {
+        if (isset(self::$topCallFrame[$function])) {
+            self::$callStackBindings[$function][] = self::$topCallFrame[$function];
+            self::$callStackThis[$function][] = self::$topCallThis[$function] ?? null;
+        }
+
+        self::$topCallFrame[$function] = [$templateName => $type];
+        self::$topCallThis[$function] = $thisObj;
+        self::$activeCallOrder[] = $function;
     }
 
     /**
@@ -554,6 +729,7 @@ final class TemplateManager
             'file' => $file,
             'targetClass' => $targetClass,
         ];
+        self::$hasPendingInstantiations = true;
     }
 
     /**
@@ -562,6 +738,7 @@ final class TemplateManager
     public static function popPendingInstantiation(): void
     {
         array_pop(self::$pendingInstantiations);
+        self::$hasPendingInstantiations = (self::$pendingInstantiations !== []);
     }
 
     /**
@@ -569,7 +746,7 @@ final class TemplateManager
      */
     public static function applyPendingInstantiation(object $instance): void
     {
-        if (! Config::isInlineGenericsEnabled() || self::$pendingInstantiations === []) {
+        if (! self::$hasPendingInstantiations || ! Config::isInlineGenericsEnabled()) {
             return;
         }
 
@@ -621,7 +798,7 @@ final class TemplateManager
             return self::$classInheritedBindingsCache[$className];
         }
 
-        if (! class_exists($className, false) && ! class_exists($className) && ! interface_exists($className) && ! trait_exists($className)) {
+        if (! class_exists($className, false) && ! class_exists($className) && ! interface_exists($className, false) && ! trait_exists($className)) {
             return self::$classInheritedBindingsCache[$className] = [];
         }
 
@@ -709,8 +886,13 @@ final class TemplateManager
      */
     public static function pushCallFrame(string $function, ?object $thisObj = null): void
     {
-        self::$callStackBindings[$function][] = [];
-        self::$callStackThis[$function][] = $thisObj;
+        if (isset(self::$topCallFrame[$function])) {
+            self::$callStackBindings[$function][] = self::$topCallFrame[$function];
+            self::$callStackThis[$function][] = self::$topCallThis[$function] ?? null;
+        }
+
+        self::$topCallFrame[$function] = [];
+        self::$topCallThis[$function] = $thisObj;
         self::$activeCallOrder[] = $function;
     }
 
@@ -720,17 +902,22 @@ final class TemplateManager
     public static function popCallFrame(string $function): void
     {
         if (isset(self::$callStackBindings[$function])) {
-            array_pop(self::$callStackBindings[$function]);
-            if (isset(self::$callStackThis[$function])) {
-                array_pop(self::$callStackThis[$function]);
-            }
+            $prev = array_pop(self::$callStackBindings[$function]);
+            $prevThis = array_pop(self::$callStackThis[$function]);
             if (self::$callStackBindings[$function] === []) {
-                unset(self::$callStackBindings[$function], self::$callStackThis[$function], self::$generatorInferredCallFrames[$function]);
+                unset(self::$callStackBindings[$function], self::$callStackThis[$function]);
             }
-
-            self::popActiveCallOrder($function);
+            self::$topCallFrame[$function] = $prev ?? [];
+            self::$topCallThis[$function] = $prevThis;
         } else {
-            unset(self::$generatorInferredCallFrames[$function]);
+            unset(self::$topCallFrame[$function], self::$topCallThis[$function], self::$generatorInferredCallFrames[$function]);
+        }
+
+        $count = \count(self::$activeCallOrder);
+        if ($count > 0 && self::$activeCallOrder[$count - 1] === $function) {
+            array_pop(self::$activeCallOrder);
+        } elseif ($count > 1) {
+            self::popActiveCallOrder($function);
         }
     }
 
@@ -760,20 +947,6 @@ final class TemplateManager
                 break;
             }
         }
-    }
-
-    /**
-     * @return object|null
-     */
-    private static function getTopCallThis(string $function): ?object
-    {
-        if (! isset(self::$callStackThis[$function]) || self::$callStackThis[$function] === []) {
-            return null;
-        }
-
-        $top = end(self::$callStackThis[$function]);
-
-        return $top !== false ? $top : null;
     }
 
     /**
@@ -831,17 +1004,23 @@ final class TemplateManager
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
 
         if ($thisObj !== null) {
-            self::ensureInstanceInherited($thisObj);
+            $className = $thisObj::class;
+            [$classHierarchyTemplates] = self::hierarchyTemplatesForClass($className);
 
-            $isCtor = str_ends_with(strtolower($function), '::__construct');
-            $bindings = $isCtor
-                ? (self::$instanceTemplateBindings[$thisObj] ?? [])
-                : self::getBoundTemplatesForInstance($thisObj);
+            if ($classHierarchyTemplates !== []) {
+                $isCtor = \strlen($function) > 13 && substr_compare($function, '::__construct', -13, 13, true) === 0;
+                if ($isCtor) {
+                    self::ensureInstanceInherited($thisObj);
+                    $bindings = self::$instanceTemplateBindings[$thisObj] ?? [];
+                } else {
+                    $bindings = self::getInstanceBindingsFast($thisObj);
+                }
 
-            $methodTemplates = self::getMethodTemplates($function);
-            if ($methodTemplates !== []) {
-                foreach ($methodTemplates as $methodTName => $_) {
-                    unset($bindings[$methodTName]);
+                $methodTemplates = self::getMethodTemplates($function);
+                if ($methodTemplates !== []) {
+                    foreach ($methodTemplates as $methodTName => $_) {
+                        unset($bindings[$methodTName]);
+                    }
                 }
             }
         } else {
@@ -862,7 +1041,7 @@ final class TemplateManager
             }
         }
 
-        $topFrame = self::getTopCallFrame($function);
+        $topFrame = self::$topCallFrame[$function] ?? null;
         if ($topFrame !== null) {
             $bindings = $bindings === []
                 ? $topFrame
@@ -895,6 +1074,55 @@ final class TemplateManager
         foreach (self::classTemplateDefaults($instance::class) as $tName => $default) {
             if (! isset($bindings[$tName])) {
                 $bindings[$tName] = $default;
+            }
+        }
+
+        return $bindings;
+    }
+
+    /**
+     * Fast O(1) lookup for a single bound template on an instance without merging defaults or copying arrays.
+     */
+    public static function getInstanceBoundTypeFast(object $instance, string $templateName): ?TypeNode
+    {
+        if (self::$instanceTemplateBindings === null) {
+            return null;
+        }
+
+        return self::$instanceTemplateBindings[$instance][$templateName] ?? null;
+    }
+
+    /**
+     * Fast O(1) retrieval of an instance's bound templates, resolving inherited bindings and defaults only when needed.
+     *
+     * @return array<string, TypeNode>
+     */
+    public static function getInstanceBindingsFast(object $instance): array
+    {
+        $bindings = self::$instanceTemplateBindings !== null
+            ? (self::$instanceTemplateBindings[$instance] ?? null)
+            : null;
+
+        $className = $instance::class;
+
+        if ($bindings === null) {
+            if (self::$pendingCloneSource !== null && is_a($instance, self::$pendingCloneSource::class)) {
+                self::copyInstanceBindings(self::$pendingCloneSource, $instance);
+                $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+            } elseif (! isset(self::$noInheritedBindingsClasses[$className])) {
+                self::resolveInheritedTemplates($instance, $className);
+                $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+            } else {
+                $bindings = [];
+            }
+        }
+
+        $defaults = self::$classTemplateDefaultsCache[$className] ?? self::classTemplateDefaults($className);
+        if ($defaults !== []) {
+            foreach ($defaults as $tName => $default) {
+                if (! isset($bindings[$tName])) {
+                    $bindings[$tName] = $default;
+                }
             }
         }
 
@@ -972,8 +1200,7 @@ final class TemplateManager
      */
     public static function isBound(string $function, object|string|null $thisOrClass, string $templateName): bool
     {
-        $topFrame = self::getTopCallFrame($function);
-        if ($topFrame !== null && isset($topFrame[$templateName])) {
+        if (isset(self::$topCallFrame[$function][$templateName])) {
             return true;
         }
 
@@ -1016,9 +1243,8 @@ final class TemplateManager
      */
     public static function getBoundType(string $function, object|string|null $thisOrClass, string $templateName): ?TypeNode
     {
-        $topFrame = self::getTopCallFrame($function);
-        if ($topFrame !== null && isset($topFrame[$templateName])) {
-            return $topFrame[$templateName];
+        if (isset(self::$topCallFrame[$function][$templateName])) {
+            return self::$topCallFrame[$function][$templateName];
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
@@ -1074,12 +1300,13 @@ final class TemplateManager
 
             self::$instanceTemplateBindings[$thisObj] = $bindings;
         } else {
-            if (! self::hasCallFrame($function)) {
-                self::$callStackBindings[$function][] = [];
+            if (! isset(self::$topCallFrame[$function])) {
+                self::$topCallFrame[$function] = [$templateName => $inferredType];
+                self::$topCallThis[$function] = null;
                 self::$activeCallOrder[] = $function;
+            } else {
+                self::$topCallFrame[$function][$templateName] = $inferredType;
             }
-            $lastIndex = \count(self::$callStackBindings[$function]) - 1;
-            self::$callStackBindings[$function][$lastIndex][$templateName] = $inferredType;
         }
     }
 
@@ -1089,32 +1316,140 @@ final class TemplateManager
      */
     public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false, bool $refineOnly = false): ?ErrorMessage
     {
-        $className = (string) $typeNode->type;
-        if (isset(self::CONTEXT_SELF_REFERENCES[strtolower($className)])) {
-            $className = $instance::class;
+        self::$compiledNodeBindPlanCache ??= new WeakMap();
+        $plan = self::$compiledNodeBindPlanCache[$typeNode] ?? null;
+
+        if ($plan === null) {
+            $rawClass = (string) $typeNode->type;
+            if (isset(self::CONTEXT_SELF_REFERENCES[strtolower($rawClass)])) {
+                $plan = ['isRelative' => true];
+            } else {
+                $plan = self::compileGenericBindingPlan($typeNode, $rawClass);
+            }
+            self::$compiledNodeBindPlanCache[$typeNode] = $plan;
         }
 
-        if (! is_a($instance, $className) || ! ClassNameValidator::isValid($className) || ! self::isRealTypeSymbol($className)) {
+        if ($plan['isRelative']) {
+            $actualClass = $instance::class;
+            self::$compiledRelativeNodeBindPlanCache ??= new WeakMap();
+            $relativePlans = self::$compiledRelativeNodeBindPlanCache[$typeNode] ?? [];
+
+            if (! isset($relativePlans[$actualClass])) {
+                $relativePlans[$actualClass] = self::compileGenericBindingPlan($typeNode, $actualClass);
+                self::$compiledRelativeNodeBindPlanCache[$typeNode] = $relativePlans;
+            }
+
+            $plan = $relativePlans[$actualClass];
+        }
+
+        if ($plan['skip']) {
             return null;
         }
 
-        self::resolveInheritedTemplates($instance, $className);
+        /** @var class-string<object> $className */
+        $className = $plan['className'];
+
+        if (! ($instance instanceof $className)) {
+            return null;
+        }
+
+        $actualClass = $instance::class;
+        if (! isset(self::$noInheritedBindingsClasses[$actualClass])) {
+            self::resolveInheritedTemplates($instance, $className);
+        }
+
+        $existingBindings = self::$instanceTemplateBindings !== null
+            ? (self::$instanceTemplateBindings[$instance] ?? null)
+            : null;
+
+        if (
+            $existingBindings !== null
+            && $plan['allStaticValid']
+            && ! $forceBind
+            && ! $refineOnly
+        ) {
+            $allFastMatched = true;
+
+            foreach ($plan['items'] as $item) {
+                $tName = $item['name'];
+                if (! isset($existingBindings[$tName])) {
+                    $allFastMatched = false;
+
+                    break;
+                }
+
+                if ($item['isWildcardOrMixed']) {
+                    continue;
+                }
+
+                $existingTypeNode = $existingBindings[$tName];
+                $expectedTypeNode = $item['expected'];
+
+                if ($existingTypeNode === $expectedTypeNode) {
+                    continue;
+                }
+
+                if (
+                    $item['identName'] !== null
+                    && $existingTypeNode instanceof IdentifierTypeNode
+                    && $existingTypeNode->name === $item['identName']
+                ) {
+                    continue;
+                }
+
+                if (
+                    $item['unionNames'] !== null
+                    && $existingTypeNode instanceof IdentifierTypeNode
+                    && isset($item['unionNames'][$existingTypeNode->name])
+                ) {
+                    continue;
+                }
+
+                if (
+                    $existingTypeNode::class === $expectedTypeNode::class
+                    && (string) $existingTypeNode === (string) $expectedTypeNode
+                ) {
+                    continue;
+                }
+
+                $allFastMatched = false;
+
+                break;
+            }
+
+            if ($allFastMatched) {
+                if (self::$generatorInferredCallFrames !== [] && self::$activeCallOrder !== []) {
+                    $activeFunc = end(self::$activeCallOrder);
+                    if ($activeFunc !== false && isset(self::$generatorInferredCallFrames[$activeFunc])) {
+                        self::$generatorInferredInstances ??= new WeakMap();
+                        if (! isset(self::$generatorInferredInstances[$instance])) {
+                            self::$generatorInferredInstances[$instance] = true;
+                        }
+                    }
+                }
+
+                if ($plan['hasPropagation']) {
+                    self::propagateBindingsIfNeeded($instance, $existingBindings);
+                }
+
+                return null;
+            }
+        }
 
         try {
-            [$templates, $classVariances] = self::hierarchyTemplatesForClass($className);
+            $templates = $plan['templates'];
+            $classVariances = $plan['classVariances'];
+            $templateList = $plan['templateList'];
+            $normalizedTypeArgs = $plan['normalizedTypeArgs'];
 
             self::$instanceTemplateBindings ??= new WeakMap();
-            $templateList = array_values($templates);
-            $normalizedTypeArgs = self::normalizeGenericArguments($typeNode->genericTypes, $templateList);
-
             $candidateBindings = self::$instanceTemplateBindings[$instance] ?? [];
-            foreach ($templateList as $index => $templateTag) {
-                if (isset($normalizedTypeArgs[$index])) {
-                    $arg = $normalizedTypeArgs[$index];
-                    $isWildcardOrMixed = ($arg instanceof IdentifierTypeNode && ($arg->name === '*' || strtolower($arg->name) === 'mixed'));
-                    if (! $isWildcardOrMixed) {
-                        $candidateBindings[$templateTag->name] = $arg;
-                    }
+
+            $itemsByIndex = [];
+            foreach ($plan['items'] as $item) {
+                $itemsByIndex[$item['index']] = $item;
+                if (! $item['isWildcardOrMixed']) {
+                    $candidateBindings[$item['name']] = $item['expected'];
                 }
             }
 
@@ -1122,6 +1457,8 @@ final class TemplateManager
                 if (! isset($normalizedTypeArgs[$index])) {
                     continue;
                 }
+
+                $planItem = $itemsByIndex[$index] ?? null;
 
                 $err = self::bindSingleTemplateArgument(
                     $instance,
@@ -1133,7 +1470,9 @@ final class TemplateManager
                     $context,
                     $forceBind,
                     $candidateBindings,
-                    $refineOnly
+                    $refineOnly,
+                    $planItem !== null && $planItem['symbolValid'],
+                    $planItem !== null && $planItem['boundSatisfied']
                 );
                 if ($err !== null) {
                     return $err;
@@ -1143,9 +1482,164 @@ final class TemplateManager
             // Silently ignore reflection or parsing errors
         }
 
-        self::propagateBindingsToInstanceProperties($instance);
+        if ($plan['hasPropagation']) {
+            $currentBindings = self::$instanceTemplateBindings[$instance] ?? [];
+            self::propagateBindingsIfNeeded($instance, $currentBindings);
+        }
 
         return null;
+    }
+
+    /**
+     * Pre-compiles static template metadata, argument normalization, symbol validity,
+     * and non-dependent upper bounds for a (GenericTypeNode, className) pair.
+     *
+     * @return array{
+     *     isRelative: false,
+     *     skip: bool,
+     *     className: string,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     classVariances: array<string, string>,
+     *     templateList: list<TemplateTagValueNode>,
+     *     normalizedTypeArgs: array<TypeNode>,
+     *     hasPropagation: bool,
+     *     allStaticValid: bool,
+     *     items: list<array{
+     *         index: int,
+     *         name: string,
+     *         expected: TypeNode,
+     *         identName: ?string,
+     *         usageVariance: string,
+     *         isWildcardOrMixed: bool,
+     *         symbolValid: bool,
+     *         boundSatisfied: bool,
+     *         unionNames: ?array<string, true>
+     *     }>
+     * }
+     */
+    private static function compileGenericBindingPlan(GenericTypeNode $typeNode, string $className): array
+    {
+        $sigKey = (string) $typeNode;
+        if (isset(self::$compiledBindPlanBySigCache[$className][$sigKey])) {
+            return self::$compiledBindPlanBySigCache[$className][$sigKey];
+        }
+
+        if (! ClassNameValidator::isValid($className) || ! self::isRealTypeSymbol($className)) {
+            return self::$compiledBindPlanBySigCache[$className][$sigKey] = [
+                'isRelative' => false,
+                'skip' => true,
+                'className' => $className,
+                'templates' => [],
+                'classVariances' => [],
+                'templateList' => [],
+                'normalizedTypeArgs' => [],
+                'hasPropagation' => false,
+                'allStaticValid' => false,
+                'items' => [],
+            ];
+        }
+
+        try {
+            [$templates, $classVariances] = self::hierarchyTemplatesForClass($className);
+            $templateList = array_values($templates);
+            $normalizedTypeArgs = self::normalizeGenericArguments($typeNode->genericTypes, $templateList);
+            $hasPropagation = self::propagationPlan($className) !== [];
+            $items = [];
+            $allStaticValid = true;
+
+            foreach ($templateList as $index => $templateTag) {
+                if (! isset($normalizedTypeArgs[$index])) {
+                    continue;
+                }
+
+                $expectedTypeNode = $normalizedTypeArgs[$index];
+                $identName = $expectedTypeNode instanceof IdentifierTypeNode ? $expectedTypeNode->name : null;
+                $isWildcardOrMixed = ($identName !== null && ($identName === '*' || strtolower($identName) === 'mixed'));
+
+                $symbolValid = true;
+                if ($identName !== null) {
+                    if (str_contains($identName, '::')) {
+                        $targetClass = explode('::', $identName, 2)[0];
+                        $symbolValid = self::isRealTypeSymbol($targetClass);
+                    } else {
+                        $symbolValid = SpecialTypeResolver::isBuiltInTypeKeyword($identName)
+                            || self::isRealTypeSymbol($identName);
+                    }
+                } elseif ($expectedTypeNode instanceof ConstTypeNode && $expectedTypeNode->constExpr instanceof ConstFetchNode && $expectedTypeNode->constExpr->className !== '') {
+                    $symbolValid = self::isRealTypeSymbol($expectedTypeNode->constExpr->className);
+                }
+
+                $boundSatisfied = true;
+                if ($symbolValid && $templateTag->bound !== null && ! $isWildcardOrMixed) {
+                    if (self::isFBounded($templateTag, $className) || DocblockParser::typeReferencesTemplate($templateTag->bound, $templates)) {
+                        $boundSatisfied = false;
+                    } else {
+                        $boundSatisfied = self::checkVariance($expectedTypeNode, $templateTag->bound, GenericTypeNode::VARIANCE_COVARIANT);
+                    }
+                }
+
+                if (! $symbolValid || ! $boundSatisfied) {
+                    $allStaticValid = false;
+                }
+
+                $declaredVar = $classVariances[$templateTag->name] ?? GenericTypeNode::VARIANCE_INVARIANT;
+                $usageVar = $typeNode->variances[$index] ?? GenericTypeNode::VARIANCE_INVARIANT;
+                $unionNames = null;
+                if (
+                    $expectedTypeNode instanceof UnionTypeNode
+                    && $declaredVar !== GenericTypeNode::VARIANCE_CONTRAVARIANT
+                    && $usageVar !== GenericTypeNode::VARIANCE_CONTRAVARIANT
+                ) {
+                    $uNames = [];
+                    foreach ($expectedTypeNode->types as $uMember) {
+                        if ($uMember instanceof IdentifierTypeNode) {
+                            $uNames[$uMember->name] = true;
+                        }
+                    }
+                    if ($uNames !== []) {
+                        $unionNames = $uNames;
+                    }
+                }
+
+                $items[] = [
+                    'index' => $index,
+                    'name' => $templateTag->name,
+                    'expected' => $expectedTypeNode,
+                    'identName' => $identName,
+                    'usageVariance' => $usageVar,
+                    'isWildcardOrMixed' => $isWildcardOrMixed,
+                    'symbolValid' => $symbolValid,
+                    'boundSatisfied' => $boundSatisfied,
+                    'unionNames' => $unionNames,
+                ];
+            }
+
+            return self::$compiledBindPlanBySigCache[$className][$sigKey] = [
+                'isRelative' => false,
+                'skip' => false,
+                'className' => $className,
+                'templates' => $templates,
+                'classVariances' => $classVariances,
+                'templateList' => $templateList,
+                'normalizedTypeArgs' => $normalizedTypeArgs,
+                'hasPropagation' => $hasPropagation,
+                'allStaticValid' => $allStaticValid,
+                'items' => $items,
+            ];
+        } catch (\Throwable) {
+            return [
+                'isRelative' => false,
+                'skip' => false,
+                'className' => $className,
+                'templates' => [],
+                'classVariances' => [],
+                'templateList' => [],
+                'normalizedTypeArgs' => [],
+                'hasPropagation' => false,
+                'allStaticValid' => false,
+                'items' => [],
+            ];
+        }
     }
 
     /**
@@ -1177,7 +1671,7 @@ final class TemplateManager
      */
     public static function applyClassTemplateDefaults(object $instance, array $classTemplates): void
     {
-        if ($classTemplates === []) {
+        if ($classTemplates === [] || self::classTemplateDefaults($instance::class) === []) {
             return;
         }
 
@@ -1211,42 +1705,101 @@ final class TemplateManager
         }
 
         $plan = [];
+        $classTemplates = DocblockParser::parseClassTemplates($className);
 
-        try {
-            /** @var class-string<object> $className */
-            $ref = new \ReflectionClass($className);
-            foreach ($ref->getProperties() as $prop) {
-                if ($prop->isStatic()) {
-                    continue;
-                }
+        if ($classTemplates !== []) {
+            try {
+                /** @var class-string<object> $className */
+                $ref = new \ReflectionClass($className);
+                foreach ($ref->getProperties() as $prop) {
+                    if ($prop->isStatic()) {
+                        continue;
+                    }
 
-                $propType = DocblockParser::parseProperty($className, $prop->getName());
-                if ($propType instanceof GenericTypeNode) {
-                    $plan[] = ['prop' => $prop, 'type' => $propType];
+                    $propType = DocblockParser::parseProperty($className, $prop->getName());
+                    if ($propType instanceof GenericTypeNode && DocblockParser::typeReferencesTemplate($propType, $classTemplates)) {
+                        $plan[] = ['prop' => $prop, 'type' => $propType];
+                    }
                 }
+            } catch (\Throwable) {
             }
-        } catch (\Throwable) {
         }
 
         return self::$propagationPlanCache[$className] = $plan;
     }
 
     /**
-     * Propagates resolved class template bindings on an instance to any of its object properties
-     * whose declared types reference those class templates (e.g. $this->store with @var KeyValueStore<K, V>).
+     * @param array<string, TypeNode> $instanceBindings
      */
-    private static function propagateBindingsToInstanceProperties(object $instance): void
+    private static function propagateBindingsIfNeeded(object $instance, array $instanceBindings): void
     {
-        if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$instance])) {
-            return;
-        }
-
-        $instanceBindings = self::$instanceTemplateBindings[$instance];
         if ($instanceBindings === []) {
             return;
         }
 
         $plan = self::propagationPlan($instance::class);
+        if ($plan === []) {
+            return;
+        }
+
+        if (\PHP_VERSION_ID >= 80400) {
+            $className = $instance::class;
+            $refClass = self::$refClassCache[$className] ??= new \ReflectionClass($className);
+            if ($refClass->isUninitializedLazyObject($instance)) {
+                return;
+            }
+        }
+
+        self::$propagatedBindingsCache ??= new WeakMap();
+        $cached = self::$propagatedBindingsCache[$instance] ?? null;
+
+        if ($cached !== null && $cached['bindings'] === $instanceBindings) {
+            $allSameProps = true;
+            foreach ($plan as $idx => $entry) {
+                $prop = $entry['prop'];
+                if ((\PHP_VERSION_ID >= 80400 && $prop->isLazy($instance)) || ! $prop->isInitialized($instance)) {
+                    $propId = -1;
+                } else {
+                    $val = $prop->getValue($instance);
+                    $propId = \is_object($val) ? spl_object_id($val) : 0;
+                }
+
+                if (($cached['propIds'][$idx] ?? null) !== $propId) {
+                    $allSameProps = false;
+
+                    break;
+                }
+            }
+
+            if ($allSameProps) {
+                return;
+            }
+        }
+
+        self::propagateBindingsToInstanceProperties($instance, $instanceBindings, $plan);
+    }
+
+    /**
+     * @param array<string, TypeNode>|null $instanceBindings
+     * @param list<array{prop: \ReflectionProperty, type: GenericTypeNode}>|null $plan
+     */
+    private static function propagateBindingsToInstanceProperties(
+        object $instance,
+        ?array $instanceBindings = null,
+        ?array $plan = null
+    ): void {
+        if ($instanceBindings === null) {
+            if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$instance])) {
+                return;
+            }
+            $instanceBindings = self::$instanceTemplateBindings[$instance];
+        }
+
+        if ($instanceBindings === []) {
+            return;
+        }
+
+        $plan ??= self::propagationPlan($instance::class);
         if ($plan === []) {
             return;
         }
@@ -1257,36 +1810,74 @@ final class TemplateManager
         }
         self::$propagationStack[$oid] = true;
 
+        $propIds = [];
+
         try {
-            if (\PHP_VERSION_ID >= 80400 && (new \ReflectionObject($instance))->isUninitializedLazyObject($instance)) {
-                return;
+            $className = $instance::class;
+
+            if (\PHP_VERSION_ID >= 80400) {
+                $refClass = self::$refClassCache[$className] ??= new \ReflectionClass($className);
+                if ($refClass->isUninitializedLazyObject($instance)) {
+                    return;
+                }
             }
 
-            foreach ($plan as $entry) {
+            $bindingsSig = null;
+
+            foreach ($plan as $idx => $entry) {
                 $prop = $entry['prop'];
 
                 if (\PHP_VERSION_ID >= 80400 && $prop->isLazy($instance)) {
+                    $propIds[] = -1;
+
                     continue;
                 }
 
                 if (! $prop->isInitialized($instance)) {
+                    $propIds[] = -1;
+
                     continue;
                 }
 
                 $propVal = $prop->getValue($instance);
                 if (! \is_object($propVal)) {
+                    $propIds[] = 0;
+
                     continue;
                 }
 
-                if (! DocblockParser::typeReferencesTemplate($entry['type'], $instanceBindings)) {
-                    continue;
+                $propIds[] = spl_object_id($propVal);
+
+                if ($bindingsSig === null) {
+                    $bindingsSig = '';
+                    foreach ($instanceBindings as $k => $v) {
+                        $bindingsSig .= $k . '=' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
+                    }
                 }
 
-                $resolvedPropType = TemplateSubstitutor::substitute($entry['type'], $instanceBindings);
-                if ($resolvedPropType instanceof GenericTypeNode) {
+                if (isset(self::$propagatedPropTypeCache[$className][$idx]) && \array_key_exists($bindingsSig, self::$propagatedPropTypeCache[$className][$idx])) {
+                    $resolvedPropType = self::$propagatedPropTypeCache[$className][$idx][$bindingsSig];
+                } else {
+                    $resolvedPropType = null;
+                    if (DocblockParser::typeReferencesTemplate($entry['type'], $instanceBindings)) {
+                        $sub = TemplateSubstitutor::substitute($entry['type'], $instanceBindings);
+                        if ($sub instanceof GenericTypeNode) {
+                            $resolvedPropType = $sub;
+                        }
+                    }
+                    self::$propagatedPropTypeCache[$className][$idx][$bindingsSig] = $resolvedPropType;
+                }
+
+                if ($resolvedPropType !== null) {
                     self::bindInstanceFromNode($propVal, $resolvedPropType, forceBind: true, refineOnly: true);
                 }
             }
+
+            self::$propagatedBindingsCache ??= new WeakMap();
+            self::$propagatedBindingsCache[$instance] = [
+                'bindings' => $instanceBindings,
+                'propIds' => $propIds,
+            ];
         } catch (\Throwable) {
         } finally {
             unset(self::$propagationStack[$oid]);
@@ -1432,7 +2023,7 @@ final class TemplateManager
             return $bindings;
         }
 
-        $topFrame = self::getTopCallFrame($activeFunction);
+        $topFrame = self::$topCallFrame[$activeFunction] ?? null;
         if ($topFrame === null || $topFrame === []) {
             return $bindings;
         }
@@ -1456,7 +2047,7 @@ final class TemplateManager
 
         $returnTemplateNames = array_keys(DocblockParser::parseClassTemplates($returnBaseClass));
         $targetTemplateNames = array_keys($targetTemplates);
-        $activeThis = self::getTopCallThis($activeFunction);
+        $activeThis = self::$topCallThis[$activeFunction] ?? null;
         $thisBindings = $activeThis !== null ? self::getBoundTemplatesForInstance($activeThis) : [];
         $combinedBindings = [...$thisBindings, ...$bindings, ...$topFrame];
         $changed = false;
@@ -1522,31 +2113,35 @@ final class TemplateManager
         string $context,
         bool $forceBind,
         array $candidateBindings = [],
-        bool $refineOnly = false
+        bool $refineOnly = false,
+        bool $symbolPreVerified = false,
+        bool $boundPreVerified = false
     ): ?ErrorMessage {
-        if ($expectedTypeNode instanceof IdentifierTypeNode) {
-            if (str_contains($expectedTypeNode->name, '::')) {
-                $targetClass = explode('::', $expectedTypeNode->name, 2)[0];
-                if (! self::isRealTypeSymbol($targetClass)) {
-                    return null;
-                }
-            } else {
-                $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($expectedTypeNode->name);
-                $isRealType = self::isRealTypeSymbol($expectedTypeNode->name);
+        if (! $symbolPreVerified) {
+            if ($expectedTypeNode instanceof IdentifierTypeNode) {
+                if (str_contains($expectedTypeNode->name, '::')) {
+                    $targetClass = explode('::', $expectedTypeNode->name, 2)[0];
+                    if (! self::isRealTypeSymbol($targetClass)) {
+                        return null;
+                    }
+                } else {
+                    $isBuiltIn = SpecialTypeResolver::isBuiltInTypeKeyword($expectedTypeNode->name);
+                    $isRealType = self::isRealTypeSymbol($expectedTypeNode->name);
 
-                if (! $isBuiltIn && ! $isRealType) {
+                    if (! $isBuiltIn && ! $isRealType) {
+                        return null;
+                    }
+                }
+            } elseif ($expectedTypeNode instanceof ConstTypeNode && $expectedTypeNode->constExpr instanceof ConstFetchNode && $expectedTypeNode->constExpr->className !== '') {
+                if (! self::isRealTypeSymbol($expectedTypeNode->constExpr->className)) {
                     return null;
                 }
-            }
-        } elseif ($expectedTypeNode instanceof ConstTypeNode && $expectedTypeNode->constExpr instanceof ConstFetchNode && $expectedTypeNode->constExpr->className !== '') {
-            if (! self::isRealTypeSymbol($expectedTypeNode->constExpr->className)) {
-                return null;
             }
         }
 
         $isWildcardOrMixed = ($expectedTypeNode instanceof IdentifierTypeNode && ($expectedTypeNode->name === '*' || strtolower($expectedTypeNode->name) === 'mixed'));
 
-        if ($templateTag->bound !== null && ! $isWildcardOrMixed) {
+        if (! $boundPreVerified && $templateTag->bound !== null && ! $isWildcardOrMixed) {
             $boundNode = $templateTag->bound;
             $allBindings = [...$candidateBindings, $templateTag->name => $expectedTypeNode];
             if (self::isFBounded($templateTag, $className) || DocblockParser::typeReferencesTemplate($boundNode, $allBindings)) {
@@ -1640,6 +2235,15 @@ final class TemplateManager
 
                         return null;
                     }
+                }
+
+                if (
+                    $existingTypeNode instanceof IdentifierTypeNode
+                    && ($existingTypeNode->name === 'list' || $existingTypeNode->name === 'array')
+                    && self::isSpecializedCollectionType($expectedTypeNode)
+                    && self::verifyShallowCollectionRefinement($instance, $templateName, $existingTypeNode->name, $expectedTypeNode, $existingBindings)
+                ) {
+                    return null;
                 }
 
                 $contextPrefix = $context !== '' ? (str_ends_with($context, ':') ? $context . ' ' : $context . ' ') : ' ';
@@ -1852,6 +2456,10 @@ final class TemplateManager
         $actualClassName = $instance::class;
         self::$instanceTemplateBindings ??= new WeakMap();
 
+        if (isset(self::$noInheritedBindingsClasses[$actualClassName])) {
+            return;
+        }
+
         if (! isset(self::$classInheritedBindingsCache[$actualClassName])) {
             $rawBindings = [];
             $resolvedClassBindings = self::computeClassInheritedBindings($actualClassName, $rawBindings);
@@ -1864,6 +2472,8 @@ final class TemplateManager
         $existing = self::$instanceTemplateBindings[$instance] ?? [];
 
         if ($cachedBindings === [] && $rawMappings === []) {
+            self::$noInheritedBindingsClasses[$actualClassName] = true;
+
             return;
         }
 
@@ -2119,6 +2729,10 @@ final class TemplateManager
             return true;
         }
 
+        if (self::isArrayKeyEquivalent($existing) && self::isArrayKeyEquivalent($expected)) {
+            return true;
+        }
+
         if ($existing instanceof IdentifierTypeNode && $expected instanceof IdentifierTypeNode) {
             $existingName = $existing->name;
             $expectedName = $expected->name;
@@ -2138,7 +2752,7 @@ final class TemplateManager
                 return true;
             }
 
-            if (self::isScalarSubtype($lowerExisting, $lowerExpected)) {
+            if (isset(self::SCALAR_SUBTYPES[$lowerExpected][$lowerExisting]) || self::isScalarSubtype($lowerExisting, $lowerExpected)) {
                 return true;
             }
 
@@ -2157,36 +2771,46 @@ final class TemplateManager
             return false;
         }
 
-        $existingStr = (string) $existing;
-        $expectedStr = (string) $expected;
-
-        if ($existingStr === $expectedStr || $expectedStr === 'mixed' || $expectedStr === '*') {
-            return true;
+        if ($variance === GenericTypeNode::VARIANCE_INVARIANT && $existing::class === $expected::class) {
+            if ((string) $existing === (string) $expected) {
+                return true;
+            }
         }
 
-        $lowerExpected = strtolower($expectedStr);
-        $lowerExisting = strtolower($existingStr);
-
-        if ($lowerExpected === 'object' && ClassNameValidator::isValid($existingStr) && self::isRealTypeSymbol($existingStr)) {
-            return true;
+        if ($expected instanceof UnionTypeNode && $variance !== GenericTypeNode::VARIANCE_INVARIANT) {
+            return self::checkExpectedUnionVariance($existing, $expected, $variance);
         }
 
-        if (self::isScalarSubtype($lowerExisting, $lowerExpected)) {
-            return true;
+        if ($existing instanceof UnionTypeNode && $variance !== GenericTypeNode::VARIANCE_INVARIANT) {
+            return self::checkExistingUnionVariance($existing, $expected, $variance);
         }
 
-        $baseExpected = strtolower($expected instanceof GenericTypeNode ? (string) $expected->type : ($expected instanceof IdentifierTypeNode ? $expected->name : $expectedStr));
-        $baseExisting = strtolower($existing instanceof GenericTypeNode ? (string) $existing->type : ($existing instanceof IdentifierTypeNode ? $existing->name : $existingStr));
+        if ($expected instanceof IntersectionTypeNode && $variance !== GenericTypeNode::VARIANCE_INVARIANT) {
+            return self::checkExpectedIntersectionVariance($existing, $expected, $variance);
+        }
 
-        if ($variance === GenericTypeNode::VARIANCE_COVARIANT && isset(self::COLLECTION_SUBTYPES[$baseExpected])) {
-            $allowedSubtypes = self::COLLECTION_SUBTYPES[$baseExpected];
+        if ($existing instanceof IntersectionTypeNode && $variance !== GenericTypeNode::VARIANCE_INVARIANT) {
+            return self::checkExistingIntersectionVariance($existing, $expected, $variance);
+        }
 
-            if (isset($allowedSubtypes[$baseExisting])) {
-                if ($expected instanceof IdentifierTypeNode) {
-                    return true;
-                }
+        if ($existing instanceof ArrayTypeNode && $expected instanceof ArrayTypeNode) {
+            return self::checkVariance($existing->type, $expected->type, $variance);
+        }
 
-                if ($expected instanceof GenericTypeNode) {
+        if ($existing instanceof ArrayShapeNode && $expected instanceof ArrayShapeNode) {
+            return self::checkNestedArrayShapeVariance($existing, $expected, $variance);
+        }
+
+        if ($existing instanceof GenericTypeNode && $expected instanceof GenericTypeNode) {
+            if (self::checkNestedGenericVariance($existing, $expected)) {
+                return true;
+            }
+
+            if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
+                $baseExpected = strtolower((string) $expected->type);
+                $baseExisting = strtolower((string) $existing->type);
+
+                if (isset(self::COLLECTION_SUBTYPES[$baseExpected][$baseExisting])) {
                     $allUnconstrained = true;
                     foreach ($expected->genericTypes as $gt) {
                         if (! self::isUnspecializedType($gt)) {
@@ -2202,31 +2826,87 @@ final class TemplateManager
                 }
             }
 
-            if ($existing instanceof ArrayTypeNode || $existing instanceof ArrayShapeNode) {
-                if ($baseExpected === 'array' || $baseExpected === 'iterable') {
-                    if ($expected instanceof IdentifierTypeNode) {
-                        return true;
+            return false;
+        }
+
+        if ($existing instanceof IdentifierTypeNode && $expected instanceof GenericTypeNode) {
+            if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
+                $baseExpected = strtolower((string) $expected->type);
+                $baseExisting = strtolower($existing->name);
+                if (isset(self::COLLECTION_SUBTYPES[$baseExpected][$baseExisting])) {
+                    $allUnconstrained = true;
+                    foreach ($expected->genericTypes as $gt) {
+                        if (! self::isUnspecializedType($gt)) {
+                            $allUnconstrained = false;
+
+                            break;
+                        }
                     }
 
-                    if ($expected instanceof GenericTypeNode) {
-                        $allUnconstrained = true;
-                        foreach ($expected->genericTypes as $gt) {
-                            if (! self::isUnspecializedType($gt)) {
-                                $allUnconstrained = false;
-
-                                break;
-                            }
-                        }
-
-                        if ($allUnconstrained) {
-                            return true;
-                        }
+                    if ($allUnconstrained) {
+                        return true;
                     }
                 }
             }
 
-            if ($existing instanceof GenericTypeNode && isset($allowedSubtypes[$baseExisting])) {
-                if ($expected instanceof IdentifierTypeNode) {
+            return self::checkIdentifierAgainstGenericVariance($existing, $expected, $variance);
+        }
+
+        if ($expected instanceof IdentifierTypeNode) {
+            $lowerExpected = strtolower($expected->name);
+
+            if ($lowerExpected === 'mixed' || $lowerExpected === '*') {
+                return true;
+            }
+
+            if ($existing instanceof ArrayTypeNode || $existing instanceof ArrayShapeNode) {
+                if ($variance === GenericTypeNode::VARIANCE_COVARIANT && ($lowerExpected === 'array' || $lowerExpected === 'iterable')) {
+                    return true;
+                }
+
+                return false;
+            }
+
+            if ($existing instanceof GenericTypeNode) {
+                $baseExisting = strtolower((string) $existing->type);
+
+                if ($variance === GenericTypeNode::VARIANCE_COVARIANT && isset(self::COLLECTION_SUBTYPES[$lowerExpected][$baseExisting])) {
+                    return true;
+                }
+
+                if (($baseExisting === 'int' || $baseExisting === 'integer') && isset(self::INT_SUPERTYPES[$lowerExpected])) {
+                    return true;
+                }
+
+                if ($baseExisting === 'class-string' && isset(self::STRING_SUPERTYPES[$lowerExpected])) {
+                    return true;
+                }
+
+                if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
+                    return self::isSubclass((string) $existing->type, $expected->name);
+                }
+
+                if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
+                    return self::isSubclass($expected->name, (string) $existing->type);
+                }
+
+                return false;
+            }
+        }
+
+        if (($existing instanceof ArrayTypeNode || $existing instanceof ArrayShapeNode) && $expected instanceof GenericTypeNode && $variance === GenericTypeNode::VARIANCE_COVARIANT) {
+            $baseExpected = strtolower((string) $expected->type);
+            if ($baseExpected === 'array' || $baseExpected === 'iterable') {
+                $allUnconstrained = true;
+                foreach ($expected->genericTypes as $gt) {
+                    if (! self::isUnspecializedType($gt)) {
+                        $allUnconstrained = false;
+
+                        break;
+                    }
+                }
+
+                if ($allUnconstrained) {
                     return true;
                 }
             }
@@ -2248,20 +2928,22 @@ final class TemplateManager
             return self::checkExistingIntersectionVariance($existing, $expected, $variance);
         }
 
-        if ($existing instanceof ArrayTypeNode && $expected instanceof ArrayTypeNode) {
-            return self::checkVariance($existing->type, $expected->type, $variance);
+        $existingStr = (string) $existing;
+        $expectedStr = (string) $expected;
+
+        if ($existingStr === $expectedStr || $expectedStr === 'mixed' || $expectedStr === '*') {
+            return true;
         }
 
-        if ($existing instanceof ArrayShapeNode && $expected instanceof ArrayShapeNode) {
-            return self::checkNestedArrayShapeVariance($existing, $expected, $variance);
+        $lowerExpected = strtolower($expectedStr);
+        $lowerExisting = strtolower($existingStr);
+
+        if ($lowerExpected === 'object' && ClassNameValidator::isValid($existingStr) && self::isRealTypeSymbol($existingStr)) {
+            return true;
         }
 
-        if ($existing instanceof GenericTypeNode && $expected instanceof GenericTypeNode) {
-            return self::checkNestedGenericVariance($existing, $expected);
-        }
-
-        if ($existing instanceof IdentifierTypeNode && $expected instanceof GenericTypeNode) {
-            return self::checkIdentifierAgainstGenericVariance($existing, $expected, $variance);
+        if (self::isScalarSubtype($lowerExisting, $lowerExpected)) {
+            return true;
         }
 
         if ($variance === GenericTypeNode::VARIANCE_COVARIANT) {
@@ -2401,6 +3083,37 @@ final class TemplateManager
             return true;
         }
 
+        if ($existing instanceof IdentifierTypeNode) {
+            self::$compiledUnionMembersCache ??= new WeakMap();
+            $compiled = self::$compiledUnionMembersCache[$expected] ?? null;
+            if ($compiled === null) {
+                $names = [];
+                $hasObject = false;
+                foreach ($expected->types as $uType) {
+                    if ($uType instanceof IdentifierTypeNode) {
+                        $lower = strtolower($uType->name);
+                        $names[$uType->name] = true;
+                        $names[$lower] = true;
+                        if ($lower === 'object') {
+                            $hasObject = true;
+                        }
+                    }
+                }
+                self::$compiledUnionMembersCache[$expected] = $compiled = [
+                    'names' => $names,
+                    'hasObject' => $hasObject,
+                ];
+            }
+
+            if (isset($compiled['names'][$existing->name])) {
+                return true;
+            }
+
+            if ($compiled['hasObject'] && ClassNameValidator::isValid($existing->name) && self::isRealTypeSymbol($existing->name)) {
+                return true;
+            }
+        }
+
         if ($existing instanceof UnionTypeNode) {
             foreach ($existing->types as $existingVariant) {
                 if (! self::checkExpectedUnionVariance($existingVariant, $expected, $variance)) {
@@ -2498,7 +3211,27 @@ final class TemplateManager
             if (! isset(self::COLLECTION_SUBTYPES[$lowerExpected][$lowerExisting])) {
                 return false;
             }
-        } elseif (! is_a((string) $existing->type, $expectedClassName, true)) {
+
+            $existingArgs = self::normalizeCollectionTypeArgs($existing->genericTypes);
+            $expectedArgs = self::normalizeCollectionTypeArgs($expected->genericTypes);
+
+            if (\count($existingArgs) === 2 && \count($expectedArgs) === 1) {
+                $expectedArgs = self::expandCollectionTypeArgs($lowerExpected, $expectedArgs);
+            } elseif (\count($existingArgs) === 1 && \count($expectedArgs) === 2) {
+                $existingArgs = self::expandCollectionTypeArgs($lowerExisting, $existingArgs);
+            }
+
+            foreach ($expectedArgs as $idx => $expectedInner) {
+                $existingInner = $existingArgs[$idx] ?? (self::$mixedNode ??= new IdentifierTypeNode('mixed'));
+                if (! self::checkVariance($existingInner, $expectedInner, GenericTypeNode::VARIANCE_COVARIANT)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        if (! is_a((string) $existing->type, $expectedClassName, true)) {
             return false;
         }
 
@@ -2517,16 +3250,191 @@ final class TemplateManager
             $useSiteVariance = $expected->variances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
             $declaredVariance = $declaredVariances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
 
-            $defaultVariance = $isCollection ? GenericTypeNode::VARIANCE_COVARIANT : GenericTypeNode::VARIANCE_INVARIANT;
-
             $innerVariance = ($useSiteVariance !== GenericTypeNode::VARIANCE_INVARIANT)
                 ? $useSiteVariance
-                : ($declaredVariance !== GenericTypeNode::VARIANCE_INVARIANT ? $declaredVariance : $defaultVariance);
+                : ($declaredVariance !== GenericTypeNode::VARIANCE_INVARIANT ? $declaredVariance : GenericTypeNode::VARIANCE_INVARIANT);
 
             if (! self::checkVariance($existingInner, $expectedInner, $innerVariance)) {
                 return false;
             }
         }
+
+        return true;
+    }
+
+    /**
+     * @param array<TypeNode> $args
+     *
+     * @return list<TypeNode>
+     */
+    private static function normalizeCollectionTypeArgs(array $args): array
+    {
+        $args = array_values($args);
+        if ($args === []) {
+            return [self::$mixedNode ??= new IdentifierTypeNode('mixed')];
+        }
+
+        if (\count($args) >= 2) {
+            return [$args[0], $args[1]];
+        }
+
+        return [$args[0]];
+    }
+
+    /**
+     * Expands a 1-arg collection generic [V] into [K, V] using its implicit key type.
+     *
+     * @param list<TypeNode> $args
+     *
+     * @return array{0: TypeNode, 1: TypeNode}
+     */
+    private static function expandCollectionTypeArgs(string $lowerBase, array $args): array
+    {
+        $keyNode = ($lowerBase === 'list' || $lowerBase === 'non-empty-list')
+            ? (self::$intNode ??= new IdentifierTypeNode('int'))
+            : new IdentifierTypeNode('array-key');
+
+        return [$keyNode, $args[0]];
+    }
+
+    private static function isArrayKeyEquivalent(TypeNode $node): bool
+    {
+        if ($node instanceof IdentifierTypeNode) {
+            return strtolower($node->name) === 'array-key';
+        }
+
+        if ($node instanceof UnionTypeNode && \count($node->types) === 2) {
+            $hasInt = false;
+            $hasString = false;
+
+            foreach ($node->types as $member) {
+                if (! ($member instanceof IdentifierTypeNode)) {
+                    return false;
+                }
+
+                $lower = strtolower($member->name);
+                if ($lower === 'int' || $lower === 'integer') {
+                    $hasInt = true;
+                } elseif ($lower === 'string') {
+                    $hasString = true;
+                } else {
+                    return false;
+                }
+            }
+
+            return $hasInt && $hasString;
+        }
+
+        return false;
+    }
+
+    private static function isSpecializedCollectionType(TypeNode $node): bool
+    {
+        if ($node instanceof ArrayTypeNode) {
+            return true;
+        }
+
+        if ($node instanceof GenericTypeNode) {
+            return isset(self::COLLECTION_SUBTYPES[strtolower((string) $node->type)]);
+        }
+
+        return false;
+    }
+
+    /**
+     * Lazily verifies an instance's runtime array properties when a shallow 'list'/'array'
+     * binding is checked against a specialized collection type (e.g. list<bool>, array<int|string, string>).
+     *
+     * @param array<string, TypeNode> $existingBindings
+     */
+    private static function verifyShallowCollectionRefinement(
+        object $instance,
+        string $templateName,
+        string $existingShallowName,
+        TypeNode $expectedTypeNode,
+        array $existingBindings
+    ): bool {
+        if ($existingShallowName === 'array') {
+            $expectedBase = $expectedTypeNode instanceof GenericTypeNode
+                ? strtolower((string) $expectedTypeNode->type)
+                : '';
+
+            if ($expectedBase === 'list' || $expectedBase === 'non-empty-list') {
+                return false;
+            }
+        }
+
+        $expectedKey = (string) $expectedTypeNode;
+        self::$verifiedShallowRefinements ??= new WeakMap();
+        $cached = self::$verifiedShallowRefinements[$instance][$templateName][$expectedKey] ?? null;
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $actualClass = $instance::class;
+        if (! isset(self::$templatePropertyPlanCache[$actualClass][$templateName])) {
+            $plan = [];
+
+            try {
+                $ref = new \ReflectionClass($actualClass);
+                $needle = [$templateName => true];
+
+                foreach ($ref->getProperties() as $prop) {
+                    if ($prop->isStatic()) {
+                        continue;
+                    }
+
+                    $propType = DocblockParser::parseProperty($actualClass, $prop->getName());
+                    if ($propType !== null && DocblockParser::typeReferencesTemplate($propType, $needle)) {
+                        $plan[] = ['prop' => $prop, 'type' => $propType];
+                    }
+                }
+            } catch (\Throwable) {
+            }
+
+            self::$templatePropertyPlanCache[$actualClass][$templateName] = $plan;
+        }
+
+        $propPlan = self::$templatePropertyPlanCache[$actualClass][$templateName];
+        if ($propPlan === []) {
+            return false;
+        }
+
+        [$classTemplates] = self::hierarchyTemplatesForClass($actualClass);
+        $testBindings = $existingBindings;
+        $testBindings[$templateName] = $expectedTypeNode;
+        $registry = \TypePHP\Internal\RuntimeTypeChecker::getRegistry();
+        $checkedAny = false;
+
+        foreach ($propPlan as $entry) {
+            $prop = $entry['prop'];
+            if ((\PHP_VERSION_ID >= 80400 && $prop->isLazy($instance)) || ! $prop->isInitialized($instance)) {
+                continue;
+            }
+
+            $checkedAny = true;
+            $val = $prop->getValue($instance);
+            $substitutedType = TemplateSubstitutor::substitute($entry['type'], $testBindings, $classTemplates);
+            $err = $registry->validate($val, $substitutedType, '');
+
+            if ($err !== null) {
+                /** @var array<string, array<string, bool>> $instMap */
+                $instMap = self::$verifiedShallowRefinements[$instance] ?? [];
+                $instMap[$templateName][$expectedKey] = false;
+                self::$verifiedShallowRefinements[$instance] = $instMap;
+
+                return false;
+            }
+        }
+
+        if (! $checkedAny) {
+            return false;
+        }
+
+        /** @var array<string, array<string, bool>> $instMap */
+        $instMap = self::$verifiedShallowRefinements[$instance] ?? [];
+        $instMap[$templateName][$expectedKey] = true;
+        self::$verifiedShallowRefinements[$instance] = $instMap;
 
         return true;
     }
@@ -2714,25 +3622,11 @@ final class TemplateManager
     }
 
     /**
-     * Checks whether a function has at least one active call frame on the stack.
-     */
-    private static function hasCallFrame(string $function): bool
-    {
-        return isset(self::$callStackBindings[$function]);
-    }
-
-    /**
      * @return array<string, TypeNode>|null
      */
-    private static function getTopCallFrame(string $function): ?array
+    public static function getTopCallFrame(string $function): ?array
     {
-        if (! isset(self::$callStackBindings[$function]) || self::$callStackBindings[$function] === []) {
-            return null;
-        }
-
-        $top = end(self::$callStackBindings[$function]);
-
-        return $top !== false ? $top : null;
+        return self::$topCallFrame[$function] ?? null;
     }
 
     private static function ensureInstanceInherited(object $instance): void
@@ -2755,14 +3649,27 @@ final class TemplateManager
             return self::$realTypeSymbolCache[$name];
         }
 
-        return self::$realTypeSymbolCache[$name] = class_exists($name, false)
-            || class_exists($name)
+        if (
+            class_exists($name, false)
             || interface_exists($name, false)
-            || interface_exists($name)
             || enum_exists($name, false)
-            || enum_exists($name)
             || trait_exists($name, false)
-            || trait_exists($name);
+        ) {
+            return self::$realTypeSymbolCache[$name] = true;
+        }
+
+        if (class_exists($name, true)) {
+            return self::$realTypeSymbolCache[$name] = true;
+        }
+
+        return self::$realTypeSymbolCache[$name] = self::nonClassSymbolExistsNoAutoload($name);
+    }
+
+    private static function nonClassSymbolExistsNoAutoload(string $name): bool
+    {
+        return interface_exists($name, false)
+            || enum_exists($name, false)
+            || trait_exists($name, false);
     }
 
     /**

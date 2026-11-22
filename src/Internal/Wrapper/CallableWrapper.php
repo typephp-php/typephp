@@ -50,6 +50,33 @@ final class CallableWrapper
     private static array $specializedCallableCache = [];
 
     /**
+     * Per-function/parameter metadata cache to avoid repeated parsing and conditional checks.
+     *
+     * @var array<string, array<string, ?array{
+     *     typeNode: TypeNode,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     hasMethodTemplates: bool,
+     *     hasConditionals: bool,
+     *     isDynamic: bool
+     * }>>
+     */
+    private static array $callablePlanCache = [];
+
+    /**
+     * Cache for resolved non-conditional callable TypeNodes keyed by [$effectiveFunction][$paramName][$sig].
+     *
+     * @var array<string, array<string, array<string, TypeNode>>>
+     */
+    private static array $wrappedNodeCache = [];
+
+    public static function reset(): void
+    {
+        self::$specializedCallableCache = [];
+        self::$callablePlanCache = [];
+        self::$wrappedNodeCache = [];
+    }
+
+    /**
      * Safely checks if a value is callable without triggering PHP 8.2+ deprecation warnings
      * on partially supported callables (e.g. 'static::method', ['static', 'method']).
      */
@@ -91,25 +118,18 @@ final class CallableWrapper
      */
     public static function wrap(string $function, string $paramName, mixed $callable, TypeValidatorRegistry $registry, object|string|null $thisOrClass = null): mixed
     {
-        $contract = DocblockParser::parse($function);
-        $typeNode = ($paramName === 'return') ? ($contract['return'] ?? null) : ($contract['types'][$paramName] ?? null);
-        $aliases = $contract['aliases'] ?? [];
-        $templates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
-
-        if ($typeNode instanceof IdentifierTypeNode && isset($aliases[$typeNode->name])) {
-            $typeNode = $aliases[$typeNode->name];
+        if ($callable === null || (! \is_array($callable) && ! self::isCallable($callable))) {
+            return $callable;
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+        $effectiveFunction = $thisOrClass !== null
+            ? \TypePHP\Internal\Checker\ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj)
+            : $function;
 
-        if ($typeNode !== null && (\count($boundTemplates) > 0 || \count($templates) > 0)) {
-            $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
-            $typeNode = SpecialTypeResolver::resolve($typeNode, $function, $thisObj);
-        }
-
-        if ($typeNode !== null && ConditionalChecker::containsConditional($typeNode)) {
-            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $function);
+        $typeNode = self::resolveCallableParamTypeNode($effectiveFunction, $paramName, $thisObj, $registry);
+        if ($typeNode === null) {
+            return $callable;
         }
 
         $prefix = ($paramName === 'return') ? "$function(): Return value" : "$function(): Callback \$$paramName";
@@ -118,7 +138,7 @@ final class CallableWrapper
             return self::wrapTypeNode($typeNode, $callable, $prefix, $registry, $function, $paramName);
         }
 
-        if (\is_array($callable) && $typeNode !== null) {
+        if (\is_array($callable)) {
             $innerCallableTypeNode = null;
 
             if ($typeNode instanceof GenericTypeNode && \in_array(strtolower((string) $typeNode->type), ['list', 'array', 'iterable'], strict: true)) {
@@ -143,6 +163,95 @@ final class CallableWrapper
         }
 
         return $callable;
+    }
+
+    private static function resolveCallableParamTypeNode(
+        string $effectiveFunction,
+        string $paramName,
+        ?object $thisObj,
+        TypeValidatorRegistry $registry
+    ): ?TypeNode {
+        if (! isset(self::$callablePlanCache[$effectiveFunction]) || ! \array_key_exists($paramName, self::$callablePlanCache[$effectiveFunction])) {
+            $contract = DocblockParser::parse($effectiveFunction);
+            $rawTypeNode = ($paramName === 'return')
+                ? ($contract['return'] ?? null)
+                : ($contract['types'][$paramName] ?? null);
+
+            if ($rawTypeNode === null) {
+                self::$callablePlanCache[$effectiveFunction][$paramName] = null;
+
+                return null;
+            }
+
+            $aliases = $contract['aliases'] ?? [];
+            if ($rawTypeNode instanceof IdentifierTypeNode && isset($aliases[$rawTypeNode->name])) {
+                $rawTypeNode = $aliases[$rawTypeNode->name];
+            }
+
+            $templates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
+
+            self::$callablePlanCache[$effectiveFunction][$paramName] = [
+                'typeNode' => $rawTypeNode,
+                'templates' => $templates,
+                'hasMethodTemplates' => ($contract['templates'] ?? []) !== [],
+                'hasConditionals' => ConditionalChecker::containsConditional($rawTypeNode),
+                'isDynamic' => str_contains((string) $rawTypeNode, 'static') || str_contains((string) $rawTypeNode, '$this'),
+            ];
+        }
+
+        $plan = self::$callablePlanCache[$effectiveFunction][$paramName];
+        if ($plan === null) {
+            return null;
+        }
+
+        $templates = $plan['templates'];
+        $boundTemplates = [];
+        if ($templates !== []) {
+            $boundTemplates = ($thisObj !== null && ! $plan['hasMethodTemplates'])
+                ? TemplateManager::getInstanceBindingsFast($thisObj)
+                : TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $templates);
+        }
+
+        $sig = null;
+        if (! $plan['hasConditionals'] && ! $plan['isDynamic'] && \count($boundTemplates) <= 2) {
+            if ($boundTemplates === []) {
+                $sig = '';
+            } elseif (\count($boundTemplates) === 1) {
+                $firstKey = (string) array_key_first($boundTemplates);
+                $first = $boundTemplates[$firstKey];
+                $sig = $firstKey . '=' . ($first instanceof IdentifierTypeNode ? $first->name : (string) $first);
+            } else {
+                $sig = '';
+                foreach ($boundTemplates as $k => $v) {
+                    $sig .= $k . '=' . ($v instanceof IdentifierTypeNode ? $v->name : (string) $v) . '|';
+                }
+            }
+
+            if (isset(self::$wrappedNodeCache[$effectiveFunction][$paramName][$sig])) {
+                return self::$wrappedNodeCache[$effectiveFunction][$paramName][$sig];
+            }
+        }
+
+        $typeNode = $plan['typeNode'];
+
+        if ($boundTemplates !== [] || $templates !== []) {
+            $subNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
+            if ($subNode !== $typeNode || $plan['isDynamic']) {
+                $typeNode = SpecialTypeResolver::resolve($subNode, $effectiveFunction, $thisObj);
+            }
+        } elseif ($plan['isDynamic']) {
+            $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+        }
+
+        if ($plan['hasConditionals'] || (! ($typeNode instanceof IdentifierTypeNode) && ConditionalChecker::containsConditional($typeNode))) {
+            $typeNode = ConditionalChecker::resolve($typeNode, [], $boundTemplates, $registry, $effectiveFunction);
+        }
+
+        if ($sig !== null) {
+            self::$wrappedNodeCache[$effectiveFunction][$paramName][$sig] = $typeNode;
+        }
+
+        return $typeNode;
     }
 
     /**
@@ -193,6 +302,117 @@ final class CallableWrapper
         }
 
         if (! $hasAnyRef) {
+            if ($typeNode->templateTypes === []) {
+                $hasVariadic = false;
+                $paramChecks = [];
+                foreach ($typeNode->parameters as $idx => $p) {
+                    if ($p->isVariadic) {
+                        $hasVariadic = true;
+
+                        break;
+                    }
+                    if ($p->type instanceof IdentifierTypeNode && strtolower($p->type->name) === 'mixed') {
+                        continue;
+                    }
+                    $rawName = ltrim($p->parameterName ?? '', '$');
+                    $label = $rawName !== '' ? "\$$rawName" : ('argument #' . ($idx + 1));
+                    $pScalar = $p->type instanceof IdentifierTypeNode ? match (strtolower($p->type->name)) {
+                        'int', 'integer' => 'int',
+                        'string' => 'string',
+                        'bool', 'boolean' => 'bool',
+                        default => null,
+                    } : null;
+                    $paramChecks[] = [$idx, $p->type, $label, $pScalar];
+                }
+
+                $retType = $typeNode->returnType;
+                $isVoidOrMixedReturn = $retType instanceof IdentifierTypeNode
+                    && \in_array(strtolower($retType->name), ['void', 'mixed'], true);
+                $retIsCallable = $retType instanceof CallableTypeNode;
+                $retScalar = $retType instanceof IdentifierTypeNode ? match (strtolower($retType->name)) {
+                    'int', 'integer' => 'int',
+                    'string' => 'string',
+                    'bool', 'boolean' => 'bool',
+                    default => null,
+                } : null;
+
+                if (! $hasVariadic) {
+                    if ($paramChecks === [] && $isVoidOrMixedReturn) {
+                        return $callable instanceof Closure ? $callable : $callable(...);
+                    }
+
+                    return function (...$args) use ($callable, $typeNode, $paramChecks, $retType, $isVoidOrMixedReturn, $retIsCallable, $retScalar, $registry, $prefix) {
+                        if ($paramChecks !== []) {
+                            if ($args !== [] && ! array_is_list($args)) {
+                                self::validateCallbackArguments($typeNode, $args, $prefix, $registry, $callable);
+                            } else {
+                                foreach ($paramChecks as $pc) {
+                                    $idx = $pc[0];
+                                    if (isset($args[$idx]) || \array_key_exists($idx, $args)) {
+                                        $argVal = $args[$idx];
+                                        $pScalar = $pc[3];
+                                        if (
+                                            ($pScalar === 'int' && \is_int($argVal))
+                                            || ($pScalar === 'string' && \is_string($argVal))
+                                            || ($pScalar === 'bool' && \is_bool($argVal))
+                                        ) {
+                                            continue;
+                                        }
+
+                                        $err = $registry->validate($argVal, $pc[1], '');
+                                        if ($err !== null) {
+                                            if (CallerBoundaryResolver::shouldBypassCallback($callable, $prefix)) {
+                                                continue;
+                                            }
+                                            if (IgnoreManager::isCallerIgnored()) {
+                                                continue;
+                                            }
+                                            $fullErr = ErrorFactory::createError("$prefix {$pc[2]}" . $err->getMessage());
+                                            $handled = ViolationCollector::handle($fullErr, 'callback', null);
+                                            if ($handled instanceof ErrorMessage) {
+                                                throw ErrorFactory::prepareException(new TypePHPTypeError($fullErr->getMessage()));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        try {
+                            $result = $callable(...$args);
+                        } catch (TypeError $e) {
+                            throw ErrorFactory::prepareException($e);
+                        }
+
+                        if (
+                            ! $isVoidOrMixedReturn
+                            && ! (
+                                ($retScalar === 'string' && \is_string($result))
+                                || ($retScalar === 'int' && \is_int($result))
+                                || ($retScalar === 'bool' && \is_bool($result))
+                            )
+                        ) {
+                            $err = $registry->validate($result, $retType, '');
+                            if ($err !== null) {
+                                if (! CallerBoundaryResolver::shouldBypassCallback($callable, $prefix) && ! IgnoreManager::isCallerIgnored()) {
+                                    $fullErr = ErrorFactory::createError("$prefix return value" . $err->getMessage());
+                                    $handled = ViolationCollector::handle($fullErr, 'callback', $result);
+                                    if ($handled instanceof ErrorMessage) {
+                                        throw ErrorFactory::prepareException(new TypePHPTypeError($fullErr->getMessage()));
+                                    }
+                                }
+                            }
+                        }
+
+                        if ($retIsCallable && self::isCallable($result)) {
+                            $result = self::wrapTypeNode($retType, $result, "$prefix: Returned callback", $registry);
+                        }
+
+                        return $result;
+                    };
+                }
+            }
+
             return function (...$args) use ($callable, $typeNode, $registry, $prefix, $function, $paramName) {
                 $effectiveTypeNode = self::resolveEffectiveCallableTypeNode($typeNode, $args, $prefix, $registry, $callable, $function, $paramName);
 

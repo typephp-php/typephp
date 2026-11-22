@@ -7,6 +7,7 @@ namespace TypePHP\Internal\Ast\Elimination;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\Array_;
 use PhpParser\Node\Expr\Ternary;
+use PhpParser\Node\Expr\Variable;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
@@ -16,6 +17,7 @@ use TypePHP\Internal\Ast\Elimination\Evaluator\ArrayLiteralEvaluator;
 use TypePHP\Internal\Ast\Elimination\Evaluator\ConstantAndEnumEvaluator;
 use TypePHP\Internal\Ast\Elimination\Evaluator\ObjectEvaluator;
 use TypePHP\Internal\Ast\Elimination\Evaluator\ScalarEvaluator;
+use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Util\Config;
 
 /**
@@ -46,17 +48,14 @@ final class StaticTypeEvaluator
     /**
      * Determines whether an AST expression deterministically satisfies a TypeNode contract.
      *
-     * Flow of logic:
-     * 1. Returns false if `eliminate_statically_proven_checks` is disabled in configuration.
-     * 2. Rejects IntersectionTypeNode unconditionally (deferred to runtime to avoid autoloader deadlocks).
-     * 3. Rejects generic object templates to ensure runtime WeakMap registrations occur.
-     * 4. Evaluates Ternary expressions: if both `if` and `else` branches satisfy the contract,
-     *    the expression is satisfied regardless of runtime condition.
-     * 5. Handles NullableTypeNode and UnionTypeNode disjunctions.
-     * 6. Delegates array expressions, constants/enums, object instantiations, and arithmetic/scalars.
+     * @param array<string, TypeNode> $trustedVariableTypes
      */
-    public static function satisfies(Expr $expr, TypeNode $typeNode, string $currentFile = ''): bool
-    {
+    public static function satisfies(
+        Expr $expr,
+        TypeNode $typeNode,
+        string $currentFile = '',
+        array $trustedVariableTypes = []
+    ): bool {
         if (! Config::isEliminateStaticallyProvenChecksEnabled()) {
             return false;
         }
@@ -72,9 +71,17 @@ final class StaticTypeEvaluator
             }
         }
 
+        if ($expr instanceof Variable && \is_string($expr->name) && isset($trustedVariableTypes[$expr->name])) {
+            return TemplateManager::checkVariance(
+                $trustedVariableTypes[$expr->name],
+                $typeNode,
+                GenericTypeNode::VARIANCE_COVARIANT
+            );
+        }
+
         if ($expr instanceof Ternary && $expr->if !== null) {
-            return self::satisfies($expr->if, $typeNode, $currentFile)
-                && self::satisfies($expr->else, $typeNode, $currentFile);
+            return self::satisfies($expr->if, $typeNode, $currentFile, $trustedVariableTypes)
+                && self::satisfies($expr->else, $typeNode, $currentFile, $trustedVariableTypes);
         }
 
         if ($typeNode instanceof NullableTypeNode) {
@@ -82,12 +89,12 @@ final class StaticTypeEvaluator
                 return true;
             }
 
-            return self::satisfies($expr, $typeNode->type, $currentFile);
+            return self::satisfies($expr, $typeNode->type, $currentFile, $trustedVariableTypes);
         }
 
         if ($typeNode instanceof UnionTypeNode) {
             foreach ($typeNode->types as $member) {
-                if (self::satisfies($expr, $member, $currentFile)) {
+                if (self::satisfies($expr, $member, $currentFile, $trustedVariableTypes)) {
                     return true;
                 }
             }
@@ -96,7 +103,7 @@ final class StaticTypeEvaluator
         }
 
         if ($expr instanceof Array_) {
-            return ArrayLiteralEvaluator::satisfies($expr, $typeNode, $currentFile);
+            return ArrayLiteralEvaluator::satisfies($expr, $typeNode, $currentFile, $trustedVariableTypes);
         }
 
         return ConstantAndEnumEvaluator::satisfies($expr, $typeNode, $currentFile)

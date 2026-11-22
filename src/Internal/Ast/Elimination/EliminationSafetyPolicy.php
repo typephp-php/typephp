@@ -61,7 +61,7 @@ final class EliminationSafetyPolicy
      *    and scalar generics (int<min, max>, int-mask) which carry no object state.
      * 3. Authorizes standalone functions, closures, and arrow functions (zero inheritance risk).
      * 4. For class methods:
-     *    - Authorizes private methods (cannot override or be overridden).
+     *    - Authorizes private methods, final methods, and methods on final classes.
      *    - Authorizes classes with no inheritance (`hasRealInheritance === false`).
      * 5. Defers all other methods to runtime to prevent bypassing unanalyzed parent contracts.
      *
@@ -89,6 +89,10 @@ final class EliminationSafetyPolicy
 
         if ($functionNode->isPrivate()) {
             return true;
+        }
+
+        if ($classContext['isTrait'] ?? false) {
+            return false;
         }
 
         $hasRealInheritance = $classContext['hasRealInheritance'] ?? true;
@@ -137,6 +141,10 @@ final class EliminationSafetyPolicy
 
         if ($functionNode->isPrivate()) {
             return true;
+        }
+
+        if ($classContext['isTrait'] ?? false) {
+            return false;
         }
 
         $hasRealInheritance = $classContext['hasRealInheritance'] ?? true;

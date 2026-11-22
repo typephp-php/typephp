@@ -36,6 +36,10 @@ final class TypePHPPrinter extends Standard
         int $lhsPrecedence = PrettyPrinterAbstract::MAX_PRECEDENCE,
         bool $parentFormatPreserved = false
     ): string {
+        if ($node->getAttribute('typephp_needs_parens') === true) {
+            return '(' . parent::p($node, PrettyPrinterAbstract::MAX_PRECEDENCE, PrettyPrinterAbstract::MAX_PRECEDENCE, $parentFormatPreserved) . ')';
+        }
+
         $output = parent::p($node, $precedence, $lhsPrecedence, $parentFormatPreserved);
 
         if ($node instanceof Node\Stmt && $node->getAttribute('typephp_injected') === true) {

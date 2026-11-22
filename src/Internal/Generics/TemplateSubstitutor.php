@@ -163,7 +163,9 @@ final class TemplateSubstitutor
         }
 
         if ($node instanceof ArrayTypeNode) {
-            return new ArrayTypeNode(self::substituteNode($node->type, $boundTemplates, $declaredTemplates, $visited));
+            $inner = self::substituteNode($node->type, $boundTemplates, $declaredTemplates, $visited);
+
+            return $inner === $node->type ? $node : new ArrayTypeNode($inner);
         }
 
         if ($node instanceof GenericTypeNode) {
@@ -171,25 +173,37 @@ final class TemplateSubstitutor
         }
 
         if ($node instanceof NullableTypeNode) {
-            return new NullableTypeNode(self::substituteNode($node->type, $boundTemplates, $declaredTemplates, $visited));
+            $inner = self::substituteNode($node->type, $boundTemplates, $declaredTemplates, $visited);
+
+            return $inner === $node->type ? $node : new NullableTypeNode($inner);
         }
 
         if ($node instanceof UnionTypeNode) {
             $types = [];
+            $changed = false;
             foreach ($node->types as $t) {
-                $types[] = self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited);
+                $sub = self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited);
+                if ($sub !== $t) {
+                    $changed = true;
+                }
+                $types[] = $sub;
             }
 
-            return self::normalizeUnion($types);
+            return $changed ? self::normalizeUnion($types) : $node;
         }
 
         if ($node instanceof IntersectionTypeNode) {
             $types = [];
+            $changed = false;
             foreach ($node->types as $t) {
-                $types[] = self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited);
+                $sub = self::substituteNode($t, $boundTemplates, $declaredTemplates, $visited);
+                if ($sub !== $t) {
+                    $changed = true;
+                }
+                $types[] = $sub;
             }
 
-            return self::normalizeIntersection($types);
+            return $changed ? self::normalizeIntersection($types) : $node;
         }
 
         if ($node instanceof ArrayShapeNode) {
@@ -234,10 +248,10 @@ final class TemplateSubstitutor
     }
 
     /**
-       * @param array<string, TypeNode> $boundTemplates
-       * @param array<string, TemplateTagValueNode> $declaredTemplates
-       * @param array<string, true> $visited
-      */
+     * @param array<string, TypeNode> $boundTemplates
+     * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param array<string, true> $visited
+     */
     private static function substituteCallable(
         CallableTypeNode $node,
         array $boundTemplates,
@@ -327,9 +341,18 @@ final class TemplateSubstitutor
         array $visited
     ): GenericTypeNode {
         $type = self::substituteNode($node->type, $boundTemplates, $declaredTemplates, $visited);
+        $changed = ($type !== $node->type);
         $genericTypes = [];
         foreach ($node->genericTypes as $gt) {
-            $genericTypes[] = self::substituteNode($gt, $boundTemplates, $declaredTemplates, $visited);
+            $sub = self::substituteNode($gt, $boundTemplates, $declaredTemplates, $visited);
+            if ($sub !== $gt) {
+                $changed = true;
+            }
+            $genericTypes[] = $sub;
+        }
+
+        if (! $changed) {
+            return $node;
         }
 
         return new GenericTypeNode(

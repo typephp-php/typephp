@@ -87,10 +87,25 @@ final class InlineChecker
     private static array $resolvedStaticPropertyTypeCache = [];
 
     /**
+     * In-memory cache for resolved instance property generic types per object instance.
+     *
+     * @var \WeakMap<object, array{bindings: array<string, TypeNode>, props: array<string, TypeNode>}>|null
+     */
+    private static ?\WeakMap $instancePropertyTypeCache = null;
+
+    /**
+     * In-memory 3D cache for file-resolved TypeNode ASTs: [$file][$namespace][$normalized] => TypeNode.
+     *
+     * @var array<string, array<string, array<string, TypeNode>>>
+     */
+    private static array $resolvedFileTypeCache = [];
+
+    /**
      * Resets internal type node and function caches. Useful for test isolation.
      */
     public static function reset(): void
     {
+        self::$resolvedFileTypeCache = [];
         self::$parsedTypeNodeCache = [];
         self::$resolvedClassContextCache = [];
         self::$nullPropertyCache = [];
@@ -168,7 +183,9 @@ final class InlineChecker
 
             if ($file !== '') {
                 $callerNamespace = self::extractNamespaceFromCaller($caller);
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file, $callerNamespace);
+                $nsKey = $callerNamespace ?? "\0";
+                $typeNode = self::$resolvedFileTypeCache[$file][$nsKey][$normalized]
+                    ??= SpecialTypeResolver::resolveForFile($typeNode, $file, $callerNamespace);
             }
 
             if ($needsContext && $caller !== null) {
@@ -253,7 +270,9 @@ final class InlineChecker
 
             if ($file !== '') {
                 $callerNamespace = self::extractNamespaceFromCaller($caller);
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file, $callerNamespace);
+                $nsKey = $callerNamespace ?? "\0";
+                $typeNode = self::$resolvedFileTypeCache[$file][$nsKey][$normalized]
+                    ??= SpecialTypeResolver::resolveForFile($typeNode, $file, $callerNamespace);
             }
 
             if ($needsContext && $caller !== null) {
@@ -703,7 +722,14 @@ final class InlineChecker
         ?string $methodName,
         ?object $thisObj
     ): TypeNode {
-        if (! class_exists($className) && ! interface_exists($className) && ! trait_exists($className)) {
+        if (
+            ! class_exists($className, false)
+            && ! interface_exists($className, false)
+            && ! trait_exists($className, false)
+            && ! class_exists($className)
+            && ! interface_exists($className)
+            && ! trait_exists($className)
+        ) {
             return $typeNode;
         }
 
@@ -763,8 +789,18 @@ final class InlineChecker
     /**
      * Substitutes generic template types declared on class properties.
      */
-    private static function substitutePropertyGenerics(TypeNode $typeNode, object $object, string $className): TypeNode
+    private static function substitutePropertyGenerics(TypeNode $typeNode, object $object, string $className, string $propName = ''): TypeNode
     {
+        $boundTemplates = TemplateManager::getInstanceBindingsFast($object);
+
+        if ($propName !== '') {
+            self::$instancePropertyTypeCache ??= new \WeakMap();
+            $entry = self::$instancePropertyTypeCache[$object] ?? null;
+            if ($entry !== null && $entry['bindings'] === $boundTemplates && isset($entry['props'][$propName])) {
+                return $entry['props'][$propName];
+            }
+        }
+
         $allTemplates = DocblockParser::parseClassTemplates($className);
 
         if ($allTemplates === []) {
@@ -773,20 +809,33 @@ final class InlineChecker
             $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
         }
 
-        $boundTemplates = TemplateManager::getBoundTemplates('none', $object, $allTemplates);
-        $declaredTemplates = $allTemplates;
+        if ($boundTemplates !== [] || $allTemplates !== []) {
+            $subNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $allTemplates);
 
-        if (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0) {
-            $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
-
-            if (class_exists($className) || interface_exists($className) || trait_exists($className)) {
+            if ($subNode !== $typeNode && (class_exists($className, false) || interface_exists($className, false) || trait_exists($className, false) || class_exists($className))) {
                 try {
                     /** @var class-string<object> $className */
                     $refClass = new \ReflectionClass($className);
-                    $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
+                    $typeNode = SpecialTypeResolver::resolve($subNode, $refClass);
                 } catch (\ReflectionException $e) {
-                    // Silently continue if reflection fails
+                    $typeNode = $subNode;
                 }
+            } else {
+                $typeNode = $subNode;
+            }
+        }
+
+        if ($propName !== '') {
+            self::$instancePropertyTypeCache ??= new \WeakMap();
+            $entry = self::$instancePropertyTypeCache[$object] ?? null;
+            if ($entry === null || $entry['bindings'] !== $boundTemplates) {
+                self::$instancePropertyTypeCache[$object] = [
+                    'bindings' => $boundTemplates,
+                    'props' => [$propName => $typeNode],
+                ];
+            } else {
+                $entry['props'][$propName] = $typeNode;
+                self::$instancePropertyTypeCache[$object] = $entry;
             }
         }
 
