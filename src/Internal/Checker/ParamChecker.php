@@ -1479,9 +1479,9 @@ final class ParamChecker
                 }
 
                 $sampleItems = self::getSampleArraySlice($arrVal);
-                self::inferSingleTemplateFromArraySamples($tName, $sampleItems, $effectiveFunction, $thisObj, $templates, $classTemplates);
+                $bound = self::inferSingleTemplateFromArraySamples($tName, $sampleItems, $effectiveFunction, $thisObj, $templates, $classTemplates);
 
-                return $isPlainArrayOrIterable && TemplateManager::isBound($effectiveFunction, $targetObj, $tName);
+                return $isPlainArrayOrIterable && $bound;
             }
 
             if ($genericCount === 1 && ($typeNode->genericTypes[0] instanceof ArrayShapeNode || $typeNode->genericTypes[0] instanceof ObjectShapeNode)) {
@@ -1817,7 +1817,7 @@ final class ParamChecker
         ?object $thisObj,
         array $templates,
         array $classTemplates = []
-    ): void {
+    ): bool {
         $valMask = 0;
         /** @var array<string, TypeNode> $valTypes */
         $valTypes = [];
@@ -1870,8 +1870,17 @@ final class ParamChecker
         }
 
         if ($inferredType !== null) {
-            self::bindTemplateIfUnbound($templateName, $inferredType, $effectiveFunction, $thisObj, $templates, $classTemplates);
+            $isClassLevel = ($thisObj !== null && isset($classTemplates[$templateName]) && ! TemplateManager::isMethodTemplate($effectiveFunction, $templateName));
+            $targetObj = $isClassLevel ? $thisObj : null;
+
+            if (self::doesInferredTypeSatisfyBound($templateName, $inferredType, $effectiveFunction, $thisObj, $templates)) {
+                TemplateManager::bindTemplate($effectiveFunction, $targetObj, $templateName, $inferredType);
+
+                return true;
+            }
         }
+
+        return false;
     }
 
     private static function isCollectionTypeNode(TypeNode $node): bool

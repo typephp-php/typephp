@@ -950,14 +950,6 @@ final class TemplateManager
     }
 
     /**
-     * @return object|null
-     */
-    private static function getTopCallThis(string $function): ?object
-    {
-        return self::$topCallThis[$function] ?? null;
-    }
-
-    /**
      * Checks whether a template declaration has an F-bound (self-referential upper bound like T of Comparable<T>).
      */
     public static function isFBounded(TemplateTagValueNode $templateNode, string $context = ''): bool
@@ -3627,14 +3619,6 @@ final class TemplateManager
         }
 
         return $matching;
-    }
-
-    /**
-     * Checks whether a function has at least one active call frame on the stack.
-     */
-    private static function hasCallFrame(string $function): bool
-    {
-        return isset(self::$topCallFrame[$function]);
     }
 
     /**
