@@ -16,9 +16,11 @@ use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use Stringable;
+use Traversable;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\ClassNameValidator;
 use WeakMap;
 
@@ -31,16 +33,22 @@ final class UnionValidator implements TypeValidatorInterface
      * Compiled primitive & literal fast-path sets cached per UnionTypeNode.
      *
      * @var WeakMap<UnionTypeNode, array{
+     *     hasMixed: bool,
      *     hasObject: bool,
      *     hasInt: bool,
      *     hasString: bool,
      *     hasBool: bool,
+     *     hasFloat: bool,
      *     hasNull: bool,
      *     hasTrue: bool,
      *     hasFalse: bool,
+     *     hasArray: bool,
+     *     hasIterable: bool,
+     *     hasScalar: bool,
      *     hasClassString: bool,
      *     stringLiterals: array<string, true>,
-     *     intLiterals: array<int, true>
+     *     intLiterals: array<int, true>,
+     *     classes: list<string>
      * }>|null
      */
     private static ?WeakMap $compiledUnionCache = null;
@@ -53,76 +61,71 @@ final class UnionValidator implements TypeValidatorInterface
         self::$compiledUnionCache ??= new WeakMap();
         $compiled = self::$compiledUnionCache[$unionNode] ??= self::compileUnion($unionNode);
 
+        if ($compiled['hasMixed']) {
+            return null;
+        }
+
         if ($value === null && $compiled['hasNull']) {
             return null;
         }
 
-        if (\is_int($value) && ($compiled['hasInt'] || isset($compiled['intLiterals'][$value]))) {
+        if (\is_int($value) && ($compiled['hasInt'] || $compiled['hasFloat'] || $compiled['hasScalar'] || isset($compiled['intLiterals'][$value]))) {
             return null;
         }
 
-        if (\is_string($value) && ($compiled['hasString'] || isset($compiled['stringLiterals'][$value]) || ($compiled['hasClassString'] && ClassNameValidator::isValidClassString($value)))) {
+        if (\is_string($value) && ($compiled['hasString'] || $compiled['hasScalar'] || isset($compiled['stringLiterals'][$value]) || ($compiled['hasClassString'] && ClassNameValidator::isValidClassString($value)))) {
             return null;
         }
 
-        if (\is_bool($value) && ($compiled['hasBool'] || ($value ? $compiled['hasTrue'] : $compiled['hasFalse']))) {
+        if (\is_bool($value) && ($compiled['hasBool'] || $compiled['hasScalar'] || ($value ? $compiled['hasTrue'] : $compiled['hasFalse']))) {
             return null;
         }
 
-        if (\is_object($value) && $compiled['hasObject']) {
+        if (\is_float($value) && ($compiled['hasFloat'] || $compiled['hasScalar'])) {
             return null;
         }
 
-        foreach ($unionNode->types as $type) {
-            if ($type instanceof IdentifierTypeNode) {
-                $name = $type->name;
+        if (\is_array($value) && ($compiled['hasArray'] || $compiled['hasIterable'])) {
+            return null;
+        }
 
-                if ($name === 'object' && \is_object($value)) {
-                    return null;
-                }
-                if (($name === 'int' || $name === 'integer') && \is_int($value)) {
-                    return null;
-                }
-                if ($name === 'string' && \is_string($value)) {
-                    return null;
-                }
-                if (($name === 'bool' || $name === 'boolean') && \is_bool($value)) {
-                    return null;
-                }
-                if ($name === 'null' && $value === null) {
-                    return null;
-                }
-                if ($name === 'class-string' && \is_string($value) && ClassNameValidator::isValidClassString($value)) {
-                    return null;
-                }
-
-                $lower = strtolower($name);
-                if ($lower === 'object' && \is_object($value)) {
-                    return null;
-                }
-                if (($lower === 'int' || $lower === 'integer') && \is_int($value)) {
-                    return null;
-                }
-                if ($lower === 'string' && \is_string($value)) {
-                    return null;
-                }
-                if (($lower === 'bool' || $lower === 'boolean') && \is_bool($value)) {
-                    return null;
-                }
-                if ($lower === 'null' && $value === null) {
-                    return null;
-                }
-                if ($lower === 'class-string' && \is_string($value) && ClassNameValidator::isValidClassString($value)) {
+        $isObj = \is_object($value);
+        if ($isObj) {
+            if ($compiled['hasObject'] || ($compiled['hasIterable'] && $value instanceof Traversable)) {
+                return null;
+            }
+            foreach ($compiled['classes'] as $cls) {
+                if ($value instanceof $cls) {
                     return null;
                 }
             }
         }
 
+        $isArr = \is_array($value);
         $deepErrors = [];
         $discriminatorMatchedErrors = [];
         $hasAnyDiscriminator = false;
 
         foreach ($unionNode->types as $type) {
+            if ($type instanceof IdentifierTypeNode) {
+                $tLower = strtolower($type->name);
+                if (
+                    ($tLower === 'null' && $value !== null)
+                    || (($tLower === 'int' || $tLower === 'integer') && ! \is_int($value))
+                    || ($tLower === 'string' && ! \is_string($value))
+                    || (($tLower === 'bool' || $tLower === 'boolean') && ! \is_bool($value))
+                    || ($tLower === 'object' && ! $isObj)
+                    || ($tLower === 'array' && ! $isArr)
+                    || (! $isObj && ! SpecialTypeResolver::isBuiltInTypeKeyword($type->name) && ClassNameValidator::isValid($type->name) && (class_exists($type->name, false) || interface_exists($type->name, false)))
+                ) {
+                    continue;
+                }
+            } elseif (! $isObj && $type instanceof ObjectShapeNode) {
+                continue;
+            } elseif (! $isArr && $type instanceof ArrayShapeNode) {
+                continue;
+            }
+
             $err = $registry->validate($value, $type, $context, $isSensitive);
             if ($err === null) {
                 return null;
@@ -236,34 +239,51 @@ final class UnionValidator implements TypeValidatorInterface
 
     /**
      * @return array{
+     *     hasMixed: bool,
      *     hasObject: bool,
      *     hasInt: bool,
      *     hasString: bool,
      *     hasBool: bool,
+     *     hasFloat: bool,
      *     hasNull: bool,
      *     hasTrue: bool,
      *     hasFalse: bool,
+     *     hasArray: bool,
+     *     hasIterable: bool,
+     *     hasScalar: bool,
      *     hasClassString: bool,
      *     stringLiterals: array<string, true>,
-     *     intLiterals: array<int, true>
+     *     intLiterals: array<int, true>,
+     *     classes: list<string>
      * }
      */
     private static function compileUnion(UnionTypeNode $unionNode): array
     {
+        $hasMixed = false;
         $hasObject = false;
         $hasInt = false;
         $hasString = false;
         $hasBool = false;
+        $hasFloat = false;
         $hasNull = false;
         $hasTrue = false;
         $hasFalse = false;
+        $hasArray = false;
+        $hasIterable = false;
+        $hasScalar = false;
         $hasClassString = false;
         $stringLiterals = [];
         $intLiterals = [];
+        $classes = [];
 
         foreach ($unionNode->types as $type) {
             if ($type instanceof IdentifierTypeNode) {
-                switch (strtolower($type->name)) {
+                $name = $type->name;
+                switch (strtolower($name)) {
+                    case 'mixed':
+                        $hasMixed = true;
+
+                        break;
                     case 'object':
                         $hasObject = true;
 
@@ -282,6 +302,11 @@ final class UnionValidator implements TypeValidatorInterface
                         $hasBool = true;
 
                         break;
+                    case 'float':
+                    case 'double':
+                        $hasFloat = true;
+
+                        break;
                     case 'null':
                         $hasNull = true;
 
@@ -294,8 +319,26 @@ final class UnionValidator implements TypeValidatorInterface
                         $hasFalse = true;
 
                         break;
+                    case 'array':
+                        $hasArray = true;
+
+                        break;
+                    case 'iterable':
+                        $hasIterable = true;
+
+                        break;
+                    case 'scalar':
+                        $hasScalar = true;
+
+                        break;
                     case 'class-string':
                         $hasClassString = true;
+
+                        break;
+                    default:
+                        if (! SpecialTypeResolver::isBuiltInTypeKeyword($name) && ClassNameValidator::isValid($name) && (class_exists($name, false) || interface_exists($name, false))) {
+                            $classes[] = $name;
+                        }
 
                         break;
                 }
@@ -316,16 +359,22 @@ final class UnionValidator implements TypeValidatorInterface
         }
 
         return [
+            'hasMixed' => $hasMixed,
             'hasObject' => $hasObject,
             'hasInt' => $hasInt,
             'hasString' => $hasString,
             'hasBool' => $hasBool,
+            'hasFloat' => $hasFloat,
             'hasNull' => $hasNull,
             'hasTrue' => $hasTrue,
             'hasFalse' => $hasFalse,
+            'hasArray' => $hasArray,
+            'hasIterable' => $hasIterable,
+            'hasScalar' => $hasScalar,
             'hasClassString' => $hasClassString,
             'stringLiterals' => $stringLiterals,
             'intLiterals' => $intLiterals,
+            'classes' => $classes,
         ];
     }
 }

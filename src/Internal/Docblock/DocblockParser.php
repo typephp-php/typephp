@@ -58,6 +58,10 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
  *     allParamsUnconstrained: bool,
  *     returnUnconstrained: bool,
  *     returnHasConditional?: bool,
+ *     returnAllowsNull?: bool,
+ *     paramsAreSimple?: bool,
+ *     hasCrossReferencedBounds?: bool,
+ *     paramsNeedPreInference?: bool,
  *     isSimple: bool
  * }
  *
@@ -310,6 +314,7 @@ final class DocblockParser
      *     allParamsUnconstrained: bool,
      *     returnUnconstrained: bool,
      *     returnHasConditional: bool,
+     *     returnAllowsNull: bool,
      *     isSimple: bool,
      *     paramsAreSimple: bool,
      *     hasCrossReferencedBounds: bool,
@@ -324,7 +329,8 @@ final class DocblockParser
         array $aliases,
         array $methodTemplates,
         bool $paramsAreDynamic = false,
-        array $allTemplates = []
+        array $allTemplates = [],
+        bool $returnIsThis = false
     ): array {
         $constrainedTypes = [];
         $paramConditionals = [];
@@ -344,7 +350,14 @@ final class DocblockParser
                     $inner = $inner->type;
                 }
                 if (! ($inner instanceof IdentifierTypeNode)) {
-                    $paramsNeedPreInference = true;
+                    if ($inner instanceof GenericTypeNode) {
+                        $base = strtolower((string) $inner->type);
+                        if (! \in_array($base, ['class-string', 'int', 'integer', 'int-mask', 'int-mask-of', 'key-of', 'value-of'], true)) {
+                            $paramsNeedPreInference = true;
+                        }
+                    } else {
+                        $paramsNeedPreInference = true;
+                    }
                 }
             }
         }
@@ -359,6 +372,11 @@ final class DocblockParser
         } elseif ($returnType !== null) {
             $returnHasConditional = ConditionalChecker::containsConditional($returnType);
         }
+
+        $returnAllowsNull = $returnType !== null
+            && ! $returnIsThis
+            && ! $returnHasConditional
+            && self::typeContainsNull($returnType);
 
         $paramsAreSimple = ! $paramsUseGenerics
             && ! $paramsAreDynamic
@@ -384,6 +402,7 @@ final class DocblockParser
             'allParamsUnconstrained' => $allParamsUnconstrained,
             'returnUnconstrained' => $returnUnconstrained,
             'returnHasConditional' => $returnHasConditional,
+            'returnAllowsNull' => $returnAllowsNull,
             'isSimple' => $isSimple,
             'paramsAreSimple' => $paramsAreSimple,
             'hasCrossReferencedBounds' => $hasCrossReferencedBounds,
@@ -1104,7 +1123,9 @@ final class DocblockParser
             $returnUsesGenerics,
             $aliases,
             $methodTemplates,
-            $paramsAreDynamic
+            $paramsAreDynamic,
+            $allTemplates,
+            $returnIsThis
         );
 
         return [
@@ -1132,6 +1153,10 @@ final class DocblockParser
             'allParamsUnconstrained' => $flags['allParamsUnconstrained'],
             'returnUnconstrained' => $flags['returnUnconstrained'],
             'returnHasConditional' => $flags['returnHasConditional'],
+            'returnAllowsNull' => $flags['returnAllowsNull'],
+            'paramsAreSimple' => $flags['paramsAreSimple'],
+            'hasCrossReferencedBounds' => $flags['hasCrossReferencedBounds'],
+            'paramsNeedPreInference' => $flags['paramsNeedPreInference'],
             'isSimple' => $flags['isSimple'],
         ];
     }
@@ -1193,16 +1218,26 @@ final class DocblockParser
                 'allParamsUnconstrained' => true,
                 'returnUnconstrained' => false,
                 'returnHasConditional' => false,
+                'returnAllowsNull' => false,
+                'paramsAreSimple' => true,
+                'hasCrossReferencedBounds' => false,
+                'paramsNeedPreInference' => false,
                 'isSimple' => true,
             ];
         }
 
         $phpDocNode = DocblockExtractor::parseDocString($doc);
 
+        DocblockExtractor::extractAliases($phpDocNode, $aliases, $ref);
+
         foreach (DocblockExtractor::extractTemplates($phpDocNode) as $name => $tag) {
+            if ($tag->bound !== null || $tag->default !== null) {
+                $bound = $tag->bound !== null ? SpecialTypeResolver::resolve(self::substituteAliases($tag->bound, $aliases), $ref) : null;
+                $default = $tag->default !== null ? SpecialTypeResolver::resolve(self::substituteAliases($tag->default, $aliases), $ref) : null;
+                $tag = new TemplateTagValueNode($tag->name, $bound, $tag->description, $default);
+            }
             $templates[$name] = $tag;
         }
-        DocblockExtractor::extractAliases($phpDocNode, $aliases, $ref);
 
         $paramIndex = 0;
         foreach (DocblockExtractor::getParamTags($phpDocNode) as $paramName => $paramTag) {
@@ -1297,7 +1332,9 @@ final class DocblockParser
             $returnUsesMethodTemplates,
             $aliases,
             $templates,
-            false
+            false,
+            $templates,
+            $returnIsThis
         );
 
         return [
@@ -1325,6 +1362,10 @@ final class DocblockParser
             'allParamsUnconstrained' => $flags['allParamsUnconstrained'],
             'returnUnconstrained' => $flags['returnUnconstrained'],
             'returnHasConditional' => $flags['returnHasConditional'],
+            'returnAllowsNull' => $flags['returnAllowsNull'],
+            'paramsAreSimple' => $flags['paramsAreSimple'],
+            'hasCrossReferencedBounds' => $flags['hasCrossReferencedBounds'],
+            'paramsNeedPreInference' => $flags['paramsNeedPreInference'],
             'isSimple' => $flags['isSimple'],
         ];
     }
@@ -1483,12 +1524,18 @@ final class DocblockParser
 
             $phpDocNode = DocblockExtractor::parseDocString($doc);
 
+            DocblockExtractor::extractAliases($phpDocNode, $aliases, $hierRef);
+
             foreach (DocblockExtractor::extractTemplates($phpDocNode) as $name => $tag) {
                 if (! isset($templates[$name])) {
+                    if ($tag->bound !== null || $tag->default !== null) {
+                        $bound = $tag->bound !== null ? SpecialTypeResolver::resolve(self::substituteAliases($tag->bound, $aliases), $hierRef) : null;
+                        $default = $tag->default !== null ? SpecialTypeResolver::resolve(self::substituteAliases($tag->default, $aliases), $hierRef) : null;
+                        $tag = new TemplateTagValueNode($tag->name, $bound, $tag->description, $default);
+                    }
                     $templates[$name] = $tag;
                 }
             }
-            DocblockExtractor::extractAliases($phpDocNode, $aliases, $hierRef);
 
             $paramTags = DocblockExtractor::getParamTags($phpDocNode);
 

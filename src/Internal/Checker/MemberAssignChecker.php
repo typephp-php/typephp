@@ -124,10 +124,25 @@ final class MemberAssignChecker
     public static ?WeakMap $fastObjectContractCache = null;
 
     /**
+     * @var WeakMap<TypeNode, array{
+     *     isList: bool,
+     *     quoteKey: bool,
+     *     keyType: ?TypeNode,
+     *     valueType: ?TypeNode,
+     *     keyOp: int,
+     *     keyExtra: string|int|null,
+     *     valOp: int,
+     *     valExtra: string|int|null
+     * }|false>|null
+     */
+    private static ?WeakMap $innerElementContractCache = null;
+
+    /**
      * Resets the cached reflection property and element contract registries.
      */
     public static function reset(): void
     {
+        self::$innerElementContractCache = null;
         self::$refPropertyCache = [];
         self::$propertyMutationPlanCache = [];
         self::$substitutedElementContractCache = [];
@@ -221,6 +236,95 @@ final class MemberAssignChecker
 
         if (isset(InlineChecker::$nullPropertyCache[$className][$propName]) || ! RuntimeTypeChecker::$inlinePropertiesEnabled) {
             return $value;
+        }
+
+        if (
+            \count($chain) === 2
+            && $chain[0][0] === 'dim'
+            && $chain[1][0] === 'dim'
+            && RuntimeTypeChecker::$arrayValidationHybrid
+            && \is_object($objectOrClass)
+        ) {
+            $propPlan = (isset(self::$propertyMutationPlanCache[$className]) && \array_key_exists($propName, self::$propertyMutationPlanCache[$className]))
+                ? self::$propertyMutationPlanCache[$className][$propName]
+                : self::buildPropertyMutationPlan($className, $propName);
+
+            if ($propPlan === null) {
+                return $value;
+            }
+
+            if (! $propPlan['isMagicOrMissing'] && $propPlan['isNativeNonNullArray']) {
+                $outerContract = self::resolveElementContractFromPlan($objectOrClass, $className, $propName, $propPlan);
+                if ($outerContract !== null && $outerContract['valueType'] !== null && (! $outerContract['isList'] || $chain[0][1] === null)) {
+                    $outerValType = $outerContract['valueType'];
+                    self::$innerElementContractCache ??= new WeakMap();
+                    $innerContract = self::$innerElementContractCache[$outerValType]
+                        ??= (self::buildElementContract($outerValType) ?? false);
+
+                    if ($innerContract !== false && (! $innerContract['isList'] || $chain[1][1] === null)) {
+                        $outerKey = $chain[0][1];
+                        $outerKeyOk = true;
+                        if (! $outerContract['isList'] && $outerKey !== null && $outerContract['keyOp'] !== self::OP_NONE) {
+                            $outerKeyOk = match ($outerContract['keyOp']) {
+                                self::OP_STRING => \is_string($outerKey),
+                                self::OP_INT => \is_int($outerKey),
+                                self::OP_ARRAY_KEY => \is_int($outerKey) || \is_string($outerKey),
+                                self::OP_NON_EMPTY_STRING => \is_string($outerKey) && $outerKey !== '',
+                                self::OP_POSITIVE_INT => \is_int($outerKey) && $outerKey > 0,
+                                default => $outerContract['keyType'] === null
+                                    || ($registry ??= RuntimeTypeChecker::getRegistry())->validate($outerKey, $outerContract['keyType'], "Property {$className}::\${$propName} key") === null,
+                            };
+                        }
+
+                        if ($outerKeyOk) {
+                            $innerKey = $chain[1][1];
+                            $innerKeyOk = true;
+                            if (! $innerContract['isList'] && $innerKey !== null && $innerContract['keyOp'] !== self::OP_NONE) {
+                                $innerKeyOk = match ($innerContract['keyOp']) {
+                                    self::OP_STRING => \is_string($innerKey),
+                                    self::OP_INT => \is_int($innerKey),
+                                    self::OP_ARRAY_KEY => \is_int($innerKey) || \is_string($innerKey),
+                                    default => false,
+                                };
+                            }
+
+                            $innerValOk = true;
+                            if ($innerKeyOk && $innerContract['valOp'] !== self::OP_NONE) {
+                                $ivExtra = $innerContract['valExtra'];
+                                $innerValOk = match ($innerContract['valOp']) {
+                                    self::OP_STRING => \is_string($value),
+                                    self::OP_INT => \is_int($value),
+                                    self::OP_BOOL => \is_bool($value),
+                                    self::OP_FLOAT => \is_float($value) || \is_int($value),
+                                    self::OP_POSITIVE_INT => \is_int($value) && $value > 0,
+                                    self::OP_NON_EMPTY_STRING => \is_string($value) && $value !== '',
+                                    self::OP_ARRAY => \is_array($value),
+                                    self::OP_OBJECT => \is_object($value),
+                                    self::OP_CLASS => \is_object($value) && \is_string($ivExtra) && ($value instanceof $ivExtra),
+                                    default => false,
+                                };
+                            }
+
+                            if ($innerKeyOk && $innerValOk) {
+                                return $value;
+                            }
+
+                            $innerErr = self::validatePropertyElementMutationWithContract(
+                                $className,
+                                $propName,
+                                $innerKey,
+                                $value,
+                                $innerContract,
+                                $registry
+                            );
+
+                            if ($innerErr === null) {
+                                return $value;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         if (\count($chain) === 1 && $chain[0][0] === 'dim') {
@@ -330,6 +434,19 @@ final class MemberAssignChecker
                     }
 
                     if ($keyOk && $valOk) {
+                        return $value;
+                    }
+
+                    $directErr = self::validatePropertyElementMutationWithContract(
+                        $className,
+                        $propName,
+                        $key,
+                        $value,
+                        $contract,
+                        $registry
+                    );
+
+                    if ($directErr === null) {
                         return $value;
                     }
                 }

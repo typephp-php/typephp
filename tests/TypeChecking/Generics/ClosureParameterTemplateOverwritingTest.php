@@ -133,7 +133,7 @@ describe('Closure Parameter Class-Template Preservation', function () {
 
             expect(fn () => $collection->filter(function (ReproPrimaryKeyStatement $pk): bool {
                 return true;
-            }))->toThrow(\TypeError::class);
+            }))->toThrow(TypeError::class);
         });
     });
 });

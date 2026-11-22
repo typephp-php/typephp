@@ -94,10 +94,18 @@ final class InlineChecker
     private static ?\WeakMap $instancePropertyTypeCache = null;
 
     /**
+     * In-memory 3D cache for file-resolved TypeNode ASTs: [$file][$namespace][$normalized] => TypeNode.
+     *
+     * @var array<string, array<string, array<string, TypeNode>>>
+     */
+    private static array $resolvedFileTypeCache = [];
+
+    /**
      * Resets internal type node and function caches. Useful for test isolation.
      */
     public static function reset(): void
     {
+        self::$resolvedFileTypeCache = [];
         self::$parsedTypeNodeCache = [];
         self::$resolvedClassContextCache = [];
         self::$nullPropertyCache = [];
@@ -175,7 +183,9 @@ final class InlineChecker
 
             if ($file !== '') {
                 $callerNamespace = self::extractNamespaceFromCaller($caller);
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file, $callerNamespace);
+                $nsKey = $callerNamespace ?? "\0";
+                $typeNode = self::$resolvedFileTypeCache[$file][$nsKey][$normalized]
+                    ??= SpecialTypeResolver::resolveForFile($typeNode, $file, $callerNamespace);
             }
 
             if ($needsContext && $caller !== null) {
@@ -260,7 +270,9 @@ final class InlineChecker
 
             if ($file !== '') {
                 $callerNamespace = self::extractNamespaceFromCaller($caller);
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file, $callerNamespace);
+                $nsKey = $callerNamespace ?? "\0";
+                $typeNode = self::$resolvedFileTypeCache[$file][$nsKey][$normalized]
+                    ??= SpecialTypeResolver::resolveForFile($typeNode, $file, $callerNamespace);
             }
 
             if ($needsContext && $caller !== null) {

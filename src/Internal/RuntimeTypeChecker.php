@@ -28,7 +28,9 @@ use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Reporting\ViolationCollector;
 use TypePHP\Internal\Resolver\CallerBoundaryResolver;
+use TypePHP\Internal\Resolver\HierarchyResolver;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
+use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\IgnoreManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
@@ -78,6 +80,10 @@ final class RuntimeTypeChecker
 
     private const PARAM_CHECK_SCALAR = 18;
 
+    private const PARAM_CHECK_OBJECT = 19;
+
+    private const PARAM_CHECK_CLASS = 20;
+
     public static bool $isEnabled = true;
 
     public static bool $paramsEnabled = true;
@@ -105,7 +111,7 @@ final class RuntimeTypeChecker
     private static array $simpleCtorTemplatePlanCache = [];
 
     /**
-     * @var array<string, array{class: ?string, type: TypeNode|false}>
+     * @var array<string, array{class: ?string, type: TypeNode|false, op: int, extra: ?string}>
      */
     private static array $simpleReturnPlanCache = [];
 
@@ -127,10 +133,55 @@ final class RuntimeTypeChecker
     private static array $genericReturnPlanCache = [];
 
     /**
+     * @var array<string, array<string, array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool}>}>>
+     */
+    private static array $traitScopePlanCache = [];
+
+    /**
+     * @var array<string, array<string, array{function: string, type: TypeNode|false, op: int, extra: ?string}>>
+     */
+    private static array $traitReturnPlanCache = [];
+
+    /**
+     * @var array<string, true>
+     */
+    private static array $nullableReturnCache = [];
+
+    /**
+     * @var array<string, array<string, true>>
+     */
+    private static array $traitNullableReturnCache = [];
+
+    /**
+     * Compiled fast-path for methods with a single class-string<T> method template (bound null or object)
+     * and optional simple scalar/bool parameters (e.g. HasAttributes::getAttribute/getAttributes).
+     *
+     * @var array<string, array<string, array{effective: string, paramName: string, templateName: string, otherParams: list<array{0: string, 1: int, 2: TypeNode, 3: bool}>}>>
+     */
+    private static array $simpleClassStringTemplatePlanCache = [];
+
+    /**
+     * @var array<string, true>
+     */
+    private static array $identitySelfReturnCache = [];
+
+    /**
+     * @var array<string, array<string, true>>
+     */
+    private static array $traitIdentitySelfReturnCache = [];
+
+    /**
      * Resets runtime caches.
      */
     public static function reset(): void
     {
+        self::$identitySelfReturnCache = [];
+        self::$traitIdentitySelfReturnCache = [];
+        self::$simpleClassStringTemplatePlanCache = [];
+        self::$traitScopePlanCache = [];
+        self::$traitReturnPlanCache = [];
+        self::$nullableReturnCache = [];
+        self::$traitNullableReturnCache = [];
         self::$simpleScopePlanCache = [];
         self::$simpleCtorTemplatePlanCache = [];
         self::$simpleReturnPlanCache = [];
@@ -303,6 +354,11 @@ final class RuntimeTypeChecker
             return $value;
         }
 
+        $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
+        if ($className !== '' && isset(InlineChecker::$nullPropertyCache[$className][$propName])) {
+            return $value;
+        }
+
         if (
             self::$arrayValidationHybrid
             && \is_object($objectOrClass)
@@ -458,6 +514,11 @@ final class RuntimeTypeChecker
         string $file
     ): mixed {
         if (! self::$isEnabled || ! self::$inlinePropertiesEnabled) {
+            return $value;
+        }
+
+        $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
+        if ($className !== '' && isset(InlineChecker::$nullPropertyCache[$className][$propName])) {
             return $value;
         }
 
@@ -763,6 +824,67 @@ final class RuntimeTypeChecker
             }
         }
 
+        $classKey = \is_object($thisOrClass) ? $thisOrClass::class : (\is_string($thisOrClass) ? $thisOrClass : '');
+        if (isset(self::$simpleClassStringTemplatePlanCache[$function][$classKey])) {
+            $csPlan = self::$simpleClassStringTemplatePlanCache[$function][$classKey];
+            $pName = $csPlan['paramName'];
+            if (isset($vars[$pName])) {
+                $valStr = $vars[$pName];
+                if (
+                    \is_string($valStr)
+                    && (ClassNameValidator::$validClassStringCache[$valStr]
+                        ?? ClassNameValidator::isValidClassString($valStr))
+                ) {
+                    $othersOk = true;
+                    foreach ($csPlan['otherParams'] as $op) {
+                        $opName = $op[0];
+                        if (isset($vars[$opName])) {
+                            $ov = $vars[$opName];
+                            $ok = match ($op[1]) {
+                                self::PARAM_CHECK_BOOL => \is_bool($ov),
+                                self::PARAM_CHECK_INT => \is_int($ov),
+                                self::PARAM_CHECK_STRING => \is_string($ov),
+                                self::PARAM_CHECK_FLOAT => \is_float($ov) || \is_int($ov),
+                                self::PARAM_CHECK_ARRAY => \is_array($ov),
+                                self::PARAM_CHECK_POSITIVE_INT => \is_int($ov) && $ov > 0,
+                                self::PARAM_CHECK_NON_EMPTY_STRING => \is_string($ov) && $ov !== '',
+                                default => false,
+                            };
+                            if (! $ok) {
+                                $othersOk = false;
+
+                                break;
+                            }
+                        } elseif (\array_key_exists($opName, $vars)) {
+                            $othersOk = false;
+
+                            break;
+                        }
+                    }
+
+                    if ($othersOk) {
+                        $classNode = TemplateManager::$classNodeCache[$valStr] ??= new IdentifierTypeNode($valStr);
+                        $eff = $csPlan['effective'];
+                        $tName = $csPlan['templateName'];
+                        $thisObjVal = \is_object($thisOrClass) ? $thisOrClass : null;
+
+                        if (isset(TemplateManager::$topCallFrame[$eff])) {
+                            TemplateManager::pushSingleTemplateFrame($eff, $tName, $classNode, $thisObjVal);
+                        } else {
+                            TemplateManager::$topCallFrame[$eff] = [$tName => $classNode];
+                            TemplateManager::$topCallThis[$eff] = $thisObjVal;
+                            TemplateManager::$activeCallOrder[] = $eff;
+                        }
+
+                        $cleaner = new ScopeCleaner($eff);
+                        $cleaner->boundTemplates = [$tName => $classNode];
+
+                        return $cleaner;
+                    }
+                }
+            }
+        }
+
         $plan = self::$simpleScopePlanCache[$function] ?? null;
 
         if (
@@ -776,8 +898,14 @@ final class RuntimeTypeChecker
             return self::executeSimpleScopePlan($plan, $vars);
         }
 
+        if (\is_object($thisOrClass) && isset(self::$traitScopePlanCache[$function][$thisOrClass::class])) {
+            return self::executeSimpleScopePlan(self::$traitScopePlanCache[$function][$thisOrClass::class], $vars);
+        }
+
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+        $effectiveFunction = $thisOrClass === null
+            ? $function
+            : ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
 
         if ($effectiveFunction !== $function && isset(self::$simpleScopePlanCache[$effectiveFunction])) {
             $effectivePlan = self::$simpleScopePlanCache[$effectiveFunction];
@@ -869,6 +997,8 @@ final class RuntimeTypeChecker
                 self::$simpleScopePlanCache[$effectiveFunction] = $compiledPlan;
                 if ($function === $effectiveFunction) {
                     self::$simpleScopePlanCache[$function] = $compiledPlan;
+                } elseif ($thisObj !== null && HierarchyResolver::getTraitAliases($thisObj::class) === []) {
+                    self::$traitScopePlanCache[$function][$thisObj::class] = $compiledPlan;
                 }
             }
 
@@ -896,6 +1026,30 @@ final class RuntimeTypeChecker
             }
 
             return null;
+        }
+
+        if (
+            ! $isMagicCall
+            && $functionKind !== ParamChecker::KIND_CONSTRUCT
+            && \count($contract['templates']) === 1
+            && $contract['classTemplates'] === []
+            && $contract['aliases'] === []
+            && ! $contract['paramsAreDynamic']
+            && ($contract['paramConditionals'] ?? []) === []
+            && ! ($contract['hasCrossReferencedBounds'] ?? false)
+            && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction])
+            && ($thisObj === null || HierarchyResolver::getTraitAliases($thisObj::class) === [])
+        ) {
+            $csPlan = self::compileSimpleClassStringTemplatePlan(
+                $effectiveFunction,
+                $contract['types'],
+                $contract['templates'],
+                $contract['sensitiveParams']
+            );
+            if ($csPlan !== null) {
+                self::$simpleClassStringTemplatePlanCache[$function][$classKey] = $csPlan;
+                self::$hasMethodTemplatesCache[$effectiveFunction] = true;
+            }
         }
 
         $err = ParamChecker::checkParams(
@@ -933,7 +1087,7 @@ final class RuntimeTypeChecker
         if ($hasMethodTemplates) {
             $cleaner = new ScopeCleaner($effectiveFunction);
             if ($thisObj !== null && $contract['classTemplates'] === []) {
-                $cleaner->boundTemplates = TemplateManager::getTopCallFrame($effectiveFunction) ?? [];
+                $cleaner->boundTemplates = TemplateManager::$topCallFrame[$effectiveFunction] ?? [];
             } else {
                 $allTemplates = [...$contract['classTemplates'], ...$contract['templates']];
                 $cleaner->boundTemplates = TemplateManager::getBoundTemplates($effectiveFunction, $thisObj, $allTemplates);
@@ -943,6 +1097,95 @@ final class RuntimeTypeChecker
         }
 
         return null;
+    }
+
+    /**
+     * @param array<string, TypeNode> $types
+     * @param array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode> $templates
+     * @param array<string, bool> $sensitiveParams
+     *
+     * @return array{effective: string, paramName: string, templateName: string, otherParams: list<array{0: string, 1: int, 2: TypeNode, 3: bool}>}|null
+     */
+    private static function compileSimpleClassStringTemplatePlan(
+        string $effectiveFunction,
+        array $types,
+        array $templates,
+        array $sensitiveParams
+    ): ?array {
+        if (\count($templates) !== 1 || $types === []) {
+            return null;
+        }
+
+        $tName = (string) array_key_first($templates);
+        $tTag = $templates[$tName];
+        if ($tTag->bound !== null) {
+            if (! ($tTag->bound instanceof IdentifierTypeNode)) {
+                return null;
+            }
+            $boundLower = strtolower($tTag->bound->name);
+            if ($boundLower !== 'object' && $boundLower !== 'mixed') {
+                return null;
+            }
+        }
+
+        $classStringParamName = null;
+        $otherParams = [];
+
+        foreach ($types as $paramName => $typeNode) {
+            if (
+                $typeNode instanceof GenericTypeNode
+                && strtolower((string) $typeNode->type) === 'class-string'
+                && \count($typeNode->genericTypes) === 1
+                && $typeNode->genericTypes[0] instanceof IdentifierTypeNode
+                && $typeNode->genericTypes[0]->name === $tName
+            ) {
+                if ($classStringParamName !== null) {
+                    return null;
+                }
+                $classStringParamName = $paramName;
+
+                continue;
+            }
+
+            if (DocblockParser::typeReferencesTemplate($typeNode, $templates)) {
+                return null;
+            }
+
+            if (! ($typeNode instanceof IdentifierTypeNode)) {
+                return null;
+            }
+
+            $checkKind = match (strtolower($typeNode->name)) {
+                'bool', 'boolean' => self::PARAM_CHECK_BOOL,
+                'int', 'integer' => self::PARAM_CHECK_INT,
+                'string' => self::PARAM_CHECK_STRING,
+                'float', 'double' => self::PARAM_CHECK_FLOAT,
+                'array' => self::PARAM_CHECK_ARRAY,
+                'positive-int' => self::PARAM_CHECK_POSITIVE_INT,
+                'non-empty-string' => self::PARAM_CHECK_NON_EMPTY_STRING,
+                'mixed' => self::PARAM_CHECK_MIXED,
+                default => null,
+            };
+
+            if ($checkKind === null) {
+                return null;
+            }
+
+            if ($checkKind !== self::PARAM_CHECK_MIXED) {
+                $otherParams[] = [$paramName, $checkKind, $typeNode, $sensitiveParams[$paramName] ?? false];
+            }
+        }
+
+        if ($classStringParamName === null) {
+            return null;
+        }
+
+        return [
+            'effective' => $effectiveFunction,
+            'paramName' => $classStringParamName,
+            'templateName' => $tName,
+            'otherParams' => $otherParams,
+        ];
     }
 
     /**
@@ -1257,23 +1500,21 @@ final class RuntimeTypeChecker
             return;
         }
 
+        if (isset(SelfOutChecker::$noSelfOutContractCache[$function])) {
+            return;
+        }
+
         $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisObj, $thisObj);
 
         if (isset(SelfOutChecker::$noSelfOutContractCache[$effectiveFunction])) {
             return;
         }
 
-        if (CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
+        if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
             return;
         }
 
-        if (IgnoreManager::isCallerIgnored()) {
-            return;
-        }
-
-        $vars = $vars !== null ? $vars : [];
-
-        SelfOutChecker::checkSelfOut($function, $thisObj, $vars, self::getRegistry(), $effectiveFunction);
+        SelfOutChecker::checkSelfOut($function, $thisObj, $vars ?? [], self::getRegistry(), $effectiveFunction);
     }
 
     /**
@@ -1287,6 +1528,32 @@ final class RuntimeTypeChecker
             return $value;
         }
 
+        if (
+            \is_object($thisOrClass)
+            && $value === $thisOrClass
+            && TemplateManager::$instanceTemplateBindings !== null
+            && isset(TemplateManager::$instanceTemplateBindings[$thisOrClass])
+        ) {
+            if (isset(self::$identitySelfReturnCache[$function]) || isset(self::$traitIdentitySelfReturnCache[$function][$thisOrClass::class])) {
+                return $value;
+            }
+        }
+
+        if ($value === null) {
+            if (isset(self::$nullableReturnCache[$function])) {
+                return null;
+            }
+            if (\is_object($thisOrClass) && isset(self::$traitNullableReturnCache[$function][$thisOrClass::class])) {
+                return null;
+            }
+        }
+
+        if (\is_object($thisOrClass) && isset(self::$traitReturnPlanCache[$function][$thisOrClass::class])) {
+            $tPlan = self::$traitReturnPlanCache[$function][$thisOrClass::class];
+
+            return self::executeSimpleReturnPlan($tPlan['function'], $tPlan['type'], $value, $tPlan['op'], $tPlan['extra']);
+        }
+
         $retPlan = self::$simpleReturnPlanCache[$function] ?? null;
         if (
             $retPlan !== null
@@ -1294,7 +1561,7 @@ final class RuntimeTypeChecker
                 ? $thisOrClass === null
                 : (\is_object($thisOrClass) ? $thisOrClass::class === $retPlan['class'] : $thisOrClass === $retPlan['class']))
         ) {
-            return self::executeSimpleReturnPlan($function, $retPlan['type'], $value);
+            return self::executeSimpleReturnPlan($function, $retPlan['type'], $value, $retPlan['op'], $retPlan['extra']);
         }
 
         if (isset(self::$genericReturnPlanCache[$function]) && \is_object($thisOrClass)) {
@@ -1319,10 +1586,28 @@ final class RuntimeTypeChecker
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
-        $effectiveFunction = ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+        $effectiveFunction = $thisOrClass === null
+            ? $function
+            : ParamChecker::resolveEffectiveFunction($function, $thisOrClass, $thisObj);
+
+        if (
+            $thisObj !== null
+            && $value === $thisObj
+            && TemplateManager::$instanceTemplateBindings !== null
+            && isset(TemplateManager::$instanceTemplateBindings[$thisObj])
+            && isset(self::$identitySelfReturnCache[$effectiveFunction])
+        ) {
+            return $value;
+        }
+
+        if ($value === null && isset(self::$nullableReturnCache[$effectiveFunction])) {
+            return null;
+        }
 
         if (isset(self::$simpleReturnPlanCache[$effectiveFunction])) {
-            return self::executeSimpleReturnPlan($effectiveFunction, self::$simpleReturnPlanCache[$effectiveFunction]['type'], $value);
+            $effPlan = self::$simpleReturnPlanCache[$effectiveFunction];
+
+            return self::executeSimpleReturnPlan($effectiveFunction, $effPlan['type'], $value, $effPlan['op'], $effPlan['extra']);
         }
 
         if (! isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && CallerBoundaryResolver::shouldBypass($effectiveFunction)) {
@@ -1338,19 +1623,51 @@ final class RuntimeTypeChecker
 
         $contract = DocblockParser::parse($effectiveFunction);
         $declaringClass = str_contains($effectiveFunction, '::') ? explode('::', $effectiveFunction, 2)[0] : null;
+        $returnTypeNode = $contract['return'];
+
+        if (! $isDynamicDispatch && $returnTypeNode === null) {
+            ReturnChecker::$noReturnContractCache[$effectiveFunction] = true;
+
+            return $value;
+        }
+
+        if (! $isDynamicDispatch && ($contract['returnAllowsNull'] ?? false) && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction])) {
+            self::$nullableReturnCache[$effectiveFunction] = true;
+            if ($function === $effectiveFunction) {
+                self::$nullableReturnCache[$function] = true;
+            } elseif ($thisObj !== null && HierarchyResolver::getTraitAliases($thisObj::class) === []) {
+                self::$traitNullableReturnCache[$function][$thisObj::class] = true;
+            }
+
+            if ($value === null) {
+                return null;
+            }
+        }
 
         if (! $isDynamicDispatch && ($contract['returnUnconstrained'] ?? false)) {
-            $unconstrainedPlan = ['class' => $declaringClass, 'type' => false];
+            ReturnChecker::$noReturnContractCache[$effectiveFunction] = true;
+            $unconstrainedPlan = [
+                'class' => $declaringClass,
+                'type' => false,
+                'op' => self::PARAM_CHECK_MIXED,
+                'extra' => null,
+            ];
             self::$simpleReturnPlanCache[$effectiveFunction] = $unconstrainedPlan;
             if ($function === $effectiveFunction) {
                 self::$simpleReturnPlanCache[$function] = $unconstrainedPlan;
+            } elseif ($thisObj !== null && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && HierarchyResolver::getTraitAliases($thisObj::class) === []) {
+                self::$traitReturnPlanCache[$function][$thisObj::class] = [
+                    'function' => $effectiveFunction,
+                    'type' => false,
+                    'op' => self::PARAM_CHECK_MIXED,
+                    'extra' => null,
+                ];
             }
 
             return $value;
         }
 
         $registry = self::$registry ??= new TypeValidatorRegistry();
-        $returnTypeNode = $contract['return'];
 
         if (
             ! $isDynamicDispatch
@@ -1367,10 +1684,23 @@ final class RuntimeTypeChecker
             if ($resolvedType instanceof IdentifierTypeNode) {
                 $lowerName = strtolower($resolvedType->name);
                 if ($lowerName === 'mixed' || $lowerName === 'array') {
-                    $unconstrainedPlan = ['class' => $declaringClass, 'type' => false];
+                    ReturnChecker::$noReturnContractCache[$effectiveFunction] = true;
+                    $unconstrainedPlan = [
+                        'class' => $declaringClass,
+                        'type' => false,
+                        'op' => self::PARAM_CHECK_MIXED,
+                        'extra' => null,
+                    ];
                     self::$simpleReturnPlanCache[$effectiveFunction] = $unconstrainedPlan;
                     if ($function === $effectiveFunction) {
                         self::$simpleReturnPlanCache[$function] = $unconstrainedPlan;
+                    } elseif ($thisObj !== null && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction]) && HierarchyResolver::getTraitAliases($thisObj::class) === []) {
+                        self::$traitReturnPlanCache[$function][$thisObj::class] = [
+                            'function' => $effectiveFunction,
+                            'type' => false,
+                            'op' => self::PARAM_CHECK_MIXED,
+                            'extra' => null,
+                        ];
                     }
 
                     return $value;
@@ -1387,10 +1717,23 @@ final class RuntimeTypeChecker
             }
 
             if (! $isTraversableIterable && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction])) {
-                $compiledPlan = ['class' => $declaringClass, 'type' => $resolvedType];
+                [$op, $extra] = self::compileSimpleReturnOp($resolvedType);
+                $compiledPlan = [
+                    'class' => $declaringClass,
+                    'type' => $resolvedType,
+                    'op' => $op,
+                    'extra' => $extra,
+                ];
                 self::$simpleReturnPlanCache[$effectiveFunction] = $compiledPlan;
                 if ($function === $effectiveFunction) {
                     self::$simpleReturnPlanCache[$function] = $compiledPlan;
+                } elseif ($thisObj !== null && HierarchyResolver::getTraitAliases($thisObj::class) === []) {
+                    self::$traitReturnPlanCache[$function][$thisObj::class] = [
+                        'function' => $effectiveFunction,
+                        'type' => $resolvedType,
+                        'op' => $op,
+                        'extra' => $extra,
+                    ];
                 }
             }
 
@@ -1432,6 +1775,35 @@ final class RuntimeTypeChecker
             }
         }
 
+        if (
+            ! $isDynamicDispatch
+            && $thisObj !== null
+            && $declaringClass !== null
+            && $returnTypeNode instanceof GenericTypeNode
+            && $contract['templates'] === []
+            && $contract['classTemplates'] !== []
+            && \count($contract['aliases']) === 0
+            && ! ($contract['returnHasConditional'] ?? true)
+            && ! ($contract['returnIsThis'] ?? false)
+            && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction])
+            && self::isIdentitySelfGenericReturn($returnTypeNode, $declaringClass, $thisObj, $contract['classTemplates'])
+        ) {
+            self::$identitySelfReturnCache[$effectiveFunction] = true;
+            if ($function === $effectiveFunction) {
+                self::$identitySelfReturnCache[$function] = true;
+            } elseif (HierarchyResolver::getTraitAliases($thisObj::class) === []) {
+                self::$traitIdentitySelfReturnCache[$function][$thisObj::class] = true;
+            }
+
+            if (
+                $value === $thisObj
+                && TemplateManager::$instanceTemplateBindings !== null
+                && isset(TemplateManager::$instanceTemplateBindings[$thisObj])
+            ) {
+                return $value;
+            }
+        }
+
         $vars = $vars !== null ? $vars : [];
 
         $res = ReturnChecker::checkReturn(
@@ -1456,9 +1828,95 @@ final class RuntimeTypeChecker
         return $res;
     }
 
-    private static function executeSimpleReturnPlan(string $function, TypeNode|false $resolvedType, mixed $value): mixed
-    {
-        if ($resolvedType === false) {
+    /**
+     * Checks whether a GenericTypeNode return contract is an exact identity self-return
+     * (e.g. `@return self<T1, T2>` or `@return static<T1, T2>`) matching the class's declared template order.
+     *
+     * @param array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode> $classTemplates
+     */
+    private static function isIdentitySelfGenericReturn(
+        GenericTypeNode $returnTypeNode,
+        string $declaringClass,
+        object $thisObj,
+        array $classTemplates
+    ): bool {
+        if ($classTemplates === []) {
+            return false;
+        }
+
+        $baseName = (string) $returnTypeNode->type;
+        $baseLower = strtolower($baseName);
+        $runtimeClass = $thisObj::class;
+
+        $isSelfRef = match ($baseLower) {
+            'self', 'static', '$this' => true,
+            default => ltrim($baseName, '\\') === $declaringClass || ltrim($baseName, '\\') === $runtimeClass,
+        };
+
+        if (! $isSelfRef) {
+            return false;
+        }
+
+        $runtimeDeclaredNames = TemplateManager::getDeclaredClassTemplateNames($runtimeClass);
+        if ($runtimeClass !== $declaringClass && $runtimeDeclaredNames !== []) {
+            return false;
+        }
+
+        $targetNames = $runtimeDeclaredNames !== [] ? $runtimeDeclaredNames : array_keys($classTemplates);
+        if (\count($returnTypeNode->genericTypes) !== \count($targetNames)) {
+            return false;
+        }
+
+        foreach ($targetNames as $idx => $tName) {
+            $gt = $returnTypeNode->genericTypes[$idx] ?? null;
+            if (! ($gt instanceof IdentifierTypeNode) || $gt->name !== $tName) {
+                return false;
+            }
+
+            $variance = $returnTypeNode->variances[$idx] ?? GenericTypeNode::VARIANCE_INVARIANT;
+            if ($variance === GenericTypeNode::VARIANCE_CONTRAVARIANT) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static function executeSimpleReturnPlan(
+        string $function,
+        TypeNode|false $resolvedType,
+        mixed $value,
+        int $op = self::PARAM_CHECK_FALLBACK,
+        ?string $extra = null
+    ): mixed {
+        if ($resolvedType === false || $op === self::PARAM_CHECK_MIXED) {
+            return $value;
+        }
+
+        $ok = match ($op) {
+            self::PARAM_CHECK_INT => \is_int($value),
+            self::PARAM_CHECK_STRING => \is_string($value),
+            self::PARAM_CHECK_BOOL => \is_bool($value),
+            self::PARAM_CHECK_FLOAT => \is_float($value) || \is_int($value),
+            self::PARAM_CHECK_ARRAY => \is_array($value),
+            self::PARAM_CHECK_OBJECT => \is_object($value),
+            self::PARAM_CHECK_CLASS => \is_object($value) && $extra !== null && ($value instanceof $extra),
+            self::PARAM_CHECK_POSITIVE_INT => \is_int($value) && $value > 0,
+            self::PARAM_CHECK_NON_EMPTY_STRING => \is_string($value) && $value !== '',
+            self::PARAM_CHECK_ARRAY_KEY => \is_int($value) || \is_string($value),
+            self::PARAM_CHECK_LIST => \is_array($value) && ($value === [] || array_is_list($value)),
+            self::PARAM_CHECK_NON_NEGATIVE_INT => \is_int($value) && $value >= 0,
+            self::PARAM_CHECK_NEGATIVE_INT => \is_int($value) && $value < 0,
+            self::PARAM_CHECK_NON_POSITIVE_INT => \is_int($value) && $value <= 0,
+            self::PARAM_CHECK_NON_ZERO_INT => \is_int($value) && $value !== 0,
+            self::PARAM_CHECK_NULL => $value === null,
+            self::PARAM_CHECK_TRUE => $value === true,
+            self::PARAM_CHECK_FALSE => $value === false,
+            self::PARAM_CHECK_SCALAR => \is_scalar($value),
+            default => false,
+        };
+
+        if ($ok) {
             return $value;
         }
 
@@ -1475,6 +1933,60 @@ final class RuntimeTypeChecker
         }
 
         return $value;
+    }
+
+    /**
+     * @return array{0: int, 1: ?string}
+     */
+    private static function compileSimpleReturnOp(TypeNode $resolvedType): array
+    {
+        $inner = $resolvedType;
+        while ($inner instanceof \PHPStan\PhpDocParser\Ast\Type\NullableTypeNode) {
+            $inner = $inner->type;
+        }
+
+        if (! ($inner instanceof IdentifierTypeNode)) {
+            return [self::PARAM_CHECK_FALLBACK, null];
+        }
+
+        $name = $inner->name;
+
+        $op = match ($name) {
+            'int', 'integer' => self::PARAM_CHECK_INT,
+            'string' => self::PARAM_CHECK_STRING,
+            'bool', 'boolean' => self::PARAM_CHECK_BOOL,
+            'float', 'double' => self::PARAM_CHECK_FLOAT,
+            'array' => self::PARAM_CHECK_ARRAY,
+            'object' => self::PARAM_CHECK_OBJECT,
+            'positive-int' => self::PARAM_CHECK_POSITIVE_INT,
+            'non-empty-string' => self::PARAM_CHECK_NON_EMPTY_STRING,
+            'array-key' => self::PARAM_CHECK_ARRAY_KEY,
+            'list' => self::PARAM_CHECK_LIST,
+            'non-negative-int', 'unsigned-int' => self::PARAM_CHECK_NON_NEGATIVE_INT,
+            'negative-int' => self::PARAM_CHECK_NEGATIVE_INT,
+            'non-positive-int' => self::PARAM_CHECK_NON_POSITIVE_INT,
+            'non-zero-int' => self::PARAM_CHECK_NON_ZERO_INT,
+            'mixed' => self::PARAM_CHECK_MIXED,
+            'null', 'void' => self::PARAM_CHECK_NULL,
+            'true' => self::PARAM_CHECK_TRUE,
+            'false' => self::PARAM_CHECK_FALSE,
+            'scalar' => self::PARAM_CHECK_SCALAR,
+            default => null,
+        };
+
+        if ($op !== null) {
+            return [$op, null];
+        }
+
+        if (
+            ! SpecialTypeResolver::isBuiltInTypeKeyword($name)
+            && ClassNameValidator::isValid($name)
+            && (class_exists($name, false) || interface_exists($name, false))
+        ) {
+            return [self::PARAM_CHECK_CLASS, $name];
+        }
+
+        return [self::PARAM_CHECK_FALLBACK, null];
     }
 
     /**

@@ -59,13 +59,6 @@ final class TemplateManager
     private static array $callStackBindings = [];
 
     /**
-     * Sequential execution order of active function call frames on the stack.
-     *
-     * @var list<string>
-     */
-    private static array $activeCallOrder = [];
-
-    /**
      * Cache for resolved hierarchy templates and variances per class name.
      *
      * @var array<string, array{0: array<string, TemplateTagValueNode>, 1: array<string, string>}>
@@ -617,10 +610,33 @@ final class TemplateManager
     private static ?WeakMap $verifiedShallowRefinements = null;
 
     /**
+     * Direct O(1) active top call frame per function (eliminates nested stack access on non-recursive calls).
+     *
+     * @var array<string, array<string, TypeNode>>
+     */
+    public static array $topCallFrame = [];
+
+    /**
+     * Sequential execution order of active function call frames on the stack.
+     *
+     * @var list<string>
+     */
+    public static array $activeCallOrder = [];
+
+    /**
+     * Direct O(1) active $this object per function.
+     *
+     * @var array<string, ?object>
+     */
+    public static array $topCallThis = [];
+
+    /**
      * Resets all static generic template bindings, call stack frames, and method template caches.
      */
     public static function reset(): void
     {
+        self::$topCallFrame = [];
+        self::$topCallThis = [];
         self::$propagatedBindingsCache = null;
         self::$refClassCache = [];
         self::$instanceTemplateBindings = null;
@@ -669,6 +685,21 @@ final class TemplateManager
         } else {
             self::$instanceTemplateBindings[$instance] = $bindings;
         }
+    }
+
+    /**
+     * Pushes a pre-bound single-template call frame onto the stack in O(1).
+     */
+    public static function pushSingleTemplateFrame(string $function, string $templateName, TypeNode $type, ?object $thisObj = null): void
+    {
+        if (isset(self::$topCallFrame[$function])) {
+            self::$callStackBindings[$function][] = self::$topCallFrame[$function];
+            self::$callStackThis[$function][] = self::$topCallThis[$function] ?? null;
+        }
+
+        self::$topCallFrame[$function] = [$templateName => $type];
+        self::$topCallThis[$function] = $thisObj;
+        self::$activeCallOrder[] = $function;
     }
 
     /**
@@ -855,8 +886,13 @@ final class TemplateManager
      */
     public static function pushCallFrame(string $function, ?object $thisObj = null): void
     {
-        self::$callStackBindings[$function][] = [];
-        self::$callStackThis[$function][] = $thisObj;
+        if (isset(self::$topCallFrame[$function])) {
+            self::$callStackBindings[$function][] = self::$topCallFrame[$function];
+            self::$callStackThis[$function][] = self::$topCallThis[$function] ?? null;
+        }
+
+        self::$topCallFrame[$function] = [];
+        self::$topCallThis[$function] = $thisObj;
         self::$activeCallOrder[] = $function;
     }
 
@@ -866,17 +902,22 @@ final class TemplateManager
     public static function popCallFrame(string $function): void
     {
         if (isset(self::$callStackBindings[$function])) {
-            array_pop(self::$callStackBindings[$function]);
-            if (isset(self::$callStackThis[$function])) {
-                array_pop(self::$callStackThis[$function]);
-            }
+            $prev = array_pop(self::$callStackBindings[$function]);
+            $prevThis = array_pop(self::$callStackThis[$function]);
             if (self::$callStackBindings[$function] === []) {
-                unset(self::$callStackBindings[$function], self::$callStackThis[$function], self::$generatorInferredCallFrames[$function]);
+                unset(self::$callStackBindings[$function], self::$callStackThis[$function]);
             }
-
-            self::popActiveCallOrder($function);
+            self::$topCallFrame[$function] = $prev ?? [];
+            self::$topCallThis[$function] = $prevThis;
         } else {
-            unset(self::$generatorInferredCallFrames[$function]);
+            unset(self::$topCallFrame[$function], self::$topCallThis[$function], self::$generatorInferredCallFrames[$function]);
+        }
+
+        $count = \count(self::$activeCallOrder);
+        if ($count > 0 && self::$activeCallOrder[$count - 1] === $function) {
+            array_pop(self::$activeCallOrder);
+        } elseif ($count > 1) {
+            self::popActiveCallOrder($function);
         }
     }
 
@@ -913,13 +954,7 @@ final class TemplateManager
      */
     private static function getTopCallThis(string $function): ?object
     {
-        if (! isset(self::$callStackThis[$function]) || self::$callStackThis[$function] === []) {
-            return null;
-        }
-
-        $top = end(self::$callStackThis[$function]);
-
-        return $top !== false ? $top : null;
+        return self::$topCallThis[$function] ?? null;
     }
 
     /**
@@ -1014,7 +1049,7 @@ final class TemplateManager
             }
         }
 
-        $topFrame = self::getTopCallFrame($function);
+        $topFrame = self::$topCallFrame[$function] ?? null;
         if ($topFrame !== null) {
             $bindings = $bindings === []
                 ? $topFrame
@@ -1173,8 +1208,7 @@ final class TemplateManager
      */
     public static function isBound(string $function, object|string|null $thisOrClass, string $templateName): bool
     {
-        $topFrame = self::getTopCallFrame($function);
-        if ($topFrame !== null && isset($topFrame[$templateName])) {
+        if (isset(self::$topCallFrame[$function][$templateName])) {
             return true;
         }
 
@@ -1217,9 +1251,8 @@ final class TemplateManager
      */
     public static function getBoundType(string $function, object|string|null $thisOrClass, string $templateName): ?TypeNode
     {
-        $topFrame = self::getTopCallFrame($function);
-        if ($topFrame !== null && isset($topFrame[$templateName])) {
-            return $topFrame[$templateName];
+        if (isset(self::$topCallFrame[$function][$templateName])) {
+            return self::$topCallFrame[$function][$templateName];
         }
 
         $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
@@ -1275,12 +1308,13 @@ final class TemplateManager
 
             self::$instanceTemplateBindings[$thisObj] = $bindings;
         } else {
-            if (! self::hasCallFrame($function)) {
-                self::$callStackBindings[$function][] = [];
+            if (! isset(self::$topCallFrame[$function])) {
+                self::$topCallFrame[$function] = [$templateName => $inferredType];
+                self::$topCallThis[$function] = null;
                 self::$activeCallOrder[] = $function;
+            } else {
+                self::$topCallFrame[$function][$templateName] = $inferredType;
             }
-            $lastIndex = \count(self::$callStackBindings[$function]) - 1;
-            self::$callStackBindings[$function][$lastIndex][$templateName] = $inferredType;
         }
     }
 
@@ -1997,7 +2031,7 @@ final class TemplateManager
             return $bindings;
         }
 
-        $topFrame = self::getTopCallFrame($activeFunction);
+        $topFrame = self::$topCallFrame[$activeFunction] ?? null;
         if ($topFrame === null || $topFrame === []) {
             return $bindings;
         }
@@ -2021,7 +2055,7 @@ final class TemplateManager
 
         $returnTemplateNames = array_keys(DocblockParser::parseClassTemplates($returnBaseClass));
         $targetTemplateNames = array_keys($targetTemplates);
-        $activeThis = self::getTopCallThis($activeFunction);
+        $activeThis = self::$topCallThis[$activeFunction] ?? null;
         $thisBindings = $activeThis !== null ? self::getBoundTemplatesForInstance($activeThis) : [];
         $combinedBindings = [...$thisBindings, ...$bindings, ...$topFrame];
         $changed = false;
@@ -3600,7 +3634,7 @@ final class TemplateManager
      */
     private static function hasCallFrame(string $function): bool
     {
-        return isset(self::$callStackBindings[$function]);
+        return isset(self::$topCallFrame[$function]);
     }
 
     /**
@@ -3608,13 +3642,7 @@ final class TemplateManager
      */
     public static function getTopCallFrame(string $function): ?array
     {
-        if (! isset(self::$callStackBindings[$function]) || self::$callStackBindings[$function] === []) {
-            return null;
-        }
-
-        $top = end(self::$callStackBindings[$function]);
-
-        return $top !== false ? $top : null;
+        return self::$topCallFrame[$function] ?? null;
     }
 
     private static function ensureInstanceInherited(object $instance): void

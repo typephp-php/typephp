@@ -16,6 +16,7 @@ use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Util\ClassNameValidator;
 
 /**
  * Registry mapping AST TypeNodes to their corresponding validator strategy implementations.
@@ -86,11 +87,14 @@ final class TypeValidatorRegistry
                 'non-positive-int' => \is_int($value) && $value <= 0,
                 'non-zero-int' => \is_int($value) && $value !== 0,
                 'mixed' => true,
-                'null' => $value === null,
+                'null', 'void' => $value === null,
                 'true' => $value === true,
                 'false' => $value === false,
                 'scalar' => \is_scalar($value),
                 'object' => \is_object($value),
+                'class-string' => \is_string($value) && ClassNameValidator::isValidClassString($value),
+                'iterable' => is_iterable($value),
+                'numeric', 'number' => \is_int($value) || \is_float($value) || (\is_string($value) && is_numeric($value)),
                 default => \is_object($value) && ($value instanceof $name),
             };
 
