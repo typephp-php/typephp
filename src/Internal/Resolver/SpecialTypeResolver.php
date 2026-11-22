@@ -189,6 +189,8 @@ final class SpecialTypeResolver
      */
     private static array $fileNamespaceRanges = [];
 
+    private const RESOLVED_ATTRIBUTE = 'typephp_resolved';
+
     /**
      * Resets reflection context and dynamic caches. Preserves static file imports.
      */
@@ -225,6 +227,10 @@ final class SpecialTypeResolver
     public static function resolve(TypeNode $node, \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context, ?object $thisObj = null): TypeNode
     {
         if ($node instanceof IdentifierTypeNode) {
+            if ($node->getAttribute(self::RESOLVED_ATTRIBUTE) === true) {
+                return $node;
+            }
+
             $lower = strtolower($node->name);
             if (isset(self::BUILTIN_TYPE_KEYWORDS[$lower]) && $lower !== 'self' && $lower !== 'parent' && $lower !== 'static' && $lower !== '$this') {
                 if (! isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) || $node->name === $lower) {
@@ -253,6 +259,10 @@ final class SpecialTypeResolver
         ?object $thisObj = null
     ): TypeNode {
         if ($node instanceof IdentifierTypeNode) {
+            if ($node->getAttribute(self::RESOLVED_ATTRIBUTE) === true) {
+                return $node;
+            }
+
             $lower = strtolower($node->name);
             if (isset(self::BUILTIN_TYPE_KEYWORDS[$lower]) && $lower !== 'self' && $lower !== 'parent' && $lower !== 'static' && $lower !== '$this') {
                 if (! isset(self::OVERRIDABLE_SCALAR_ALIASES[$lower]) || $node->name === $lower) {
@@ -265,13 +275,13 @@ final class SpecialTypeResolver
 
         if ($node instanceof ThisTypeNode) {
             if ($thisObj !== null) {
-                return new IdentifierTypeNode($thisObj::class);
+                return self::createResolvedIdentifier($thisObj::class);
             }
 
             if (\is_string($context)) {
                 $callingClass = strstr($context, '::', true);
                 if ($callingClass !== false && self::symbolExists($callingClass)) {
-                    return new IdentifierTypeNode($callingClass);
+                    return self::createResolvedIdentifier($callingClass);
                 }
             }
 
@@ -396,6 +406,10 @@ final class SpecialTypeResolver
         }
 
         if ($node instanceof IdentifierTypeNode) {
+            if ($node->getAttribute(self::RESOLVED_ATTRIBUTE) === true) {
+                return clone $node;
+            }
+
             $lower = strtolower($node->name);
             if (\in_array($lower, ['self', 'static', 'parent', '$this'], strict: true)) {
                 return clone $node;
@@ -410,12 +424,28 @@ final class SpecialTypeResolver
 
                 $resolvedClass = self::resolveFqcnForFile($className, $file, true, $namespace);
 
-                return $resolvedClass !== $className ? new IdentifierTypeNode($resolvedClass . '::' . $member) : clone $node;
+                if (
+                    str_starts_with($className, '\\')
+                    || $resolvedClass !== $className
+                    || (! self::isBuiltInTypeKeyword($resolvedClass) && self::symbolExists($resolvedClass, true))
+                ) {
+                    return self::createResolvedIdentifier($resolvedClass . '::' . $member);
+                }
+
+                return clone $node;
             }
 
             $fqcn = self::resolveFqcnForFile($node->name, $file, true, $namespace);
 
-            return $fqcn !== $node->name ? new IdentifierTypeNode($fqcn) : clone $node;
+            if (
+                str_starts_with($node->name, '\\')
+                || $fqcn !== $node->name
+                || (! self::isBuiltInTypeKeyword($fqcn) && self::symbolExists($fqcn, true))
+            ) {
+                return self::createResolvedIdentifier($fqcn);
+            }
+
+            return clone $node;
         }
 
         if ($node instanceof ConstTypeNode) {
@@ -560,17 +590,21 @@ final class SpecialTypeResolver
         \ReflectionClass|\ReflectionFunction|\ReflectionMethod|string $context,
         ?object $thisObj = null
     ): IdentifierTypeNode {
+        if ($node->getAttribute(self::RESOLVED_ATTRIBUTE) === true) {
+            return $node;
+        }
+
         $lower = strtolower($node->name);
 
         if ($lower === '$this') {
             if ($thisObj !== null) {
-                return new IdentifierTypeNode($thisObj::class);
+                return self::createResolvedIdentifier($thisObj::class);
             }
 
             if (\is_string($context)) {
                 $callingClass = strstr($context, '::', true);
                 if ($callingClass !== false && self::symbolExists($callingClass)) {
-                    return new IdentifierTypeNode($callingClass);
+                    return self::createResolvedIdentifier($callingClass);
                 }
             }
 
@@ -579,13 +613,13 @@ final class SpecialTypeResolver
 
         if ($lower === 'static') {
             if ($thisObj !== null) {
-                return new IdentifierTypeNode($thisObj::class);
+                return self::createResolvedIdentifier($thisObj::class);
             }
 
             if (\is_string($context)) {
                 $callingClass = strstr($context, '::', true);
                 if ($callingClass !== false && self::symbolExists($callingClass)) {
-                    return new IdentifierTypeNode($callingClass);
+                    return self::createResolvedIdentifier($callingClass);
                 }
             }
 
@@ -593,24 +627,24 @@ final class SpecialTypeResolver
         }
 
         if ($lower === 'self' && $declaringClass !== null) {
-            return new IdentifierTypeNode($declaringClass);
+            return self::createResolvedIdentifier($declaringClass);
         }
 
         if ($lower === 'parent' && $declaringClass !== null) {
             $parentClass = get_parent_class($declaringClass);
             if ($parentClass !== false) {
-                return new IdentifierTypeNode($parentClass);
+                return self::createResolvedIdentifier($parentClass);
             }
         }
 
         if (str_starts_with($lower, 'self::') && $declaringClass !== null) {
-            return new IdentifierTypeNode($declaringClass . substr($node->name, 4));
+            return self::createResolvedIdentifier($declaringClass . substr($node->name, 4));
         }
 
         if (str_starts_with($lower, 'parent::') && $declaringClass !== null) {
             $parentClass = get_parent_class($declaringClass);
             if ($parentClass !== false) {
-                return new IdentifierTypeNode($parentClass . substr($node->name, 6));
+                return self::createResolvedIdentifier($parentClass . substr($node->name, 6));
             }
         }
 
@@ -630,12 +664,36 @@ final class SpecialTypeResolver
                 $resolvedClass = self::resolveFqcn($className, $ref);
             }
 
-            return $resolvedClass !== $className ? new IdentifierTypeNode($resolvedClass . '::' . $member) : $node;
+            if (
+                str_starts_with($className, '\\')
+                || $resolvedClass !== $className
+                || (! self::isBuiltInTypeKeyword($resolvedClass) && self::symbolExists($resolvedClass, true))
+            ) {
+                return self::createResolvedIdentifier($resolvedClass . '::' . $member);
+            }
+
+            return $node;
         }
 
         $fqcn = self::resolveFqcn($node->name, $ref);
 
-        return $fqcn !== $node->name ? new IdentifierTypeNode($fqcn) : $node;
+        if (
+            str_starts_with($node->name, '\\')
+            || $fqcn !== $node->name
+            || (! self::isBuiltInTypeKeyword($fqcn) && self::symbolExists($fqcn, true))
+        ) {
+            return self::createResolvedIdentifier($fqcn);
+        }
+
+        return $node;
+    }
+
+    private static function createResolvedIdentifier(string $name): IdentifierTypeNode
+    {
+        $node = new IdentifierTypeNode($name);
+        $node->setAttribute(self::RESOLVED_ATTRIBUTE, true);
+
+        return $node;
     }
 
     /**
@@ -643,6 +701,10 @@ final class SpecialTypeResolver
      */
     private static function resolveConstType(ConstTypeNode $node, ?string $declaringClass, \ReflectionClass|\ReflectionFunction|\ReflectionMethod $ref): ConstTypeNode
     {
+        if ($node->getAttribute(self::RESOLVED_ATTRIBUTE) === true) {
+            return $node;
+        }
+
         if ($node->constExpr instanceof ConstFetchNode && $node->constExpr->className !== '') {
             $className = $node->constExpr->className;
             $lowerClassName = strtolower($className);
@@ -656,7 +718,16 @@ final class SpecialTypeResolver
                 $resolvedClass = self::resolveFqcn($className, $ref);
             }
 
-            return new ConstTypeNode(new ConstFetchNode($resolvedClass, $node->constExpr->name));
+            $resolvedNode = new ConstTypeNode(new ConstFetchNode($resolvedClass, $node->constExpr->name));
+            if (
+                str_starts_with($className, '\\')
+                || $resolvedClass !== $className
+                || (! self::isBuiltInTypeKeyword($resolvedClass) && self::symbolExists($resolvedClass, true))
+            ) {
+                $resolvedNode->setAttribute(self::RESOLVED_ATTRIBUTE, true);
+            }
+
+            return $resolvedNode;
         }
 
         return $node;
@@ -821,6 +892,10 @@ final class SpecialTypeResolver
 
     private static function resolveConstTypeForFile(ConstTypeNode $node, string $file, ?string $namespace = null): ConstTypeNode
     {
+        if ($node->getAttribute(self::RESOLVED_ATTRIBUTE) === true) {
+            return clone $node;
+        }
+
         if ($node->constExpr instanceof ConstFetchNode && $node->constExpr->className !== '') {
             $className = $node->constExpr->className;
             $lowerClassName = strtolower($className);
@@ -831,7 +906,16 @@ final class SpecialTypeResolver
                 $resolvedClass = self::resolveFqcnForFile($className, $file, true, $namespace);
             }
 
-            return new ConstTypeNode(new ConstFetchNode($resolvedClass, $node->constExpr->name));
+            $resolvedNode = new ConstTypeNode(new ConstFetchNode($resolvedClass, $node->constExpr->name));
+            if (
+                str_starts_with($className, '\\')
+                || $resolvedClass !== $className
+                || (! self::isBuiltInTypeKeyword($resolvedClass) && self::symbolExists($resolvedClass, true))
+            ) {
+                $resolvedNode->setAttribute(self::RESOLVED_ATTRIBUTE, true);
+            }
+
+            return $resolvedNode;
         }
 
         return clone $node;
