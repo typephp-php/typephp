@@ -4,10 +4,15 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal;
 
+use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
@@ -83,6 +88,18 @@ final class RuntimeTypeChecker
     private const PARAM_CHECK_OBJECT = 19;
 
     private const PARAM_CHECK_CLASS = 20;
+
+    private const PARAM_CHECK_NULL_OR_INT = 21;
+
+    private const PARAM_CHECK_NULL_OR_STRING = 22;
+
+    private const PARAM_CHECK_NULL_OR_BOOL = 23;
+
+    private const PARAM_CHECK_REQUIRE_NULL = 24;
+
+    private const PARAM_CHECK_BIND_TEMPLATE = 25;
+
+    private const PARAM_CHECK_INT_OR_FLOAT = 26;
 
     public static bool $isEnabled = true;
 
@@ -171,17 +188,34 @@ final class RuntimeTypeChecker
     private static array $traitIdentitySelfReturnCache = [];
 
     /**
+     * Compiled fast-path for standalone generic collection functions (e.g. Arr\to_array, Arr\values, Arr\keys, Arr\first).
+     *
+     * @var array<string, array{
+     *     primaryParam: string,
+     *     keyTName: ?string,
+     *     valTName: ?string,
+     *     needsKey: bool,
+     *     needsVal: bool,
+     *     otherParams: list<array{0: string, 1: int, 2: ?string}>
+     * }>
+     */
+    private static array $simpleGenericIterablePlanCache = [];
+
+    private static ?IdentifierTypeNode $arrayKeyNode = null;
+
+    /**
      * Resets runtime caches.
      */
     public static function reset(): void
     {
-        self::$identitySelfReturnCache = [];
-        self::$traitIdentitySelfReturnCache = [];
-        self::$simpleClassStringTemplatePlanCache = [];
         self::$traitScopePlanCache = [];
         self::$traitReturnPlanCache = [];
         self::$nullableReturnCache = [];
         self::$traitNullableReturnCache = [];
+        self::$simpleClassStringTemplatePlanCache = [];
+        self::$identitySelfReturnCache = [];
+        self::$traitIdentitySelfReturnCache = [];
+        self::$simpleGenericIterablePlanCache = [];
         self::$simpleScopePlanCache = [];
         self::$simpleCtorTemplatePlanCache = [];
         self::$simpleReturnPlanCache = [];
@@ -204,6 +238,32 @@ final class RuntimeTypeChecker
     public static function isEnabled(): bool
     {
         return Config::isEnabled();
+    }
+
+    /**
+     * Validates non-public (protected/private) class constants via reflection without triggering visibility errors.
+     *
+     * @param class-string $className
+     */
+    public static function checkClassConstant(
+        string $className,
+        string $constName,
+        string $typeString,
+        string $file = '',
+        ?int $line = null
+    ): mixed {
+        if (! self::$isEnabled || ! class_exists($className, false)) {
+            return null;
+        }
+
+        try {
+            $refConst = new \ReflectionClassConstant($className, $constName);
+            $value = $refConst->getValue();
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return self::checkConstant($className . '::' . $constName, $value, $typeString, $file, $line);
     }
 
     /**
@@ -293,32 +353,6 @@ final class RuntimeTypeChecker
         }
 
         return $value;
-    }
-
-    /**
-     * Validates non-public (protected/private) class constants via reflection without triggering visibility errors.
-     *
-     * @param class-string $className
-     */
-    public static function checkClassConstant(
-        string $className,
-        string $constName,
-        string $typeString,
-        string $file = '',
-        ?int $line = null
-    ): mixed {
-        if (! self::$isEnabled || ! class_exists($className, false)) {
-            return null;
-        }
-
-        try {
-            $refConst = new \ReflectionClassConstant($className, $constName);
-            $value = $refConst->getValue();
-        } catch (\Throwable) {
-            return null;
-        }
-
-        return self::checkConstant($className . '::' . $constName, $value, $typeString, $file, $line);
     }
 
     /**
@@ -911,6 +945,128 @@ final class RuntimeTypeChecker
             }
         }
 
+        if ($thisOrClass === null && isset(self::$simpleGenericIterablePlanCache[$function])) {
+            $gaPlan = self::$simpleGenericIterablePlanCache[$function];
+            $pName = $gaPlan['primaryParam'];
+
+            if (isset($vars[$pName]) && \is_array($vars[$pName])) {
+                $boundTemplates = [];
+                $otherOk = true;
+
+                foreach ($gaPlan['otherParams'] as $op) {
+                    $opName = $op[0];
+                    if (isset($vars[$opName])) {
+                        $ov = $vars[$opName];
+                    } elseif (\array_key_exists($opName, $vars)) {
+                        $ov = null;
+                    } else {
+                        continue;
+                    }
+
+                    $opKind = $op[1];
+                    if ($opKind === self::PARAM_CHECK_BIND_TEMPLATE) {
+                        /** @var string $btName */
+                        $btName = $op[2];
+                        $boundTemplates[$btName] = self::fastInferType($ov);
+
+                        continue;
+                    }
+
+                    $ok = match ($opKind) {
+                        self::PARAM_CHECK_BOOL => \is_bool($ov),
+                        self::PARAM_CHECK_INT => \is_int($ov),
+                        self::PARAM_CHECK_STRING => \is_string($ov),
+                        self::PARAM_CHECK_FLOAT => \is_float($ov) || \is_int($ov),
+                        self::PARAM_CHECK_INT_OR_FLOAT => \is_int($ov) || \is_float($ov),
+                        self::PARAM_CHECK_NULL_OR_INT => $ov === null || \is_int($ov),
+                        self::PARAM_CHECK_NULL_OR_STRING => $ov === null || \is_string($ov),
+                        self::PARAM_CHECK_NULL_OR_BOOL => $ov === null || \is_bool($ov),
+                        self::PARAM_CHECK_REQUIRE_NULL => $ov === null,
+                        self::PARAM_CHECK_ARRAY_KEY => \is_int($ov) || \is_string($ov),
+                        self::PARAM_CHECK_ARRAY => \is_array($ov),
+                        self::PARAM_CHECK_MIXED => true,
+                        default => false,
+                    };
+
+                    if (! $ok) {
+                        $otherOk = false;
+
+                        break;
+                    }
+                }
+
+                if ($otherOk) {
+                    $arr = $vars[$pName];
+                    $count = \count($arr);
+
+                    if ($count > 0 && ($gaPlan['needsKey'] || $gaPlan['needsVal'])) {
+                        $needK = $gaPlan['needsKey'];
+                        $needV = $gaPlan['needsVal'];
+                        $keyMask = 0;
+                        $valMask = 0;
+                        /** @var array<string, TypeNode> $valTypes */
+                        $valTypes = [];
+
+                        if ($count > Config::HYBRID_SAMPLE_THRESHOLD && self::$arrayValidationHybrid) {
+                            $keys = array_keys($arr);
+                            $sampleKeys = [$keys[0], $keys[$count - 1]];
+                            $samplesToTake = min(3, $count - 2);
+                            for ($i = 0; $i < $samplesToTake; $i++) {
+                                $sampleKeys[] = $keys[mt_rand(1, $count - 2)];
+                            }
+
+                            foreach ($sampleKeys as $k) {
+                                if ($needK) {
+                                    $keyMask |= \is_int($k) ? 1 : 2;
+                                }
+                                if ($needV) {
+                                    self::accumulateInferredSample($arr[$k], $valMask, $valTypes);
+                                }
+                            }
+                        } else {
+                            foreach ($arr as $k => $v) {
+                                if ($needK) {
+                                    $keyMask |= \is_int($k) ? 1 : 2;
+                                    if (! $needV && $keyMask === 3) {
+                                        break;
+                                    }
+                                }
+                                if ($needV) {
+                                    self::accumulateInferredSample($v, $valMask, $valTypes);
+                                }
+                            }
+                        }
+
+                        if ($needK && $keyMask !== 0 && $gaPlan['keyTName'] !== null) {
+                            $boundTemplates[$gaPlan['keyTName']] = match ($keyMask) {
+                                1 => TemplateManager::$intNode ??= new IdentifierTypeNode('int'),
+                                2 => TemplateManager::$stringNode ??= new IdentifierTypeNode('string'),
+                                default => self::$arrayKeyNode ??= new IdentifierTypeNode('array-key'),
+                            };
+                        }
+
+                        if ($needV && ($valMask !== 0 || $valTypes !== []) && $gaPlan['valTName'] !== null) {
+                            $boundTemplates[$gaPlan['valTName']] = self::buildFastValueTypeNode($valMask, $valTypes);
+                        }
+                    }
+
+                    if (isset(TemplateManager::$topCallFrame[$function])) {
+                        TemplateManager::pushCallFrame($function, null);
+                        TemplateManager::$topCallFrame[$function] = $boundTemplates;
+                    } else {
+                        TemplateManager::$topCallFrame[$function] = $boundTemplates;
+                        TemplateManager::$topCallThis[$function] = null;
+                        TemplateManager::$activeCallOrder[] = $function;
+                    }
+
+                    $cleaner = new ScopeCleaner($function);
+                    $cleaner->boundTemplates = $boundTemplates;
+
+                    return $cleaner;
+                }
+            }
+        }
+
         $plan = self::$simpleScopePlanCache[$function] ?? null;
 
         if (
@@ -1078,6 +1234,26 @@ final class RuntimeTypeChecker
             }
         }
 
+        if (
+            $thisOrClass === null
+            && ! $isMagicCall
+            && ! str_contains($effectiveFunction, '::')
+            && $contract['classTemplates'] === []
+            && $contract['templates'] !== []
+            && $contract['aliases'] === []
+            && ! $contract['paramsAreDynamic']
+            && ! $contract['hasParamOutContract']
+            && ($contract['paramConditionals'] ?? []) === []
+            && ! ($contract['hasCrossReferencedBounds'] ?? true)
+            && isset(CallerBoundaryResolver::$nonBypassCalleeCache[$effectiveFunction])
+            && ! isset(self::$simpleGenericIterablePlanCache[$effectiveFunction])
+        ) {
+            $gaCompiled = self::compileSimpleGenericIterablePlan($contract);
+            if ($gaCompiled !== null) {
+                self::$simpleGenericIterablePlanCache[$effectiveFunction] = $gaCompiled;
+            }
+        }
+
         $err = ParamChecker::checkParams(
             $function,
             $vars,
@@ -1125,9 +1301,334 @@ final class RuntimeTypeChecker
         return null;
     }
 
+    private static function fastInferType(mixed $val): TypeNode
+    {
+        if (\is_string($val)) {
+            return TemplateManager::$stringNode ??= new IdentifierTypeNode('string');
+        }
+        if (\is_int($val)) {
+            return TemplateManager::$intNode ??= new IdentifierTypeNode('int');
+        }
+        if ($val === null) {
+            return new IdentifierTypeNode('null');
+        }
+        if (\is_bool($val)) {
+            return TemplateManager::$boolNode ??= new IdentifierTypeNode('bool');
+        }
+        if (\is_float($val)) {
+            return TemplateManager::$floatNode ??= new IdentifierTypeNode('float');
+        }
+        if (\is_object($val) && (TemplateManager::$instanceTemplateBindings === null || ! isset(TemplateManager::$instanceTemplateBindings[$val]))) {
+            $cls = $val::class;
+
+            return TemplateManager::$classNodeCache[$cls] ??= new IdentifierTypeNode($cls);
+        }
+
+        return TemplateManager::inferTypeFromValue($val);
+    }
+
+    /**
+     * @param array<string, TypeNode> $valTypes
+     */
+    private static function accumulateInferredSample(mixed $item, int &$valMask, array &$valTypes): void
+    {
+        if (\is_string($item)) {
+            $valMask |= 2;
+        } elseif (\is_int($item)) {
+            $valMask |= 1;
+        } elseif (\is_bool($item)) {
+            $valMask |= 4;
+        } elseif (\is_float($item)) {
+            $valMask |= 8;
+        } elseif ($item === null) {
+            $valMask |= 16;
+        } elseif (\is_object($item)) {
+            if (TemplateManager::$instanceTemplateBindings !== null && isset(TemplateManager::$instanceTemplateBindings[$item])) {
+                $objType = TemplateManager::inferTypeFromValue($item);
+                $valTypes[(string) $objType] = $objType;
+            } else {
+                $cls = $item::class;
+                if (! isset($valTypes[$cls])) {
+                    $valTypes[$cls] = TemplateManager::$classNodeCache[$cls] ??= new IdentifierTypeNode($cls);
+                }
+            }
+        } else {
+            $itemType = TemplateManager::inferTypeFromValue($item);
+            $valTypes[(string) $itemType] = $itemType;
+        }
+    }
+
+    /**
+     * @param array<string, TypeNode> $valTypes
+     */
+    private static function buildFastValueTypeNode(int $valMask, array $valTypes): TypeNode
+    {
+        if ($valTypes === []) {
+            if ($valMask === 2) {
+                return TemplateManager::$stringNode ??= new IdentifierTypeNode('string');
+            }
+            if ($valMask === 1) {
+                return TemplateManager::$intNode ??= new IdentifierTypeNode('int');
+            }
+            if ($valMask === 4) {
+                return TemplateManager::$boolNode ??= new IdentifierTypeNode('bool');
+            }
+            if ($valMask === 8) {
+                return TemplateManager::$floatNode ??= new IdentifierTypeNode('float');
+            }
+        }
+
+        if (($valMask & 1) !== 0 && ! isset($valTypes['int'])) {
+            $valTypes['int'] = TemplateManager::$intNode ??= new IdentifierTypeNode('int');
+        }
+        if (($valMask & 2) !== 0 && ! isset($valTypes['string'])) {
+            $valTypes['string'] = TemplateManager::$stringNode ??= new IdentifierTypeNode('string');
+        }
+        if (($valMask & 4) !== 0 && ! isset($valTypes['bool'])) {
+            $valTypes['bool'] = TemplateManager::$boolNode ??= new IdentifierTypeNode('bool');
+        }
+        if (($valMask & 8) !== 0 && ! isset($valTypes['float'])) {
+            $valTypes['float'] = TemplateManager::$floatNode ??= new IdentifierTypeNode('float');
+        }
+        if (($valMask & 16) !== 0 && ! isset($valTypes['null'])) {
+            $valTypes['null'] = new IdentifierTypeNode('null');
+        }
+
+        $values = array_values($valTypes);
+
+        return \count($values) === 1 ? $values[0] : new UnionTypeNode($values);
+    }
+
+    /**
+     * @param array{
+     *     types: array<string, TypeNode>,
+     *     templates: array<string, TemplateTagValueNode>,
+     *     return: ?TypeNode
+     * } $contract
+     *
+     * @return ?array{
+     *     primaryParam: string,
+     *     keyTName: ?string,
+     *     valTName: ?string,
+     *     needsKey: bool,
+     *     needsVal: bool,
+     *     otherParams: list<array{0: string, 1: int, 2: ?string}>
+     * }
+     */
+    private static function compileSimpleGenericIterablePlan(array $contract): ?array
+    {
+        $templates = $contract['templates'];
+
+        foreach ($templates as $tTag) {
+            if ($tTag->default !== null) {
+                return null;
+            }
+            if ($tTag->bound !== null) {
+                if (! ($tTag->bound instanceof IdentifierTypeNode) || strtolower($tTag->bound->name) !== 'array-key') {
+                    return null;
+                }
+            }
+        }
+
+        $primaryParam = null;
+        $keyTName = null;
+        $valTName = null;
+
+        foreach ($contract['types'] as $pName => $tNode) {
+            $foundGeneric = null;
+            if ($tNode instanceof GenericTypeNode) {
+                $base = strtolower((string) $tNode->type);
+                if ($base === 'array' || $base === 'iterable') {
+                    $foundGeneric = $tNode;
+                } else {
+                    return null;
+                }
+            } elseif ($tNode instanceof UnionTypeNode) {
+                foreach ($tNode->types as $member) {
+                    if ($member instanceof ArrayShapeNode || $member instanceof ObjectShapeNode || $member instanceof ArrayTypeNode || $member instanceof CallableTypeNode) {
+                        return null;
+                    }
+                    if ($member instanceof GenericTypeNode) {
+                        $mBase = strtolower((string) $member->type);
+                        if ($mBase === 'array' || $mBase === 'iterable') {
+                            $foundGeneric ??= $member;
+                        } else {
+                            return null;
+                        }
+                    }
+                }
+            }
+
+            if ($foundGeneric !== null) {
+                if ($primaryParam !== null) {
+                    return null;
+                }
+
+                $gtCount = \count($foundGeneric->genericTypes);
+                if ($gtCount === 1) {
+                    $gt0 = $foundGeneric->genericTypes[0];
+                    if (! ($gt0 instanceof IdentifierTypeNode) || ! isset($templates[$gt0->name])) {
+                        return null;
+                    }
+                    $valTName = $gt0->name;
+                } elseif ($gtCount === 2) {
+                    $gt0 = $foundGeneric->genericTypes[0];
+                    $gt1 = $foundGeneric->genericTypes[1];
+
+                    if ($gt0 instanceof IdentifierTypeNode && isset($templates[$gt0->name])) {
+                        $keyTName = $gt0->name;
+                    } elseif (! ($gt0 instanceof IdentifierTypeNode) || ! \in_array(strtolower($gt0->name), ['array-key', 'mixed'], true)) {
+                        return null;
+                    }
+
+                    if (! ($gt1 instanceof IdentifierTypeNode) || ! isset($templates[$gt1->name])) {
+                        return null;
+                    }
+                    $valTName = $gt1->name;
+                } else {
+                    return null;
+                }
+
+                $primaryParam = $pName;
+            }
+        }
+
+        if ($primaryParam === null) {
+            return null;
+        }
+
+        $otherParams = [];
+        $usedElsewhere = [];
+        if ($contract['return'] !== null) {
+            foreach ($templates as $tName => $_) {
+                if (DocblockParser::typeReferencesTemplate($contract['return'], [$tName => true])) {
+                    $usedElsewhere[$tName] = true;
+                }
+            }
+        } else {
+            foreach ($templates as $tName => $_) {
+                $usedElsewhere[$tName] = true;
+            }
+        }
+
+        foreach ($contract['types'] as $pName => $tNode) {
+            if ($pName === $primaryParam) {
+                continue;
+            }
+
+            if ($tNode instanceof IdentifierTypeNode && isset($templates[$tNode->name])) {
+                $btName = $tNode->name;
+                if ($btName === $keyTName || $btName === $valTName || $templates[$btName]->bound !== null) {
+                    return null;
+                }
+                $otherParams[] = [$pName, self::PARAM_CHECK_BIND_TEMPLATE, $btName];
+
+                continue;
+            }
+
+            if ($tNode instanceof CallableTypeNode) {
+                return null;
+            }
+
+            if ($tNode instanceof NullableTypeNode) {
+                if ($tNode->type instanceof CallableTypeNode) {
+                    $otherParams[] = [$pName, self::PARAM_CHECK_REQUIRE_NULL, null];
+
+                    continue;
+                }
+                if ($tNode->type instanceof IdentifierTypeNode) {
+                    $op = match (strtolower($tNode->type->name)) {
+                        'int', 'integer' => self::PARAM_CHECK_NULL_OR_INT,
+                        'string' => self::PARAM_CHECK_NULL_OR_STRING,
+                        'bool', 'boolean' => self::PARAM_CHECK_NULL_OR_BOOL,
+                        'closure' => self::PARAM_CHECK_REQUIRE_NULL,
+                        default => null,
+                    };
+                    if ($op === null) {
+                        return null;
+                    }
+                    $otherParams[] = [$pName, $op, null];
+
+                    continue;
+                }
+
+                return null;
+            }
+
+            if ($tNode instanceof UnionTypeNode) {
+                if (\count($tNode->types) === 2) {
+                    $t0 = $tNode->types[0];
+                    $t1 = $tNode->types[1];
+                    if ($t0 instanceof IdentifierTypeNode && $t1 instanceof IdentifierTypeNode) {
+                        $n0 = strtolower($t0->name);
+                        $n1 = strtolower($t1->name);
+                        if (($n0 === 'int' && $n1 === 'float') || ($n0 === 'float' && $n1 === 'int')) {
+                            $otherParams[] = [$pName, self::PARAM_CHECK_INT_OR_FLOAT, null];
+
+                            continue;
+                        }
+                        if ($n1 === 'null' || $n0 === 'null') {
+                            $otherName = $n1 === 'null' ? $n0 : $n1;
+                            $op = match ($otherName) {
+                                'int', 'integer' => self::PARAM_CHECK_NULL_OR_INT,
+                                'string' => self::PARAM_CHECK_NULL_OR_STRING,
+                                'bool', 'boolean' => self::PARAM_CHECK_NULL_OR_BOOL,
+                                'closure' => self::PARAM_CHECK_REQUIRE_NULL,
+                                default => null,
+                            };
+                            if ($op !== null) {
+                                $otherParams[] = [$pName, $op, null];
+
+                                continue;
+                            }
+                        }
+                    }
+                    if (($t0 instanceof CallableTypeNode && $t1 instanceof IdentifierTypeNode && strtolower($t1->name) === 'null')
+                        || ($t1 instanceof CallableTypeNode && $t0 instanceof IdentifierTypeNode && strtolower($t0->name) === 'null')) {
+                        $otherParams[] = [$pName, self::PARAM_CHECK_REQUIRE_NULL, null];
+
+                        continue;
+                    }
+                }
+
+                return null;
+            }
+
+            if ($tNode instanceof IdentifierTypeNode) {
+                $op = match (strtolower($tNode->name)) {
+                    'int', 'integer' => self::PARAM_CHECK_INT,
+                    'string' => self::PARAM_CHECK_STRING,
+                    'bool', 'boolean' => self::PARAM_CHECK_BOOL,
+                    'float', 'double' => self::PARAM_CHECK_FLOAT,
+                    'array-key' => self::PARAM_CHECK_ARRAY_KEY,
+                    'array' => self::PARAM_CHECK_ARRAY,
+                    'mixed' => self::PARAM_CHECK_MIXED,
+                    default => null,
+                };
+                if ($op === null) {
+                    return null;
+                }
+                $otherParams[] = [$pName, $op, null];
+
+                continue;
+            }
+
+            return null;
+        }
+
+        return [
+            'primaryParam' => $primaryParam,
+            'keyTName' => $keyTName,
+            'valTName' => $valTName,
+            'needsKey' => $keyTName !== null && isset($usedElsewhere[$keyTName]),
+            'needsVal' => $valTName !== null && isset($usedElsewhere[$valTName]),
+            'otherParams' => $otherParams,
+        ];
+    }
+
     /**
      * @param array<string, TypeNode> $types
-     * @param array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode> $templates
+     * @param array<string, TemplateTagValueNode> $templates
      * @param array<string, bool> $sensitiveParams
      *
      * @return array{effective: string, paramName: string, templateName: string, otherParams: list<array{0: string, 1: int, 2: TypeNode, 3: bool}>}|null
@@ -1219,7 +1720,7 @@ final class RuntimeTypeChecker
      * with no defaults or complex/const bounds. Returns null if the constructor is not eligible.
      *
      * @param array<string, TypeNode> $types
-     * @param array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode> $classTemplates
+     * @param array<string, TemplateTagValueNode> $classTemplates
      *
      * @return list<array{0: string, 1: string, 2: int}>|null
      */
@@ -1858,7 +2359,7 @@ final class RuntimeTypeChecker
      * Checks whether a GenericTypeNode return contract is an exact identity self-return
      * (e.g. `@return self<T1, T2>` or `@return static<T1, T2>`) matching the class's declared template order.
      *
-     * @param array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode> $classTemplates
+     * @param array<string, TemplateTagValueNode> $classTemplates
      */
     private static function isIdentitySelfGenericReturn(
         GenericTypeNode $returnTypeNode,
@@ -1967,7 +2468,7 @@ final class RuntimeTypeChecker
     private static function compileSimpleReturnOp(TypeNode $resolvedType): array
     {
         $inner = $resolvedType;
-        while ($inner instanceof \PHPStan\PhpDocParser\Ast\Type\NullableTypeNode) {
+        while ($inner instanceof NullableTypeNode) {
             $inner = $inner->type;
         }
 
