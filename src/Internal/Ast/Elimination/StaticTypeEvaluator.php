@@ -8,7 +8,9 @@ use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\Array_;
 use PhpParser\Node\Expr\Ternary;
 use PhpParser\Node\Expr\Variable;
+use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
@@ -18,6 +20,7 @@ use TypePHP\Internal\Ast\Elimination\Evaluator\ConstantAndEnumEvaluator;
 use TypePHP\Internal\Ast\Elimination\Evaluator\ObjectEvaluator;
 use TypePHP\Internal\Ast\Elimination\Evaluator\ScalarEvaluator;
 use TypePHP\Internal\Generics\TemplateManager;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
 
 /**
@@ -54,7 +57,8 @@ final class StaticTypeEvaluator
         Expr $expr,
         TypeNode $typeNode,
         string $currentFile = '',
-        array $trustedVariableTypes = []
+        array $trustedVariableTypes = [],
+        ?string $currentNamespace = null
     ): bool {
         if (! Config::isEliminateStaticallyProvenChecksEnabled()) {
             return false;
@@ -72,16 +76,20 @@ final class StaticTypeEvaluator
         }
 
         if ($expr instanceof Variable && \is_string($expr->name) && isset($trustedVariableTypes[$expr->name])) {
+            $resolvedTarget = $currentFile !== ''
+                ? SpecialTypeResolver::resolveForFile($typeNode, $currentFile, $currentNamespace, false)
+                : $typeNode;
+
             return TemplateManager::checkVariance(
                 $trustedVariableTypes[$expr->name],
-                $typeNode,
+                $resolvedTarget,
                 GenericTypeNode::VARIANCE_COVARIANT
             );
         }
 
         if ($expr instanceof Ternary && $expr->if !== null) {
-            return self::satisfies($expr->if, $typeNode, $currentFile, $trustedVariableTypes)
-                && self::satisfies($expr->else, $typeNode, $currentFile, $trustedVariableTypes);
+            return self::satisfies($expr->if, $typeNode, $currentFile, $trustedVariableTypes, $currentNamespace)
+                && self::satisfies($expr->else, $typeNode, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
         if ($typeNode instanceof NullableTypeNode) {
@@ -89,12 +97,12 @@ final class StaticTypeEvaluator
                 return true;
             }
 
-            return self::satisfies($expr, $typeNode->type, $currentFile, $trustedVariableTypes);
+            return self::satisfies($expr, $typeNode->type, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
         if ($typeNode instanceof UnionTypeNode) {
             foreach ($typeNode->types as $member) {
-                if (self::satisfies($expr, $member, $currentFile, $trustedVariableTypes)) {
+                if (self::satisfies($expr, $member, $currentFile, $trustedVariableTypes, $currentNamespace)) {
                     return true;
                 }
             }
@@ -103,11 +111,89 @@ final class StaticTypeEvaluator
         }
 
         if ($expr instanceof Array_) {
-            return ArrayLiteralEvaluator::satisfies($expr, $typeNode, $currentFile, $trustedVariableTypes);
+            return ArrayLiteralEvaluator::satisfies($expr, $typeNode, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
-        return ConstantAndEnumEvaluator::satisfies($expr, $typeNode, $currentFile)
-            || ObjectEvaluator::satisfies($expr, $typeNode, $currentFile)
+        return ConstantAndEnumEvaluator::satisfies($expr, $typeNode, $currentFile, $currentNamespace)
+            || ObjectEvaluator::satisfies($expr, $typeNode, $currentFile, $currentNamespace)
             || ScalarEvaluator::satisfies($expr, $typeNode);
+    }
+
+    /**
+     * Determines whether unsetting a member at the given accessor chain can never
+     * violate the target TypeNode contract (e.g., unset($map['k']) on array<K, V> or T[]).
+     *
+     * @param list<array{0: 'dim'|'prop', 1: mixed}> $chain
+     */
+    public static function isUnsetSafe(TypeNode $typeNode, array $chain): bool
+    {
+        if (! Config::isEliminateStaticallyProvenChecksEnabled()) {
+            return false;
+        }
+
+        if ($chain === []) {
+            return true;
+        }
+
+        $firstKind = $chain[0][0];
+        if ($firstKind !== 'dim') {
+            return false;
+        }
+
+        if ($typeNode instanceof NullableTypeNode) {
+            return self::isUnsetSafe($typeNode->type, $chain);
+        }
+
+        if ($typeNode instanceof UnionTypeNode) {
+            $hasArrayMember = false;
+            foreach ($typeNode->types as $member) {
+                if ($member instanceof IdentifierTypeNode && strtolower($member->name) === 'null') {
+                    continue;
+                }
+
+                $hasArrayMember = true;
+                if (! self::isUnsetSafe($member, $chain)) {
+                    return false;
+                }
+            }
+
+            return $hasArrayMember;
+        }
+
+        if ($typeNode instanceof IdentifierTypeNode) {
+            $lower = strtolower($typeNode->name);
+
+            return $lower === 'array' || $lower === 'iterable' || $lower === 'mixed';
+        }
+
+        if ($typeNode instanceof ArrayTypeNode) {
+            if (\count($chain) === 1) {
+                return true;
+            }
+
+            return self::isUnsetSafe($typeNode->type, \array_slice($chain, 1));
+        }
+
+        if ($typeNode instanceof GenericTypeNode) {
+            $base = strtolower((string) $typeNode->type);
+            if ($base !== 'array' && $base !== 'iterable') {
+                return false;
+            }
+
+            if (\count($chain) === 1) {
+                return true;
+            }
+
+            $genericCount = \count($typeNode->genericTypes);
+            if ($genericCount === 0) {
+                return true;
+            }
+
+            $valueType = $genericCount >= 2 ? $typeNode->genericTypes[1] : $typeNode->genericTypes[0];
+
+            return self::isUnsetSafe($valueType, \array_slice($chain, 1));
+        }
+
+        return false;
     }
 }

@@ -36,6 +36,14 @@ final class DocblockNormalizer
             return $doc;
         }
 
+        if (str_contains($doc, "\n")) {
+            $doc = preg_replace(
+                '/(@(?:phpstan-|psalm-)?(?:param-out|param|return|var|self-out|this-out|throws))[ \t]*\r?\n[ \t]*\*[ \t]+(?![@*\/])/m',
+                '$1 ',
+                $doc
+            ) ?? $doc;
+        }
+
         if (substr_count($doc, '@') > 1) {
             $doc = preg_replace_callback(
                 '/(?:\/\*\*|^\s*\*)\s*@[a-zA-Z0-9_-]+[^\r\n]*/m',

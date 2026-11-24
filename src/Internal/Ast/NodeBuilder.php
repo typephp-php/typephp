@@ -232,4 +232,102 @@ final class NodeBuilder
             ]
         );
     }
+
+    public static function createMemberUnsetCheckCall(
+        Node\Expr $rootExpr,
+        Node\Expr $chainsExpr,
+        string $typeString,
+        string $varName,
+        int $line,
+        ?Node\Expr $callerExpr = null,
+        ?Node\Expr $thisArg = null
+    ): Node\Expr\FuncCall {
+        $args = [
+            new Node\Arg($rootExpr),
+            new Node\Arg($chainsExpr),
+            new Node\Arg(new Node\Scalar\String_($typeString)),
+            new Node\Arg(new Node\Scalar\String_($varName)),
+            new Node\Arg(new Node\Scalar\MagicConst\File()),
+            new Node\Arg(new Node\Scalar\LNumber($line)),
+        ];
+
+        if ($callerExpr !== null) {
+            $args[] = new Node\Arg($callerExpr);
+            if ($thisArg !== null) {
+                $args[] = new Node\Arg($thisArg);
+            }
+        }
+
+        return new Node\Expr\FuncCall(
+            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkMemberUnset'),
+            $args
+        );
+    }
+
+    public static function createPropertyMemberUnsetCheckCall(
+        Node\Expr $objectOrClassExpr,
+        string $propertyName,
+        Node\Expr $chainsExpr,
+        int $line
+    ): Node\Expr\FuncCall {
+        return new Node\Expr\FuncCall(
+            new Node\Name('\TypePHP\Internal\RuntimeTypeChecker::checkPropertyMemberUnset'),
+            [
+                new Node\Arg($objectOrClassExpr),
+                new Node\Arg(new Node\Scalar\String_($propertyName)),
+                new Node\Arg($chainsExpr),
+                new Node\Arg(new Node\Scalar\MagicConst\File()),
+                new Node\Arg(new Node\Scalar\LNumber($line)),
+            ]
+        );
+    }
+
+    public static function createIfErrorThrowStmt(Node\Expr\FuncCall $checkCall, int $startLine = -1): Node\Stmt\If_
+    {
+        $args = [
+            new Node\Arg(
+                new Node\Expr\New_(
+                    new Node\Name\FullyQualified('TypePHP\Exception\TypeError'),
+                    [
+                        new Node\Arg(
+                            new Node\Expr\MethodCall(
+                                new Node\Expr\Variable('__typephpErr'),
+                                'getMessage'
+                            )
+                        ),
+                    ]
+                )
+            ),
+        ];
+
+        if ($startLine !== -1) {
+            $args[] = new Node\Arg(new Node\Scalar\LNumber($startLine));
+        }
+
+        $ifStmt = new Node\Stmt\If_(
+            new Node\Expr\Instanceof_(
+                new Node\Expr\Assign(
+                    new Node\Expr\Variable('__typephpErr'),
+                    $checkCall
+                ),
+                new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorMessage')
+            ),
+            [
+                'stmts' => [
+                    new Node\Stmt\Expression(
+                        new Node\Expr\Throw_(
+                            new Node\Expr\StaticCall(
+                                new Node\Name\FullyQualified('TypePHP\Internal\Diagnostic\ErrorFactory'),
+                                'prepareException',
+                                $args
+                            )
+                        )
+                    ),
+                ],
+            ]
+        );
+        $ifStmt->setAttribute('typephp_injected', true);
+
+        return $ifStmt;
+    }
 }

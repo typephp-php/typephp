@@ -35,7 +35,7 @@
         "phpstan/phpstan": "^2.1",
         "phpstan/phpstan-strict-rules": "^2.0",
         "phpstan/extension-installer": "^1.4",
-        "vimeo/psalm": "^6.16",
+        "vimeo/psalm": "^7.0.0",
         "carthage-software/mago": "^1.47",
         "rector/rector": "^2.6",
         "friendsofphp/php-cs-fixer": "^3.95"

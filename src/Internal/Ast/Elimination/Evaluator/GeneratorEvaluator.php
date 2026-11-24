@@ -125,7 +125,8 @@ final class GeneratorEvaluator
         ?TypeNode $keyType,
         ?TypeNode $valueType,
         string $currentFile = '',
-        ?Expr $precedingValueExpr = null
+        ?Expr $precedingValueExpr = null,
+        ?string $currentNamespace = null
     ): bool {
         if (! Config::isEliminateStaticallyProvenChecksEnabled()) {
             return false;
@@ -133,14 +134,14 @@ final class GeneratorEvaluator
 
         if ($keyType !== null && ! self::isMixedType($keyType)) {
             $keyExpr = $yieldNode->key ?? new LNumber(0);
-            if (! StaticTypeEvaluator::satisfies($keyExpr, $keyType, $currentFile)) {
+            if (! StaticTypeEvaluator::satisfies($keyExpr, $keyType, $currentFile, [], $currentNamespace)) {
                 return false;
             }
         }
 
         if ($valueType !== null && ! self::isMixedType($valueType)) {
             $valExpr = $precedingValueExpr ?? $yieldNode->value ?? new ConstFetch(new Name('null'));
-            if (! StaticTypeEvaluator::satisfies($valExpr, $valueType, $currentFile)) {
+            if (! StaticTypeEvaluator::satisfies($valExpr, $valueType, $currentFile, [], $currentNamespace)) {
                 return false;
             }
         }
@@ -168,7 +169,8 @@ final class GeneratorEvaluator
         YieldFrom $yieldFromNode,
         ?TypeNode $keyType,
         ?TypeNode $valueType,
-        string $currentFile = ''
+        string $currentFile = '',
+        ?string $currentNamespace = null
     ): bool {
         if (! Config::isEliminateStaticallyProvenChecksEnabled()) {
             return false;
@@ -186,13 +188,13 @@ final class GeneratorEvaluator
             /** @var TypeNode $valueType */
             $targetType = new GenericTypeNode(new IdentifierTypeNode('iterable'), [$valueType]);
 
-            return ArrayLiteralEvaluator::satisfies($yieldFromNode->expr, $targetType, $currentFile);
+            return ArrayLiteralEvaluator::satisfies($yieldFromNode->expr, $targetType, $currentFile, [], $currentNamespace);
         }
 
         $effectiveValueType = $valueType ?? new IdentifierTypeNode('mixed');
         $targetType = new GenericTypeNode(new IdentifierTypeNode('iterable'), [$keyType, $effectiveValueType]);
 
-        return ArrayLiteralEvaluator::satisfies($yieldFromNode->expr, $targetType, $currentFile);
+        return ArrayLiteralEvaluator::satisfies($yieldFromNode->expr, $targetType, $currentFile, [], $currentNamespace);
     }
 
     /**
@@ -204,7 +206,8 @@ final class GeneratorEvaluator
         ?Expr $returnExpr,
         ?TypeNode $returnType,
         string $currentFile = '',
-        array $trustedVariableTypes = []
+        array $trustedVariableTypes = [],
+        ?string $currentNamespace = null
     ): bool {
         if (! Config::isEliminateStaticallyProvenChecksEnabled()) {
             return false;
@@ -216,7 +219,7 @@ final class GeneratorEvaluator
 
         $effectiveExpr = $returnExpr ?? new ConstFetch(new Name('null'));
 
-        return StaticTypeEvaluator::satisfies($effectiveExpr, $returnType, $currentFile, $trustedVariableTypes);
+        return StaticTypeEvaluator::satisfies($effectiveExpr, $returnType, $currentFile, $trustedVariableTypes, $currentNamespace);
     }
 
     /**

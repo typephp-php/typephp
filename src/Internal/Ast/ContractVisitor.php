@@ -4,12 +4,17 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Ast;
 
+use Composer\Autoload\ClassLoader;
 use PhpParser\Node;
 use PhpParser\NodeFinder;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\PhpDocNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\TypeAliasImportTagValueNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\TypeAliasTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
@@ -23,6 +28,7 @@ use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Docblock\DocblockParser;
+use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Util\Config;
@@ -49,22 +55,76 @@ final class ContractVisitor extends NodeVisitorAbstract
         Node\Expr\AssignOp\Coalesce::class => Node\Expr\BinaryOp\Coalesce::class,
     ];
 
+    private const BY_REF_BUILTIN_FUNCTIONS = [
+        'preg_match' => [2 => true],
+        'preg_match_all' => [2 => true],
+        'sort' => [0 => true],
+        'rsort' => [0 => true],
+        'asort' => [0 => true],
+        'arsort' => [0 => true],
+        'ksort' => [0 => true],
+        'krsort' => [0 => true],
+        'usort' => [0 => true],
+        'uasort' => [0 => true],
+        'uksort' => [0 => true],
+        'natcasesort' => [0 => true],
+        'natsort' => [0 => true],
+        'shuffle' => [0 => true],
+        'array_multisort' => [0 => true, 1 => true, 2 => true],
+        'array_push' => [0 => true],
+        'array_pop' => [0 => true],
+        'array_shift' => [0 => true],
+        'array_unshift' => [0 => true],
+        'array_splice' => [0 => true],
+        'array_walk' => [0 => true],
+        'array_walk_recursive' => [0 => true],
+        'reset' => [0 => true],
+        'end' => [0 => true],
+        'next' => [0 => true],
+        'prev' => [0 => true],
+        'each' => [0 => true],
+        'parse_str' => [1 => true],
+        'openssl_random_pseudo_bytes' => [1 => true],
+    ];
+
     /**
      * @var array<string, array<string|int, string>>
      */
     private static array $parsedShapeCache = [];
 
     /**
+     * @var array<string, TypeNode|false>
+     */
+    private static array $parsedUnsetTypeCache = [];
+
+    /**
+     * In-memory cache of class-level aliases resolved from AST without invoking PHP autoloading.
+     *
+     * @var array<string, array<string, TypeNode>>
+     */
+    private static array $astClassAliasesCache = [];
+
+    public static function reset(): void
+    {
+        self::$astClassAliasesCache = [];
+    }
+
+    /**
      * @var array<string, array<string, string>>
      */
     private array $localClassPropertyTypes = [];
+
+    /**
+     * @var array<string, array<string, TypeNode>>
+     */
+    private array $localClassAliases = [];
 
     private ScopeManager $scopeManager;
 
     private string $currentNamespace = '';
 
     /**
-     * @var list<array{name: ?string, isAnonymous: bool, hasInheritance: bool, hasRealInheritance: bool, hasPropertyWithDoc: bool, isReadonly: bool, isFinal: bool, hasTemplates: bool, isTrait?: bool}>
+     * @var list<array{name: ?string, isAnonymous: bool, hasInheritance: bool, hasRealInheritance: bool, hasPropertyWithDoc: bool, isReadonly: bool, isFinal: bool, hasTemplates: bool, isTrait?: bool, aliases?: array<string, TypeNode>, templates?: array<string, TemplateTagValueNode>}>
      */
     private array $classStack = [];
 
@@ -91,6 +151,20 @@ final class ContractVisitor extends NodeVisitorAbstract
     private array $byRefStack = [];
 
     /**
+     * Tracks whether the try-body scope of an active TryCatch node is currently open.
+     *
+     * @var list<bool>
+     */
+    private array $tryCatchScopeStack = [];
+
+    /**
+     * Tracks whether the if-body scope of an active If_ node is currently open.
+     *
+     * @var list<bool>
+     */
+    private array $ifScopeStack = [];
+
+    /**
      * @var array<string, list<string>>
      */
     private array $localClassTemplates = [];
@@ -111,8 +185,41 @@ final class ContractVisitor extends NodeVisitorAbstract
     {
         $this->trackDeclarationEntry($node);
 
-        if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Expr\Closure) {
+        if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Expr\Closure || $node instanceof Node\Expr\ArrowFunction) {
             $this->byRefStack[] = $node->byRef;
+        }
+
+        if ($node instanceof Node\Expr\ArrowFunction && $node->byRef) {
+            $this->markWriteContext($node->expr);
+        }
+
+        if ($node instanceof Node\Expr\CallLike && ! $node->isFirstClassCallable()) {
+            foreach ($node->getArgs() as $arg) {
+                if ($arg->byRef) {
+                    $this->markWriteContext($arg->value);
+                }
+            }
+
+            // Built-in functions with by-reference parameters
+            if ($node instanceof Node\Expr\FuncCall && $node->name instanceof Node\Name) {
+                $funcLower = strtolower($node->name->getLast());
+                if (isset(self::BY_REF_BUILTIN_FUNCTIONS[$funcLower])) {
+                    $targetIndices = self::BY_REF_BUILTIN_FUNCTIONS[$funcLower];
+                    foreach ($node->getArgs() as $idx => $arg) {
+                        if (isset($targetIndices[$idx])) {
+                            $this->markWriteContext($arg->value);
+                        }
+                    }
+                }
+            } elseif ($node instanceof Node\Expr\MethodCall || $node instanceof Node\Expr\StaticCall) {
+                // If a static property is passed as an argument to any method call, mark write context
+                // so it cannot be broken by rewriting into a function call if the method takes by-ref.
+                foreach ($node->getArgs() as $arg) {
+                    if ($arg->value instanceof Node\Expr\StaticPropertyFetch) {
+                        $this->markWriteContext($arg->value);
+                    }
+                }
+            }
         }
 
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
@@ -133,6 +240,26 @@ final class ContractVisitor extends NodeVisitorAbstract
             $this->registerParamInferredTypes($node->params);
         } elseif ($this->isSoftScopeBoundary($node)) {
             $this->scopeManager->pushScope(isIsolated: false);
+        } elseif ($node instanceof Node\Stmt\If_) {
+            $this->scopeManager->pushScope(isIsolated: false);
+            $this->ifScopeStack[] = true;
+        } elseif ($node instanceof Node\Stmt\ElseIf_ || $node instanceof Node\Stmt\Else_) {
+            if ($this->ifScopeStack !== [] && end($this->ifScopeStack)) {
+                $this->scopeManager->popScope();
+                array_pop($this->ifScopeStack);
+                $this->ifScopeStack[] = false;
+            }
+            $this->scopeManager->pushScope(isIsolated: false);
+        } elseif ($node instanceof Node\Stmt\TryCatch) {
+            $this->scopeManager->pushScope(isIsolated: false);
+            $this->tryCatchScopeStack[] = true;
+        } elseif ($node instanceof Node\Stmt\Catch_ || $node instanceof Node\Stmt\Finally_) {
+            if ($this->tryCatchScopeStack !== [] && end($this->tryCatchScopeStack)) {
+                $this->scopeManager->popScope();
+                array_pop($this->tryCatchScopeStack);
+                $this->tryCatchScopeStack[] = false;
+            }
+            $this->scopeManager->pushScope(isIsolated: false);
         }
 
         if ($node instanceof Node\Expr\Assign || $node instanceof Node\Expr\AssignOp) {
@@ -145,9 +272,6 @@ final class ContractVisitor extends NodeVisitorAbstract
         } elseif ($node instanceof Node\Stmt\Unset_) {
             foreach ($node->vars as $v) {
                 $this->markWriteContext($v);
-                if ($v instanceof Node\Expr\Variable && \is_string($v->name)) {
-                    $this->scopeManager->unregisterVarType($v->name);
-                }
             }
         } elseif ($node instanceof Node\ArrayItem && $node->byRef) {
             $this->markWriteContext($node->value);
@@ -165,7 +289,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
             $classContext = $this->classStack !== [] ? end($this->classStack) : null;
-            FunctionContractInjector::inject($node, $classContext, $this->currentFile);
+            FunctionContractInjector::inject($node, $classContext, $this->currentFile, $this->currentNamespace);
 
             return null;
         }
@@ -234,6 +358,10 @@ final class ContractVisitor extends NodeVisitorAbstract
     {
         $this->trackDeclarationExit($node);
 
+        if ($node instanceof Node\Stmt\Unset_) {
+            return $this->handleUnset($node);
+        }
+
         if ($node instanceof Node\Stmt\Class_ && $node->name !== null) {
             $className = $this->resolveQualifiedName($node->name);
             if ($className !== null) {
@@ -251,7 +379,7 @@ final class ContractVisitor extends NodeVisitorAbstract
             }
         }
 
-        if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Expr\Closure) {
+        if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Expr\Closure || $node instanceof Node\Expr\ArrowFunction) {
             array_pop($this->byRefStack);
         }
 
@@ -314,6 +442,22 @@ final class ContractVisitor extends NodeVisitorAbstract
             return $boundaryCheck !== null ? [$node, $boundaryCheck] : null;
         }
 
+        if ($node instanceof Node\Stmt\ElseIf_ || $node instanceof Node\Stmt\Else_) {
+            $this->scopeManager->popScope();
+        } elseif ($node instanceof Node\Stmt\If_) {
+            $wasActive = $this->ifScopeStack !== [] ? array_pop($this->ifScopeStack) : false;
+            if ($wasActive) {
+                $this->scopeManager->popScope();
+            }
+        } elseif ($node instanceof Node\Stmt\Catch_ || $node instanceof Node\Stmt\Finally_) {
+            $this->scopeManager->popScope();
+        } elseif ($node instanceof Node\Stmt\TryCatch) {
+            $wasActive = $this->tryCatchScopeStack !== [] ? array_pop($this->tryCatchScopeStack) : false;
+            if ($wasActive) {
+                $this->scopeManager->popScope();
+            }
+        }
+
         if ($this->isScopeBoundary($node)) {
             $this->scopeManager->popScope();
         }
@@ -364,7 +508,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                         continue;
                     }
 
-                    if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile)) {
+                    if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile, [], $this->currentNamespace)) {
                         continue;
                     }
 
@@ -432,7 +576,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                     continue;
                 }
 
-                if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile)) {
+                if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile, [], $this->currentNamespace)) {
                     continue;
                 }
 
@@ -516,13 +660,15 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $caller,
                 $returnTypeNode,
                 $returnTypeStr,
-                $this->currentFile
+                $this->currentFile,
+                $this->currentNamespace
             ) extends NodeVisitorAbstract {
                 public function __construct(
                     private string $caller,
                     private TypeNode $returnTypeNode,
                     private string $returnTypeStr,
-                    private string $currentFile
+                    private string $currentFile,
+                    private string $currentNamespace
                 ) {
                 }
 
@@ -543,7 +689,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
                         if (
                             Config::isEliminateStaticallyProvenChecksEnabled()
-                            && StaticTypeEvaluator::satisfies($exprToWrap, $this->returnTypeNode, $this->currentFile)
+                            && StaticTypeEvaluator::satisfies($exprToWrap, $this->returnTypeNode, $this->currentFile, [], $this->currentNamespace)
                         ) {
                             return null;
                         }
@@ -752,7 +898,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                     foreach ($stmt->props as $p) {
                         $isExplicitNull = $p->default instanceof Node\Expr\ConstFetch && strtolower($p->default->name->toString()) === 'null';
                         if ($p->default !== null && ! $isExplicitNull) {
-                            if ($propTypeNode !== null && StaticTypeEvaluator::satisfies($p->default, $propTypeNode, $this->currentFile)) {
+                            if ($propTypeNode !== null && StaticTypeEvaluator::satisfies($p->default, $propTypeNode, $this->currentFile, [], $this->currentNamespace)) {
                                 continue;
                             }
 
@@ -818,7 +964,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     }
 
     /**
-     * @return array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode>
+     * @return array<string, TemplateTagValueNode>
      */
     private function resolveClassTemplatesForDefaults(Node\Stmt\Class_ $node): array
     {
@@ -846,10 +992,30 @@ final class ContractVisitor extends NodeVisitorAbstract
         if ($node->extends !== null) {
             $parentClass = $this->resolveClassNameFromNode($node->extends) ?? $node->extends->toString();
 
-            try {
-                $parentTemplates = DocblockParser::parseClassTemplates($parentClass);
-                $classTemplates = [...$classTemplates, ...$parentTemplates];
-            } catch (\Throwable) {
+            if (class_exists($parentClass, false) || StubManager::hasClassStub($parentClass)) {
+                try {
+                    $parentTemplates = DocblockParser::parseClassTemplates($parentClass);
+                    $classTemplates = [...$classTemplates, ...$parentTemplates];
+                } catch (\Throwable) {
+                }
+            } else {
+                $parentFile = self::findClassFileWithoutAutoload($parentClass);
+                if ($parentFile !== null) {
+                    $parentSource = @file_get_contents($parentFile);
+                    if ($parentSource !== false && str_contains($parentSource, 'template')) {
+                        try {
+                            $parentStmts = StreamWrapper::getParser()->parse($parentSource);
+                            if ($parentStmts !== null) {
+                                $parentDoc = self::findClassDocInStmts($parentStmts, $parentClass);
+                                if ($parentDoc !== null) {
+                                    $phpDocNode = DocblockExtractor::parseDocString($parentDoc);
+                                    $classTemplates = [...$classTemplates, ...DocblockExtractor::extractTemplates($phpDocNode)];
+                                }
+                            }
+                        } catch (\Throwable) {
+                        }
+                    }
+                }
             }
         }
 
@@ -1036,6 +1202,8 @@ final class ContractVisitor extends NodeVisitorAbstract
             }
         }
 
+        $classAliases = $this->extractClassLikeAliases($node, $doc, $typeName);
+
         $this->classStack[] = [
             'name' => $typeName,
             'isAnonymous' => ($node instanceof Node\Stmt\Class_ && $node->name === null),
@@ -1046,7 +1214,511 @@ final class ContractVisitor extends NodeVisitorAbstract
             'isFinal' => $isFinal,
             'hasTemplates' => $hasTemplates,
             'isTrait' => $isTrait,
+            'aliases' => $classAliases,
+            'templates' => $templates,
         ];
+    }
+
+    /**
+     * Extracts class-level and inherited @phpstan-type / @psalm-type / @phpstan-import-type aliases at AST transform time
+     * without invoking PHP's autoloader/compiler.
+     *
+     * @return array<string, TypeNode>
+     */
+    private function extractClassLikeAliases(
+        Node\Stmt\Class_|Node\Stmt\Interface_|Node\Stmt\Trait_|Node\Stmt\Enum_ $node,
+        ?\PhpParser\Comment\Doc $doc,
+        ?string $typeName
+    ): array {
+        /** @var array<string, TypeNode> $aliases */
+        $aliases = [];
+        $visited = $typeName !== null ? [$typeName => true] : [];
+
+        if ($doc !== null && (str_contains($doc->getText(), '-type') || str_contains($doc->getText(), 'import-type'))) {
+            try {
+                $phpDocNode = DocblockExtractor::parseDocString($doc->getText());
+                $this->collectAliasesFromPhpDocInFile($phpDocNode, $aliases, $this->currentFile, $this->currentNamespace, $visited);
+            } catch (\Throwable) {
+            }
+        }
+
+        /** @var list<Node\Name> $parentNodes */
+        $parentNodes = [];
+        if ($node instanceof Node\Stmt\Class_) {
+            if ($node->extends !== null) {
+                $parentNodes[] = $node->extends;
+            }
+            foreach ($node->implements as $iface) {
+                $parentNodes[] = $iface;
+            }
+        } elseif ($node instanceof Node\Stmt\Interface_) {
+            foreach ($node->extends as $iface) {
+                $parentNodes[] = $iface;
+            }
+        } elseif ($node instanceof Node\Stmt\Enum_) {
+            foreach ($node->implements as $iface) {
+                $parentNodes[] = $iface;
+            }
+        }
+
+        if ($node instanceof Node\Stmt\Class_ || $node instanceof Node\Stmt\Trait_ || $node instanceof Node\Stmt\Enum_) {
+            foreach ($node->stmts as $stmt) {
+                if ($stmt instanceof Node\Stmt\TraitUse) {
+                    foreach ($stmt->traits as $traitName) {
+                        $parentNodes[] = $traitName;
+                    }
+                }
+            }
+        }
+
+        foreach ($parentNodes as $parentNode) {
+            $parentFqcn = $this->resolveClassNameFromNode($parentNode) ?? $parentNode->toString();
+            $parentAliases = self::resolveClassAliasesNoAutoload($parentFqcn, $this->localClassAliases, $visited);
+
+            foreach ($parentAliases as $aName => $aType) {
+                if (! isset($aliases[$aName])) {
+                    $aliases[$aName] = $aType;
+                }
+            }
+        }
+
+        foreach ($aliases as $aName => $aType) {
+            $aliases[$aName] = DocblockParser::substituteAliases($aType, $aliases);
+        }
+
+        if ($typeName !== null && $aliases !== []) {
+            $this->localClassAliases[$typeName] = $aliases;
+        }
+
+        return $aliases;
+    }
+
+    /**
+     * @param array<string, TypeNode> $aliases
+     * @param array<string, true> $visited
+     */
+    private function collectAliasesFromPhpDocInFile(
+        PhpDocNode $phpDocNode,
+        array &$aliases,
+        string $filePath,
+        string $namespace,
+        array $visited
+    ): void {
+        foreach ($phpDocNode->getTagsByName('@psalm-type') as $tag) {
+            if ($tag->value instanceof TypeAliasTagValueNode) {
+                $aliases[$tag->value->alias] = $tag->value->type;
+            }
+        }
+
+        foreach ($phpDocNode->getTagsByName('@phpstan-type') as $tag) {
+            if ($tag->value instanceof TypeAliasTagValueNode) {
+                $aliases[$tag->value->alias] = $tag->value->type;
+            }
+        }
+
+        $importTags = [
+            ...$phpDocNode->getTagsByName('@psalm-import-type'),
+            ...$phpDocNode->getTagsByName('@phpstan-import-type'),
+        ];
+
+        foreach ($importTags as $tag) {
+            if ($tag->value instanceof TypeAliasImportTagValueNode) {
+                $importTag = $tag->value;
+                $localName = $importTag->importedAs ?? $importTag->importedAlias;
+                if (isset($aliases[$localName])) {
+                    continue;
+                }
+
+                $sourceFqcn = $this->resolveClassNameFromNode(new Node\Name((string) $importTag->importedFrom))
+                    ?? (string) $importTag->importedFrom;
+
+                $sourceAliases = self::resolveClassAliasesNoAutoload($sourceFqcn, $this->localClassAliases, $visited);
+                if (isset($sourceAliases[$importTag->importedAlias])) {
+                    $aliases[$localName] = $sourceAliases[$importTag->importedAlias];
+                }
+            }
+        }
+    }
+
+    /**
+     * Resolves class-level aliases for an FQCN without invoking PHP autoloading/compilation.
+     *
+     * @param array<string, array<string, TypeNode>> $localClassAliases
+     * @param array<string, true> $visited
+     *
+     * @return array<string, TypeNode>
+     */
+    public static function resolveClassAliasesNoAutoload(
+        string $fqcn,
+        array $localClassAliases = [],
+        array $visited = []
+    ): array {
+        $fqcn = ltrim($fqcn, '\\');
+        if ($fqcn === '' || isset($visited[$fqcn])) {
+            return [];
+        }
+
+        if (isset($localClassAliases[$fqcn])) {
+            return $localClassAliases[$fqcn];
+        }
+
+        if (isset(self::$astClassAliasesCache[$fqcn])) {
+            return self::$astClassAliasesCache[$fqcn];
+        }
+
+        if (
+            class_exists($fqcn, false)
+            || interface_exists($fqcn, false)
+            || trait_exists($fqcn, false)
+            || enum_exists($fqcn, false)
+        ) {
+            return self::$astClassAliasesCache[$fqcn] = DocblockParser::parseClassAliases($fqcn);
+        }
+
+        $visited[$fqcn] = true;
+
+        $stubDoc = StubManager::getClassDoc($fqcn);
+        if ($stubDoc !== null) {
+            if (! str_contains($stubDoc, '-type') && ! str_contains($stubDoc, 'import-type')) {
+                return self::$astClassAliasesCache[$fqcn] = [];
+            }
+
+            try {
+                $phpDocNode = DocblockExtractor::parseDocString($stubDoc);
+                $aliases = [];
+                self::collectRawAliasesFromAstDoc($phpDocNode, $aliases, '', '', [], $localClassAliases, $visited);
+
+                return self::$astClassAliasesCache[$fqcn] = $aliases;
+            } catch (\Throwable) {
+                return self::$astClassAliasesCache[$fqcn] = [];
+            }
+        }
+
+        $filePath = self::findClassFileWithoutAutoload($fqcn);
+        if ($filePath === null) {
+            return self::$astClassAliasesCache[$fqcn] = [];
+        }
+
+        $source = @file_get_contents($filePath);
+        if (
+            $source === false
+            || (
+                ! str_contains($source, '-type')
+                && ! str_contains($source, 'import-type')
+                && ! str_contains($source, 'extends')
+                && ! str_contains($source, 'implements')
+                && ! str_contains($source, 'use ')
+            )
+        ) {
+            return self::$astClassAliasesCache[$fqcn] = [];
+        }
+
+        try {
+            $stmts = StreamWrapper::getParser()->parse($source);
+            if ($stmts === null) {
+                return self::$astClassAliasesCache[$fqcn] = [];
+            }
+
+            $aliases = self::extractTargetClassAliasesFromStmts($stmts, $fqcn, $filePath, $localClassAliases, $visited);
+        } catch (\Throwable) {
+            $aliases = [];
+        }
+
+        return self::$astClassAliasesCache[$fqcn] = $aliases;
+    }
+
+    /**
+     * Locates a class, interface, trait, or enum source file via Composer's ClassLoader without executing it.
+     */
+    public static function findClassFileWithoutAutoload(string $fqcn): ?string
+    {
+        $fqcn = ltrim($fqcn, '\\');
+        if (! ClassNameValidator::isValid($fqcn)) {
+            return null;
+        }
+
+        $autoloaders = spl_autoload_functions();
+        foreach ($autoloaders as $autoloader) {
+            if (\is_array($autoloader) && $autoloader[0] instanceof ClassLoader) {
+                $file = $autoloader[0]->findFile($fqcn);
+                if (\is_string($file) && $file !== '' && is_file($file)) {
+                    return $file;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<Node\Stmt> $stmts
+     * @param array<string, array<string, TypeNode>> $localClassAliases
+     * @param array<string, true> $visited
+     *
+     * @return array<string, TypeNode>
+     */
+    private static function extractTargetClassAliasesFromStmts(
+        array $stmts,
+        string $targetFqcn,
+        string $filePath,
+        array $localClassAliases,
+        array $visited
+    ): array {
+        foreach ($stmts as $stmt) {
+            if ($stmt instanceof Node\Stmt\Namespace_) {
+                $ns = $stmt->name !== null ? $stmt->name->toString() : '';
+                $imports = self::collectNamespaceImports($stmt->stmts);
+                $found = self::scanClassLikesForAliases($stmt->stmts, $ns, $imports, $targetFqcn, $filePath, $localClassAliases, $visited);
+                if ($found !== null) {
+                    return $found;
+                }
+            }
+        }
+
+        $topImports = self::collectNamespaceImports($stmts);
+
+        return self::scanClassLikesForAliases($stmts, '', $topImports, $targetFqcn, $filePath, $localClassAliases, $visited) ?? [];
+    }
+
+    /**
+     * @param array<Node\Stmt> $stmts
+     * @param array<string, string> $imports
+     * @param array<string, array<string, TypeNode>> $localClassAliases
+     * @param array<string, true> $visited
+     *
+     * @return array<string, TypeNode>|null
+     */
+    private static function scanClassLikesForAliases(
+        array $stmts,
+        string $namespace,
+        array $imports,
+        string $targetFqcn,
+        string $filePath,
+        array $localClassAliases,
+        array $visited
+    ): ?array {
+        foreach ($stmts as $stmt) {
+            if (
+                ! (
+                    $stmt instanceof Node\Stmt\Class_
+                    || $stmt instanceof Node\Stmt\Interface_
+                    || $stmt instanceof Node\Stmt\Trait_
+                    || $stmt instanceof Node\Stmt\Enum_
+                )
+                || $stmt->name === null
+            ) {
+                continue;
+            }
+
+            $fqcn = $namespace !== '' ? $namespace . '\\' . $stmt->name->toString() : $stmt->name->toString();
+            if ($fqcn !== $targetFqcn) {
+                continue;
+            }
+
+            /** @var array<string, TypeNode> $aliases */
+            $aliases = [];
+            $doc = $stmt->getDocComment();
+            if ($doc !== null && (str_contains($doc->getText(), '-type') || str_contains($doc->getText(), 'import-type'))) {
+                try {
+                    $phpDocNode = DocblockExtractor::parseDocString($doc->getText());
+                    self::collectRawAliasesFromAstDoc($phpDocNode, $aliases, $filePath, $namespace, $imports, $localClassAliases, $visited);
+                } catch (\Throwable) {
+                }
+            }
+
+            /** @var list<Node\Name> $parentNodes */
+            $parentNodes = [];
+            if ($stmt instanceof Node\Stmt\Class_) {
+                if ($stmt->extends !== null) {
+                    $parentNodes[] = $stmt->extends;
+                }
+                foreach ($stmt->implements as $iface) {
+                    $parentNodes[] = $iface;
+                }
+            } elseif ($stmt instanceof Node\Stmt\Interface_) {
+                foreach ($stmt->extends as $iface) {
+                    $parentNodes[] = $iface;
+                }
+            } elseif ($stmt instanceof Node\Stmt\Enum_) {
+                foreach ($stmt->implements as $iface) {
+                    $parentNodes[] = $iface;
+                }
+            }
+
+            if ($stmt instanceof Node\Stmt\Class_ || $stmt instanceof Node\Stmt\Trait_ || $stmt instanceof Node\Stmt\Enum_) {
+                foreach ($stmt->stmts as $member) {
+                    if ($member instanceof Node\Stmt\TraitUse) {
+                        foreach ($member->traits as $traitName) {
+                            $parentNodes[] = $traitName;
+                        }
+                    }
+                }
+            }
+
+            foreach ($parentNodes as $parentNode) {
+                $parentFqcn = self::resolveAstName($parentNode, $namespace, $imports);
+                foreach (self::resolveClassAliasesNoAutoload($parentFqcn, $localClassAliases, $visited) as $aName => $aType) {
+                    if (! isset($aliases[$aName])) {
+                        $aliases[$aName] = $aType;
+                    }
+                }
+            }
+
+            foreach ($aliases as $aName => $aType) {
+                $substituted = DocblockParser::substituteAliases($aType, $aliases);
+                $aliases[$aName] = $filePath !== ''
+                    ? SpecialTypeResolver::resolveForFile($substituted, $filePath, $namespace, false)
+                    : $substituted;
+            }
+
+            return $aliases;
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, TypeNode> $aliases
+     * @param array<string, string> $imports
+     * @param array<string, array<string, TypeNode>> $localClassAliases
+     * @param array<string, true> $visited
+     */
+    private static function collectRawAliasesFromAstDoc(
+        PhpDocNode $phpDocNode,
+        array &$aliases,
+        string $filePath,
+        string $namespace,
+        array $imports,
+        array $localClassAliases,
+        array $visited
+    ): void {
+        foreach ($phpDocNode->getTagsByName('@psalm-type') as $tag) {
+            if ($tag->value instanceof TypeAliasTagValueNode) {
+                $aliases[$tag->value->alias] = $tag->value->type;
+            }
+        }
+
+        foreach ($phpDocNode->getTagsByName('@phpstan-type') as $tag) {
+            if ($tag->value instanceof TypeAliasTagValueNode) {
+                $aliases[$tag->value->alias] = $tag->value->type;
+            }
+        }
+
+        $importTags = [
+            ...$phpDocNode->getTagsByName('@psalm-import-type'),
+            ...$phpDocNode->getTagsByName('@phpstan-import-type'),
+        ];
+
+        foreach ($importTags as $tag) {
+            if ($tag->value instanceof TypeAliasImportTagValueNode) {
+                $importTag = $tag->value;
+                $localName = $importTag->importedAs ?? $importTag->importedAlias;
+                if (isset($aliases[$localName])) {
+                    continue;
+                }
+
+                $rawSource = ltrim((string) $importTag->importedFrom, '\\');
+                $sourceFqcn = str_starts_with((string) $importTag->importedFrom, '\\')
+                    ? $rawSource
+                    : ($imports[$rawSource] ?? ($namespace !== '' && ! str_contains($rawSource, '\\') ? $namespace . '\\' . $rawSource : $rawSource));
+
+                $sourceAliases = self::resolveClassAliasesNoAutoload($sourceFqcn, $localClassAliases, $visited);
+                if (isset($sourceAliases[$importTag->importedAlias])) {
+                    $aliases[$localName] = $sourceAliases[$importTag->importedAlias];
+                }
+            }
+        }
+
+        if ($filePath !== '') {
+            foreach ($aliases as $aName => $aType) {
+                $aliases[$aName] = SpecialTypeResolver::resolveForFile($aType, $filePath, $namespace, false);
+            }
+        }
+    }
+
+    /**
+     * @param array<Node\Stmt> $stmts
+     *
+     * @return array<string, string>
+     */
+    private static function collectNamespaceImports(array $stmts): array
+    {
+        $imports = [];
+
+        foreach ($stmts as $stmt) {
+            if ($stmt instanceof Node\Stmt\Use_) {
+                if ($stmt->type !== Node\Stmt\Use_::TYPE_NORMAL) {
+                    continue;
+                }
+                foreach ($stmt->uses as $use) {
+                    $imports[$use->getAlias()->toString()] = $use->name->toString();
+                }
+            } elseif ($stmt instanceof Node\Stmt\GroupUse) {
+                $prefix = $stmt->prefix->toString();
+                foreach ($stmt->uses as $use) {
+                    if (
+                        $use->type !== Node\Stmt\Use_::TYPE_NORMAL
+                        && $use->type !== Node\Stmt\Use_::TYPE_UNKNOWN
+                        && $stmt->type !== Node\Stmt\Use_::TYPE_NORMAL
+                    ) {
+                        continue;
+                    }
+                    $imports[$use->getAlias()->toString()] = $prefix . '\\' . $use->name->toString();
+                }
+            }
+        }
+
+        return $imports;
+    }
+
+    /**
+     * @param array<string, string> $imports
+     */
+    private static function resolveAstName(Node\Name $nameNode, string $namespace, array $imports): string
+    {
+        $raw = $nameNode->toString();
+        if ($nameNode->isFullyQualified()) {
+            return $raw;
+        }
+
+        if (isset($imports[$raw])) {
+            return $imports[$raw];
+        }
+
+        if (str_contains($raw, '\\')) {
+            [$first, $rest] = explode('\\', $raw, 2);
+            if (isset($imports[$first])) {
+                return $imports[$first] . '\\' . $rest;
+            }
+        }
+
+        return $namespace !== '' ? $namespace . '\\' . $raw : $raw;
+    }
+
+    /**
+     * @param array<Node\Stmt> $stmts
+     */
+    private static function findClassDocInStmts(array $stmts, string $targetFqcn): ?string
+    {
+        foreach ($stmts as $stmt) {
+            if ($stmt instanceof Node\Stmt\Namespace_) {
+                $ns = $stmt->name !== null ? $stmt->name->toString() : '';
+                foreach ($stmt->stmts as $inner) {
+                    if ($inner instanceof Node\Stmt\Class_ && $inner->name !== null) {
+                        $fqcn = $ns !== '' ? $ns . '\\' . $inner->name->toString() : $inner->name->toString();
+                        if ($fqcn === $targetFqcn) {
+                            return $inner->getDocComment()?->getText();
+                        }
+                    }
+                }
+            } elseif ($stmt instanceof Node\Stmt\Class_ && $stmt->name !== null) {
+                if ($stmt->name->toString() === $targetFqcn) {
+                    return $stmt->getDocComment()?->getText();
+                }
+            }
+        }
+
+        return null;
     }
 
     private function handleReturn(Node\Stmt\Return_ $node): void
@@ -1265,7 +1937,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                     }
                 }
 
-                if ($parsedType !== null && StaticTypeEvaluator::satisfies($expr, $parsedType, $this->currentFile)) {
+                if ($parsedType !== null && StaticTypeEvaluator::satisfies($expr, $parsedType, $this->currentFile, [], $this->currentNamespace)) {
                     return null;
                 }
 
@@ -1768,6 +2440,10 @@ final class ContractVisitor extends NodeVisitorAbstract
      */
     private function resolveClassNameFromNode(Node\Name $classNode): ?string
     {
+        if ($classNode->isFullyQualified()) {
+            return $classNode->toString();
+        }
+
         $rawClass = $classNode->toString();
         $lowerClass = strtolower($rawClass);
 
@@ -1778,10 +2454,10 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         $resolved = $this->currentFile !== ''
-            ? SpecialTypeResolver::resolveFqcnForFile($rawClass, $this->currentFile, false)
+            ? SpecialTypeResolver::resolveFqcnForFile($rawClass, $this->currentFile, false, $this->currentNamespace)
             : $rawClass;
 
-        if ($resolved === $rawClass && $this->currentNamespace !== '' && ! str_contains($rawClass, '\\')) {
+        if ($resolved === $rawClass && $this->currentNamespace !== '') {
             return $this->currentNamespace . '\\' . $rawClass;
         }
 
@@ -1816,11 +2492,11 @@ final class ContractVisitor extends NodeVisitorAbstract
         foreach ($chain as $step) {
             $kind = new Node\Scalar\String_($step[0]);
             if ($step[0] === 'dim') {
-                $dimExpr = $step[1] instanceof Node\Expr ? $step[1] : new Node\Expr\ConstFetch(new Node\Name('null'));
+                $dimExpr = $step[1] instanceof Node\Expr ? clone $step[1] : new Node\Expr\ConstFetch(new Node\Name('null'));
             } elseif (\is_string($step[1])) {
                 $dimExpr = new Node\Scalar\String_($step[1]);
             } elseif ($step[1] instanceof Node\Expr) {
-                $dimExpr = $step[1];
+                $dimExpr = clone $step[1];
             } else {
                 $dimExpr = new Node\Scalar\String_('');
             }
@@ -2032,14 +2708,12 @@ final class ContractVisitor extends NodeVisitorAbstract
     {
         return $node instanceof Node\Expr\ArrowFunction
             || $node instanceof Node\Stmt\Block
-            || $node instanceof Node\Stmt\If_
-            || $node instanceof Node\Stmt\Else_
-            || $node instanceof Node\Stmt\ElseIf_
             || $node instanceof Node\Stmt\Foreach_
             || $node instanceof Node\Stmt\While_
             || $node instanceof Node\Stmt\For_
             || $node instanceof Node\Stmt\Do_
-            || $node instanceof Node\Stmt\TryCatch;
+            || $node instanceof Node\Stmt\Case_
+            || $node instanceof Node\MatchArm;
     }
 
     private function isScopeBoundary(Node $node): bool
@@ -2125,5 +2799,201 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         return $vars;
+    }
+
+    /**
+     * Hoists impure targets, groups unset chains by root, injects pre-validation checks,
+     * and unregisters any whole variables destroyed by unset().
+     *
+     * @return list<Node\Stmt>|null
+     */
+    private function handleUnset(Node\Stmt\Unset_ $node): ?array
+    {
+        /** @var list<Node\Stmt> $preStmts */
+        $preStmts = [];
+        /** @var list<string> $varsToUnregister */
+        $varsToUnregister = [];
+        /** @var array<string, array{rootExpr: Node\Expr, typeString: string, varName: string, chains: list<list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}>>}> $varUnsetGroups */
+        $varUnsetGroups = [];
+        /** @var array<string, array{targetExpr: Node\Expr, propName: string, chains: list<list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}>>}> $propUnsetGroups */
+        $propUnsetGroups = [];
+
+        foreach ($node->vars as $idx => $v) {
+            if ($v instanceof Node\Expr\Variable) {
+                if (\is_string($v->name)) {
+                    $varsToUnregister[] = $v->name;
+                }
+
+                continue;
+            }
+
+            if ($this->targetHasSideEffects($v)) {
+                $preAssignments = [];
+                $cleanTarget = $this->hoistImpureTarget($v, $preAssignments);
+                $this->markWriteContext($cleanTarget);
+                $node->vars[$idx] = $cleanTarget;
+                $v = $cleanTarget;
+
+                foreach ($preAssignments as $assign) {
+                    $preStmt = new Node\Stmt\Expression($assign);
+                    $preStmt->setAttribute('typephp_injected', true);
+                    $preStmts[] = $preStmt;
+                }
+            }
+
+            $chainInfo = $this->extractMemberChain($v);
+            if ($chainInfo !== null) {
+                $root = $chainInfo['root'];
+                $chain = $chainInfo['chain'];
+
+                if ($root instanceof Node\Expr\Variable && \is_string($root->name)) {
+                    $varName = $root->name;
+                    $typeString = $this->scopeManager->getVarTypeFromScope($varName);
+
+                    if ($typeString !== null && $this->shouldHandleMemberUnsetCheck($typeString, $chain)) {
+                        if (! isset($varUnsetGroups[$varName])) {
+                            $varUnsetGroups[$varName] = [
+                                'rootExpr' => clone $root,
+                                'typeString' => $typeString,
+                                'varName' => $varName,
+                                'chains' => [],
+                            ];
+                        }
+                        $varUnsetGroups[$varName]['chains'][] = $chain;
+
+                        continue;
+                    }
+                }
+            }
+
+            $propDimInfo = $this->extractPropertyDimChain($v);
+            if ($propDimInfo !== null) {
+                $tExpr = $propDimInfo['targetExpr'];
+                $pName = $propDimInfo['propName'];
+
+                if ($tExpr instanceof Node\Expr\Variable && \is_string($tExpr->name)) {
+                    $groupKey = 'v:' . $tExpr->name . ':' . $pName;
+                } elseif ($tExpr instanceof Node\Expr\ClassConstFetch && $tExpr->class instanceof Node\Name) {
+                    $groupKey = 'c:' . $tExpr->class->toString() . ':' . $pName;
+                } else {
+                    $groupKey = 'u:' . $idx;
+                }
+
+                if (! isset($propUnsetGroups[$groupKey])) {
+                    $propUnsetGroups[$groupKey] = [
+                        'targetExpr' => clone $tExpr,
+                        'propName' => $pName,
+                        'chains' => [],
+                    ];
+                }
+                $propUnsetGroups[$groupKey]['chains'][] = $propDimInfo['chain'];
+            }
+        }
+
+        /** @var list<Node\Stmt> $checkStmts */
+        $checkStmts = [];
+        $line = $node->getStartLine();
+
+        foreach ($varUnsetGroups as $group) {
+            $checkCall = NodeBuilder::createMemberUnsetCheckCall(
+                $group['rootExpr'],
+                $this->buildChainsAst($group['chains']),
+                $group['typeString'],
+                $group['varName'],
+                $line,
+                $this->getCurrentCallerExpr(),
+                $this->getCurrentThisExpr()
+            );
+            $checkStmts[] = NodeBuilder::createIfErrorThrowStmt($checkCall, $line);
+        }
+
+        foreach ($propUnsetGroups as $group) {
+            $checkCall = NodeBuilder::createPropertyMemberUnsetCheckCall(
+                $group['targetExpr'],
+                $group['propName'],
+                $this->buildChainsAst($group['chains']),
+                $line
+            );
+            $checkStmts[] = NodeBuilder::createIfErrorThrowStmt($checkCall, $line);
+        }
+
+        foreach ($varsToUnregister as $varName) {
+            $this->scopeManager->unregisterVarType($varName);
+        }
+
+        if ($preStmts === [] && $checkStmts === []) {
+            return null;
+        }
+
+        return [...$preStmts, ...$checkStmts, $node];
+    }
+
+    /**
+     * Converts a list of member accessor chains into an AST Array_ of chains.
+     *
+     * @param list<list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}>> $chains
+     */
+    private function buildChainsAst(array $chains): Node\Expr\Array_
+    {
+        $items = [];
+        foreach ($chains as $chain) {
+            $items[] = new Node\ArrayItem($this->buildChainAst($chain));
+        }
+
+        return new Node\Expr\Array_($items);
+    }
+
+    /**
+     * @param list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}> $chain
+     */
+    private function shouldHandleMemberUnsetCheck(string $typeString, array $chain): bool
+    {
+        if (($chain[0][0] ?? null) === 'prop') {
+            return str_contains($typeString, '{');
+        }
+
+        $hasDim = false;
+        foreach ($chain as $step) {
+            if ($step[0] === 'dim') {
+                $hasDim = true;
+
+                break;
+            }
+        }
+
+        if (! $hasDim) {
+            return str_contains($typeString, '{');
+        }
+
+        if (Config::isEliminateStaticallyProvenChecksEnabled()) {
+            $typeNode = $this->parseUnsetTypeCached($typeString);
+            if ($typeNode !== null && StaticTypeEvaluator::isUnsetSafe($typeNode, $chain)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function parseUnsetTypeCached(string $typeString): ?TypeNode
+    {
+        if (isset(self::$parsedUnsetTypeCache[$typeString])) {
+            $cached = self::$parsedUnsetTypeCache[$typeString];
+
+            return $cached !== false ? $cached : null;
+        }
+
+        try {
+            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+            $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($typeString)));
+            $parsed = $typeParser->parse($tokens);
+            self::$parsedUnsetTypeCache[$typeString] = $parsed;
+
+            return $parsed;
+        } catch (\Throwable) {
+            self::$parsedUnsetTypeCache[$typeString] = false;
+
+            return null;
+        }
     }
 }

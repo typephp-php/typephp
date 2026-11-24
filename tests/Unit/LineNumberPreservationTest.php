@@ -28,10 +28,8 @@ PHP;
         $origLines = explode("\n", str_replace("\r\n", "\n", $source));
         $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
 
-        // Total number of lines in transformed source MUST match original source
         expect(\count($transLines))->toBe(\count($origLines));
 
-        // The line containing 'number(-5);' must be on the exact same line index
         $origCallLine = array_search('number(-5);', array_map('trim', $origLines), true);
         $transCallLine = array_search('number(-5);', array_map('trim', $transLines), true);
 
@@ -942,5 +940,269 @@ PHP;
         expect($transReturnLine)->toBe($origReturnLine, 'Line drift detected on return statement check')
             ->and($transLines[$transReturnLine])->toContain('$intermediate')
         ;
+    });
+
+    describe('Unset Statement Line Number Preservation', function () {
+        test('preserves exact line numbers when injecting unset guards across comments, closures, properties, and hoisted targets', function () {
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+class UnsetDriftClassFixture
+{
+    /**
+     * @var array{id: positive-int, name: non-empty-string}
+     */
+    public array $user = ['id' => 1, 'name' => 'Alice'];
+
+    /**
+     * @var list<positive-int>
+     */
+    public static array $scores = [10, 20, 30];
+
+    public function mutate(): void
+    {
+        /** @var array{status: 'paid', amount: positive-int} $receipt */
+        $receipt = ['status' => 'paid', 'amount' => 100];
+
+        // Trailing comment right before unset
+        unset($receipt['amount']);
+
+        unset($this->user['name']);
+        unset(self::$scores[0]);
+
+        $fn = function () use (&$receipt): void {
+            unset($receipt['status']);
+        };
+
+        $landmarkAfterClosure = true;
+    }
+}
+
+$factory = new class () {
+    /**
+     * @var list<int>
+     */
+    public array $items = [1, 2, 3];
+
+    public function next(): self
+    {
+        return $this;
+    }
+};
+
+$idx = 0;
+unset($factory->next()->items[$idx++]);
+
+$finalLandmark = 'exact_final_line';
+PHP;
+
+            $transformed = StreamWrapper::transformSource($source, 'test_unset_drift_comprehensive.php');
+
+            $origLines = explode("\n", str_replace("\r\n", "\n", $source));
+            $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
+
+            expect(\count($transLines))->toBe(\count($origLines))
+                ->and($transformed)->toContain('// Trailing comment right before unset')
+                ->and($transformed)->toContain('RuntimeTypeChecker::checkMemberUnset')
+                ->and($transformed)->toContain('RuntimeTypeChecker::checkPropertyMemberUnset')
+                ->and($transformed)->toContain('$__typephpTgt0 = $factory->next()')
+            ;
+
+            $findLineIndex = static function (string $needle, array $lines): int {
+                foreach ($lines as $idx => $line) {
+                    if (str_contains($line, $needle)) {
+                        return $idx;
+                    }
+                }
+
+                return -1;
+            };
+
+            $landmarks = [
+                "unset(\$receipt['amount']);",
+                "unset(\$this->user['name']);",
+                'unset(self::$scores[0]);',
+                "unset(\$receipt['status']);",
+                '$landmarkAfterClosure = true;',
+                "\$finalLandmark = 'exact_final_line';",
+            ];
+
+            foreach ($landmarks as $landmark) {
+                $origIdx = $findLineIndex($landmark, $origLines);
+                $transIdx = $findLineIndex($landmark, $transLines);
+
+                expect($origIdx)->toBeGreaterThan(-1, "Missing original landmark: {$landmark}")
+                    ->and($transIdx)->toBe($origIdx, "Line drift detected on landmark: {$landmark}")
+                ;
+            }
+
+            $origHoistedIdx = $findLineIndex('unset($factory->next()->items[$idx++]);', $origLines);
+            $transHoistedIdx = $findLineIndex('unset($__typephpTgt0->items[$__typephpTgt1]);', $transLines);
+
+            expect($origHoistedIdx)->toBeGreaterThan(-1)
+                ->and($transHoistedIdx)->toBe($origHoistedIdx)
+            ;
+        });
+
+        test('preserves exact line numbers on CRLF (\r\n) files with unset injections', function () {
+            $source = "<?php\r\n"
+                . "\r\n"
+                . "declare(strict_types=1);\r\n"
+                . "\r\n"
+                . "/** @var array{status: 'paid', amount: positive-int} \$receipt */\r\n"
+                . "\$receipt = ['status' => 'paid', 'amount' => 100];\r\n"
+                . "\r\n"
+                . "unset(\$receipt['amount']);\r\n"
+                . "\r\n"
+                . "\$crlfLandmark = true;\r\n";
+
+            $transformed = StreamWrapper::transformSource($source, 'test_unset_crlf_drift.php');
+
+            $origLines = explode("\n", str_replace("\r\n", "\n", $source));
+            $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
+
+            expect(\count($transLines))->toBe(\count($origLines));
+
+            $origIdx = array_search('$crlfLandmark = true;', array_map('trim', $origLines), true);
+            $transIdx = array_search('$crlfLandmark = true;', array_map('trim', $transLines), true);
+
+            expect($transIdx)->toBe($origIdx)
+                ->and($origIdx)->toBe(9)
+            ;
+        });
+
+        test('points TypeError::getLine() to the exact unset statement line at runtime', function () {
+            $sysTemp = realpath(sys_get_temp_dir());
+            $baseTemp = str_replace('\\', '/', $sysTemp !== false ? $sysTemp : sys_get_temp_dir());
+            $tempDir = $baseTemp . '/typephp_unset_line_' . uniqid();
+            mkdir($tempDir, 0777, true);
+
+            $canonicalDir = str_replace('\\', '/', realpath($tempDir) ?: $tempDir);
+            $scriptPath = $canonicalDir . '/unset_line_check.php';
+
+            $code = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+class UnsetLineCheckFixture
+{
+    /**
+     * @var array{id: positive-int, name: non-empty-string}
+     */
+    public array $user = ['id' => 1, 'name' => 'Alice'];
+}
+
+function triggerUnsetLocalLineError(): void
+{
+    /** @var array{status: 'paid', amount: positive-int} $receipt */
+    $receipt = ['status' => 'paid', 'amount' => 100];
+
+    unset($receipt['amount']);
+}
+
+function triggerUnsetPropLineError(): void
+{
+    $box = new UnsetLineCheckFixture();
+
+    unset($box->user['name']);
+}
+PHP;
+
+            file_put_contents($scriptPath, $code);
+
+            try {
+                Config::set([
+                    'include' => [
+                        $canonicalDir . '/**',
+                    ],
+                    'exclude' => [
+                        'vendor/**',
+                    ],
+                ]);
+                StreamWrapper::register();
+
+                require $scriptPath;
+
+                $localLine = null;
+
+                try {
+                    triggerUnsetLocalLineError();
+                } catch (TypePHP\Exception\TypeError $e) {
+                    $localLine = $e->getLine();
+                }
+
+                $propLine = null;
+
+                try {
+                    triggerUnsetPropLineError();
+                } catch (TypePHP\Exception\TypeError $e) {
+                    $propLine = $e->getLine();
+                }
+
+                expect($localLine)->toBe(18)
+                    ->and($propLine)->toBe(25)
+                ;
+            } finally {
+                Config::reset();
+                if (file_exists($scriptPath)) {
+                    @unlink($scriptPath);
+                }
+                if (is_dir($tempDir)) {
+                    @rmdir($tempDir);
+                }
+            }
+        });
+
+        test('preserves valid PHP and exact line numbers when an inline // comment precedes an unset guard', function () {
+            $source = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+function inlineCommentBeforeUnset(): void
+{
+    /** @var array{status: 'paid', amount: positive-int} $receipt */
+    $receipt = ['status' => 'paid', 'amount' => 100]; // Inline trailing comment
+    unset($receipt['amount']);
+
+    $afterUnset = true;
+}
+PHP;
+
+            $transformed = StreamWrapper::transformSource($source, 'test_unset_inline_comment_drift.php');
+
+            $origLines = explode("\n", str_replace("\r\n", "\n", $source));
+            $transLines = explode("\n", str_replace("\r\n", "\n", $transformed));
+
+            expect(\count($transLines))->toBe(\count($origLines))
+                ->and($transformed)->toContain('RuntimeTypeChecker::checkMemberUnset')
+                ->and(PhpToken::tokenize($transformed))->toBeArray()
+            ;
+
+            $findLineIndex = static function (string $needle, array $lines): int {
+                foreach ($lines as $idx => $line) {
+                    if (str_contains($line, $needle)) {
+                        return $idx;
+                    }
+                }
+
+                return -1;
+            };
+
+            $origUnsetIdx = $findLineIndex("unset(\$receipt['amount']);", $origLines);
+            $transUnsetIdx = $findLineIndex("unset(\$receipt['amount']);", $transLines);
+
+            $origAfterIdx = $findLineIndex('$afterUnset = true;', $origLines);
+            $transAfterIdx = $findLineIndex('$afterUnset = true;', $transLines);
+
+            expect($origUnsetIdx)->toBeGreaterThan(-1)
+                ->and($transUnsetIdx)->toBe($origUnsetIdx)
+                ->and($origAfterIdx)->toBeGreaterThan(-1)
+                ->and($transAfterIdx)->toBe($origAfterIdx)
+            ;
+        });
     });
 });

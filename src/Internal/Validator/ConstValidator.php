@@ -17,6 +17,7 @@ use ReflectionClass;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Diagnostic\TypeFormatter;
+use TypePHP\Internal\Util\ClassNameValidator;
 
 /**
  * @internal Validates literal values, class constants, and wildcard constant patterns (Class::PREFIX_*) against ConstTypeNode ASTs.
@@ -29,6 +30,19 @@ final class ConstValidator implements TypeValidatorInterface
      * @var array<string, array<string, array{list: list<mixed>, map: array<string|int, true>}>>
      */
     private static array $wildcardConstantCache = [];
+
+    /**
+     * 2D Cache for single resolved class constants: [$className][$constName] => array{0: bool, 1: mixed}.
+     *
+     * @var array<string, array<string, array{0: bool, 1: mixed}>>
+     */
+    private static array $classConstantCache = [];
+
+    public static function reset(): void
+    {
+        self::$wildcardConstantCache = [];
+        self::$classConstantCache = [];
+    }
 
     public function validate(mixed $value, TypeNode $node, string $context, TypeValidatorRegistry $registry, bool $isSensitive = false): ?ErrorMessage
     {
@@ -68,15 +82,8 @@ final class ConstValidator implements TypeValidatorInterface
                 return null;
             }
 
-            $fqcnConstant = $className !== ''
-                ? $className . '::' . $pattern
-                : $pattern;
-
-            if (\defined($fqcnConstant)) {
-                $expected = \constant($fqcnConstant);
-            } else {
-                $expected = (string) $constExpr;
-            }
+            [$resolved, $constValue] = self::resolveSingleConstantValue($className, $pattern);
+            $expected = $resolved ? $constValue : (string) $constExpr;
         } else {
             $expected = (string) $constExpr;
         }
@@ -97,6 +104,52 @@ final class ConstValidator implements TypeValidatorInterface
     }
 
     /**
+     * Resolves a single class or global constant value via ReflectionClass (supporting protected/private constants),
+     * guarding against unresolved relative class keywords (self, static, parent, $this).
+     *
+     * @return array{0: bool, 1: mixed}
+     */
+    private static function resolveSingleConstantValue(string $className, string $constName): array
+    {
+        if ($className !== '') {
+            $lowerClass = strtolower($className);
+            if ($lowerClass === 'self' || $lowerClass === 'static' || $lowerClass === 'parent' || $lowerClass === '$this') {
+                return [false, null];
+            }
+
+            if (isset(self::$classConstantCache[$className]) && \array_key_exists($constName, self::$classConstantCache[$className])) {
+                return self::$classConstantCache[$className][$constName];
+            }
+
+            if (
+                ClassNameValidator::isValid($className)
+                && (
+                    class_exists($className, false)
+                    || class_exists($className)
+                    || interface_exists($className, false)
+                    || interface_exists($className)
+                    || enum_exists($className, false)
+                    || enum_exists($className)
+                )
+            ) {
+                /** @var class-string<object> $className */
+                $refClass = new ReflectionClass($className);
+                if ($refClass->hasConstant($constName)) {
+                    return self::$classConstantCache[$className][$constName] = [true, $refClass->getConstant($constName)];
+                }
+            }
+
+            return self::$classConstantCache[$className][$constName] = [false, null];
+        }
+
+        if (\defined($constName)) {
+            return [true, \constant($constName)];
+        }
+
+        return [false, null];
+    }
+
+    /**
      * Resolves and caches all values of class constants matching a wildcard pattern (e.g. PREFIX_*).
      *
      * @return array{list: list<mixed>, map: array<string|int, true>}
@@ -109,8 +162,24 @@ final class ConstValidator implements TypeValidatorInterface
 
         $list = [];
         $map = [];
+        $lowerClass = strtolower($className);
 
-        if ($className !== '' && (class_exists($className, false) || class_exists($className) || interface_exists($className, false) || interface_exists($className))) {
+        if (
+            $className !== ''
+            && $lowerClass !== 'self'
+            && $lowerClass !== 'static'
+            && $lowerClass !== 'parent'
+            && $lowerClass !== '$this'
+            && ClassNameValidator::isValid($className)
+            && (
+                class_exists($className, false)
+                || class_exists($className)
+                || interface_exists($className, false)
+                || interface_exists($className)
+                || enum_exists($className, false)
+                || enum_exists($className)
+            )
+        ) {
             /** @var class-string<object> $className */
             $refClass = new ReflectionClass($className);
             $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';

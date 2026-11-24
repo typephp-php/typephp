@@ -8,6 +8,7 @@ use Generator;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use TypePHP\Exception\TypeError as TypePHPTypeError;
@@ -179,6 +180,25 @@ final class IterableWrapper
             if ($boundTemplates !== [] || $templates !== []) {
                 $typeNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $templates);
                 $typeNode = SpecialTypeResolver::resolve($typeNode, $effectiveFunction, $thisObj);
+            }
+        }
+
+        while ($typeNode instanceof NullableTypeNode) {
+            $typeNode = $typeNode->type;
+        }
+
+        if ($typeNode instanceof UnionTypeNode) {
+            $nonNullNode = null;
+            $nonNullCount = 0;
+            foreach ($typeNode->types as $member) {
+                if ($member instanceof IdentifierTypeNode && strtolower($member->name) === 'null') {
+                    continue;
+                }
+                $nonNullCount++;
+                $nonNullNode = $member;
+            }
+            if ($nonNullCount === 1 && $nonNullNode !== null) {
+                $typeNode = $nonNullNode;
             }
         }
 

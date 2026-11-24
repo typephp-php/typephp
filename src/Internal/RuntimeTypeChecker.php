@@ -281,32 +281,25 @@ final class RuntimeTypeChecker
         }
 
         try {
-            $normalized = DocblockNormalizer::normalize($typeString);
-            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
-            $tokens = new TokenIterator($lexer->tokenize($normalized));
-            $typeNode = $typeParser->parse($tokens);
-
-            if ($file !== '') {
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
-            }
-
-            $context = "Constant {$constantName}";
-
-            $err = self::getRegistry()->validate($value, $typeNode, $context);
-            if ($err !== null) {
-                if (IgnoreManager::isCallerIgnored()) {
-                    return $value;
-                }
-
-                $target = str_contains($constantName, '::')
-                    ? explode('::', $constantName, 2)[1]
-                    : $constantName;
-                $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
-
-                return ViolationCollector::handle($err, 'constant', $value, $file, $line, $constantName, $target, $declaredIn);
-            }
+            $typeNode = self::resolveConstantTypeNode($typeString, $constantName, $file);
         } catch (\Throwable $e) {
-            // Silently ignore unexpected parsing errors
+            return $value;
+        }
+
+        $context = "Constant {$constantName}";
+
+        $err = self::getRegistry()->validate($value, $typeNode, $context);
+        if ($err !== null) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return $value;
+            }
+
+            $target = str_contains($constantName, '::')
+                ? explode('::', $constantName, 2)[1]
+                : $constantName;
+            $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
+
+            return ViolationCollector::handle($err, 'constant', $value, $file, $line, $constantName, $target, $declaredIn);
         }
 
         return $value;
@@ -328,28 +321,22 @@ final class RuntimeTypeChecker
         }
 
         try {
-            $normalized = DocblockNormalizer::normalize($typeString);
-            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
-            $tokens = new TokenIterator($lexer->tokenize($normalized));
-            $typeNode = $typeParser->parse($tokens);
-
-            if ($file !== '') {
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
-            }
-
-            $context = "{$caller}(): Argument \${$paramName}";
-
-            $err = self::getRegistry()->validate($value, $typeNode, $context);
-            if ($err !== null) {
-                if (IgnoreManager::isCallerIgnored()) {
-                    return $value;
-                }
-
-                $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
-
-                return ViolationCollector::handle($err, 'parameter', $value, null, null, $caller, '$' . $paramName, $declaredIn);
-            }
+            $typeNode = self::resolveConstantTypeNode($typeString, $caller, $file);
         } catch (\Throwable $e) {
+            return $value;
+        }
+
+        $context = "{$caller}(): Argument \${$paramName}";
+
+        $err = self::getRegistry()->validate($value, $typeNode, $context);
+        if ($err !== null) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return $value;
+            }
+
+            $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
+
+            return ViolationCollector::handle($err, 'parameter', $value, null, null, $caller, '$' . $paramName, $declaredIn);
         }
 
         return $value;
@@ -370,31 +357,68 @@ final class RuntimeTypeChecker
         }
 
         try {
-            $normalized = DocblockNormalizer::normalize($typeString);
-            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
-            $tokens = new TokenIterator($lexer->tokenize($normalized));
-            $typeNode = $typeParser->parse($tokens);
-
-            if ($file !== '') {
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
-            }
-
-            $context = "{$caller}(): Return value";
-
-            $err = self::getRegistry()->validate($value, $typeNode, $context);
-            if ($err !== null) {
-                if (IgnoreManager::isCallerIgnored()) {
-                    return $value;
-                }
-
-                $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
-
-                return ViolationCollector::handle($err, 'return', $value, $file, $line, $caller, 'return', $declaredIn);
-            }
+            $typeNode = self::resolveConstantTypeNode($typeString, $caller, $file);
         } catch (\Throwable $e) {
+            return $value;
+        }
+
+        $context = "{$caller}(): Return value";
+
+        $err = self::getRegistry()->validate($value, $typeNode, $context);
+        if ($err !== null) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return $value;
+            }
+
+            $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
+
+            return ViolationCollector::handle($err, 'return', $value, $file, $line, $caller, 'return', $declaredIn);
         }
 
         return $value;
+    }
+
+    /**
+     * Parses a constant's type string, expanding class-level aliases and resolving self/static/parent
+     * when the target denotes a class constant, or falling back to file imports for global constants.
+     */
+    private static function resolveConstantTypeNode(string $typeString, string $targetName, string $file): TypeNode
+    {
+        $normalized = DocblockNormalizer::normalize($typeString);
+        [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+        $tokens = new TokenIterator($lexer->tokenize($normalized));
+        $typeNode = $typeParser->parse($tokens);
+
+        if (str_contains($targetName, '::')) {
+            $declaringClass = explode('::', $targetName, 2)[0];
+            if (
+                $declaringClass !== ''
+                && ClassNameValidator::isValid($declaringClass)
+                && (
+                    class_exists($declaringClass, false)
+                    || interface_exists($declaringClass, false)
+                    || trait_exists($declaringClass, false)
+                    || enum_exists($declaringClass, false)
+                    || class_exists($declaringClass)
+                    || interface_exists($declaringClass)
+                    || trait_exists($declaringClass)
+                    || enum_exists($declaringClass)
+                )
+            ) {
+                $aliases = DocblockParser::parseClassAliases($declaringClass);
+                if ($aliases !== []) {
+                    $typeNode = DocblockParser::substituteAliases($typeNode, $aliases);
+                }
+
+                return SpecialTypeResolver::resolve($typeNode, $declaringClass);
+            }
+        }
+
+        if ($file !== '') {
+            $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+        }
+
+        return $typeNode;
     }
 
     /**
@@ -560,6 +584,95 @@ final class RuntimeTypeChecker
         }
 
         return $res;
+    }
+
+    /**
+     * Evaluates member unset mutations (unset($arr[$key]) or unset($obj->prop))
+     * against the root variable's type contract atomically before unsetting.
+     *
+     * @param list<list<array{0: 'dim'|'prop', 1: mixed}>> $chains
+     */
+    public static function checkMemberUnset(
+        mixed $root,
+        array $chains,
+        string $typeString,
+        string $varName,
+        string $file,
+        int $line = -1,
+        ?string $caller = null,
+        mixed $thisOrClass = null
+    ): ?ErrorMessage {
+        if (! self::$isEnabled) {
+            return null;
+        }
+
+        $res = MemberAssignChecker::checkUnset(
+            $root,
+            $chains,
+            $typeString,
+            $varName,
+            $file,
+            self::getRegistry(),
+            $caller,
+            $thisOrClass
+        );
+
+        if ($res instanceof ErrorMessage) {
+            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($caller ?? '')) {
+                return null;
+            }
+
+            /** @var ErrorMessage|null $handled */
+            $handled = ViolationCollector::handle($res, 'variable', null, $file, $line > 0 ? $line : null, $caller, '$' . $varName);
+
+            return $handled;
+        }
+
+        return null;
+    }
+
+    /**
+     * Evaluates member unset mutations on an object or static property
+     * (unset($obj->prop[$key]) or unset(Class::$prop[$key])) atomically before unsetting.
+     *
+     * @param list<list<array{0: 'dim'|'prop', 1: mixed}>> $chains
+     */
+    public static function checkPropertyMemberUnset(
+        mixed $objectOrClass,
+        string $propName,
+        array $chains,
+        string $file,
+        int $line = -1
+    ): ?ErrorMessage {
+        if (! self::$isEnabled || ! self::$inlinePropertiesEnabled) {
+            return null;
+        }
+
+        $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
+        if ($className !== '' && isset(InlineChecker::$nullPropertyCache[$className][$propName])) {
+            return null;
+        }
+
+        $res = MemberAssignChecker::checkPropertyUnset(
+            $objectOrClass,
+            $propName,
+            $chains,
+            $file,
+            self::$registry
+        );
+
+        if ($res instanceof ErrorMessage) {
+            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName)) {
+                return null;
+            }
+
+            /** @var ErrorMessage|null $handled */
+            $handled = ViolationCollector::handle($res, 'property', null, $file, $line > 0 ? $line : null, $className . '::$' . $propName, '$' . $propName);
+
+            return $handled;
+        }
+
+        return null;
     }
 
     /**
@@ -2440,6 +2553,9 @@ final class RuntimeTypeChecker
             self::PARAM_CHECK_TRUE => $value === true,
             self::PARAM_CHECK_FALSE => $value === false,
             self::PARAM_CHECK_SCALAR => \is_scalar($value),
+            self::PARAM_CHECK_NULL_OR_INT => $value === null || \is_int($value),
+            self::PARAM_CHECK_NULL_OR_STRING => $value === null || \is_string($value),
+            self::PARAM_CHECK_NULL_OR_BOOL => $value === null || \is_bool($value),
             default => false,
         };
 
@@ -2467,9 +2583,30 @@ final class RuntimeTypeChecker
      */
     private static function compileSimpleReturnOp(TypeNode $resolvedType): array
     {
+        $isNullable = false;
         $inner = $resolvedType;
+
         while ($inner instanceof NullableTypeNode) {
+            $isNullable = true;
             $inner = $inner->type;
+        }
+
+        if ($inner instanceof UnionTypeNode && \count($inner->types) === 2) {
+            $t0 = $inner->types[0];
+            $t1 = $inner->types[1];
+
+            if (self::isNullTypeNode($t0)) {
+                $isNullable = true;
+                $inner = $t1;
+            } elseif (self::isNullTypeNode($t1)) {
+                $isNullable = true;
+                $inner = $t0;
+            }
+
+            while ($inner instanceof NullableTypeNode) {
+                $isNullable = true;
+                $inner = $inner->type;
+            }
         }
 
         if (! ($inner instanceof IdentifierTypeNode)) {
@@ -2477,6 +2614,19 @@ final class RuntimeTypeChecker
         }
 
         $name = $inner->name;
+
+        if ($isNullable) {
+            $nullableOp = match ($name) {
+                'int', 'integer' => self::PARAM_CHECK_NULL_OR_INT,
+                'string' => self::PARAM_CHECK_NULL_OR_STRING,
+                'bool', 'boolean' => self::PARAM_CHECK_NULL_OR_BOOL,
+                default => null,
+            };
+
+            if ($nullableOp !== null) {
+                return [$nullableOp, null];
+            }
+        }
 
         $op = match ($name) {
             'int', 'integer' => self::PARAM_CHECK_INT,
@@ -2514,6 +2664,12 @@ final class RuntimeTypeChecker
         }
 
         return [self::PARAM_CHECK_FALLBACK, null];
+    }
+
+    private static function isNullTypeNode(TypeNode $node): bool
+    {
+        return ($node instanceof IdentifierTypeNode && strtolower($node->name) === 'null')
+            || ($node instanceof ConstTypeNode && $node->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprNullNode);
     }
 
     /**

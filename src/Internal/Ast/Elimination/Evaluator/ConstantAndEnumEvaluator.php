@@ -47,18 +47,22 @@ final class ConstantAndEnumEvaluator
      * 2. Evaluates bitwise OR expressions (A | B) against `int-mask-of` wildcards.
      * 3. Evaluates backed enum property reads (Enum::Case->value) against `value-of<Enum>`.
      */
-    public static function satisfies(Expr $expr, TypeNode $typeNode, string $currentFile = ''): bool
-    {
+    public static function satisfies(
+        Expr $expr,
+        TypeNode $typeNode,
+        string $currentFile = '',
+        ?string $currentNamespace = null
+    ): bool {
         if ($expr instanceof ClassConstFetch) {
-            return self::satisfiesClassConst($expr, $typeNode, $currentFile);
+            return self::satisfiesClassConst($expr, $typeNode, $currentFile, $currentNamespace);
         }
 
         if ($expr instanceof BitwiseOr) {
-            return self::satisfiesBitwiseOr($expr, $typeNode, $currentFile);
+            return self::satisfiesBitwiseOr($expr, $typeNode, $currentFile, $currentNamespace);
         }
 
         if ($expr instanceof PropertyFetch) {
-            return self::satisfiesEnumBackingValue($expr, $typeNode, $currentFile);
+            return self::satisfiesEnumBackingValue($expr, $typeNode, $currentFile, $currentNamespace);
         }
 
         return false;
@@ -67,8 +71,12 @@ final class ConstantAndEnumEvaluator
     /**
      * Evaluates a class constant fetch against ConstTypeNode, IdentifierTypeNode, or int-mask-of.
      */
-    private static function satisfiesClassConst(ClassConstFetch $fetch, TypeNode $typeNode, string $currentFile): bool
-    {
+    private static function satisfiesClassConst(
+        ClassConstFetch $fetch,
+        TypeNode $typeNode,
+        string $currentFile,
+        ?string $currentNamespace = null
+    ): bool {
         if (! ($fetch->class instanceof Name) || ! ($fetch->name instanceof Identifier)) {
             return false;
         }
@@ -81,7 +89,7 @@ final class ConstantAndEnumEvaluator
         $targetClassName = $fetch->class->toString();
 
         if ($typeNode instanceof ConstTypeNode && $typeNode->constExpr instanceof ConstFetchNode) {
-            if (! self::classesMatch($targetClassName, $typeNode->constExpr->className, $currentFile)) {
+            if (! self::classesMatch($targetClassName, $typeNode->constExpr->className, $currentFile, $currentNamespace)) {
                 return false;
             }
 
@@ -95,11 +103,11 @@ final class ConstantAndEnumEvaluator
         }
 
         if ($typeNode instanceof IdentifierTypeNode) {
-            if (! self::classesMatch($targetClassName, $typeNode->name, $currentFile)) {
+            if (! self::classesMatch($targetClassName, $typeNode->name, $currentFile, $currentNamespace)) {
                 return false;
             }
 
-            $resolvedEnum = self::resolveClassForReflection($targetClassName, $currentFile);
+            $resolvedEnum = self::resolveClassForReflection($targetClassName, $currentFile, $currentNamespace);
             if ($resolvedEnum === '' || ! enum_exists($resolvedEnum, false)) {
                 return false;
             }
@@ -110,7 +118,7 @@ final class ConstantAndEnumEvaluator
         if ($typeNode instanceof GenericTypeNode && strtolower((string) $typeNode->type) === 'int-mask-of') {
             $inner = $typeNode->genericTypes[0] ?? null;
             if ($inner instanceof ConstTypeNode && $inner->constExpr instanceof ConstFetchNode) {
-                if (! self::classesMatch($targetClassName, $inner->constExpr->className, $currentFile)) {
+                if (! self::classesMatch($targetClassName, $inner->constExpr->className, $currentFile, $currentNamespace)) {
                     return false;
                 }
 
@@ -129,21 +137,29 @@ final class ConstantAndEnumEvaluator
     /**
      * Recursively verifies that both operands of a bitwise OR expression satisfy an `int-mask-of` wildcard.
      */
-    private static function satisfiesBitwiseOr(BitwiseOr $expr, TypeNode $typeNode, string $currentFile): bool
-    {
+    private static function satisfiesBitwiseOr(
+        BitwiseOr $expr,
+        TypeNode $typeNode,
+        string $currentFile,
+        ?string $currentNamespace = null
+    ): bool {
         if (! ($typeNode instanceof GenericTypeNode) || strtolower((string) $typeNode->type) !== 'int-mask-of') {
             return false;
         }
 
-        return self::satisfies($expr->left, $typeNode, $currentFile)
-            && self::satisfies($expr->right, $typeNode, $currentFile);
+        return self::satisfies($expr->left, $typeNode, $currentFile, $currentNamespace)
+            && self::satisfies($expr->right, $typeNode, $currentFile, $currentNamespace);
     }
 
     /**
      * Verifies whether a BackedEnum::Case->value property access satisfies `value-of<Enum>`.
      */
-    private static function satisfiesEnumBackingValue(PropertyFetch $fetch, TypeNode $typeNode, string $currentFile): bool
-    {
+    private static function satisfiesEnumBackingValue(
+        PropertyFetch $fetch,
+        TypeNode $typeNode,
+        string $currentFile,
+        ?string $currentNamespace = null
+    ): bool {
         if (! ($fetch->name instanceof Identifier) || $fetch->name->name !== 'value') {
             return false;
         }
@@ -168,11 +184,11 @@ final class ConstantAndEnumEvaluator
             return false;
         }
 
-        if (! self::classesMatch($enumClassName, $enumTarget->name, $currentFile)) {
+        if (! self::classesMatch($enumClassName, $enumTarget->name, $currentFile, $currentNamespace)) {
             return false;
         }
 
-        $resolvedEnum = self::resolveClassForReflection($enumClassName, $currentFile);
+        $resolvedEnum = self::resolveClassForReflection($enumClassName, $currentFile, $currentNamespace);
         if ($resolvedEnum === '' || ! enum_exists($resolvedEnum, false) || ! is_subclass_of($resolvedEnum, BackedEnum::class)) {
             return false;
         }
@@ -183,7 +199,7 @@ final class ConstantAndEnumEvaluator
     /**
      * Verifies whether two class references deterministically denote the same class/enum.
      */
-    private static function classesMatch(string $fetchClass, string $docClass, string $currentFile): bool
+    private static function classesMatch(string $fetchClass, string $docClass, string $currentFile, ?string $currentNamespace = null): bool
     {
         if ($docClass === '') {
             return false;
@@ -205,8 +221,8 @@ final class ConstantAndEnumEvaluator
         }
 
         if ($currentFile !== '') {
-            $resolvedFetchClass = SpecialTypeResolver::resolveFqcnForFile($fetchClass, $currentFile, false);
-            $resolvedTypeClass = SpecialTypeResolver::resolveFqcnForFile($docClass, $currentFile, false);
+            $resolvedFetchClass = SpecialTypeResolver::resolveFqcnForFile($fetchClass, $currentFile, false, $currentNamespace);
+            $resolvedTypeClass = SpecialTypeResolver::resolveFqcnForFile($docClass, $currentFile, false, $currentNamespace);
 
             return $resolvedFetchClass !== '' && $resolvedFetchClass === $resolvedTypeClass;
         }
@@ -217,10 +233,10 @@ final class ConstantAndEnumEvaluator
     /**
      * Resolves a class name without invoking autoloading.
      */
-    private static function resolveClassForReflection(string $rawClass, string $currentFile): string
+    private static function resolveClassForReflection(string $rawClass, string $currentFile, ?string $currentNamespace = null): string
     {
         if ($currentFile !== '') {
-            return SpecialTypeResolver::resolveFqcnForFile($rawClass, $currentFile, false);
+            return SpecialTypeResolver::resolveFqcnForFile($rawClass, $currentFile, false, $currentNamespace);
         }
 
         return ltrim($rawClass, '\\');
