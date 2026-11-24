@@ -563,6 +563,95 @@ final class RuntimeTypeChecker
     }
 
     /**
+     * Evaluates member unset mutations (unset($arr[$key]) or unset($obj->prop))
+     * against the root variable's type contract atomically before unsetting.
+     *
+     * @param list<list<array{0: 'dim'|'prop', 1: mixed}>> $chains
+     */
+    public static function checkMemberUnset(
+        mixed $root,
+        array $chains,
+        string $typeString,
+        string $varName,
+        string $file,
+        int $line = -1,
+        ?string $caller = null,
+        mixed $thisOrClass = null
+    ): ?ErrorMessage {
+        if (! self::$isEnabled) {
+            return null;
+        }
+
+        $res = MemberAssignChecker::checkUnset(
+            $root,
+            $chains,
+            $typeString,
+            $varName,
+            $file,
+            self::getRegistry(),
+            $caller,
+            $thisOrClass
+        );
+
+        if ($res instanceof ErrorMessage) {
+            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($caller ?? '')) {
+                return null;
+            }
+
+            /** @var ErrorMessage|null $handled */
+            $handled = ViolationCollector::handle($res, 'variable', null, $file, $line > 0 ? $line : null, $caller, '$' . $varName);
+
+            return $handled;
+        }
+
+        return null;
+    }
+
+    /**
+     * Evaluates member unset mutations on an object or static property
+     * (unset($obj->prop[$key]) or unset(Class::$prop[$key])) atomically before unsetting.
+     *
+     * @param list<list<array{0: 'dim'|'prop', 1: mixed}>> $chains
+     */
+    public static function checkPropertyMemberUnset(
+        mixed $objectOrClass,
+        string $propName,
+        array $chains,
+        string $file,
+        int $line = -1
+    ): ?ErrorMessage {
+        if (! self::$isEnabled || ! self::$inlinePropertiesEnabled) {
+            return null;
+        }
+
+        $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
+        if ($className !== '' && isset(InlineChecker::$nullPropertyCache[$className][$propName])) {
+            return null;
+        }
+
+        $res = MemberAssignChecker::checkPropertyUnset(
+            $objectOrClass,
+            $propName,
+            $chains,
+            $file,
+            self::$registry
+        );
+
+        if ($res instanceof ErrorMessage) {
+            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName)) {
+                return null;
+            }
+
+            /** @var ErrorMessage|null $handled */
+            $handled = ViolationCollector::handle($res, 'property', null, $file, $line > 0 ? $line : null, $className . '::$' . $propName, '$' . $propName);
+
+            return $handled;
+        }
+
+        return null;
+    }
+
+    /**
      * Fast-path for 1-level property dimension assignments ($obj->prop[$key] = $val or $obj->prop[] = $val),
      * avoiding per-write [['dim', $key]] array allocations.
      */

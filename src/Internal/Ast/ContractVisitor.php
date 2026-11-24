@@ -49,10 +49,47 @@ final class ContractVisitor extends NodeVisitorAbstract
         Node\Expr\AssignOp\Coalesce::class => Node\Expr\BinaryOp\Coalesce::class,
     ];
 
+    private const BY_REF_BUILTIN_FUNCTIONS = [
+        'preg_match' => [2 => true],
+        'preg_match_all' => [2 => true],
+        'sort' => [0 => true],
+        'rsort' => [0 => true],
+        'asort' => [0 => true],
+        'arsort' => [0 => true],
+        'ksort' => [0 => true],
+        'krsort' => [0 => true],
+        'usort' => [0 => true],
+        'uasort' => [0 => true],
+        'uksort' => [0 => true],
+        'natcasesort' => [0 => true],
+        'natsort' => [0 => true],
+        'shuffle' => [0 => true],
+        'array_multisort' => [0 => true, 1 => true, 2 => true],
+        'array_push' => [0 => true],
+        'array_pop' => [0 => true],
+        'array_shift' => [0 => true],
+        'array_unshift' => [0 => true],
+        'array_splice' => [0 => true],
+        'array_walk' => [0 => true],
+        'array_walk_recursive' => [0 => true],
+        'reset' => [0 => true],
+        'end' => [0 => true],
+        'next' => [0 => true],
+        'prev' => [0 => true],
+        'each' => [0 => true],
+        'parse_str' => [1 => true],
+        'openssl_random_pseudo_bytes' => [1 => true],
+    ];
+
     /**
      * @var array<string, array<string|int, string>>
      */
     private static array $parsedShapeCache = [];
+
+    /**
+     * @var array<string, TypeNode|false>
+     */
+    private static array $parsedUnsetTypeCache = [];
 
     /**
      * @var array<string, array<string, string>>
@@ -111,8 +148,41 @@ final class ContractVisitor extends NodeVisitorAbstract
     {
         $this->trackDeclarationEntry($node);
 
-        if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Expr\Closure) {
+        if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Expr\Closure || $node instanceof Node\Expr\ArrowFunction) {
             $this->byRefStack[] = $node->byRef;
+        }
+
+        if ($node instanceof Node\Expr\ArrowFunction && $node->byRef) {
+            $this->markWriteContext($node->expr);
+        }
+
+        if ($node instanceof Node\Expr\CallLike && ! $node->isFirstClassCallable()) {
+            foreach ($node->getArgs() as $arg) {
+                if ($arg->byRef) {
+                    $this->markWriteContext($arg->value);
+                }
+            }
+
+            // Built-in functions with by-reference parameters
+            if ($node instanceof Node\Expr\FuncCall && $node->name instanceof Node\Name) {
+                $funcLower = strtolower($node->name->getLast());
+                if (isset(self::BY_REF_BUILTIN_FUNCTIONS[$funcLower])) {
+                    $targetIndices = self::BY_REF_BUILTIN_FUNCTIONS[$funcLower];
+                    foreach ($node->getArgs() as $idx => $arg) {
+                        if (isset($targetIndices[$idx])) {
+                            $this->markWriteContext($arg->value);
+                        }
+                    }
+                }
+            } elseif ($node instanceof Node\Expr\MethodCall || $node instanceof Node\Expr\StaticCall) {
+                // If a static property is passed as an argument to any method call, mark write context
+                // so it cannot be broken by rewriting into a function call if the method takes by-ref.
+                foreach ($node->getArgs() as $arg) {
+                    if ($arg->value instanceof Node\Expr\StaticPropertyFetch) {
+                        $this->markWriteContext($arg->value);
+                    }
+                }
+            }
         }
 
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
@@ -145,9 +215,6 @@ final class ContractVisitor extends NodeVisitorAbstract
         } elseif ($node instanceof Node\Stmt\Unset_) {
             foreach ($node->vars as $v) {
                 $this->markWriteContext($v);
-                if ($v instanceof Node\Expr\Variable && \is_string($v->name)) {
-                    $this->scopeManager->unregisterVarType($v->name);
-                }
             }
         } elseif ($node instanceof Node\ArrayItem && $node->byRef) {
             $this->markWriteContext($node->value);
@@ -234,6 +301,10 @@ final class ContractVisitor extends NodeVisitorAbstract
     {
         $this->trackDeclarationExit($node);
 
+        if ($node instanceof Node\Stmt\Unset_) {
+            return $this->handleUnset($node);
+        }
+
         if ($node instanceof Node\Stmt\Class_ && $node->name !== null) {
             $className = $this->resolveQualifiedName($node->name);
             if ($className !== null) {
@@ -251,7 +322,7 @@ final class ContractVisitor extends NodeVisitorAbstract
             }
         }
 
-        if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Expr\Closure) {
+        if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Expr\Closure || $node instanceof Node\Expr\ArrowFunction) {
             array_pop($this->byRefStack);
         }
 
@@ -1816,11 +1887,11 @@ final class ContractVisitor extends NodeVisitorAbstract
         foreach ($chain as $step) {
             $kind = new Node\Scalar\String_($step[0]);
             if ($step[0] === 'dim') {
-                $dimExpr = $step[1] instanceof Node\Expr ? $step[1] : new Node\Expr\ConstFetch(new Node\Name('null'));
+                $dimExpr = $step[1] instanceof Node\Expr ? clone $step[1] : new Node\Expr\ConstFetch(new Node\Name('null'));
             } elseif (\is_string($step[1])) {
                 $dimExpr = new Node\Scalar\String_($step[1]);
             } elseif ($step[1] instanceof Node\Expr) {
-                $dimExpr = $step[1];
+                $dimExpr = clone $step[1];
             } else {
                 $dimExpr = new Node\Scalar\String_('');
             }
@@ -2125,5 +2196,201 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         return $vars;
+    }
+
+    /**
+     * Hoists impure targets, groups unset chains by root, injects pre-validation checks,
+     * and unregisters any whole variables destroyed by unset().
+     *
+     * @return list<Node\Stmt>|null
+     */
+    private function handleUnset(Node\Stmt\Unset_ $node): ?array
+    {
+        /** @var list<Node\Stmt> $preStmts */
+        $preStmts = [];
+        /** @var list<string> $varsToUnregister */
+        $varsToUnregister = [];
+        /** @var array<string, array{rootExpr: Node\Expr, typeString: string, varName: string, chains: list<list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}>>}> $varUnsetGroups */
+        $varUnsetGroups = [];
+        /** @var array<string, array{targetExpr: Node\Expr, propName: string, chains: list<list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}>>}> $propUnsetGroups */
+        $propUnsetGroups = [];
+
+        foreach ($node->vars as $idx => $v) {
+            if ($v instanceof Node\Expr\Variable) {
+                if (\is_string($v->name)) {
+                    $varsToUnregister[] = $v->name;
+                }
+
+                continue;
+            }
+
+            if ($this->targetHasSideEffects($v)) {
+                $preAssignments = [];
+                $cleanTarget = $this->hoistImpureTarget($v, $preAssignments);
+                $this->markWriteContext($cleanTarget);
+                $node->vars[$idx] = $cleanTarget;
+                $v = $cleanTarget;
+
+                foreach ($preAssignments as $assign) {
+                    $preStmt = new Node\Stmt\Expression($assign);
+                    $preStmt->setAttribute('typephp_injected', true);
+                    $preStmts[] = $preStmt;
+                }
+            }
+
+            $chainInfo = $this->extractMemberChain($v);
+            if ($chainInfo !== null) {
+                $root = $chainInfo['root'];
+                $chain = $chainInfo['chain'];
+
+                if ($root instanceof Node\Expr\Variable && \is_string($root->name)) {
+                    $varName = $root->name;
+                    $typeString = $this->scopeManager->getVarTypeFromScope($varName);
+
+                    if ($typeString !== null && $this->shouldHandleMemberUnsetCheck($typeString, $chain)) {
+                        if (! isset($varUnsetGroups[$varName])) {
+                            $varUnsetGroups[$varName] = [
+                                'rootExpr' => clone $root,
+                                'typeString' => $typeString,
+                                'varName' => $varName,
+                                'chains' => [],
+                            ];
+                        }
+                        $varUnsetGroups[$varName]['chains'][] = $chain;
+
+                        continue;
+                    }
+                }
+            }
+
+            $propDimInfo = $this->extractPropertyDimChain($v);
+            if ($propDimInfo !== null) {
+                $tExpr = $propDimInfo['targetExpr'];
+                $pName = $propDimInfo['propName'];
+
+                if ($tExpr instanceof Node\Expr\Variable && \is_string($tExpr->name)) {
+                    $groupKey = 'v:' . $tExpr->name . ':' . $pName;
+                } elseif ($tExpr instanceof Node\Expr\ClassConstFetch && $tExpr->class instanceof Node\Name) {
+                    $groupKey = 'c:' . $tExpr->class->toString() . ':' . $pName;
+                } else {
+                    $groupKey = 'u:' . $idx;
+                }
+
+                if (! isset($propUnsetGroups[$groupKey])) {
+                    $propUnsetGroups[$groupKey] = [
+                        'targetExpr' => clone $tExpr,
+                        'propName' => $pName,
+                        'chains' => [],
+                    ];
+                }
+                $propUnsetGroups[$groupKey]['chains'][] = $propDimInfo['chain'];
+            }
+        }
+
+        /** @var list<Node\Stmt> $checkStmts */
+        $checkStmts = [];
+        $line = $node->getStartLine();
+
+        foreach ($varUnsetGroups as $group) {
+            $checkCall = NodeBuilder::createMemberUnsetCheckCall(
+                $group['rootExpr'],
+                $this->buildChainsAst($group['chains']),
+                $group['typeString'],
+                $group['varName'],
+                $line,
+                $this->getCurrentCallerExpr(),
+                $this->getCurrentThisExpr()
+            );
+            $checkStmts[] = NodeBuilder::createIfErrorThrowStmt($checkCall, $line);
+        }
+
+        foreach ($propUnsetGroups as $group) {
+            $checkCall = NodeBuilder::createPropertyMemberUnsetCheckCall(
+                $group['targetExpr'],
+                $group['propName'],
+                $this->buildChainsAst($group['chains']),
+                $line
+            );
+            $checkStmts[] = NodeBuilder::createIfErrorThrowStmt($checkCall, $line);
+        }
+
+        foreach ($varsToUnregister as $varName) {
+            $this->scopeManager->unregisterVarType($varName);
+        }
+
+        if ($preStmts === [] && $checkStmts === []) {
+            return null;
+        }
+
+        return [...$preStmts, ...$checkStmts, $node];
+    }
+
+    /**
+     * Converts a list of member accessor chains into an AST Array_ of chains.
+     *
+     * @param list<list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}>> $chains
+     */
+    private function buildChainsAst(array $chains): Node\Expr\Array_
+    {
+        $items = [];
+        foreach ($chains as $chain) {
+            $items[] = new Node\ArrayItem($this->buildChainAst($chain));
+        }
+
+        return new Node\Expr\Array_($items);
+    }
+
+    /**
+     * @param list<array{0: 'dim'|'prop', 1: Node\Expr|string|null}> $chain
+     */
+    private function shouldHandleMemberUnsetCheck(string $typeString, array $chain): bool
+    {
+        if (($chain[0][0] ?? null) === 'prop') {
+            return str_contains($typeString, '{');
+        }
+
+        $hasDim = false;
+        foreach ($chain as $step) {
+            if ($step[0] === 'dim') {
+                $hasDim = true;
+
+                break;
+            }
+        }
+
+        if (! $hasDim) {
+            return str_contains($typeString, '{');
+        }
+
+        if (Config::isEliminateStaticallyProvenChecksEnabled()) {
+            $typeNode = $this->parseUnsetTypeCached($typeString);
+            if ($typeNode !== null && StaticTypeEvaluator::isUnsetSafe($typeNode, $chain)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function parseUnsetTypeCached(string $typeString): ?TypeNode
+    {
+        if (isset(self::$parsedUnsetTypeCache[$typeString])) {
+            $cached = self::$parsedUnsetTypeCache[$typeString];
+
+            return $cached !== false ? $cached : null;
+        }
+
+        try {
+            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+            $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($typeString)));
+            $parsed = $typeParser->parse($tokens);
+            self::$parsedUnsetTypeCache[$typeString] = $parsed;
+
+            return $parsed;
+        } catch (\Throwable) {
+            self::$parsedUnsetTypeCache[$typeString] = false;
+
+            return null;
+        }
     }
 }

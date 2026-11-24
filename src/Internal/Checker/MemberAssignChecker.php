@@ -12,6 +12,7 @@ use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 use ReflectionNamedType;
 use ReflectionProperty;
+use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockParser;
@@ -213,6 +214,109 @@ final class MemberAssignChecker
         }
 
         return $value;
+    }
+
+    /**
+     * Evaluates member unset mutations against the root variable's type contract before unsetting.
+     *
+     * @param list<list<array{0: 'dim'|'prop', 1: mixed}>> $chains
+     */
+    public static function checkUnset(
+        mixed $root,
+        array $chains,
+        string $typeString,
+        string $varName,
+        string $file,
+        TypeValidatorRegistry $registry,
+        ?string $caller = null,
+        mixed $thisOrClass = null
+    ): ?ErrorMessage {
+        if ($chains === []) {
+            return null;
+        }
+
+        if (\is_object($root) && ($chains[0][0][0] ?? null) === 'dim') {
+            return null;
+        }
+
+        $copy = StructureMutator::unsetCopy($root, $chains);
+
+        $res = InlineChecker::checkVariable(
+            $copy,
+            $typeString,
+            $varName,
+            $file,
+            $registry,
+            $caller,
+            $thisOrClass,
+            allowEmptyShape: false
+        );
+
+        return $res instanceof ErrorMessage ? $res : null;
+    }
+
+    /**
+     * Evaluates member unset mutations on an object or static property.
+     *
+     * @param list<list<array{0: 'dim'|'prop', 1: mixed}>> $chains
+     */
+    public static function checkPropertyUnset(
+        mixed $objectOrClass,
+        string $propName,
+        array $chains,
+        string $file,
+        ?TypeValidatorRegistry $registry = null
+    ): ?ErrorMessage {
+        if ($chains === [] || (! \is_object($objectOrClass) && ! \is_string($objectOrClass))) {
+            return null;
+        }
+
+        $className = \is_string($objectOrClass) ? $objectOrClass : $objectOrClass::class;
+
+        if (isset(InlineChecker::$nullPropertyCache[$className][$propName]) || ! RuntimeTypeChecker::$inlinePropertiesEnabled) {
+            return null;
+        }
+
+        if (Config::isEliminateStaticallyProvenChecksEnabled()) {
+            $propPlan = (isset(self::$propertyMutationPlanCache[$className]) && \array_key_exists($propName, self::$propertyMutationPlanCache[$className]))
+                ? self::$propertyMutationPlanCache[$className][$propName]
+                : self::buildPropertyMutationPlan($className, $propName);
+
+            if ($propPlan === null) {
+                return null;
+            }
+
+            $allSafe = true;
+            foreach ($chains as $chain) {
+                if (! StaticTypeEvaluator::isUnsetSafe($propPlan['rawType'], $chain)) {
+                    $allSafe = false;
+
+                    break;
+                }
+            }
+
+            if ($allSafe) {
+                return null;
+            }
+        }
+
+        $currentVal = self::readPropertyValue($objectOrClass, $className, $propName);
+
+        if (\is_object($currentVal) && ($chains[0][0][0] ?? null) === 'dim') {
+            return null;
+        }
+
+        $copy = StructureMutator::unsetCopy($currentVal, $chains);
+
+        $res = InlineChecker::checkProperty(
+            $copy,
+            $objectOrClass,
+            $propName,
+            $file,
+            $registry ?? RuntimeTypeChecker::getRegistry()
+        );
+
+        return $res instanceof ErrorMessage ? $res : null;
     }
 
     /**

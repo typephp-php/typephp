@@ -389,6 +389,10 @@ final class FunctionContractInjector
             return [];
         }
 
+        if (Config::getOnViolation() !== 'throw' || ! Config::isParamsEnabled()) {
+            return [];
+        }
+
         $candidateNames = [];
         foreach ($node->params as $p) {
             if (! $p->byRef && $p->var instanceof Node\Expr\Variable && \is_string($p->var->name)) {
@@ -425,6 +429,13 @@ final class FunctionContractInjector
                 continue;
             }
 
+            if (
+                Config::isRespectNativeNullabilityEnabled()
+                && self::parameterAllowsNullNatively($p)
+            ) {
+                continue;
+            }
+
             $typeNode = null;
             if (isset($paramTags[$pName])) {
                 $typeNode = $paramTags[$pName]->type;
@@ -458,6 +469,32 @@ final class FunctionContractInjector
         return $trustedTypes;
     }
 
+    private static function parameterAllowsNullNatively(Node\Param $param): bool
+    {
+        if ($param->default instanceof Node\Expr\ConstFetch && strtolower($param->default->name->toString()) === 'null') {
+            return true;
+        }
+
+        $type = $param->type;
+        if ($type instanceof Node\NullableType) {
+            return true;
+        }
+
+        if ($type instanceof Node\Identifier && strtolower($type->name) === 'null') {
+            return true;
+        }
+
+        if ($type instanceof Node\UnionType) {
+            foreach ($type->types as $t) {
+                if ($t instanceof Node\Identifier && strtolower($t->name) === 'null') {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     /**
      * Traverses statements to identify parameters that are never mutated or passed by reference.
      *
@@ -470,13 +507,11 @@ final class FunctionContractInjector
     {
         $unmutated = $candidateNames;
 
-        $visitor = new class ($unmutated) extends NodeVisitorAbstract {
+        $visitor = new class($unmutated) extends NodeVisitorAbstract {
             /**
              * @param array<string, true> $unmutated
              */
-            public function __construct(public array &$unmutated)
-            {
-            }
+            public function __construct(public array &$unmutated) {}
 
             public function enterNode(Node $node): ?int
             {
@@ -836,7 +871,7 @@ final class FunctionContractInjector
 
     private static function isGenerator(Node\Stmt\Function_|Node\Stmt\ClassMethod $node): bool
     {
-        $visitor = new class () extends NodeVisitorAbstract {
+        $visitor = new class() extends NodeVisitorAbstract {
             public bool $isGen = false;
 
             public function enterNode(Node $n): ?int
@@ -1466,7 +1501,7 @@ final class FunctionContractInjector
         }
 
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class (
+        $traverser->addVisitor(new class(
             $thisArg,
             $genContract,
             $explicitGenContract,
@@ -1493,8 +1528,7 @@ final class FunctionContractInjector
                 private bool $hasSelfOut,
                 private array $trustedParamTypes,
                 private bool $useDynamicMethodKey
-            ) {
-            }
+            ) {}
 
             public function enterNode(Node $n): int|Node|array|null
             {
@@ -1741,7 +1775,7 @@ final class FunctionContractInjector
         self::tagPrecedingAssignments($stmts);
 
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new class (
+        $traverser->addVisitor(new class(
             $thisArg,
             $isNativeVoid,
             $needsReturnVars,
@@ -1777,8 +1811,7 @@ final class FunctionContractInjector
                 private array $trustedParamTypes,
                 private bool $useDynamicMethodKey,
                 private bool $canGuardReturnCache
-            ) {
-            }
+            ) {}
 
             public function enterNode(Node $n): int|array|null
             {
