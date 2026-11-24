@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TypePHP\Internal\Util;
 
 use TypePHP\Extension\ExtensionInterface;
+use TypePHP\Internal\Ast\ContractVisitor;
 use TypePHP\Internal\Checker\MemberAssignChecker;
 use TypePHP\Internal\Checker\ParamChecker;
 use TypePHP\Internal\Checker\ReturnChecker;
@@ -778,6 +779,7 @@ final class Config
         self::syncFlags($mergedConfig);
 
         DocblockParser::reset();
+        ContractVisitor::reset();
         ParamChecker::reset();
         MemberAssignChecker::reset();
         ReturnChecker::reset();
@@ -837,6 +839,7 @@ final class Config
     public static function reset(): void
     {
         self::$cachedConfig = null;
+        ContractVisitor::reset();
         self::$projectRoot = null;
         self::$resolvedConfigFile = null;
         self::$enabled = true;
@@ -882,6 +885,7 @@ final class Config
         RuntimeTypeChecker::$arrayValidationHybrid = false;
 
         DocblockParser::reset();
+        ContractVisitor::reset();
         ParamChecker::reset();
         MemberAssignChecker::reset();
         ReturnChecker::reset();

@@ -145,12 +145,8 @@ final class StructureMutator
                     }
 
                     if ($isLast) {
-                        try {
-                            // @phpstan-ignore property.dynamicName
-                            unset($current->$propName);
-                        } catch (\Throwable) {
-                            break;
-                        }
+                        // @phpstan-ignore property.dynamicName
+                        unset($current->$propName);
                     } else {
                         try {
                             // @phpstan-ignore property.dynamicName

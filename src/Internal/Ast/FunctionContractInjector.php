@@ -29,7 +29,6 @@ use TypePHP\Internal\Checker\ConditionalChecker;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
-use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\StubManager;
 
@@ -1456,18 +1455,31 @@ final class FunctionContractInjector
                 $importTag = $tag->value;
                 $localName = $importTag->importedAs ?? $importTag->importedAlias;
                 $sourceName = (string) $importTag->importedFrom;
-                $sourceFqcn = $currentFile !== ''
-                    ? SpecialTypeResolver::resolveFqcnForFile($sourceName, $currentFile, true, $currentNamespace)
-                    : $sourceName;
 
-                if (
-                    ClassNameValidator::isValid($sourceFqcn)
-                    && (class_exists($sourceFqcn) || interface_exists($sourceFqcn) || trait_exists($sourceFqcn) || enum_exists($sourceFqcn))
-                ) {
-                    $imported = DocblockExtractor::resolveImportedTypeAlias($sourceFqcn, $importTag->importedAlias);
-                    if ($imported !== null) {
-                        $aliases[$localName] = $imported;
+                if (str_starts_with($sourceName, '\\')) {
+                    $sourceFqcn = ltrim($sourceName, '\\');
+                } else {
+                    $sourceFqcn = $currentFile !== ''
+                        ? SpecialTypeResolver::resolveFqcnForFile($sourceName, $currentFile, false, $currentNamespace)
+                        : $sourceName;
+
+                    if (
+                        $sourceFqcn === $sourceName
+                        && $currentNamespace !== null
+                        && $currentNamespace !== ''
+                        && ! str_contains($sourceName, '\\')
+                        && ! class_exists($sourceName, false)
+                        && ! interface_exists($sourceName, false)
+                        && ! trait_exists($sourceName, false)
+                        && ! enum_exists($sourceName, false)
+                    ) {
+                        $sourceFqcn = $currentNamespace . '\\' . $sourceName;
                     }
+                }
+
+                $sourceAliases = ContractVisitor::resolveClassAliasesNoAutoload($sourceFqcn);
+                if (isset($sourceAliases[$importTag->importedAlias])) {
+                    $aliases[$localName] = $sourceAliases[$importTag->importedAlias];
                 }
             }
         }
