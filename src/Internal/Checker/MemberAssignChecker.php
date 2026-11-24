@@ -8,20 +8,26 @@ use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
+use ReflectionClass;
 use ReflectionNamedType;
 use ReflectionProperty;
 use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
 use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockParser;
 use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Generics\TemplateSubstitutor;
+use TypePHP\Internal\Resolver\HierarchyResolver;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\RuntimeTypeChecker;
 use TypePHP\Internal\Util\ClassNameValidator;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\StructureMutator;
+use TypePHP\Internal\Util\StubManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use WeakMap;
 
@@ -139,11 +145,20 @@ final class MemberAssignChecker
     private static ?WeakMap $innerElementContractCache = null;
 
     /**
+     * Memoized ArrayAccess <K, V> resolution plan per concrete/generic ArrayAccess subclass:
+     * [$className] => ?array{classTemplates: array<string, TemplateTagValueNode>, keyType: ?TypeNode, valueType: ?TypeNode}
+     *
+     * @var array<string, ?array{classTemplates: array<string, TemplateTagValueNode>, keyType: ?TypeNode, valueType: ?TypeNode}>
+     */
+    private static array $arrayAccessPlanCache = [];
+
+    /**
      * Resets the cached reflection property and element contract registries.
      */
     public static function reset(): void
     {
         self::$innerElementContractCache = null;
+        self::$arrayAccessPlanCache = [];
         self::$refPropertyCache = [];
         self::$propertyMutationPlanCache = [];
         self::$substitutedElementContractCache = [];
@@ -878,10 +893,46 @@ final class MemberAssignChecker
      *     valExtra: string|int|null
      * }
      */
+    /**
+     * Resolves an element contract for any collection, ArrayObject, or ArrayAccess subclass TypeNode.
+     *
+     * @return ?array{
+     *     isList: bool,
+     *     quoteKey: bool,
+     *     keyType: ?TypeNode,
+     *     valueType: ?TypeNode,
+     *     keyOp: int,
+     *     keyExtra: string|int|null,
+     *     valOp: int,
+     *     valExtra: string|int|null
+     * }
+     */
+    public static function resolveArrayAccessElementContract(TypeNode $typeNode): ?array
+    {
+        return self::buildElementContract($typeNode);
+    }
+
+    /**
+     * @return ?array{
+     *     isList: bool,
+     *     quoteKey: bool,
+     *     keyType: ?TypeNode,
+     *     valueType: ?TypeNode,
+     *     keyOp: int,
+     *     keyExtra: string|int|null,
+     *     valOp: int,
+     *     valExtra: string|int|null
+     * }
+     */
     private static function buildElementContract(TypeNode $typeNode): ?array
     {
+        while ($typeNode instanceof NullableTypeNode) {
+            $typeNode = $typeNode->type;
+        }
+
         if ($typeNode instanceof GenericTypeNode) {
-            $base = strtolower((string) $typeNode->type);
+            $rawType = (string) $typeNode->type;
+            $base = strtolower($rawType);
 
             if ($base === 'list' || $base === 'non-empty-list') {
                 $valueType = $typeNode->genericTypes[0] ?? null;
@@ -897,6 +948,53 @@ final class MemberAssignChecker
                     'valOp' => $valOp,
                     'valExtra' => $valExtra,
                 ];
+            }
+
+            if (
+                ! \in_array($base, ['array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator', 'arrayaccess', 'arrayobject', 'arrayiterator', 'weakmap', 'splobjectstorage'], true)
+                && ClassNameValidator::isValid($rawType)
+                && (class_exists($rawType, false) || class_exists($rawType) || interface_exists($rawType, false) || interface_exists($rawType))
+                && is_a($rawType, \ArrayAccess::class, true)
+            ) {
+                $aaPlan = self::resolveArrayAccessPlan($rawType);
+                if ($aaPlan !== null) {
+                    $keyType = $aaPlan['keyType'];
+                    $valueType = $aaPlan['valueType'];
+
+                    if ($aaPlan['classTemplates'] !== []) {
+                        $templateList = array_values($aaPlan['classTemplates']);
+                        $normalizedArgs = TemplateManager::normalizeGenericArguments($typeNode->genericTypes, $templateList);
+                        $bindings = [];
+                        foreach ($templateList as $idx => $tTag) {
+                            if (isset($normalizedArgs[$idx])) {
+                                $bindings[$tTag->name] = $normalizedArgs[$idx];
+                            }
+                        }
+
+                        if ($bindings !== []) {
+                            if ($keyType !== null) {
+                                $keyType = TemplateSubstitutor::substitute($keyType, $bindings, $aaPlan['classTemplates']);
+                            }
+                            if ($valueType !== null) {
+                                $valueType = TemplateSubstitutor::substitute($valueType, $bindings, $aaPlan['classTemplates']);
+                            }
+                        }
+                    }
+
+                    [$keyOp, $keyExtra] = self::compileCheckOp($keyType);
+                    [$valOp, $valExtra] = self::compileCheckOp($valueType);
+
+                    return [
+                        'isList' => false,
+                        'quoteKey' => true,
+                        'keyType' => $keyType,
+                        'valueType' => $valueType,
+                        'keyOp' => $keyOp,
+                        'keyExtra' => $keyExtra,
+                        'valOp' => $valOp,
+                        'valExtra' => $valExtra,
+                    ];
+                }
             }
 
             $genericCount = \count($typeNode->genericTypes);
@@ -936,7 +1034,147 @@ final class MemberAssignChecker
             ];
         }
 
+        if (
+            $typeNode instanceof IdentifierTypeNode
+            && ClassNameValidator::isValid($typeNode->name)
+            && (class_exists($typeNode->name, false) || class_exists($typeNode->name) || interface_exists($typeNode->name, false) || interface_exists($typeNode->name))
+            && is_a($typeNode->name, \ArrayAccess::class, true)
+        ) {
+            $aaPlan = self::resolveArrayAccessPlan($typeNode->name);
+            if ($aaPlan !== null) {
+                $keyType = $aaPlan['keyType'];
+                $valueType = $aaPlan['valueType'];
+
+                if ($aaPlan['classTemplates'] !== []) {
+                    $fallbackBindings = [];
+                    foreach ($aaPlan['classTemplates'] as $tName => $tTag) {
+                        $fallbackBindings[$tName] = $tTag->default ?? $tTag->bound ?? new IdentifierTypeNode('mixed');
+                    }
+                    if ($keyType !== null) {
+                        $keyType = TemplateSubstitutor::substitute($keyType, $fallbackBindings, $aaPlan['classTemplates']);
+                    }
+                    if ($valueType !== null) {
+                        $valueType = TemplateSubstitutor::substitute($valueType, $fallbackBindings, $aaPlan['classTemplates']);
+                    }
+                }
+
+                [$keyOp, $keyExtra] = self::compileCheckOp($keyType);
+                [$valOp, $valExtra] = self::compileCheckOp($valueType);
+
+                return [
+                    'isList' => false,
+                    'quoteKey' => true,
+                    'keyType' => $keyType,
+                    'valueType' => $valueType,
+                    'keyOp' => $keyOp,
+                    'keyExtra' => $keyExtra,
+                    'valOp' => $valOp,
+                    'valExtra' => $valExtra,
+                ];
+            }
+        }
+
         return null;
+    }
+
+    /**
+     * Walks @extends/@implements/@use hierarchy to extract ArrayAccess <K, V> contracts,
+     * including SPL targets (ArrayObject, ArrayIterator, SplFixedArray, ArrayAccess, etc.).
+     *
+     * @return ?array{classTemplates: array<string, TemplateTagValueNode>, keyType: ?TypeNode, valueType: ?TypeNode}
+     */
+    private static function resolveArrayAccessPlan(string $className): ?array
+    {
+        if (\array_key_exists($className, self::$arrayAccessPlanCache)) {
+            return self::$arrayAccessPlanCache[$className];
+        }
+
+        try {
+            /** @var class-string<object> $className */
+            $refClass = new ReflectionClass($className);
+            $hierarchy = HierarchyResolver::getClassHierarchy($refClass);
+            $rootTemplates = DocblockParser::parseClassTemplates($className);
+
+            /** @var array<string, array<string, TypeNode>> $pendingBindings */
+            $pendingBindings = [];
+
+            foreach ($hierarchy as $hierClass) {
+                $hierName = $hierClass->getName();
+                $activeBindings = $pendingBindings[$hierName] ?? [];
+                $aliases = DocblockParser::parseClassAliases($hierName);
+
+                $docs = [];
+                $classDoc = StubManager::getClassDoc($hierName) ?? $hierClass->getDocComment();
+                if ($classDoc !== false && $classDoc !== null) {
+                    $docs[] = $classDoc;
+                }
+                foreach (SpecialTypeResolver::getClassTraitUseDocs($hierName) as $tDoc) {
+                    $docs[] = $tDoc;
+                }
+
+                foreach ($docs as $rawDoc) {
+                    $phpDocNode = DocblockExtractor::parseDocString($rawDoc);
+                    foreach (DocblockExtractor::getInheritedTags($phpDocNode) as $inheritedTag) {
+                        if (! ($inheritedTag->type instanceof GenericTypeNode)) {
+                            continue;
+                        }
+
+                        $genericNode = $inheritedTag->type;
+                        $targetFqcn = SpecialTypeResolver::resolveFqcn((string) $genericNode->type, $hierClass);
+                        $lowerTarget = strtolower(ltrim($targetFqcn, '\\'));
+
+                        $resolvedArgs = [];
+                        foreach ($genericNode->genericTypes as $gt) {
+                            $arg = $aliases !== [] ? DocblockParser::substituteAliases($gt, $aliases) : $gt;
+                            if ($activeBindings !== []) {
+                                $arg = TemplateSubstitutor::substitute($arg, $activeBindings);
+                            }
+                            $resolvedArgs[] = SpecialTypeResolver::resolve($arg, $hierClass);
+                        }
+
+                        if (\in_array($lowerTarget, ['arrayaccess', 'arrayobject', 'arrayiterator', 'splfixedarray', 'splobjectstorage', 'weakmap'], true)) {
+                            $count = \count($resolvedArgs);
+                            if ($lowerTarget === 'splfixedarray') {
+                                $keyType = new IdentifierTypeNode('int');
+                                $valueType = $resolvedArgs[0] ?? null;
+                            } elseif ($count === 1) {
+                                $keyType = null;
+                                $valueType = $resolvedArgs[0];
+                            } elseif ($count >= 2) {
+                                $keyType = $resolvedArgs[0];
+                                $valueType = $resolvedArgs[1];
+                            } else {
+                                continue;
+                            }
+
+                            return self::$arrayAccessPlanCache[$className] = [
+                                'classTemplates' => $rootTemplates,
+                                'keyType' => $keyType,
+                                'valueType' => $valueType,
+                            ];
+                        }
+
+                        if (
+                            ClassNameValidator::isValid($targetFqcn)
+                            && (class_exists($targetFqcn, false) || class_exists($targetFqcn) || interface_exists($targetFqcn, false) || interface_exists($targetFqcn) || trait_exists($targetFqcn, false) || trait_exists($targetFqcn))
+                            && is_a($targetFqcn, \ArrayAccess::class, true)
+                        ) {
+                            $targetTemplates = DocblockParser::parseClassTemplates($targetFqcn);
+                            $templateList = array_values($targetTemplates);
+                            $normalizedArgs = TemplateManager::normalizeGenericArguments($resolvedArgs, $templateList);
+                            foreach ($templateList as $idx => $tTag) {
+                                if (isset($normalizedArgs[$idx])) {
+                                    $pendingBindings[$targetFqcn][$tTag->name] = $normalizedArgs[$idx];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable) {
+        }
+
+        return self::$arrayAccessPlanCache[$className] = null;
     }
 
     /**

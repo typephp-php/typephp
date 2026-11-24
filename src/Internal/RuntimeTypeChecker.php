@@ -2553,6 +2553,9 @@ final class RuntimeTypeChecker
             self::PARAM_CHECK_TRUE => $value === true,
             self::PARAM_CHECK_FALSE => $value === false,
             self::PARAM_CHECK_SCALAR => \is_scalar($value),
+            self::PARAM_CHECK_NULL_OR_INT => $value === null || \is_int($value),
+            self::PARAM_CHECK_NULL_OR_STRING => $value === null || \is_string($value),
+            self::PARAM_CHECK_NULL_OR_BOOL => $value === null || \is_bool($value),
             default => false,
         };
 
@@ -2580,9 +2583,30 @@ final class RuntimeTypeChecker
      */
     private static function compileSimpleReturnOp(TypeNode $resolvedType): array
     {
+        $isNullable = false;
         $inner = $resolvedType;
+
         while ($inner instanceof NullableTypeNode) {
+            $isNullable = true;
             $inner = $inner->type;
+        }
+
+        if ($inner instanceof UnionTypeNode && \count($inner->types) === 2) {
+            $t0 = $inner->types[0];
+            $t1 = $inner->types[1];
+
+            if (self::isNullTypeNode($t0)) {
+                $isNullable = true;
+                $inner = $t1;
+            } elseif (self::isNullTypeNode($t1)) {
+                $isNullable = true;
+                $inner = $t0;
+            }
+
+            while ($inner instanceof NullableTypeNode) {
+                $isNullable = true;
+                $inner = $inner->type;
+            }
         }
 
         if (! ($inner instanceof IdentifierTypeNode)) {
@@ -2590,6 +2614,19 @@ final class RuntimeTypeChecker
         }
 
         $name = $inner->name;
+
+        if ($isNullable) {
+            $nullableOp = match ($name) {
+                'int', 'integer' => self::PARAM_CHECK_NULL_OR_INT,
+                'string' => self::PARAM_CHECK_NULL_OR_STRING,
+                'bool', 'boolean' => self::PARAM_CHECK_NULL_OR_BOOL,
+                default => null,
+            };
+
+            if ($nullableOp !== null) {
+                return [$nullableOp, null];
+            }
+        }
 
         $op = match ($name) {
             'int', 'integer' => self::PARAM_CHECK_INT,
@@ -2627,6 +2664,12 @@ final class RuntimeTypeChecker
         }
 
         return [self::PARAM_CHECK_FALLBACK, null];
+    }
+
+    private static function isNullTypeNode(TypeNode $node): bool
+    {
+        return ($node instanceof IdentifierTypeNode && strtolower($node->name) === 'null')
+            || ($node instanceof ConstTypeNode && $node->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprNullNode);
     }
 
     /**

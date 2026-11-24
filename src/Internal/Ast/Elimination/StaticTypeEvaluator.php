@@ -20,6 +20,7 @@ use TypePHP\Internal\Ast\Elimination\Evaluator\ConstantAndEnumEvaluator;
 use TypePHP\Internal\Ast\Elimination\Evaluator\ObjectEvaluator;
 use TypePHP\Internal\Ast\Elimination\Evaluator\ScalarEvaluator;
 use TypePHP\Internal\Generics\TemplateManager;
+use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
 
 /**
@@ -56,7 +57,8 @@ final class StaticTypeEvaluator
         Expr $expr,
         TypeNode $typeNode,
         string $currentFile = '',
-        array $trustedVariableTypes = []
+        array $trustedVariableTypes = [],
+        ?string $currentNamespace = null
     ): bool {
         if (! Config::isEliminateStaticallyProvenChecksEnabled()) {
             return false;
@@ -74,16 +76,20 @@ final class StaticTypeEvaluator
         }
 
         if ($expr instanceof Variable && \is_string($expr->name) && isset($trustedVariableTypes[$expr->name])) {
+            $resolvedTarget = $currentFile !== ''
+                ? SpecialTypeResolver::resolveForFile($typeNode, $currentFile, $currentNamespace, false)
+                : $typeNode;
+
             return TemplateManager::checkVariance(
                 $trustedVariableTypes[$expr->name],
-                $typeNode,
+                $resolvedTarget,
                 GenericTypeNode::VARIANCE_COVARIANT
             );
         }
 
         if ($expr instanceof Ternary && $expr->if !== null) {
-            return self::satisfies($expr->if, $typeNode, $currentFile, $trustedVariableTypes)
-                && self::satisfies($expr->else, $typeNode, $currentFile, $trustedVariableTypes);
+            return self::satisfies($expr->if, $typeNode, $currentFile, $trustedVariableTypes, $currentNamespace)
+                && self::satisfies($expr->else, $typeNode, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
         if ($typeNode instanceof NullableTypeNode) {
@@ -91,12 +97,12 @@ final class StaticTypeEvaluator
                 return true;
             }
 
-            return self::satisfies($expr, $typeNode->type, $currentFile, $trustedVariableTypes);
+            return self::satisfies($expr, $typeNode->type, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
         if ($typeNode instanceof UnionTypeNode) {
             foreach ($typeNode->types as $member) {
-                if (self::satisfies($expr, $member, $currentFile, $trustedVariableTypes)) {
+                if (self::satisfies($expr, $member, $currentFile, $trustedVariableTypes, $currentNamespace)) {
                     return true;
                 }
             }
@@ -105,11 +111,11 @@ final class StaticTypeEvaluator
         }
 
         if ($expr instanceof Array_) {
-            return ArrayLiteralEvaluator::satisfies($expr, $typeNode, $currentFile, $trustedVariableTypes);
+            return ArrayLiteralEvaluator::satisfies($expr, $typeNode, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
-        return ConstantAndEnumEvaluator::satisfies($expr, $typeNode, $currentFile)
-            || ObjectEvaluator::satisfies($expr, $typeNode, $currentFile)
+        return ConstantAndEnumEvaluator::satisfies($expr, $typeNode, $currentFile, $currentNamespace)
+            || ObjectEvaluator::satisfies($expr, $typeNode, $currentFile, $currentNamespace)
             || ScalarEvaluator::satisfies($expr, $typeNode);
     }
 

@@ -53,8 +53,12 @@ final class ObjectEvaluator
      * 4. Evaluates `new self()` against `self`.
      * 5. Evaluates `new ClassName()` against `ClassName` using static FQCN equality (zero reflection, zero autoloading).
      */
-    public static function satisfies(Expr $expr, TypeNode $typeNode, string $currentFile = ''): bool
-    {
+    public static function satisfies(
+        Expr $expr,
+        TypeNode $typeNode,
+        string $currentFile = '',
+        ?string $currentNamespace = null
+    ): bool {
         if ($typeNode instanceof GenericTypeNode) {
             return false;
         }
@@ -64,7 +68,7 @@ final class ObjectEvaluator
         }
 
         if ($expr instanceof New_ && $expr->class instanceof Name) {
-            return self::satisfiesNew($expr->class, $typeNode, $currentFile);
+            return self::satisfiesNew($expr->class, $typeNode, $currentFile, $currentNamespace);
         }
 
         return false;
@@ -89,7 +93,7 @@ final class ObjectEvaluator
     /**
      * Evaluates `new ClassName(...)` against expected object type contracts.
      */
-    private static function satisfiesNew(Name $classNameNode, TypeNode $typeNode, string $currentFile): bool
+    private static function satisfiesNew(Name $classNameNode, TypeNode $typeNode, string $currentFile, ?string $currentNamespace = null): bool
     {
         if (! ($typeNode instanceof IdentifierTypeNode)) {
             return false;
@@ -120,8 +124,8 @@ final class ObjectEvaluator
         }
 
         if ($currentFile !== '') {
-            $resolvedNewClass = SpecialTypeResolver::resolveFqcnForFile($rawNewClass, $currentFile, false);
-            $resolvedTypeClass = SpecialTypeResolver::resolveFqcnForFile($typeNode->name, $currentFile, false);
+            $resolvedNewClass = SpecialTypeResolver::resolveFqcnForFile($rawNewClass, $currentFile, false, $currentNamespace);
+            $resolvedTypeClass = SpecialTypeResolver::resolveFqcnForFile($typeNode->name, $currentFile, false, $currentNamespace);
 
             return $resolvedNewClass !== '' && $resolvedNewClass === $resolvedTypeClass;
         }

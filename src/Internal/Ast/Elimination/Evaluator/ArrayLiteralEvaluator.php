@@ -58,7 +58,8 @@ final class ArrayLiteralEvaluator
         Array_ $arrayExpr,
         TypeNode $typeNode,
         string $currentFile = '',
-        array $trustedVariableTypes = []
+        array $trustedVariableTypes = [],
+        ?string $currentNamespace = null
     ): bool {
         $count = \count($arrayExpr->items);
 
@@ -71,15 +72,15 @@ final class ArrayLiteralEvaluator
         }
 
         if ($typeNode instanceof ArrayTypeNode) {
-            return self::satisfiesList($arrayExpr, $typeNode->type, false, $currentFile, $trustedVariableTypes);
+            return self::satisfiesList($arrayExpr, $typeNode->type, false, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
         if ($typeNode instanceof GenericTypeNode) {
-            return self::satisfiesGenericArray($arrayExpr, $typeNode, $currentFile, $trustedVariableTypes);
+            return self::satisfiesGenericArray($arrayExpr, $typeNode, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
         if ($typeNode instanceof ArrayShapeNode) {
-            return self::satisfiesArrayShape($arrayExpr, $typeNode, $currentFile, $trustedVariableTypes);
+            return self::satisfiesArrayShape($arrayExpr, $typeNode, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
         return false;
@@ -138,33 +139,34 @@ final class ArrayLiteralEvaluator
         Array_ $arrayExpr,
         GenericTypeNode $node,
         string $currentFile,
-        array $trustedVariableTypes = []
+        array $trustedVariableTypes = [],
+        ?string $currentNamespace = null
     ): bool {
         $base = strtolower((string) $node->type);
         $genericCount = \count($node->genericTypes);
 
         if ($base === 'list' && $genericCount >= 1) {
-            return self::satisfiesList($arrayExpr, $node->genericTypes[0], false, $currentFile, $trustedVariableTypes);
+            return self::satisfiesList($arrayExpr, $node->genericTypes[0], false, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
         if ($base === 'non-empty-list' && $genericCount >= 1) {
-            return self::satisfiesList($arrayExpr, $node->genericTypes[0], true, $currentFile, $trustedVariableTypes);
+            return self::satisfiesList($arrayExpr, $node->genericTypes[0], true, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
         if (($base === 'array' || $base === 'iterable') && $genericCount === 1) {
-            return self::satisfiesList($arrayExpr, $node->genericTypes[0], false, $currentFile, $trustedVariableTypes);
+            return self::satisfiesList($arrayExpr, $node->genericTypes[0], false, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
         if (($base === 'array' || $base === 'iterable') && $genericCount >= 2) {
-            return self::satisfiesKeyValueArray($arrayExpr, $node->genericTypes[0], $node->genericTypes[1], false, $currentFile, $trustedVariableTypes);
+            return self::satisfiesKeyValueArray($arrayExpr, $node->genericTypes[0], $node->genericTypes[1], false, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
         if ($base === 'non-empty-array' && $genericCount === 1) {
-            return self::satisfiesList($arrayExpr, $node->genericTypes[0], true, $currentFile, $trustedVariableTypes);
+            return self::satisfiesList($arrayExpr, $node->genericTypes[0], true, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
         if ($base === 'non-empty-array' && $genericCount >= 2) {
-            return self::satisfiesKeyValueArray($arrayExpr, $node->genericTypes[0], $node->genericTypes[1], true, $currentFile, $trustedVariableTypes);
+            return self::satisfiesKeyValueArray($arrayExpr, $node->genericTypes[0], $node->genericTypes[1], true, $currentFile, $trustedVariableTypes, $currentNamespace);
         }
 
         return false;
@@ -178,7 +180,8 @@ final class ArrayLiteralEvaluator
         TypeNode $itemType,
         bool $requireNonEmpty,
         string $currentFile,
-        array $trustedVariableTypes = []
+        array $trustedVariableTypes = [],
+        ?string $currentNamespace = null
     ): bool {
         $count = \count($arrayExpr->items);
         if ($requireNonEmpty && $count === 0) {
@@ -198,7 +201,7 @@ final class ArrayLiteralEvaluator
             }
             $expectedIdx++;
 
-            if (! StaticTypeEvaluator::satisfies($item->value, $itemType, $currentFile, $trustedVariableTypes)) {
+            if (! StaticTypeEvaluator::satisfies($item->value, $itemType, $currentFile, $trustedVariableTypes, $currentNamespace)) {
                 return false;
             }
         }
@@ -215,7 +218,8 @@ final class ArrayLiteralEvaluator
         TypeNode $valueType,
         bool $requireNonEmpty,
         string $currentFile,
-        array $trustedVariableTypes = []
+        array $trustedVariableTypes = [],
+        ?string $currentNamespace = null
     ): bool {
         $count = \count($arrayExpr->items);
         if ($requireNonEmpty && $count === 0) {
@@ -240,11 +244,11 @@ final class ArrayLiteralEvaluator
                 return false;
             }
 
-            if (! StaticTypeEvaluator::satisfies($keyExpr, $keyType, $currentFile, $trustedVariableTypes)) {
+            if (! StaticTypeEvaluator::satisfies($keyExpr, $keyType, $currentFile, $trustedVariableTypes, $currentNamespace)) {
                 return false;
             }
 
-            if (! StaticTypeEvaluator::satisfies($item->value, $valueType, $currentFile, $trustedVariableTypes)) {
+            if (! StaticTypeEvaluator::satisfies($item->value, $valueType, $currentFile, $trustedVariableTypes, $currentNamespace)) {
                 return false;
             }
         }
@@ -259,7 +263,8 @@ final class ArrayLiteralEvaluator
         Array_ $arrayExpr,
         ArrayShapeNode $shapeNode,
         string $currentFile,
-        array $trustedVariableTypes = []
+        array $trustedVariableTypes = [],
+        ?string $currentNamespace = null
     ): bool {
         if ($shapeNode->kind === ArrayShapeNode::KIND_LIST && ! self::isSequentialList($arrayExpr)) {
             return false;
@@ -314,7 +319,7 @@ final class ArrayLiteralEvaluator
                 continue;
             }
 
-            if (! StaticTypeEvaluator::satisfies($actualItems[$expectedKey], $shapeItem->valueType, $currentFile, $trustedVariableTypes)) {
+            if (! StaticTypeEvaluator::satisfies($actualItems[$expectedKey], $shapeItem->valueType, $currentFile, $trustedVariableTypes, $currentNamespace)) {
                 return false;
             }
         }
@@ -331,12 +336,12 @@ final class ArrayLiteralEvaluator
             if ($shapeNode->unsealedType !== null) {
                 if ($shapeNode->unsealedType->keyType !== null) {
                     $keyExpr = \is_int($actualKey) ? new LNumber($actualKey) : new String_($actualKey);
-                    if (! StaticTypeEvaluator::satisfies($keyExpr, $shapeNode->unsealedType->keyType, $currentFile, $trustedVariableTypes)) {
+                    if (! StaticTypeEvaluator::satisfies($keyExpr, $shapeNode->unsealedType->keyType, $currentFile, $trustedVariableTypes, $currentNamespace)) {
                         return false;
                     }
                 }
 
-                if (! StaticTypeEvaluator::satisfies($actualValueExpr, $shapeNode->unsealedType->valueType, $currentFile, $trustedVariableTypes)) {
+                if (! StaticTypeEvaluator::satisfies($actualValueExpr, $shapeNode->unsealedType->valueType, $currentFile, $trustedVariableTypes, $currentNamespace)) {
                     return false;
                 }
             }

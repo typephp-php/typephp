@@ -10,6 +10,9 @@ use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\TypeAliasImportTagValueNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\TypeAliasTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
@@ -96,12 +99,17 @@ final class ContractVisitor extends NodeVisitorAbstract
      */
     private array $localClassPropertyTypes = [];
 
+    /**
+     * @var array<string, array<string, TypeNode>>
+     */
+    private array $localClassAliases = [];
+
     private ScopeManager $scopeManager;
 
     private string $currentNamespace = '';
 
     /**
-     * @var list<array{name: ?string, isAnonymous: bool, hasInheritance: bool, hasRealInheritance: bool, hasPropertyWithDoc: bool, isReadonly: bool, isFinal: bool, hasTemplates: bool, isTrait?: bool}>
+     * @var list<array{name: ?string, isAnonymous: bool, hasInheritance: bool, hasRealInheritance: bool, hasPropertyWithDoc: bool, isReadonly: bool, isFinal: bool, hasTemplates: bool, isTrait?: bool, aliases?: array<string, TypeNode>, templates?: array<string, TemplateTagValueNode>}>
      */
     private array $classStack = [];
 
@@ -232,7 +240,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
             $classContext = $this->classStack !== [] ? end($this->classStack) : null;
-            FunctionContractInjector::inject($node, $classContext, $this->currentFile);
+            FunctionContractInjector::inject($node, $classContext, $this->currentFile, $this->currentNamespace);
 
             return null;
         }
@@ -435,7 +443,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                         continue;
                     }
 
-                    if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile)) {
+                    if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile, [], $this->currentNamespace)) {
                         continue;
                     }
 
@@ -503,7 +511,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                     continue;
                 }
 
-                if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile)) {
+                if (Config::isEliminateStaticallyProvenChecksEnabled() && StaticTypeEvaluator::satisfies($const->value, $typeNode, $this->currentFile, [], $this->currentNamespace)) {
                     continue;
                 }
 
@@ -587,13 +595,15 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $caller,
                 $returnTypeNode,
                 $returnTypeStr,
-                $this->currentFile
+                $this->currentFile,
+                $this->currentNamespace
             ) extends NodeVisitorAbstract {
                 public function __construct(
                     private string $caller,
                     private TypeNode $returnTypeNode,
                     private string $returnTypeStr,
-                    private string $currentFile
+                    private string $currentFile,
+                    private string $currentNamespace
                 ) {
                 }
 
@@ -614,7 +624,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
                         if (
                             Config::isEliminateStaticallyProvenChecksEnabled()
-                            && StaticTypeEvaluator::satisfies($exprToWrap, $this->returnTypeNode, $this->currentFile)
+                            && StaticTypeEvaluator::satisfies($exprToWrap, $this->returnTypeNode, $this->currentFile, [], $this->currentNamespace)
                         ) {
                             return null;
                         }
@@ -823,7 +833,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                     foreach ($stmt->props as $p) {
                         $isExplicitNull = $p->default instanceof Node\Expr\ConstFetch && strtolower($p->default->name->toString()) === 'null';
                         if ($p->default !== null && ! $isExplicitNull) {
-                            if ($propTypeNode !== null && StaticTypeEvaluator::satisfies($p->default, $propTypeNode, $this->currentFile)) {
+                            if ($propTypeNode !== null && StaticTypeEvaluator::satisfies($p->default, $propTypeNode, $this->currentFile, [], $this->currentNamespace)) {
                                 continue;
                             }
 
@@ -889,7 +899,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     }
 
     /**
-     * @return array<string, \PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode>
+     * @return array<string, TemplateTagValueNode>
      */
     private function resolveClassTemplatesForDefaults(Node\Stmt\Class_ $node): array
     {
@@ -1107,6 +1117,8 @@ final class ContractVisitor extends NodeVisitorAbstract
             }
         }
 
+        $classAliases = $this->extractClassLikeAliases($node, $doc, $typeName);
+
         $this->classStack[] = [
             'name' => $typeName,
             'isAnonymous' => ($node instanceof Node\Stmt\Class_ && $node->name === null),
@@ -1117,7 +1129,132 @@ final class ContractVisitor extends NodeVisitorAbstract
             'isFinal' => $isFinal,
             'hasTemplates' => $hasTemplates,
             'isTrait' => $isTrait,
+            'aliases' => $classAliases,
+            'templates' => $templates,
         ];
+    }
+
+    /**
+     * Extracts class-level and inherited @phpstan-type / @psalm-type / @phpstan-import-type aliases at AST transform time.
+     *
+     * @return array<string, TypeNode>
+     */
+    private function extractClassLikeAliases(
+        Node\Stmt\Class_|Node\Stmt\Interface_|Node\Stmt\Trait_|Node\Stmt\Enum_ $node,
+        ?\PhpParser\Comment\Doc $doc,
+        ?string $typeName
+    ): array {
+        /** @var array<string, TypeNode> $aliases */
+        $aliases = [];
+
+        if ($doc !== null && (str_contains($doc->getText(), '-type') || str_contains($doc->getText(), 'import-type'))) {
+            try {
+                $phpDocNode = DocblockExtractor::parseDocString($doc->getText());
+
+                foreach ($phpDocNode->getTagsByName('@psalm-type') as $tag) {
+                    if ($tag->value instanceof TypeAliasTagValueNode) {
+                        $aliases[$tag->value->alias] = $tag->value->type;
+                    }
+                }
+
+                foreach ($phpDocNode->getTagsByName('@phpstan-type') as $tag) {
+                    if ($tag->value instanceof TypeAliasTagValueNode) {
+                        $aliases[$tag->value->alias] = $tag->value->type;
+                    }
+                }
+
+                $importTags = [
+                    ...$phpDocNode->getTagsByName('@psalm-import-type'),
+                    ...$phpDocNode->getTagsByName('@phpstan-import-type'),
+                ];
+
+                foreach ($importTags as $tag) {
+                    if ($tag->value instanceof TypeAliasImportTagValueNode) {
+                        $importTag = $tag->value;
+                        $localName = $importTag->importedAs ?? $importTag->importedAlias;
+                        if (isset($aliases[$localName])) {
+                            continue;
+                        }
+
+                        $sourceFqcn = $this->resolveClassNameFromNode(new Node\Name((string) $importTag->importedFrom))
+                            ?? (string) $importTag->importedFrom;
+
+                        $imported = $this->localClassAliases[$sourceFqcn][$importTag->importedAlias] ?? null;
+                        if (
+                            $imported === null
+                            && ClassNameValidator::isValid($sourceFqcn)
+                            && (class_exists($sourceFqcn) || interface_exists($sourceFqcn) || trait_exists($sourceFqcn) || enum_exists($sourceFqcn))
+                        ) {
+                            $imported = DocblockExtractor::resolveImportedTypeAlias($sourceFqcn, $importTag->importedAlias);
+                        }
+
+                        if ($imported !== null) {
+                            $aliases[$localName] = $imported;
+                        }
+                    }
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        /** @var list<Node\Name> $parentNodes */
+        $parentNodes = [];
+        if ($node instanceof Node\Stmt\Class_) {
+            if ($node->extends !== null) {
+                $parentNodes[] = $node->extends;
+            }
+            foreach ($node->implements as $iface) {
+                $parentNodes[] = $iface;
+            }
+        } elseif ($node instanceof Node\Stmt\Interface_) {
+            foreach ($node->extends as $iface) {
+                $parentNodes[] = $iface;
+            }
+        } elseif ($node instanceof Node\Stmt\Enum_) {
+            foreach ($node->implements as $iface) {
+                $parentNodes[] = $iface;
+            }
+        }
+
+        if ($node instanceof Node\Stmt\Class_ || $node instanceof Node\Stmt\Trait_ || $node instanceof Node\Stmt\Enum_) {
+            foreach ($node->stmts as $stmt) {
+                if ($stmt instanceof Node\Stmt\TraitUse) {
+                    foreach ($stmt->traits as $traitName) {
+                        $parentNodes[] = $traitName;
+                    }
+                }
+            }
+        }
+
+        foreach ($parentNodes as $parentNode) {
+            $parentFqcn = $this->resolveClassNameFromNode($parentNode) ?? $parentNode->toString();
+            $parentAliases = $this->localClassAliases[$parentFqcn] ?? null;
+            if (
+                $parentAliases === null
+                && ClassNameValidator::isValid($parentFqcn)
+                && (class_exists($parentFqcn) || interface_exists($parentFqcn) || trait_exists($parentFqcn))
+            ) {
+                $parentAliases = DocblockParser::parseClassAliases($parentFqcn);
+            }
+
+            if ($parentAliases !== null) {
+                foreach ($parentAliases as $aName => $aType) {
+                    if (! isset($aliases[$aName])) {
+                        $aliases[$aName] = $aType;
+                    }
+                }
+            }
+        }
+
+        foreach ($aliases as $aName => $aType) {
+            $aliases[$aName] = DocblockParser::substituteAliases($aType, $aliases);
+        }
+
+        if ($typeName !== null && $aliases !== []) {
+            $this->localClassAliases[$typeName] = $aliases;
+        }
+
+        return $aliases;
     }
 
     private function handleReturn(Node\Stmt\Return_ $node): void
@@ -1336,7 +1473,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                     }
                 }
 
-                if ($parsedType !== null && StaticTypeEvaluator::satisfies($expr, $parsedType, $this->currentFile)) {
+                if ($parsedType !== null && StaticTypeEvaluator::satisfies($expr, $parsedType, $this->currentFile, [], $this->currentNamespace)) {
                     return null;
                 }
 

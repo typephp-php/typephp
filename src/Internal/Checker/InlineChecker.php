@@ -283,6 +283,29 @@ final class InlineChecker
             $key = $path[0][1];
             $keyStr = \is_string($key) ? $key : (\is_int($key) ? (string) $key : '');
 
+            $aaContract = null;
+            if (
+                ($typeNode instanceof IdentifierTypeNode && ! SpecialTypeResolver::isBuiltInTypeKeyword($typeNode->name) && is_a($typeNode->name, \ArrayAccess::class, true))
+                || ($typeNode instanceof GenericTypeNode && ! \in_array(strtolower((string) $typeNode->type), ['list', 'non-empty-list', 'array', 'non-empty-array', 'iterable'], true) && is_a((string) $typeNode->type, \ArrayAccess::class, true))
+            ) {
+                $aaContract = MemberAssignChecker::resolveArrayAccessElementContract($typeNode);
+            }
+
+            if ($aaContract !== null) {
+                if ($key !== null && $aaContract['keyType'] !== null) {
+                    $keyErr = $registry->validate($key, $aaContract['keyType'], "Variable \${$varName} key");
+                    if ($keyErr !== null) {
+                        return $keyErr;
+                    }
+                }
+
+                if ($aaContract['valueType'] !== null) {
+                    $context = "Variable \${$varName}" . ($key !== null ? "['{$keyStr}']" : '[]');
+
+                    return $registry->validate($value, $aaContract['valueType'], $context);
+                }
+            }
+
             if ($typeNode instanceof GenericTypeNode) {
                 $base = strtolower((string) $typeNode->type);
 

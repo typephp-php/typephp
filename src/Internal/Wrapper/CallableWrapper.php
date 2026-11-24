@@ -139,12 +139,31 @@ final class CallableWrapper
         }
 
         if (\is_array($callable)) {
+            $unwrappedNode = $typeNode;
+            while ($unwrappedNode instanceof NullableTypeNode) {
+                $unwrappedNode = $unwrappedNode->type;
+            }
+            if ($unwrappedNode instanceof UnionTypeNode) {
+                $nonNullNode = null;
+                $nonNullCount = 0;
+                foreach ($unwrappedNode->types as $member) {
+                    if ($member instanceof IdentifierTypeNode && strtolower($member->name) === 'null') {
+                        continue;
+                    }
+                    $nonNullCount++;
+                    $nonNullNode = $member;
+                }
+                if ($nonNullCount === 1 && $nonNullNode !== null) {
+                    $unwrappedNode = $nonNullNode;
+                }
+            }
+
             $innerCallableTypeNode = null;
 
-            if ($typeNode instanceof GenericTypeNode && \in_array(strtolower((string) $typeNode->type), ['list', 'array', 'iterable'], strict: true)) {
-                $innerCallableTypeNode = $typeNode->genericTypes[1] ?? $typeNode->genericTypes[0] ?? null;
-            } elseif ($typeNode instanceof ArrayTypeNode) {
-                $innerCallableTypeNode = $typeNode->type;
+            if ($unwrappedNode instanceof GenericTypeNode && \in_array(strtolower((string) $unwrappedNode->type), ['list', 'array', 'iterable'], strict: true)) {
+                $innerCallableTypeNode = $unwrappedNode->genericTypes[1] ?? $unwrappedNode->genericTypes[0] ?? null;
+            } elseif ($unwrappedNode instanceof ArrayTypeNode) {
+                $innerCallableTypeNode = $unwrappedNode->type;
             }
 
             if ($innerCallableTypeNode instanceof CallableTypeNode) {
@@ -265,6 +284,27 @@ final class CallableWrapper
         string $function = '',
         string $paramName = 'callback'
     ): mixed {
+        while ($typeNode instanceof NullableTypeNode) {
+            $typeNode = $typeNode->type;
+        }
+
+        if ($typeNode instanceof UnionTypeNode) {
+            $nonNullCallable = null;
+            $nonNullCount = 0;
+            foreach ($typeNode->types as $member) {
+                if ($member instanceof IdentifierTypeNode && strtolower($member->name) === 'null') {
+                    continue;
+                }
+                $nonNullCount++;
+                if ($member instanceof CallableTypeNode) {
+                    $nonNullCallable = $member;
+                }
+            }
+            if ($nonNullCount === 1 && $nonNullCallable !== null) {
+                $typeNode = $nonNullCallable;
+            }
+        }
+
         if (! ($typeNode instanceof CallableTypeNode) || ! self::isCallable($callable)) {
             return $callable;
         }
