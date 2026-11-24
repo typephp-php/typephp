@@ -482,6 +482,7 @@ PHP;
             mkdir($tempDir, 0777, true);
             $validFile = $tempDir . '/alias_const_valid.php';
             $invalidFile = $tempDir . '/alias_const_invalid.php';
+            $invalidPrivateFile = $tempDir . '/alias_private_const_invalid.php';
 
             $validCode = <<<'PHP'
 <?php
@@ -527,18 +528,40 @@ class AliasConstInvalidFixture
 }
 PHP;
 
+            $invalidPrivateCode = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\Priority2;
+
+/**
+ * @psalm-type Label non-empty-string
+ */
+class AliasPrivateConstInvalidFixture
+{
+    /**
+     * @var Label
+     */
+    private const BAD_LABEL = '';
+}
+PHP;
+
             file_put_contents($validFile, $validCode);
             file_put_contents($invalidFile, $invalidCode);
+            file_put_contents($invalidPrivateFile, $invalidPrivateCode);
 
             try {
                 StreamWrapper::register();
 
                 expect(fn() => require $validFile)->not()->toThrow(TypeError::class)
                     ->and(fn() => require $invalidFile)->toThrow(TypeError::class, 'positive-int')
+                    ->and(fn() => require $invalidPrivateFile)->toThrow(TypeError::class, 'non-empty-string')
                 ;
             } finally {
                 @unlink($validFile);
                 @unlink($invalidFile);
+                @unlink($invalidPrivateFile);
                 @rmdir($tempDir);
             }
         });
@@ -548,6 +571,7 @@ PHP;
             mkdir($tempDir, 0777, true);
             $validFile = $tempDir . '/import_alias_valid.php';
             $invalidFile = $tempDir . '/import_alias_invalid.php';
+            $invalidMaskFile = $tempDir . '/import_alias_mask_invalid.php';
 
             $validCode = <<<'PHP'
 <?php
@@ -610,6 +634,104 @@ class ImportedAliasConstInvalidFixture
 }
 PHP;
 
+            $invalidMaskCode = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\Priority2;
+
+/**
+ * @phpstan-type FlagMask int-mask-of<self::FLAG_*>
+ */
+class ImportedAliasMaskInvalidFixture
+{
+    public const FLAG_READ = 1;
+    public const FLAG_WRITE = 2;
+
+    /**
+     * @var FlagMask
+     */
+    public const BAD_FLAGS = 8;
+}
+PHP;
+
+            file_put_contents($validFile, $validCode);
+            file_put_contents($invalidFile, $invalidCode);
+            file_put_contents($invalidMaskFile, $invalidMaskCode);
+
+            try {
+                StreamWrapper::register();
+
+                expect(fn() => require $validFile)->not()->toThrow(TypeError::class)
+                    ->and(fn() => require $invalidFile)->toThrow(TypeError::class, '<= 65535')
+                    ->and(fn() => require $invalidMaskFile)->toThrow(TypeError::class, 'bitmask')
+                ;
+            } finally {
+                @unlink($validFile);
+                @unlink($invalidFile);
+                @unlink($invalidMaskFile);
+                @rmdir($tempDir);
+            }
+        });
+
+        test('resolves inherited class-level aliases from parent classes in class constant checks', function () {
+            $tempDir = sys_get_temp_dir() . '/typephp_p2_inherited_alias_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $validFile = $tempDir . '/inherited_alias_valid.php';
+            $invalidFile = $tempDir . '/inherited_alias_invalid.php';
+
+            $validCode = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\Priority2;
+
+/**
+ * @phpstan-type RetryCount int<1, 5>
+ */
+class InheritedAliasParentValidFixture
+{
+}
+
+class InheritedAliasChildValidFixture extends InheritedAliasParentValidFixture
+{
+    /**
+     * @var RetryCount
+     */
+    public const MAX_RETRIES = 3;
+
+    /**
+     * @var RetryCount
+     */
+    protected const DEFAULT_RETRIES = 1;
+}
+PHP;
+
+            $invalidCode = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\Priority2;
+
+/**
+ * @phpstan-type RetryCount int<1, 5>
+ */
+class InheritedAliasParentInvalidFixture
+{
+}
+
+class InheritedAliasChildInvalidFixture extends InheritedAliasParentInvalidFixture
+{
+    /**
+     * @var RetryCount
+     */
+    public const MAX_RETRIES = 10;
+}
+PHP;
+
             file_put_contents($validFile, $validCode);
             file_put_contents($invalidFile, $invalidCode);
 
@@ -617,7 +739,7 @@ PHP;
                 StreamWrapper::register();
 
                 expect(fn() => require $validFile)->not()->toThrow(TypeError::class)
-                    ->and(fn() => require $invalidFile)->toThrow(TypeError::class, '<= 65535')
+                    ->and(fn() => require $invalidFile)->toThrow(TypeError::class, '<= 5')
                 ;
             } finally {
                 @unlink($validFile);

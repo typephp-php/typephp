@@ -281,32 +281,25 @@ final class RuntimeTypeChecker
         }
 
         try {
-            $normalized = DocblockNormalizer::normalize($typeString);
-            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
-            $tokens = new TokenIterator($lexer->tokenize($normalized));
-            $typeNode = $typeParser->parse($tokens);
-
-            if ($file !== '') {
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
-            }
-
-            $context = "Constant {$constantName}";
-
-            $err = self::getRegistry()->validate($value, $typeNode, $context);
-            if ($err !== null) {
-                if (IgnoreManager::isCallerIgnored()) {
-                    return $value;
-                }
-
-                $target = str_contains($constantName, '::')
-                    ? explode('::', $constantName, 2)[1]
-                    : $constantName;
-                $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
-
-                return ViolationCollector::handle($err, 'constant', $value, $file, $line, $constantName, $target, $declaredIn);
-            }
+            $typeNode = self::resolveConstantTypeNode($typeString, $constantName, $file);
         } catch (\Throwable $e) {
-            // Silently ignore unexpected parsing errors
+            return $value;
+        }
+
+        $context = "Constant {$constantName}";
+
+        $err = self::getRegistry()->validate($value, $typeNode, $context);
+        if ($err !== null) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return $value;
+            }
+
+            $target = str_contains($constantName, '::')
+                ? explode('::', $constantName, 2)[1]
+                : $constantName;
+            $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
+
+            return ViolationCollector::handle($err, 'constant', $value, $file, $line, $constantName, $target, $declaredIn);
         }
 
         return $value;
@@ -328,28 +321,22 @@ final class RuntimeTypeChecker
         }
 
         try {
-            $normalized = DocblockNormalizer::normalize($typeString);
-            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
-            $tokens = new TokenIterator($lexer->tokenize($normalized));
-            $typeNode = $typeParser->parse($tokens);
-
-            if ($file !== '') {
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
-            }
-
-            $context = "{$caller}(): Argument \${$paramName}";
-
-            $err = self::getRegistry()->validate($value, $typeNode, $context);
-            if ($err !== null) {
-                if (IgnoreManager::isCallerIgnored()) {
-                    return $value;
-                }
-
-                $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
-
-                return ViolationCollector::handle($err, 'parameter', $value, null, null, $caller, '$' . $paramName, $declaredIn);
-            }
+            $typeNode = self::resolveConstantTypeNode($typeString, $caller, $file);
         } catch (\Throwable $e) {
+            return $value;
+        }
+
+        $context = "{$caller}(): Argument \${$paramName}";
+
+        $err = self::getRegistry()->validate($value, $typeNode, $context);
+        if ($err !== null) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return $value;
+            }
+
+            $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
+
+            return ViolationCollector::handle($err, 'parameter', $value, null, null, $caller, '$' . $paramName, $declaredIn);
         }
 
         return $value;
@@ -370,31 +357,68 @@ final class RuntimeTypeChecker
         }
 
         try {
-            $normalized = DocblockNormalizer::normalize($typeString);
-            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
-            $tokens = new TokenIterator($lexer->tokenize($normalized));
-            $typeNode = $typeParser->parse($tokens);
-
-            if ($file !== '') {
-                $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
-            }
-
-            $context = "{$caller}(): Return value";
-
-            $err = self::getRegistry()->validate($value, $typeNode, $context);
-            if ($err !== null) {
-                if (IgnoreManager::isCallerIgnored()) {
-                    return $value;
-                }
-
-                $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
-
-                return ViolationCollector::handle($err, 'return', $value, $file, $line, $caller, 'return', $declaredIn);
-            }
+            $typeNode = self::resolveConstantTypeNode($typeString, $caller, $file);
         } catch (\Throwable $e) {
+            return $value;
+        }
+
+        $context = "{$caller}(): Return value";
+
+        $err = self::getRegistry()->validate($value, $typeNode, $context);
+        if ($err !== null) {
+            if (IgnoreManager::isCallerIgnored()) {
+                return $value;
+            }
+
+            $declaredIn = ($file !== '' && $line !== null) ? "{$file}:{$line}" : null;
+
+            return ViolationCollector::handle($err, 'return', $value, $file, $line, $caller, 'return', $declaredIn);
         }
 
         return $value;
+    }
+
+    /**
+     * Parses a constant's type string, expanding class-level aliases and resolving self/static/parent
+     * when the target denotes a class constant, or falling back to file imports for global constants.
+     */
+    private static function resolveConstantTypeNode(string $typeString, string $targetName, string $file): TypeNode
+    {
+        $normalized = DocblockNormalizer::normalize($typeString);
+        [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+        $tokens = new TokenIterator($lexer->tokenize($normalized));
+        $typeNode = $typeParser->parse($tokens);
+
+        if (str_contains($targetName, '::')) {
+            $declaringClass = explode('::', $targetName, 2)[0];
+            if (
+                $declaringClass !== ''
+                && ClassNameValidator::isValid($declaringClass)
+                && (
+                    class_exists($declaringClass, false)
+                    || interface_exists($declaringClass, false)
+                    || trait_exists($declaringClass, false)
+                    || enum_exists($declaringClass, false)
+                    || class_exists($declaringClass)
+                    || interface_exists($declaringClass)
+                    || trait_exists($declaringClass)
+                    || enum_exists($declaringClass)
+                )
+            ) {
+                $aliases = DocblockParser::parseClassAliases($declaringClass);
+                if ($aliases !== []) {
+                    $typeNode = DocblockParser::substituteAliases($typeNode, $aliases);
+                }
+
+                return SpecialTypeResolver::resolve($typeNode, $declaringClass);
+            }
+        }
+
+        if ($file !== '') {
+            $typeNode = SpecialTypeResolver::resolveForFile($typeNode, $file);
+        }
+
+        return $typeNode;
     }
 
     /**

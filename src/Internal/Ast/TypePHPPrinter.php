@@ -50,13 +50,54 @@ final class TypePHPPrinter extends Standard
     }
 
     /**
-     * Converts single-line comments and squashes whitespace on injected statements.
+     * Converts single-line comments and squashes whitespace on injected statements
+     * without altering string literals or attribute tokens.
      */
     private function formatInjectedStatement(string $output): string
     {
-        $output = preg_replace('/(?:\/\/(.*?)|#(.*?))(?=\r?\n|$)/', '/*$1$2 */', $output) ?? $output;
-        $output = preg_replace('/\s+/', ' ', trim($output)) ?? $output;
+        $trimmed = trim($output);
+        if ($trimmed === '') {
+            return '/*__TYPEPHP_INJECTED_START__*/' . '/*__TYPEPHP_INJECTED_END__*/';
+        }
 
-        return '/*__TYPEPHP_INJECTED_START__*/' . $output . '/*__TYPEPHP_INJECTED_END__*/';
+        $tokens = \PhpToken::tokenize('<?php ' . $trimmed);
+        $formatted = '';
+
+        foreach ($tokens as $index => $token) {
+            if ($index === 0 && $token->id === T_OPEN_TAG) {
+                continue;
+            }
+
+            if ($token->id === T_WHITESPACE) {
+                $formatted .= ' ';
+
+                continue;
+            }
+
+            if ($token->id === T_COMMENT) {
+                if (str_starts_with($token->text, '//') || str_starts_with($token->text, '#')) {
+                    $commentBody = rtrim($token->text, "\r\n");
+                    $cleaned = str_starts_with($commentBody, '//')
+                        ? substr($commentBody, 2)
+                        : substr($commentBody, 1);
+                    $cleaned = str_replace('*/', '* /', $cleaned);
+                    $formatted .= '/*' . $cleaned . ' */';
+                } else {
+                    $formatted .= preg_replace('/\s+/', ' ', $token->text) ?? $token->text;
+                }
+
+                continue;
+            }
+
+            if ($token->id === T_DOC_COMMENT) {
+                $formatted .= preg_replace('/\s+/', ' ', $token->text) ?? $token->text;
+
+                continue;
+            }
+
+            $formatted .= $token->text;
+        }
+
+        return '/*__TYPEPHP_INJECTED_START__*/' . trim($formatted) . '/*__TYPEPHP_INJECTED_END__*/';
     }
 }

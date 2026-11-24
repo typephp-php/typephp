@@ -47,6 +47,7 @@ final class TypeValidatorRegistry
     {
         GenericValidator::reset();
         ArrayShapeValidator::reset();
+        ConstValidator::reset();
     }
 
     public function __construct()

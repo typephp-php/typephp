@@ -669,6 +669,8 @@ final class TemplateManager
         self::$noInheritedBindingsClasses = [];
         self::$templatePropertyPlanCache = [];
         self::$verifiedShallowRefinements = null;
+        self::$compiledBindPlanBySigCache = [];
+        self::$propagatedPropTypeCache = [];
     }
 
     /**
