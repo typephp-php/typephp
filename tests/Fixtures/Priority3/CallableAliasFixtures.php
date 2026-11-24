@@ -6,7 +6,7 @@ namespace TypePHP\Tests\Fixtures\Priority3;
 
 /**
  * @phpstan-type NumberPredicate callable(positive-int): bool
- * @phpstan-type StringIterable iterable<int, string>
+ * @phpstan-type StringSequence iterable<int, string>
  */
 class Priority3CallableAliasHolder
 {
@@ -19,7 +19,19 @@ class Priority3CallableAliasHolder
     }
 
     /**
-     * @param StringIterable $items
+     * @param ?NumberPredicate $predicate
+     */
+    public function filterOptionalNumber(mixed $predicate, int $val): bool
+    {
+        if ($predicate === null) {
+            return true;
+        }
+
+        return $predicate($val);
+    }
+
+    /**
+     * @param StringSequence $items
      *
      * @return list<string>
      */
@@ -31,5 +43,18 @@ class Priority3CallableAliasHolder
         }
 
         return $out;
+    }
+
+    /**
+     * @param StringSequence $items
+     */
+    public function countStrings(mixed $items): int
+    {
+        $count = 0;
+        foreach ($items as $_) {
+            $count++;
+        }
+
+        return $count;
     }
 }

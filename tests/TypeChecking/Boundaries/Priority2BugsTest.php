@@ -32,7 +32,9 @@ class Priority2InnerBoxFixture
     /**
      * @param T $value
      */
-    public function __construct(public mixed $value) {}
+    public function __construct(public mixed $value)
+    {
+    }
 }
 
 /**
@@ -209,7 +211,7 @@ PHP;
                 require $validFile;
 
                 expect(\App\Priority2\Printer\PrinterValidFixture::run())->toBe('#112233|https://a.test/x   y')
-                    ->and(fn() => require $invalidFile)->toThrow(TypeError::class)
+                    ->and(fn () => require $invalidFile)->toThrow(TypeError::class)
                 ;
             } finally {
                 @unlink($validFile);
@@ -309,8 +311,8 @@ PHP;
             try {
                 StreamWrapper::register();
 
-                expect(fn() => require $validFile)->not()->toThrow(TypeError::class)
-                    ->and(fn() => require $invalidFile)->toThrow(TypeError::class, 'BASE_CODE')
+                expect(fn () => require $validFile)->not()->toThrow(TypeError::class)
+                    ->and(fn () => require $invalidFile)->toThrow(TypeError::class, 'BASE_CODE')
                 ;
             } finally {
                 @unlink($validFile);
@@ -372,8 +374,8 @@ PHP;
             try {
                 StreamWrapper::register();
 
-                expect(fn() => require $validFile)->not()->toThrow(TypeError::class)
-                    ->and(fn() => require $invalidFile)->toThrow(TypeError::class, 'PRIVATE_BASE')
+                expect(fn () => require $validFile)->not()->toThrow(TypeError::class)
+                    ->and(fn () => require $invalidFile)->toThrow(TypeError::class, 'PRIVATE_BASE')
                 ;
             } finally {
                 @unlink($validFile);
@@ -467,8 +469,8 @@ PHP;
             try {
                 StreamWrapper::register();
 
-                expect(fn() => require $validFile)->not()->toThrow(TypeError::class)
-                    ->and(fn() => require $invalidFile)->toThrow(TypeError::class, 'PROTECTED_LIMIT')
+                expect(fn () => require $validFile)->not()->toThrow(TypeError::class)
+                    ->and(fn () => require $invalidFile)->toThrow(TypeError::class, 'PROTECTED_LIMIT')
                 ;
             } finally {
                 @unlink($validFile);
@@ -554,9 +556,9 @@ PHP;
             try {
                 StreamWrapper::register();
 
-                expect(fn() => require $validFile)->not()->toThrow(TypeError::class)
-                    ->and(fn() => require $invalidFile)->toThrow(TypeError::class, 'positive-int')
-                    ->and(fn() => require $invalidPrivateFile)->toThrow(TypeError::class, 'non-empty-string')
+                expect(fn () => require $validFile)->not()->toThrow(TypeError::class)
+                    ->and(fn () => require $invalidFile)->toThrow(TypeError::class, 'positive-int')
+                    ->and(fn () => require $invalidPrivateFile)->toThrow(TypeError::class, 'non-empty-string')
                 ;
             } finally {
                 @unlink($validFile);
@@ -663,9 +665,9 @@ PHP;
             try {
                 StreamWrapper::register();
 
-                expect(fn() => require $validFile)->not()->toThrow(TypeError::class)
-                    ->and(fn() => require $invalidFile)->toThrow(TypeError::class, '<= 65535')
-                    ->and(fn() => require $invalidMaskFile)->toThrow(TypeError::class, 'bitmask')
+                expect(fn () => require $validFile)->not()->toThrow(TypeError::class)
+                    ->and(fn () => require $invalidFile)->toThrow(TypeError::class, '<= 65535')
+                    ->and(fn () => require $invalidMaskFile)->toThrow(TypeError::class, 'bitmask')
                 ;
             } finally {
                 @unlink($validFile);
@@ -738,8 +740,8 @@ PHP;
             try {
                 StreamWrapper::register();
 
-                expect(fn() => require $validFile)->not()->toThrow(TypeError::class)
-                    ->and(fn() => require $invalidFile)->toThrow(TypeError::class, '<= 5')
+                expect(fn () => require $validFile)->not()->toThrow(TypeError::class)
+                    ->and(fn () => require $invalidFile)->toThrow(TypeError::class, '<= 5')
                 ;
             } finally {
                 @unlink($validFile);
