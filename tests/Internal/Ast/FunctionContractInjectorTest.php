@@ -88,13 +88,39 @@ PHP;
 
             expect($fn->stmts)->not()->toBeEmpty();
 
+            $setupIf = $fn->stmts[0];
+            expect($setupIf)->toBeInstanceOf(Node\Stmt\If_::class)
+                ->and($setupIf->getAttribute('typephp_injected'))->toBeTrue()
+                ->and($setupIf->stmts[0])->toBeInstanceOf(Node\Stmt\Expression::class)
+                ->and($setupIf->stmts[0]->expr)->toBeInstanceOf(Node\Expr\Assign::class)
+                ->and($setupIf->stmts[0]->expr->var->name)->toBe('_typephpArgs')
+                ->and($fn->stmts[1])->toBeInstanceOf(Node\Stmt\Return_::class)
+            ;
+        });
+
+        test('hoists _typephpArgs to root when return type contains parameter-dependent conditional type', function () {
+            $doc = new Doc('/** @param int $id @return ($id is positive-int ? non-empty-string : string) */');
+
+            $fn = new Node\Stmt\Function_('testConditionalUser', [
+                'params' => [
+                    new Node\Param(new Node\Expr\Variable('id'), null, new Node\Identifier('int')),
+                ],
+                'stmts' => [
+                    new Node\Stmt\Return_(new Node\Scalar\String_('alice')),
+                ],
+            ], [
+                'comments' => [$doc],
+            ]);
+
+            FunctionContractInjector::inject($fn);
+
             $firstStmt = $fn->stmts[0];
             expect($firstStmt)->toBeInstanceOf(Node\Stmt\Expression::class)
                 ->and($firstStmt->getAttribute('typephp_injected'))->toBeTrue()
                 ->and($firstStmt->expr)->toBeInstanceOf(Node\Expr\Assign::class)
                 ->and($firstStmt->expr->var->name)->toBe('_typephpArgs')
                 ->and($fn->stmts[1])->toBeInstanceOf(Node\Stmt\If_::class)
-                ->and($fn->stmts[1]->getAttribute('typephp_injected'))->toBeTrue()
+                ->and($fn->stmts[2])->toBeInstanceOf(Node\Stmt\Return_::class)
             ;
         });
 
@@ -130,7 +156,10 @@ PHP;
 
             FunctionContractInjector::inject($fn);
 
-            expect(\count($fn->stmts))->toBe(2);
+            expect(\count($fn->stmts))->toBe(1)
+                ->and($fn->stmts[0])->toBeInstanceOf(Node\Stmt\If_::class)
+                ->and($fn->stmts[0]->getAttribute('typephp_injected'))->toBeTrue()
+            ;
         });
     });
 

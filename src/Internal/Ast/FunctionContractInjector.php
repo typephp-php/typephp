@@ -68,7 +68,7 @@ final class FunctionContractInjector
         $docText = $doc !== null ? $doc->getText() : '';
 
         $hasInheritance = $classContext['hasInheritance'] ?? true;
-        $hasRealInheritance = $classContext['hasRealInheritance'] ?? $hasInheritance;
+        $hasRealInheritance = $isClassMethod ? ($classContext['hasRealInheritance'] ?? $hasInheritance) : false;
         $hasPropertyWithDoc = $classContext['hasPropertyWithDoc'] ?? true;
         $isReadonlyClass = $classContext['isReadonly'] ?? false;
         $isFinalClass = $classContext['isFinal'] ?? false;
@@ -96,66 +96,14 @@ final class FunctionContractInjector
 
         $paramCount = \count($node->params);
 
-        $hasReturnDoc = str_contains($docText, '@return')
-            || str_contains($docText, '@phpstan-return')
-            || str_contains($docText, '@psalm-return');
-
-        $hasReturn = ! $isMagicLifecycle
-            && ! $isNativeNever
-            && ! ($isNativeVoid && ! $hasReturnDoc)
-            && ($isMagicGet || $isMagicCall || self::hasReturnContracts(
-                $docText,
-                $isClassMethod,
-                $hasInheritance,
-                $isPrivate,
-                $classContext === null,
-            ));
-
-        $byRefParams = [];
-        foreach ($node->params as $p) {
-            if ($p->byRef && $p->var instanceof Node\Expr\Variable && \is_string($p->var->name)) {
-                $byRefParams[] = $p->var->name;
-            }
-        }
-
-        $hasParamOutDoc = str_contains($docText, '@param-out')
-            || str_contains($docText, '@phpstan-param-out')
-            || str_contains($docText, '@psalm-param-out');
-
-        $hasParamOut = $byRefParams !== [] && ($hasParamOutDoc || $hasInheritance);
-
-        $hasSelfOutDoc = str_contains($docText, 'self-out') || str_contains($docText, 'this-out');
-        $hasSelfOut = $isClassMethod && ! $node->isStatic() && ($hasSelfOutDoc || ($hasClassTemplates && $hasRealInheritance));
-
-        $hasParam = ($isMagicGet || $isMagicCall) || ($paramCount > 0 && (
-            str_contains($docText, ' is ') || (($hasReturnDoc || $hasSelfOutDoc || $hasParamOutDoc) && str_contains($docText, '$'))
-        )) || self::hasParamContracts(
-            $docText,
-            $isClassMethod,
-            $hasInheritance,
-            $paramCount,
-            $isPrivate,
-            $isConstructor,
-            $hasPropertyWithDoc,
-            $classContext === null,
-            $node->attrGroups !== [],
-        );
-
-        if (! $hasParam && ! $hasReturn && ! $hasParamOut && ! $hasSelfOut) {
-            return;
-        }
-
-        $thisArg = self::resolveThisArg($isClassMethod, $node);
-        $needsReturnVars = ($hasParam && ($paramCount > 0) && (
-            $hasInheritance || str_contains($docText, ' is ') || ($hasReturnDoc && str_contains($docText, '$'))
-        )) || ($isClassMethod && $paramCount > 0 && ($isMagicGet || $isMagicCall));
-
-        $useDynamicMethodKey = $isClassMethod && ! $isPrivate && ! $isFinalClass;
-
         $phpDocNode = null;
         $returnTypeNode = null;
         $hasMethodTemplates = false;
         $declaredTemplates = [];
+        $paramTags = [];
+        $paramOutTags = [];
+        $selfOutType = null;
+
         if ($doc !== null) {
             try {
                 $phpDocNode = DocblockExtractor::parseDocString($doc->getText());
@@ -165,6 +113,9 @@ final class FunctionContractInjector
                 }
                 $declaredTemplates = DocblockExtractor::extractTemplates($phpDocNode);
                 $hasMethodTemplates = $declaredTemplates !== [];
+                $paramTags = DocblockExtractor::getParamTags($phpDocNode);
+                $paramOutTags = DocblockExtractor::getParamOutTags($phpDocNode);
+                $selfOutType = DocblockExtractor::getSelfOutTag($phpDocNode);
             } catch (\Throwable) {
             }
         }
@@ -179,16 +130,73 @@ final class FunctionContractInjector
 
         /** @var array<string, TypeNode> $resolvedParamTypes */
         $resolvedParamTypes = [];
-        if ($phpDocNode !== null) {
-            foreach (DocblockExtractor::getParamTags($phpDocNode) as $pName => $pTag) {
-                $pType = $pTag->type;
-                if ($effectiveAliases !== []) {
-                    $pType = DocblockParser::substituteAliases($pType, $effectiveAliases);
-                }
-                $resolvedParamTypes[$pName] = $pType;
+        foreach ($paramTags as $pName => $pTag) {
+            $pType = $pTag->type;
+            if ($effectiveAliases !== []) {
+                $pType = DocblockParser::substituteAliases($pType, $effectiveAliases);
+            }
+            $resolvedParamTypes[$pName] = $pType;
+        }
+
+        if ($returnTypeNode !== null && $effectiveAliases !== []) {
+            $returnTypeNode = DocblockParser::substituteAliases($returnTypeNode, $effectiveAliases);
+        }
+
+        $hasReturnDoc = $returnTypeNode !== null;
+
+        $hasReturn = ! $isMagicLifecycle
+            && ! $isNativeNever
+            && ! ($isNativeVoid && ! $hasReturnDoc)
+            && ($isMagicGet || $isMagicCall || self::hasReturnContracts(
+                $returnTypeNode,
+                $isClassMethod,
+                $hasInheritance,
+                $isPrivate,
+                $classContext === null,
+            ));
+
+        $byRefParams = [];
+        foreach ($node->params as $p) {
+            if ($p->byRef && $p->var instanceof Node\Expr\Variable && \is_string($p->var->name)) {
+                $byRefParams[] = $p->var->name;
             }
         }
 
+        $hasParamOutDoc = $paramOutTags !== [];
+        $hasParamOut = $byRefParams !== [] && ($hasParamOutDoc || $hasInheritance);
+
+        $hasSelfOutDoc = $selfOutType !== null;
+        $hasSelfOut = $isClassMethod && ! $node->isStatic() && ($hasSelfOutDoc || ($hasClassTemplates && $hasRealInheritance));
+
+        $isDirectUnitTest = ($classContext === null);
+        $hasParam = ($isMagicGet || $isMagicCall)
+            || ($isDirectUnitTest && $isClassMethod)
+            || ($paramCount > 0 && (
+                $hasParamOutDoc
+                || ($returnTypeNode !== null && ConditionalChecker::containsConditional($returnTypeNode))
+                || ($selfOutType !== null && ConditionalChecker::containsConditional($selfOutType))
+                || ($isClassMethod && $hasInheritance && ! $isPrivate)
+                || $hasMethodTemplates
+                || $node->attrGroups !== []
+                || self::hasParamDocContracts($resolvedParamTypes)
+                || ($isConstructor && $hasPropertyWithDoc)
+            ));
+
+        if (! $hasParam && ! $hasReturn && ! $hasParamOut && ! $hasSelfOut) {
+            return;
+        }
+
+        $thisArg = self::resolveThisArg($isClassMethod, $node);
+
+        $needsReturnVars = ($hasParam && $paramCount > 0 && (
+            ($isClassMethod && $hasInheritance)
+            || ($returnTypeNode !== null && ConditionalChecker::containsConditional($returnTypeNode))
+            || ($selfOutType !== null && ConditionalChecker::containsConditional($selfOutType))
+            || $hasParamOut
+            || ($isClassMethod && ($isMagicGet || $isMagicCall))
+        ));
+
+        $useDynamicMethodKey = $isClassMethod && ! $isPrivate && ! $isFinalClass;
         $isTrait = $classContext['isTrait'] ?? false;
 
         if (
@@ -204,7 +212,6 @@ final class FunctionContractInjector
             && self::canEliminateSetupScope(
                 $node,
                 $phpDocNode,
-                $docText,
                 $isClassMethod,
                 $isPrivate,
                 $hasRealInheritance,
@@ -226,7 +233,6 @@ final class FunctionContractInjector
         if ($hasParam) {
             $injectedStmts = self::buildParamInjections(
                 $node->params,
-                $docText,
                 $thisArg,
                 $isReadonlyClass,
                 $needsReturnVars,
@@ -286,7 +292,6 @@ final class FunctionContractInjector
     private static function canEliminateSetupScope(
         Node\Stmt\Function_|Node\Stmt\ClassMethod $node,
         ?PhpDocNode $phpDocNode,
-        string $docText,
         bool $isClassMethod,
         bool $isPrivate,
         bool $hasRealInheritance,
@@ -299,7 +304,7 @@ final class FunctionContractInjector
             return false;
         }
 
-        if ($node->attrGroups !== [] || str_contains($docText, ' is ')) {
+        if ($node->attrGroups !== []) {
             return false;
         }
 
@@ -319,13 +324,9 @@ final class FunctionContractInjector
             }
 
             $pName = $param->var->name;
-            $resolvedType = $resolvedParamTypes[$pName] ?? null;
-            $paramDoc = $param->getDocComment() !== null ? $param->getDocComment()->getText() : '';
-            $effectiveDoc = $docText . ' ' . $paramDoc;
-            if (
-                self::isCallableCandidate($param, $effectiveDoc, $resolvedType, $effectiveTemplates)
-                || self::isIterableCandidate($param, $effectiveDoc, $resolvedType, $effectiveTemplates)
-            ) {
+            $pTypeNode = $resolvedParamTypes[$pName] ?? null;
+
+            if (self::isCallableCandidate($param, $pTypeNode, $effectiveTemplates) || self::isIterableCandidate($param, $pTypeNode, $effectiveTemplates)) {
                 return false;
             }
 
@@ -339,7 +340,7 @@ final class FunctionContractInjector
                 continue;
             }
 
-            if (! self::nativeParamSatisfiesDocType($param->type, $resolvedType ?? $paramTag->type)) {
+            if (! self::nativeParamSatisfiesDocType($param->type, $paramTag->type)) {
                 return false;
             }
         }
@@ -800,74 +801,8 @@ final class FunctionContractInjector
         return null;
     }
 
-    private static function hasParamContracts(
-        string $docText,
-        bool $isClassMethod,
-        bool $hasInheritance,
-        int $paramCount,
-        bool $isPrivate,
-        bool $isConstructor,
-        bool $hasPropertyWithDoc,
-        bool $isDirectUnitTest,
-        bool $hasAttributes = false
-    ): bool {
-        if ($paramCount === 0 && ! str_contains($docText, '@template')) {
-            return $isDirectUnitTest && $isClassMethod;
-        }
-
-        if ($isDirectUnitTest && $isClassMethod) {
-            return true;
-        }
-
-        if ($isConstructor && $docText === '' && ! $hasPropertyWithDoc) {
-            return false;
-        }
-
-        if ($isPrivate && $docText === '' && ! ($isConstructor && $hasPropertyWithDoc)) {
-            return false;
-        }
-
-        if (! $hasInheritance && $docText === '' && ! ($isConstructor && $hasPropertyWithDoc) && ! $hasAttributes) {
-            return false;
-        }
-
-        if (str_contains($docText, '@template') || str_contains($docText, '@phpstan-param') || str_contains($docText, '@psalm-param')) {
-            return true;
-        }
-
-        if (str_contains($docText, '@param')) {
-            return self::hasNonMixedParam($docText);
-        }
-
-        return $isClassMethod && (! $isPrivate || ($isConstructor && $hasPropertyWithDoc));
-    }
-
-    private static function hasNonMixedParam(string $docText): bool
-    {
-        if ((int) preg_match_all('/@param\s+([^\s$]+)/', $docText, $matches) === 0) {
-            return false;
-        }
-
-        foreach ($matches[1] as $typeStr) {
-            $unionParts = explode('|', $typeStr);
-            $hasMixed = false;
-            foreach ($unionParts as $part) {
-                if (strtolower(trim($part)) === 'mixed') {
-                    $hasMixed = true;
-
-                    break;
-                }
-            }
-            if (! $hasMixed) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private static function hasReturnContracts(
-        string $docText,
+        ?TypeNode $returnTypeNode,
         bool $isClassMethod,
         bool $hasInheritance,
         bool $isPrivate,
@@ -877,29 +812,8 @@ final class FunctionContractInjector
             return true;
         }
 
-        if ($isPrivate && $docText === '') {
-            return false;
-        }
-
-        if (
-            str_contains($docText, '@template')
-            || str_contains($docText, '@phpstan-return')
-            || str_contains($docText, '@psalm-return')
-            || str_contains($docText, '$this')
-        ) {
-            return true;
-        }
-
-        if (preg_match('/@return\s+([^\s]+)/', $docText, $matches) === 1) {
-            $returnTypeStr = $matches[1];
-            $unionParts = explode('|', $returnTypeStr);
-            foreach ($unionParts as $part) {
-                if (strtolower(trim($part)) === 'mixed') {
-                    return false;
-                }
-            }
-
-            return true;
+        if ($returnTypeNode !== null) {
+            return ! self::isUnconstrainedDocType($returnTypeNode);
         }
 
         if (! $isClassMethod) {
@@ -911,6 +825,37 @@ final class FunctionContractInjector
         }
 
         return ! $isPrivate;
+    }
+
+    /**
+     * @param array<string, TypeNode> $resolvedParamTypes
+     */
+    private static function hasParamDocContracts(array $resolvedParamTypes): bool
+    {
+        foreach ($resolvedParamTypes as $typeNode) {
+            if (! self::isUnconstrainedDocType($typeNode)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function isUnconstrainedDocType(TypeNode $typeNode): bool
+    {
+        if ($typeNode instanceof IdentifierTypeNode) {
+            return strtolower($typeNode->name) === 'mixed';
+        }
+
+        if ($typeNode instanceof UnionTypeNode) {
+            foreach ($typeNode->types as $member) {
+                if ($member instanceof IdentifierTypeNode && strtolower($member->name) === 'mixed') {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static function resolveThisArg(bool $isClassMethod, Node\Stmt\Function_|Node\Stmt\ClassMethod $node): Node\Expr
@@ -964,7 +909,6 @@ final class FunctionContractInjector
      */
     private static function buildParamInjections(
         array $params,
-        string $docText,
         Node\Expr $thisArg,
         bool $isReadonlyClass = false,
         bool $needsReturnVars = false,
@@ -973,8 +917,8 @@ final class FunctionContractInjector
         array $effectiveTemplates = []
     ): array {
         $setupScopeStmts = self::buildSetupScopeStmt($params, $thisArg, $needsReturnVars, $useDynamicMethodKey);
-        $callableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isCallableCandidate'], 'wrapCallable', $isReadonlyClass, $resolvedParamTypes, $effectiveTemplates);
-        $iterableWrappers = self::buildParamWrappers($params, $docText, $thisArg, [self::class, 'isIterableCandidate'], 'wrapIterable', $isReadonlyClass, $resolvedParamTypes, $effectiveTemplates);
+        $callableWrappers = self::buildParamWrappers($params, $thisArg, [self::class, 'isCallableCandidate'], 'wrapCallable', $isReadonlyClass, $resolvedParamTypes, $effectiveTemplates);
+        $iterableWrappers = self::buildParamWrappers($params, $thisArg, [self::class, 'isIterableCandidate'], 'wrapIterable', $isReadonlyClass, $resolvedParamTypes, $effectiveTemplates);
 
         return [...$setupScopeStmts, ...$callableWrappers, ...$iterableWrappers];
     }
@@ -1128,7 +1072,7 @@ final class FunctionContractInjector
 
     /**
      * @param array<Node\Param> $params
-     * @param callable(Node\Param, string, ?TypeNode, array<string, TemplateTagValueNode>): bool $predicate
+     * @param callable(Node\Param, ?TypeNode, array<string, TemplateTagValueNode>): bool $predicate
      * @param array<string, TypeNode> $resolvedParamTypes
      * @param array<string, TemplateTagValueNode> $effectiveTemplates
      *
@@ -1136,7 +1080,6 @@ final class FunctionContractInjector
      */
     private static function buildParamWrappers(
         array $params,
-        string $docText,
         Node\Expr $thisArg,
         callable $predicate,
         string $wrapperMethod,
@@ -1148,11 +1091,13 @@ final class FunctionContractInjector
 
         foreach ($params as $param) {
             $paramName = $param->var instanceof Node\Expr\Variable && \is_string($param->var->name) ? $param->var->name : '';
-            $resolvedType = $paramName !== '' ? ($resolvedParamTypes[$paramName] ?? null) : null;
-            $paramDoc = $param->getDocComment() !== null ? $param->getDocComment()->getText() : '';
-            $effectiveDoc = $docText . ' ' . $paramDoc;
+            if ($paramName === '') {
+                continue;
+            }
 
-            if ($paramName !== '' && $predicate($param, $effectiveDoc, $resolvedType, $effectiveTemplates)) {
+            $paramTypeNode = $resolvedParamTypes[$paramName] ?? null;
+
+            if ($predicate($param, $paramTypeNode, $effectiveTemplates)) {
                 $assignExpr = new Node\Expr\Assign(
                     new Node\Expr\Variable($paramName),
                     new Node\Expr\FuncCall(
@@ -1270,7 +1215,6 @@ final class FunctionContractInjector
      */
     private static function isCallableCandidate(
         Node\Param $param,
-        string $docText,
         ?TypeNode $resolvedParamType = null,
         array $effectiveTemplates = []
     ): bool {
@@ -1282,10 +1226,12 @@ final class FunctionContractInjector
             return self::typeNodeContainsCallable($resolvedParamType, $effectiveTemplates);
         }
 
-        return str_contains($docText, 'callable')
-            || str_contains($docText, 'Closure')
-            || str_contains($docText, 'pure-callable')
-            || str_contains($docText, 'static-closure');
+        $paramDoc = $param->getDocComment()?->getText() ?? '';
+        if ($paramDoc !== '') {
+            return str_contains($paramDoc, 'callable') || str_contains($paramDoc, 'Closure');
+        }
+
+        return false;
     }
 
     /**
@@ -1293,7 +1239,6 @@ final class FunctionContractInjector
      */
     private static function isIterableCandidate(
         Node\Param $param,
-        string $docText,
         ?TypeNode $resolvedParamType = null,
         array $effectiveTemplates = []
     ): bool {
@@ -1305,9 +1250,9 @@ final class FunctionContractInjector
             return self::typeNodeContainsIterable($resolvedParamType, $effectiveTemplates);
         }
 
-        $paramName = $param->var instanceof Node\Expr\Variable && \is_string($param->var->name) ? $param->var->name : '';
-        if ($paramName !== '' && preg_match('/@(?:param|phpstan-param|psalm-param)\s+[^\$]*?\b(?:iterable|Traversable|Generator|Iterator|IteratorAggregate)\b[^\$]*?\$' . preg_quote($paramName, '/') . '\b/i', $docText) === 1) {
-            return true;
+        $paramDoc = $param->getDocComment()?->getText() ?? '';
+        if ($paramDoc !== '') {
+            return (bool) preg_match('/\b(?:iterable|Traversable|Generator|Iterator|IteratorAggregate)\b/i', $paramDoc);
         }
 
         return false;

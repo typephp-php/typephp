@@ -151,6 +151,20 @@ final class ContractVisitor extends NodeVisitorAbstract
     private array $byRefStack = [];
 
     /**
+     * Tracks whether the try-body scope of an active TryCatch node is currently open.
+     *
+     * @var list<bool>
+     */
+    private array $tryCatchScopeStack = [];
+
+    /**
+     * Tracks whether the if-body scope of an active If_ node is currently open.
+     *
+     * @var list<bool>
+     */
+    private array $ifScopeStack = [];
+
+    /**
      * @var array<string, list<string>>
      */
     private array $localClassTemplates = [];
@@ -225,6 +239,26 @@ final class ContractVisitor extends NodeVisitorAbstract
             $this->scopeManager->pushScope(isIsolated: true, initialBindings: $capturedVars);
             $this->registerParamInferredTypes($node->params);
         } elseif ($this->isSoftScopeBoundary($node)) {
+            $this->scopeManager->pushScope(isIsolated: false);
+        } elseif ($node instanceof Node\Stmt\If_) {
+            $this->scopeManager->pushScope(isIsolated: false);
+            $this->ifScopeStack[] = true;
+        } elseif ($node instanceof Node\Stmt\ElseIf_ || $node instanceof Node\Stmt\Else_) {
+            if ($this->ifScopeStack !== [] && end($this->ifScopeStack)) {
+                $this->scopeManager->popScope();
+                array_pop($this->ifScopeStack);
+                $this->ifScopeStack[] = false;
+            }
+            $this->scopeManager->pushScope(isIsolated: false);
+        } elseif ($node instanceof Node\Stmt\TryCatch) {
+            $this->scopeManager->pushScope(isIsolated: false);
+            $this->tryCatchScopeStack[] = true;
+        } elseif ($node instanceof Node\Stmt\Catch_ || $node instanceof Node\Stmt\Finally_) {
+            if ($this->tryCatchScopeStack !== [] && end($this->tryCatchScopeStack)) {
+                $this->scopeManager->popScope();
+                array_pop($this->tryCatchScopeStack);
+                $this->tryCatchScopeStack[] = false;
+            }
             $this->scopeManager->pushScope(isIsolated: false);
         }
 
@@ -406,6 +440,22 @@ final class ContractVisitor extends NodeVisitorAbstract
             }
 
             return $boundaryCheck !== null ? [$node, $boundaryCheck] : null;
+        }
+
+        if ($node instanceof Node\Stmt\ElseIf_ || $node instanceof Node\Stmt\Else_) {
+            $this->scopeManager->popScope();
+        } elseif ($node instanceof Node\Stmt\If_) {
+            $wasActive = $this->ifScopeStack !== [] ? array_pop($this->ifScopeStack) : false;
+            if ($wasActive) {
+                $this->scopeManager->popScope();
+            }
+        } elseif ($node instanceof Node\Stmt\Catch_ || $node instanceof Node\Stmt\Finally_) {
+            $this->scopeManager->popScope();
+        } elseif ($node instanceof Node\Stmt\TryCatch) {
+            $wasActive = $this->tryCatchScopeStack !== [] ? array_pop($this->tryCatchScopeStack) : false;
+            if ($wasActive) {
+                $this->scopeManager->popScope();
+            }
         }
 
         if ($this->isScopeBoundary($node)) {
@@ -2658,14 +2708,12 @@ final class ContractVisitor extends NodeVisitorAbstract
     {
         return $node instanceof Node\Expr\ArrowFunction
             || $node instanceof Node\Stmt\Block
-            || $node instanceof Node\Stmt\If_
-            || $node instanceof Node\Stmt\Else_
-            || $node instanceof Node\Stmt\ElseIf_
             || $node instanceof Node\Stmt\Foreach_
             || $node instanceof Node\Stmt\While_
             || $node instanceof Node\Stmt\For_
             || $node instanceof Node\Stmt\Do_
-            || $node instanceof Node\Stmt\TryCatch;
+            || $node instanceof Node\Stmt\Case_
+            || $node instanceof Node\MatchArm;
     }
 
     private function isScopeBoundary(Node $node): bool
