@@ -28,6 +28,21 @@ final class ScopeManager
     private array $inferredStack = [[]];
 
     /**
+     * In-memory stack of property reference aliases ($ref = &$obj->prop or $ref = &Cls::$prop).
+     *
+     * @var list<array<string, array{targetExpr: Node\Expr, propName: string}>>
+     */
+    private array $propertyAliasStack = [[]];
+
+    /**
+     * Tracks variable names whose scopeStack entry came from AssignRef alias deduction
+     * (as opposed to an explicit @var annotation).
+     *
+     * @var list<array<string, true>>
+     */
+    private array $aliasDeducedStack = [[]];
+
+    /**
      * Tracks which scope frames are isolated boundaries (functions, methods, closures).
      *
      * @var list<bool>
@@ -46,19 +61,72 @@ final class ScopeManager
     {
         unset($this->scopeStack[$this->depth][$varName]);
         unset($this->inferredStack[$this->depth][$varName]);
+        unset($this->propertyAliasStack[$this->depth][$varName]);
+        unset($this->aliasDeducedStack[$this->depth][$varName]);
+    }
+
+    public function registerPropertyAlias(string $varName, Node\Expr $targetExpr, string $propName): void
+    {
+        $this->propertyAliasStack[$this->depth][$varName] = [
+            'targetExpr' => $targetExpr,
+            'propName' => $propName,
+        ];
+    }
+
+    public function unregisterPropertyAlias(string $varName): void
+    {
+        unset($this->propertyAliasStack[$this->depth][$varName]);
+    }
+
+    /**
+     * @return array{targetExpr: Node\Expr, propName: string}|null
+     */
+    public function getPropertyAlias(string $varName): ?array
+    {
+        for ($i = $this->depth; $i >= 0; $i--) {
+            if (isset($this->propertyAliasStack[$i][$varName])) {
+                return $this->propertyAliasStack[$i][$varName];
+            }
+
+            if ($this->isolatedStack[$i]) {
+                break;
+            }
+        }
+
+        return null;
     }
 
     /**
      * Programmatically registers a variable's type into the current scope frame.
      * Preserves explicit inline @var declarations in the current frame unless overwrite is true.
      */
-    public function registerVarType(string $varName, string $typeString, bool $overwrite = false): void
+    public function registerVarType(string $varName, string $typeString, bool $overwrite = false, bool $isAlias = false): void
     {
         if (! $overwrite && isset($this->scopeStack[$this->depth][$varName])) {
             return;
         }
 
         $this->scopeStack[$this->depth][$varName] = $typeString;
+        if ($isAlias) {
+            $this->aliasDeducedStack[$this->depth][$varName] = true;
+        } else {
+            unset($this->aliasDeducedStack[$this->depth][$varName]);
+        }
+    }
+
+    public function isAliasDeducedVar(string $varName): bool
+    {
+        for ($i = $this->depth; $i >= 0; $i--) {
+            if (isset($this->scopeStack[$i][$varName])) {
+                return isset($this->aliasDeducedStack[$i][$varName]);
+            }
+
+            if ($this->isolatedStack[$i]) {
+                break;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -88,6 +156,8 @@ final class ScopeManager
         $this->depth++;
         $this->scopeStack[] = $initialBindings;
         $this->inferredStack[] = [];
+        $this->propertyAliasStack[] = [];
+        $this->aliasDeducedStack[] = [];
         $this->isolatedStack[] = $isIsolated;
     }
 
@@ -99,6 +169,8 @@ final class ScopeManager
         if ($this->depth > 0) {
             array_pop($this->scopeStack);
             array_pop($this->inferredStack);
+            array_pop($this->propertyAliasStack);
+            array_pop($this->aliasDeducedStack);
             array_pop($this->isolatedStack);
             $this->depth--;
         }
@@ -122,7 +194,12 @@ final class ScopeManager
                 $typeString = (string) $varTag->type;
                 $varName = ltrim($varTag->variableName, '$');
 
-                if ($varName === '' && $expr instanceof Node\Expr\Assign && $expr->var instanceof Node\Expr\Variable && \is_string($expr->var->name)) {
+                if (
+                    $varName === ''
+                    && ($expr instanceof Node\Expr\Assign || $expr instanceof Node\Expr\AssignRef)
+                    && $expr->var instanceof Node\Expr\Variable
+                    && \is_string($expr->var->name)
+                ) {
                     $varName = $expr->var->name;
                 } elseif ($varName === '' && $expr instanceof Node\Expr\Variable && \is_string($expr->name)) {
                     $varName = $expr->name;
@@ -130,6 +207,7 @@ final class ScopeManager
 
                 if ($varName !== '') {
                     $this->scopeStack[$this->depth][$varName] = $typeString;
+                    unset($this->aliasDeducedStack[$this->depth][$varName]);
                 }
             }
         } catch (\Throwable $e) {

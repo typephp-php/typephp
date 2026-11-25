@@ -224,7 +224,7 @@ final class ContractVisitor extends NodeVisitorAbstract
 
         if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
             $this->scopeManager->pushScope(isIsolated: true);
-            $this->registerParamInferredTypes($node->params);
+            $this->registerParamInferredTypes($node->params, $node->getDocComment()?->getText());
         } elseif ($node instanceof Node\Expr\Closure) {
             $capturedVars = [];
             foreach ($node->uses as $u) {
@@ -237,7 +237,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                 }
             }
             $this->scopeManager->pushScope(isIsolated: true, initialBindings: $capturedVars);
-            $this->registerParamInferredTypes($node->params);
+            $this->registerParamInferredTypes($node->params, $node->getDocComment()?->getText());
         } elseif ($this->isSoftScopeBoundary($node)) {
             $this->scopeManager->pushScope(isIsolated: false);
         } elseif ($node instanceof Node\Stmt\If_) {
@@ -336,7 +336,11 @@ final class ContractVisitor extends NodeVisitorAbstract
 
             return $this->handleAssign($node);
         } elseif ($node instanceof Node\Expr\AssignRef) {
-            $this->handleAssignRef($node);
+            if ($node->getAttribute('typephp_wrapped') === true) {
+                return null;
+            }
+
+            return $this->handleAssignRef($node);
         }
 
         return null;
@@ -1893,6 +1897,18 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $this->scopeManager->unregisterInferredVarType($varName);
             }
 
+            $propAlias = $this->scopeManager->getPropertyAlias($varName);
+            if ($propAlias !== null) {
+                $node->expr = $this->wrapPropertyCheck(
+                    $node->expr,
+                    clone $propAlias['targetExpr'],
+                    $propAlias['propName'],
+                    $node->var->getStartLine()
+                );
+
+                return null;
+            }
+
             $typeString = $this->scopeManager->getVarTypeFromScope($varName);
 
             if ($typeString !== null) {
@@ -2035,19 +2051,100 @@ final class ContractVisitor extends NodeVisitorAbstract
         return [];
     }
 
-    private function handleAssignRef(Node\Expr\AssignRef $node): void
+    private function handleAssignRef(Node\Expr\AssignRef $node): ?Node
     {
-        if (! ($node->var instanceof Node\Expr\Variable) || ! \is_string($node->var->name)) {
+        $line = $node->var->getStartLine();
+        $cleanTarget = $node->var;
+        $cleanRhs = $node->expr;
+
+        $isVarTarget = $cleanTarget instanceof Node\Expr\Variable && \is_string($cleanTarget->name);
+        $explicitVarType = ($isVarTarget && ! $this->scopeManager->isAliasDeducedVar($cleanTarget->name))
+            ? $this->scopeManager->getVarTypeFromScope($cleanTarget->name)
+            : null;
+
+        $needsPreCheck = $isVarTarget ? ($explicitVarType !== null) : true;
+        /** @var list<Node\Expr\Assign|Node\Expr\AssignRef> $preAssignments */
+        $preAssignments = [];
+        $wrappedCheck = null;
+
+        if ($needsPreCheck) {
+            if ($this->targetHasSideEffects($cleanTarget)) {
+                $cleanTarget = $this->hoistImpureTarget($cleanTarget, $preAssignments);
+                $this->markWriteContext($cleanTarget);
+            }
+
+            if ($this->targetHasSideEffects($cleanRhs)) {
+                if ($cleanRhs instanceof Node\Expr\CallLike) {
+                    $tempVar = new Node\Expr\Variable('__typephpTgt' . $this->hoistTempCounter++);
+                    $preAssignments[] = new Node\Expr\AssignRef($tempVar, $cleanRhs);
+                    $cleanRhs = new Node\Expr\Variable($tempVar->name);
+                } else {
+                    $cleanRhs = $this->hoistImpureTarget($cleanRhs, $preAssignments);
+                }
+                $this->markWriteContext($cleanRhs);
+            }
+
+            if ($isVarTarget && $explicitVarType !== null) {
+                /** @var Node\Expr\Variable $cleanTarget */
+                /** @var string $varName */
+                $varName = $cleanTarget->name;
+                $wrappedCheck = $this->wrapVariableCheck(clone $cleanRhs, $explicitVarType, $varName, $line);
+            } else {
+                $wrappedCheck = $this->wrapTargetMutation($cleanTarget, clone $cleanRhs, $line);
+            }
+        }
+
+        $this->updateAssignRefAliasScope($cleanTarget, $cleanRhs, $explicitVarType !== null);
+
+        if ($wrappedCheck === null) {
+            return null;
+        }
+
+        $assignRef = ($cleanTarget === $node->var && $cleanRhs === $node->expr)
+            ? $node
+            : new Node\Expr\AssignRef($cleanTarget, $cleanRhs);
+        $assignRef->setAttribute('typephp_wrapped', true);
+
+        if ($wrappedCheck instanceof Node\Expr\Ternary) {
+            $wrappedCheck->else = $assignRef;
+
+            return $this->wrapWithPreEvaluations($preAssignments, $wrappedCheck);
+        }
+
+        return $this->wrapWithPreEvaluations($preAssignments, $assignRef);
+    }
+
+    private function updateAssignRefAliasScope(Node\Expr $target, Node\Expr $rhs, bool $hasExplicitTargetVarType): void
+    {
+        if (! ($target instanceof Node\Expr\Variable) || ! \is_string($target->name)) {
             return;
         }
 
-        $aliasName = $node->var->name;
-        $deducedType = null;
+        $aliasName = $target->name;
 
-        if ($node->expr instanceof Node\Expr\Variable && \is_string($node->expr->name)) {
-            $deducedType = $this->scopeManager->getVarTypeFromScope($node->expr->name)
-                ?? $this->scopeManager->getInferredVarType($node->expr->name);
-        } elseif (($chainInfo = $this->extractMemberChain($node->expr)) !== null) {
+        if ($hasExplicitTargetVarType) {
+            $this->scopeManager->unregisterPropertyAlias($aliasName);
+
+            return;
+        }
+
+        if ($rhs instanceof Node\Expr\Variable && \is_string($rhs->name)) {
+            $rhsPropAlias = $this->scopeManager->getPropertyAlias($rhs->name);
+            if ($rhsPropAlias !== null) {
+                $this->scopeManager->unregisterVarType($aliasName);
+                $this->scopeManager->registerPropertyAlias($aliasName, clone $rhsPropAlias['targetExpr'], $rhsPropAlias['propName']);
+
+                return;
+            }
+        }
+
+        $deducedType = null;
+        $ownerTypeForDeduction = null;
+
+        if ($rhs instanceof Node\Expr\Variable && \is_string($rhs->name)) {
+            $deducedType = $this->scopeManager->getVarTypeFromScope($rhs->name)
+                ?? $this->scopeManager->getInferredVarType($rhs->name);
+        } elseif (($chainInfo = $this->extractMemberChain($rhs)) !== null) {
             $root = $chainInfo['root'];
             $chain = $chainInfo['chain'];
             $currType = null;
@@ -2065,15 +2162,92 @@ final class ContractVisitor extends NodeVisitorAbstract
             }
 
             if (\is_string($currType) && $currType !== '') {
+                $ownerTypeForDeduction = $currType;
                 $deducedType = $this->deduceMemberChainType($currType, $chain);
             }
         }
 
-        if (\is_string($deducedType) && $deducedType !== '') {
-            $this->scopeManager->registerVarType($aliasName, $deducedType, overwrite: true);
+        $hasUnresolvableTemplate = $deducedType !== null
+            && $ownerTypeForDeduction !== null
+            && $this->hasUnresolvableOwnerTemplate($deducedType, $ownerTypeForDeduction, $rhs);
+
+        if ($hasUnresolvableTemplate || $deducedType === null) {
+            if (
+                $rhs instanceof Node\Expr\PropertyFetch
+                && $rhs->name instanceof Node\Identifier
+                && ! $this->targetHasSideEffects($rhs->var)
+            ) {
+                $rootType = null;
+                if ($rhs->var instanceof Node\Expr\Variable && \is_string($rhs->var->name)) {
+                    $rootType = $this->scopeManager->getVarTypeFromScope($rhs->var->name)
+                        ?? $this->scopeManager->getInferredVarType($rhs->var->name);
+                }
+
+                if ($rootType === null || ! str_contains($rootType, '{')) {
+                    $this->scopeManager->unregisterVarType($aliasName);
+                    $this->scopeManager->registerPropertyAlias($aliasName, clone $rhs->var, $rhs->name->toString());
+
+                    return;
+                }
+            } elseif (
+                $rhs instanceof Node\Expr\StaticPropertyFetch
+                && $rhs->name instanceof Node\VarLikeIdentifier
+                && ! $this->targetHasSideEffects($rhs->class)
+            ) {
+                $classArg = $this->resolveStaticClassArg($rhs->class);
+                $this->scopeManager->unregisterVarType($aliasName);
+                $this->scopeManager->registerPropertyAlias($aliasName, $classArg, $rhs->name->toString());
+
+                return;
+            }
+        }
+
+        $this->scopeManager->unregisterPropertyAlias($aliasName);
+
+        if (\is_string($deducedType) && $deducedType !== '' && ! $hasUnresolvableTemplate) {
+            $this->scopeManager->registerVarType($aliasName, $deducedType, overwrite: true, isAlias: true);
         } else {
             $this->scopeManager->unregisterVarType($aliasName);
         }
+    }
+
+    private function hasUnresolvableOwnerTemplate(string $deducedType, string $ownerType, Node\Expr $rhs): bool
+    {
+        $curr = $rhs;
+        while ($curr instanceof Node\Expr\ArrayDimFetch || $curr instanceof Node\Expr\PropertyFetch) {
+            $curr = $curr->var;
+        }
+
+        if ($curr instanceof Node\Expr\Variable && $curr->name === 'this') {
+            return false;
+        }
+
+        $baseClass = ($pos = strpos($ownerType, '<')) !== false ? trim(substr($ownerType, 0, $pos)) : trim($ownerType);
+        $baseClass = ltrim($baseClass, '\\');
+        if ($baseClass === '') {
+            return false;
+        }
+
+        $shortBase = ($slashPos = strrpos($baseClass, '\\')) !== false ? substr($baseClass, $slashPos + 1) : $baseClass;
+        $ownerTemplates = $this->localClassTemplates[$baseClass] ?? ($this->localClassTemplates[$shortBase] ?? null);
+
+        if (
+            $ownerTemplates === null
+            && (class_exists($baseClass, false) || interface_exists($baseClass, false) || trait_exists($baseClass, false))
+        ) {
+            $ownerTemplates = array_keys(DocblockParser::parseClassTemplates($baseClass));
+        }
+
+        if ($ownerTemplates === null || $ownerTemplates === []) {
+            return false;
+        }
+
+        $parsed = $this->parseUnsetTypeCached($deducedType);
+        if ($parsed === null) {
+            return false;
+        }
+
+        return DocblockParser::typeReferencesTemplate($parsed, array_fill_keys($ownerTemplates, true));
     }
 
     private function handleForeachTypePropagation(Node\Stmt\Foreach_ $node): void
@@ -2238,7 +2412,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     }
 
     /**
-     * @param list<Node\Expr\Assign> $preAssignments
+     * @param list<Node\Expr\Assign|Node\Expr\AssignRef> $preAssignments
      */
     private function hoistImpureTarget(Node\Expr $target, array &$preAssignments): Node\Expr
     {
@@ -2290,7 +2464,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     }
 
     /**
-     * @param list<Node\Expr\Assign> $preAssignments
+     * @param list<Node\Expr\Assign|Node\Expr\AssignRef> $preAssignments
      */
     private function createHoistedTemp(Node\Expr $expr, array &$preAssignments): Node\Expr\Variable
     {
@@ -2301,7 +2475,7 @@ final class ContractVisitor extends NodeVisitorAbstract
     }
 
     /**
-     * @param list<Node\Expr\Assign> $preAssignments
+     * @param list<Node\Expr\Assign|Node\Expr\AssignRef> $preAssignments
      */
     private function wrapWithPreEvaluations(array $preAssignments, Node\Expr $expr): Node\Expr
     {
@@ -2332,6 +2506,17 @@ final class ContractVisitor extends NodeVisitorAbstract
     {
         if ($target instanceof Node\Expr\Variable && \is_string($target->name)) {
             $varName = $target->name;
+
+            $propAlias = $this->scopeManager->getPropertyAlias($varName);
+            if ($propAlias !== null) {
+                return $this->wrapPropertyCheck(
+                    $valueExpr,
+                    clone $propAlias['targetExpr'],
+                    $propAlias['propName'],
+                    $line
+                );
+            }
+
             $typeString = $this->scopeManager->getVarTypeFromScope($varName);
 
             if ($typeString !== null) {
@@ -2343,6 +2528,18 @@ final class ContractVisitor extends NodeVisitorAbstract
 
             if ($root instanceof Node\Expr\Variable && \is_string($root->name)) {
                 $varName = $root->name;
+
+                $propAlias = $this->scopeManager->getPropertyAlias($varName);
+                if ($propAlias !== null) {
+                    return $this->wrapPropertyMemberAssignCheck(
+                        $valueExpr,
+                        clone $propAlias['targetExpr'],
+                        $propAlias['propName'],
+                        $chain,
+                        $line
+                    );
+                }
+
                 $typeString = $this->scopeManager->getVarTypeFromScope($varName);
 
                 if ($typeString !== null && $this->shouldHandleMemberAssignCheck($typeString, $chain)) {
@@ -2468,13 +2665,29 @@ final class ContractVisitor extends NodeVisitorAbstract
      *
      * @param array<Node\Param> $params
      */
-    private function registerParamInferredTypes(array $params): void
+    private function registerParamInferredTypes(array $params, ?string $docText = null): void
     {
+        $docParamTypes = [];
+        if ($docText !== null && str_contains($docText, '@param')) {
+            try {
+                $phpDocNode = DocblockExtractor::parseDocString($docText);
+                foreach (DocblockExtractor::getParamTags($phpDocNode) as $pName => $pTag) {
+                    $docParamTypes[$pName] = (string) $pTag->type;
+                }
+            } catch (\Throwable) {
+            }
+        }
+
         foreach ($params as $param) {
             if ($param->var instanceof Node\Expr\Variable && \is_string($param->var->name) && $param->type instanceof Node\Name) {
-                $pClass = $this->resolveClassNameFromNode($param->type);
-                if ($pClass !== null) {
-                    $this->scopeManager->registerInferredVarType($param->var->name, $pClass);
+                $pName = $param->var->name;
+                if (isset($docParamTypes[$pName])) {
+                    $this->scopeManager->registerInferredVarType($pName, $docParamTypes[$pName]);
+                } else {
+                    $pClass = $this->resolveClassNameFromNode($param->type);
+                    if ($pClass !== null) {
+                        $this->scopeManager->registerInferredVarType($pName, $pClass);
+                    }
                 }
             }
         }
