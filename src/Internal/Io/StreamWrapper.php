@@ -423,78 +423,85 @@ final class StreamWrapper implements StreamWrapperInterface
             return $this->openDirectHandle($path, $mode, $options, $openedPath);
         }
 
+        $wasRegistered = self::$isRegistered;
+        $missingTarget = null;
+        $success = false;
         self::unregister();
 
-        if (! $useIncludePath && isset(self::$realpathCache[$path])) {
-            $resolvedPath = self::$realpathCache[$path];
-        } else {
-            $resolvedPath = self::silent(static function () use ($path, $useIncludePath): string|false {
-                $real = realpath($path);
-                if ($real !== false) {
-                    return $real;
-                }
-
-                if ($useIncludePath) {
-                    $resolved = stream_resolve_include_path($path);
-                    if ($resolved !== false) {
-                        $realResolved = realpath($resolved);
-
-                        return $realResolved !== false ? $realResolved : $resolved;
+        try {
+            if (! $useIncludePath && isset(self::$realpathCache[$path])) {
+                $resolvedPath = self::$realpathCache[$path];
+            } else {
+                $resolvedPath = self::silent(static function () use ($path, $useIncludePath): string|false {
+                    $real = realpath($path);
+                    if ($real !== false) {
+                        return $real;
                     }
+
+                    if ($useIncludePath) {
+                        $resolved = stream_resolve_include_path($path);
+                        if ($resolved !== false) {
+                            $realResolved = realpath($resolved);
+
+                            return $realResolved !== false ? $realResolved : $resolved;
+                        }
+                    }
+
+                    return false;
+                });
+                if (! $useIncludePath && $resolvedPath !== false) {
+                    self::$realpathCache[$path] = $resolvedPath;
+                }
+            }
+
+            if ($resolvedPath === false || ! self::isApplicationFile($path, $resolvedPath)) {
+                if (! $useIncludePath && $resolvedPath !== false) {
+                    self::$bypassedPathCache[$path] = true;
                 }
 
-                return false;
-            });
-            if (! $useIncludePath && $resolvedPath !== false) {
-                self::$realpathCache[$path] = $resolvedPath;
-            }
-        }
-
-        if ($resolvedPath === false || ! self::isApplicationFile($path, $resolvedPath)) {
-            if (! $useIncludePath && $resolvedPath !== false) {
-                self::$bypassedPathCache[$path] = true;
-            }
-
-            $target = ($resolvedPath !== false) ? $resolvedPath : $path;
-            /** @var resource|false $handle */
-            $handle = self::silent(
-                fn () => ($this->context !== null)
-                    ? fopen($target, $mode, $useIncludePath, $this->context)
-                    : fopen($target, $mode, $useIncludePath)
-            );
-            $this->handle = $handle !== false ? $handle : null;
-            $this->eof = false;
-            if ($this->handle !== null) {
-                if ($resolvedPath !== false) {
-                    $openedPath = $resolvedPath;
+                $target = ($resolvedPath !== false) ? $resolvedPath : $path;
+                /** @var resource|false $handle */
+                $handle = self::silent(
+                    fn () => ($this->context !== null)
+                        ? fopen($target, $mode, $useIncludePath, $this->context)
+                        : fopen($target, $mode, $useIncludePath)
+                );
+                $this->handle = $handle !== false ? $handle : null;
+                $this->eof = false;
+                if ($this->handle !== null) {
+                    if ($resolvedPath !== false) {
+                        $openedPath = $resolvedPath;
+                    } else {
+                        $meta = stream_get_meta_data($this->handle);
+                        if (isset($meta['uri']) && $meta['uri'] !== '') {
+                            $openedPath = $meta['uri'];
+                        }
+                    }
+                    $success = true;
                 } else {
-                    $meta = stream_get_meta_data($this->handle);
-                    if (isset($meta['uri']) && $meta['uri'] !== '') {
-                        $openedPath = $meta['uri'];
+                    $missingTarget = $target;
+                }
+            } else {
+                $success = self::$cacheEnabled
+                    ? $this->openCachedStream($resolvedPath, $mode)
+                    : $this->openMemoryStream($resolvedPath);
+
+                if ($success) {
+                    $openedPath = $resolvedPath;
+                    if (self::shouldTrackTelemetry()) {
+                        self::$instrumentedFiles[$resolvedPath] = true;
                     }
                 }
             }
-            self::register();
-
-            if ($this->handle === null && ! self::isPharCall()) {
-                trigger_error("include({$target}): Failed to open stream: No such file or directory", E_USER_WARNING);
-            }
-
-            return $this->handle !== null;
-        }
-
-        $success = self::$cacheEnabled
-            ? $this->openCachedStream($resolvedPath, $mode)
-            : $this->openMemoryStream($resolvedPath);
-
-        if ($success) {
-            $openedPath = $resolvedPath;
-            if (self::shouldTrackTelemetry()) {
-                self::$instrumentedFiles[$resolvedPath] = true;
+        } finally {
+            if ($wasRegistered) {
+                self::register();
             }
         }
 
-        self::register();
+        if ($missingTarget !== null && ! self::isPharCall()) {
+            trigger_error("include({$missingTarget}): Failed to open stream: No such file or directory", E_USER_WARNING);
+        }
 
         return $success;
     }
@@ -525,34 +532,41 @@ final class StreamWrapper implements StreamWrapperInterface
         $useIncludePath = ($options & STREAM_USE_PATH) !== 0;
         $isWriteMode = strpbrk($mode, 'waxc+') !== false;
 
+        $wasRegistered = self::$isRegistered;
         self::unregister();
-        /** @var resource|false $handle */
-        $handle = self::silent(
-            fn () => ($this->context !== null)
-                ? fopen($targetFile, $mode, $useIncludePath, $this->context)
-                : fopen($targetFile, $mode, $useIncludePath)
-        );
-        $this->handle = $handle !== false ? $handle : null;
-        $this->eof = false;
 
-        if ($this->handle !== null) {
-            if ($useIncludePath || $isInclude) {
-                $meta = stream_get_meta_data($this->handle);
-                if (isset($meta['uri']) && $meta['uri'] !== '') {
-                    $openedPath = $meta['uri'];
+        try {
+            /** @var resource|false $handle */
+            $handle = self::silent(
+                fn () => ($this->context !== null)
+                    ? fopen($targetFile, $mode, $useIncludePath, $this->context)
+                    : fopen($targetFile, $mode, $useIncludePath)
+            );
+            $this->handle = $handle !== false ? $handle : null;
+            $this->eof = false;
+
+            if ($this->handle !== null) {
+                if ($useIncludePath || $isInclude) {
+                    $meta = stream_get_meta_data($this->handle);
+                    if (isset($meta['uri']) && $meta['uri'] !== '') {
+                        $openedPath = $meta['uri'];
+                    }
+                }
+
+                if ($isWriteMode) {
+                    $this->openedRawPath = $targetFile;
+                    $this->openedNormalizedPath = str_replace('\\', '/', $targetFile);
+                    $resolvedWrite = self::silent(static fn () => realpath($targetFile));
+                    $this->openedResolvedPath = ($resolvedWrite !== false && $resolvedWrite !== $targetFile) ? $resolvedWrite : null;
+                    $this->wasWritten = true;
+                    $this->invalidateOpenedWritePaths();
                 }
             }
-
-            if ($isWriteMode) {
-                $this->openedRawPath = $targetFile;
-                $this->openedNormalizedPath = str_replace('\\', '/', $targetFile);
-                $resolvedWrite = self::silent(static fn () => realpath($targetFile));
-                $this->openedResolvedPath = ($resolvedWrite !== false && $resolvedWrite !== $targetFile) ? $resolvedWrite : null;
-                $this->wasWritten = true;
-                $this->invalidateOpenedWritePaths();
+        } finally {
+            if ($wasRegistered) {
+                self::register();
             }
         }
-        self::register();
 
         if ($this->handle === null && ! self::isPharCall()) {
             $action = $isInclude ? 'include' : 'fopen';
@@ -757,10 +771,17 @@ final class StreamWrapper implements StreamWrapperInterface
             return false;
         }
 
+        $wasRegistered = self::$isRegistered;
         self::unregister();
-        /** @var array<int|string, int>|false $result */
-        $result = self::silent(static fn () => $isLink ? @lstat($path) : @stat($path));
-        self::register();
+
+        try {
+            /** @var array<int|string, int>|false $result */
+            $result = self::silent(static fn () => $isLink ? @lstat($path) : @stat($path));
+        } finally {
+            if ($wasRegistered) {
+                self::register();
+            }
+        }
 
         if ($result !== false) {
             $isPhp = str_ends_with($normalized, '.php') || str_ends_with(strtolower($normalized), '.php');
@@ -791,35 +812,49 @@ final class StreamWrapper implements StreamWrapperInterface
             self::$bypassedPathCache[$path]
         );
 
+        $wasRegistered = self::$isRegistered;
         self::unregister();
-        $result = false;
-        if ($option === STREAM_META_TOUCH) {
-            /** @var array{0?: int, 1?: int} $valueArray */
-            $valueArray = \is_array($value) ? $value : [];
-            $time = $valueArray[0] ?? time();
-            $atime = $valueArray[1] ?? $time;
-            $result = (bool) self::silent(fn () => @touch($path, (int) $time, (int) $atime));
-        } elseif ($option === STREAM_META_ACCESS) {
-            /** @var int $mode */
-            $mode = \is_int($value) ? $value : 0777;
-            $result = (bool) self::silent(fn () => @chmod($path, $mode));
+
+        try {
+            $result = false;
+            if ($option === STREAM_META_TOUCH) {
+                /** @var array{0?: int, 1?: int} $valueArray */
+                $valueArray = \is_array($value) ? $value : [];
+                $time = $valueArray[0] ?? time();
+                $atime = $valueArray[1] ?? $time;
+                $result = (bool) self::silent(fn () => @touch($path, (int) $time, (int) $atime));
+            } elseif ($option === STREAM_META_ACCESS) {
+                /** @var int $mode */
+                $mode = \is_int($value) ? $value : 0777;
+                $result = (bool) self::silent(fn () => @chmod($path, $mode));
+            }
+        } finally {
+            if ($wasRegistered) {
+                self::register();
+            }
         }
-        self::register();
 
         return $result;
     }
 
     public function dir_opendir(string $path, int $options): bool
     {
+        $wasRegistered = self::$isRegistered;
         self::unregister();
-        /** @var resource|false $dh */
-        $dh = self::silent(
-            fn () => ($this->context !== null)
-                ? @opendir($path, $this->context)
-                : @opendir($path)
-        );
-        $this->dirHandle = $dh !== false ? $dh : null;
-        self::register();
+
+        try {
+            /** @var resource|false $dh */
+            $dh = self::silent(
+                fn () => ($this->context !== null)
+                    ? @opendir($path, $this->context)
+                    : @opendir($path)
+            );
+            $this->dirHandle = $dh !== false ? $dh : null;
+        } finally {
+            if ($wasRegistered) {
+                self::register();
+            }
+        }
 
         return $this->dirHandle !== null;
     }
@@ -865,11 +900,18 @@ final class StreamWrapper implements StreamWrapperInterface
             self::$bypassedPathCache[$path]
         );
 
+        $wasRegistered = self::$isRegistered;
         self::unregister();
-        $result = ($this->context !== null)
-            ? @mkdir($path, $mode, ($options & STREAM_MKDIR_RECURSIVE) !== 0, $this->context)
-            : @mkdir($path, $mode, ($options & STREAM_MKDIR_RECURSIVE) !== 0);
-        self::register();
+
+        try {
+            $result = ($this->context !== null)
+                ? @mkdir($path, $mode, ($options & STREAM_MKDIR_RECURSIVE) !== 0, $this->context)
+                : @mkdir($path, $mode, ($options & STREAM_MKDIR_RECURSIVE) !== 0);
+        } finally {
+            if ($wasRegistered) {
+                self::register();
+            }
+        }
 
         return $result;
     }
@@ -885,11 +927,18 @@ final class StreamWrapper implements StreamWrapperInterface
             self::$bypassedPathCache[$path]
         );
 
+        $wasRegistered = self::$isRegistered;
         self::unregister();
-        $result = ($this->context !== null)
-            ? rmdir($path, $this->context)
-            : rmdir($path);
-        self::register();
+
+        try {
+            $result = ($this->context !== null)
+                ? rmdir($path, $this->context)
+                : rmdir($path);
+        } finally {
+            if ($wasRegistered) {
+                self::register();
+            }
+        }
 
         return $result;
     }
@@ -905,11 +954,18 @@ final class StreamWrapper implements StreamWrapperInterface
             self::$bypassedPathCache[$path]
         );
 
+        $wasRegistered = self::$isRegistered;
         self::unregister();
-        $result = ($this->context !== null)
-            ? unlink($path, $this->context)
-            : unlink($path);
-        self::register();
+
+        try {
+            $result = ($this->context !== null)
+                ? unlink($path, $this->context)
+                : unlink($path);
+        } finally {
+            if ($wasRegistered) {
+                self::register();
+            }
+        }
 
         return $result;
     }
@@ -931,11 +987,18 @@ final class StreamWrapper implements StreamWrapperInterface
             self::$bypassedPathCache[$pathTo]
         );
 
+        $wasRegistered = self::$isRegistered;
         self::unregister();
-        $result = ($this->context !== null)
-            ? rename($pathFrom, $pathTo, $this->context)
-            : rename($pathFrom, $pathTo);
-        self::register();
+
+        try {
+            $result = ($this->context !== null)
+                ? rename($pathFrom, $pathTo, $this->context)
+                : rename($pathFrom, $pathTo);
+        } finally {
+            if ($wasRegistered) {
+                self::register();
+            }
+        }
 
         return $result;
     }
