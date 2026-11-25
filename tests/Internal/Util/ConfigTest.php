@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use TypePHP\Internal\Diagnostic\ErrorMessage;
+use TypePHP\Internal\RuntimeTypeChecker;
 use TypePHP\Internal\Util\Config;
 
 function cleanTypePhpEnvVariables(): void
@@ -409,6 +411,43 @@ describe('Config Unit Tests', function () {
             expect(Config::isRedactValuesEnabled())->toBeFalse();
 
             unset($_SERVER['TYPEPHP_REDACT_VALUES']);
+        });
+
+        test('syncs RuntimeTypeChecker::$isEnabled when TYPEPHP_DISABLE or TYPEPHP_ENABLED is set before Config::get() / Config::set()', function () {
+            $_ENV['TYPEPHP_DISABLE'] = 'true';
+            Config::reset();
+
+            Config::get();
+
+            expect(RuntimeTypeChecker::$isEnabled)->toBeFalse()
+                ->and(RuntimeTypeChecker::checkVariable(-5, 'positive-int', 'age', __FILE__))->toBe(-5)
+            ;
+
+            unset($_ENV['TYPEPHP_DISABLE']);
+            $_ENV['TYPEPHP_ENABLED'] = 'false';
+
+            Config::set(['enabled' => true]);
+
+            expect(RuntimeTypeChecker::$isEnabled)->toBeFalse()
+                ->and(RuntimeTypeChecker::checkVariable(-5, 'positive-int', 'age', __FILE__))->toBe(-5)
+            ;
+        });
+
+        test('syncs RuntimeTypeChecker::$isEnabled when Config::isEnabled() observes Dotenv changes after boot', function () {
+            Config::get();
+            expect(RuntimeTypeChecker::$isEnabled)->toBeTrue();
+
+            $_ENV['TYPEPHP_DISABLE'] = 'true';
+            expect(Config::isEnabled())->toBeFalse()
+                ->and(RuntimeTypeChecker::$isEnabled)->toBeFalse()
+                ->and(RuntimeTypeChecker::checkVariable(-5, 'positive-int', 'age', __FILE__))->toBe(-5)
+            ;
+
+            $_ENV['TYPEPHP_DISABLE'] = 'false';
+            expect(Config::isEnabled())->toBeTrue()
+                ->and(RuntimeTypeChecker::$isEnabled)->toBeTrue()
+                ->and(RuntimeTypeChecker::checkVariable(-5, 'positive-int', 'age', __FILE__))->toBeInstanceOf(ErrorMessage::class)
+            ;
         });
     });
 
