@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Generics;
 
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFalseNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFloatNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprNullNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprTrueNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;
@@ -38,7 +42,31 @@ use TypePHP\Internal\Util\StubManager;
 use WeakMap;
 
 /**
- * Manages generic template bindings for object instances (via WeakMap) and static/method call stack frames.
+ * Manages reified generic template bindings for object instances (via WeakMap)
+ * and active function/method call stack frames, along with variance and inheritance resolution.
+ *
+ * Performance & Mechanical Sympathy Architecture:
+ * Generic binding and variance checks run frequently across constructor, parameter, property,
+ * and return boundaries. This class minimizes allocations and reflection overhead via:
+ *
+ * - GC-safe `WeakMap` instance storage (`$instanceTemplateBindings`, `$fallbackBoundTemplates`)
+ *   paired with flat O(1) top call frames (`$topCallFrame`, `$topCallThis`) that avoid nested
+ *   stack operations on non-recursive calls.
+ * - Pre-compiled binding plans (`$compiledNodeBindPlanCache`, `$compiledRelativeNodeBindPlanCache`,
+ *   `$compiledBindPlanBySigCache`, `$compiledUnionMembersCache`) and `WeakMap`-memoized
+ *   `key-of`/`value-of` expansions (`$expandedKeyOrValueOfCache`) so repeated checks verify
+ *   existing bindings via inline identity/name fast paths without re-running reflection or
+ *   re-checking static upper bounds.
+ * - Pre-computed O(1) subtype hash matrices (`SCALAR_SUBTYPES`, `COLLECTION_SUBTYPES`,
+ *   `INT_SUPERTYPES`, `STRING_SUPERTYPES`) and cached singleton primitive AST nodes
+ *   (`$intNode`, `$stringNode`, `$floatNode`, `$boolNode`, `$classNodeCache`) to avoid
+ *   per-call `TypeNode` allocations.
+ * - Negative and hierarchy memoization (`$noInheritedBindingsClasses`, `$realTypeSymbolCache`,
+ *   `$subclassCache`, `$propagationPlanCache`, `$propagatedBindingsCache`) to keep repeated
+ *   object/class lookups allocation-free.
+ *
+ * Contributor note: Preserve singleton AST node reuse and flat fast paths in `bindInstanceFromNode()`,
+ * `checkVariance()`, and `getInstanceBindingsFast()` to avoid regressions in generic-heavy codebases.
  *
  * @internal
  */
@@ -50,6 +78,21 @@ final class TemplateManager
      * @var WeakMap<object, array<string, TypeNode>>|null
      */
     public static ?WeakMap $instanceTemplateBindings = null;
+
+    /**
+     * Tracks template names per instance whose current binding came from an implicit default/bound fallback
+     * rather than an explicit specialization or concrete argument inference.
+     *
+     * @var WeakMap<object, array<string, true>>|null
+     */
+    private static ?WeakMap $fallbackBoundTemplates = null;
+
+    /**
+     * Memoized expansions of key-of<...> and value-of<...> GenericTypeNodes.
+     *
+     * @var WeakMap<GenericTypeNode, TypeNode|false>|null
+     */
+    private static ?WeakMap $expandedKeyOrValueOfCache = null;
 
     /**
      * Call stack frames storing template bindings per function or method call.
@@ -92,6 +135,14 @@ final class TemplateManager
      * @var array<string, array<string, TypeNode>>
      */
     private static array $classInheritedBindingsCache = [];
+
+    /**
+     * Cache for inherited template names whose class-level binding came from a template bound/default fallback:
+     * [$className][$templateName] => true.
+     *
+     * @var array<string, array<string, true>>
+     */
+    private static array $classInheritedFallbackKeysCache = [];
 
     /**
      * In-memory 2D cache for subclass hierarchy (is_a) lookups: [$sub][$super] => bool.
@@ -417,7 +468,7 @@ final class TemplateManager
     /**
      * Stack storing pending generic instantiations for constructors.
      *
-     * @var list<array{typeString: string, file: string, targetClass: string}>
+     * @var list<array{typeString: string, file: string, targetClass: string, consumed: bool}>
      */
     private static array $pendingInstantiations = [];
 
@@ -647,6 +698,7 @@ final class TemplateManager
         self::$classTemplateDefaultsCache = [];
         self::$templateVariancesCache = [];
         self::$classInheritedBindingsCache = [];
+        self::$classInheritedFallbackKeysCache = [];
         self::$classInheritedRawMappingsCache = [];
         self::$subclassCache = [];
         self::$realTypeSymbolCache = [];
@@ -671,6 +723,8 @@ final class TemplateManager
         self::$verifiedShallowRefinements = null;
         self::$compiledBindPlanBySigCache = [];
         self::$propagatedPropTypeCache = [];
+        self::$fallbackBoundTemplates = null;
+        self::$expandedKeyOrValueOfCache = null;
     }
 
     /**
@@ -686,6 +740,135 @@ final class TemplateManager
             unset(self::$instanceTemplateBindings[$instance]);
         } else {
             self::$instanceTemplateBindings[$instance] = $bindings;
+        }
+    }
+
+    public static function isFallbackBound(object $instance, string $templateName): bool
+    {
+        return self::$fallbackBoundTemplates !== null && isset(self::$fallbackBoundTemplates[$instance][$templateName]);
+    }
+
+    public static function markFallbackBound(object $instance, string $templateName): void
+    {
+        self::$fallbackBoundTemplates ??= new WeakMap();
+        $map = self::$fallbackBoundTemplates[$instance] ?? [];
+        $map[$templateName] = true;
+        self::$fallbackBoundTemplates[$instance] = $map;
+    }
+
+    public static function clearFallbackBound(object $instance, string $templateName): void
+    {
+        if (self::$fallbackBoundTemplates !== null && isset(self::$fallbackBoundTemplates[$instance][$templateName])) {
+            $map = self::$fallbackBoundTemplates[$instance];
+            unset($map[$templateName]);
+            if ($map === []) {
+                unset(self::$fallbackBoundTemplates[$instance]);
+            } else {
+                self::$fallbackBoundTemplates[$instance] = $map;
+            }
+        }
+    }
+
+    /**
+     * Returns template names on an instance whose bindings came from unbound template fallbacks.
+     *
+     * @return array<string, true>
+     */
+    public static function getFallbackBoundTemplates(object $instance): array
+    {
+        return self::$fallbackBoundTemplates !== null
+            ? (self::$fallbackBoundTemplates[$instance] ?? [])
+            : [];
+    }
+
+    /**
+     * Returns only concretely bound (non-fallback) template bindings currently attached to an instance.
+     *
+     * @return array<string, TypeNode>
+     */
+    public static function getConcreteInstanceBindings(object $instance): array
+    {
+        if (self::$instanceTemplateBindings === null || ! isset(self::$instanceTemplateBindings[$instance])) {
+            return [];
+        }
+
+        $bindings = self::$instanceTemplateBindings[$instance];
+        $fallbacks = self::$fallbackBoundTemplates[$instance] ?? [];
+
+        return $fallbacks !== [] ? array_diff_key($bindings, $fallbacks) : $bindings;
+    }
+
+    /**
+     * Marks newly bound template slots on an instance as fallback-derived when populated from
+     * unbound template parameters in a return contract.
+     *
+     * @param array<int, true> $fallbackArgIndices
+     * @param array<string, TypeNode> $preExistingBindings
+     */
+    public static function markFallbackReturnBindings(
+        object $instance,
+        GenericTypeNode $returnNode,
+        array $fallbackArgIndices,
+        int $preSubArgCount,
+        array $preExistingBindings
+    ): void {
+        if ($preSubArgCount !== -1 && $fallbackArgIndices === []) {
+            return;
+        }
+
+        try {
+            $targetClass = (string) $returnNode->type;
+            $lookupClass = (
+                ! isset(self::CONTEXT_SELF_REFERENCES[strtolower($targetClass)])
+                && ClassNameValidator::isValid($targetClass)
+                && self::isRealTypeSymbol($targetClass)
+            ) ? $targetClass : $instance::class;
+
+            [$templates] = self::hierarchyTemplatesForClass($lookupClass);
+            if ($templates === []) {
+                return;
+            }
+
+            $templateList = array_values($templates);
+            $templateCount = \count($templateList);
+
+            if ($preSubArgCount === -1) {
+                foreach ($templateList as $idx => $templateTag) {
+                    if (isset($returnNode->genericTypes[$idx]) && ! isset($preExistingBindings[$templateTag->name])) {
+                        self::markFallbackBound($instance, $templateTag->name);
+                    }
+                }
+
+                return;
+            }
+
+            if ($preSubArgCount === 1 && $templateCount === 2) {
+                $firstTemplate = $templateList[0];
+                $firstBound = $firstTemplate->bound !== null ? strtolower((string) $firstTemplate->bound) : '';
+                $firstName = strtolower($firstTemplate->name);
+                $isKeyTemplate = $firstBound === 'array-key' || isset(self::KEY_TEMPLATE_NAMES[$firstName]);
+
+                if ($isKeyTemplate) {
+                    if (! isset($preExistingBindings[$firstTemplate->name])) {
+                        self::markFallbackBound($instance, $firstTemplate->name);
+                    }
+                    if (isset($fallbackArgIndices[0]) && ! isset($preExistingBindings[$templateList[1]->name])) {
+                        self::markFallbackBound($instance, $templateList[1]->name);
+                    }
+
+                    return;
+                }
+            }
+
+            foreach ($fallbackArgIndices as $idx => $_) {
+                if (isset($templateList[$idx])) {
+                    $tName = $templateList[$idx]->name;
+                    if (! isset($preExistingBindings[$tName])) {
+                        self::markFallbackBound($instance, $tName);
+                    }
+                }
+            }
+        } catch (\Throwable) {
         }
     }
 
@@ -730,6 +913,7 @@ final class TemplateManager
             'typeString' => $resolvedTypeString,
             'file' => $file,
             'targetClass' => $targetClass,
+            'consumed' => false,
         ];
         self::$hasPendingInstantiations = true;
     }
@@ -752,10 +936,79 @@ final class TemplateManager
             return;
         }
 
-        $pending = end(self::$pendingInstantiations);
-        if ($pending !== false && $pending['targetClass'] !== '' && is_a($instance, $pending['targetClass'])) {
+        $lastIdx = \count(self::$pendingInstantiations) - 1;
+        if ($lastIdx < 0) {
+            return;
+        }
+
+        $pending = self::$pendingInstantiations[$lastIdx];
+        if ($pending['targetClass'] !== '' && is_a($instance, $pending['targetClass'])) {
+            self::$pendingInstantiations[$lastIdx]['consumed'] = true;
             self::bindInstance($instance, $pending['typeString'], $pending['file']);
         }
+    }
+
+    public static function applyPendingInstantiationIfUnconsumed(object $instance): void
+    {
+        if (! self::$hasPendingInstantiations || ! Config::isInlineGenericsEnabled()) {
+            return;
+        }
+
+        $lastIdx = \count(self::$pendingInstantiations) - 1;
+        if ($lastIdx < 0) {
+            return;
+        }
+
+        $pending = self::$pendingInstantiations[$lastIdx];
+        if (! $pending['consumed'] && $pending['targetClass'] !== '' && is_a($instance, $pending['targetClass'])) {
+            self::$pendingInstantiations[$lastIdx]['consumed'] = true;
+            self::bindInstance($instance, $pending['typeString'], $pending['file']);
+        }
+    }
+
+    /**
+     * Identifies generic argument positions that reference unbound templates and will fall back
+     * to their declared default or upper bound during TemplateSubstitutor::substitute().
+     *
+     * @param array<string, TypeNode> $boundTemplates
+     * @param array<string, TemplateTagValueNode> $declaredTemplates
+     *
+     * @return array{0: int, 1: array<int, true>}
+     */
+    public static function collectUnboundGenericArgIndices(
+        TypeNode $preSubNode,
+        array $boundTemplates,
+        array $declaredTemplates
+    ): array {
+        if ($declaredTemplates === []) {
+            return [0, []];
+        }
+
+        if ($preSubNode instanceof IdentifierTypeNode && isset($declaredTemplates[$preSubNode->name]) && ! isset($boundTemplates[$preSubNode->name])) {
+            return [-1, []];
+        }
+
+        if (! ($preSubNode instanceof GenericTypeNode)) {
+            return [0, []];
+        }
+
+        $unboundTemplates = $boundTemplates === []
+            ? $declaredTemplates
+            : array_diff_key($declaredTemplates, $boundTemplates);
+
+        if ($unboundTemplates === []) {
+            return [\count($preSubNode->genericTypes), []];
+        }
+
+        /** @var array<int, true> $indices */
+        $indices = [];
+        foreach ($preSubNode->genericTypes as $idx => $gt) {
+            if (DocblockParser::typeReferencesTemplate($gt, $unboundTemplates)) {
+                $indices[(int) $idx] = true;
+            }
+        }
+
+        return [\count($preSubNode->genericTypes), $indices];
     }
 
     /**
@@ -805,8 +1058,10 @@ final class TemplateManager
         }
 
         $rawBindings = [];
-        $resolved = self::computeClassInheritedBindings($className, $rawBindings);
+        $fallbackKeys = [];
+        $resolved = self::computeClassInheritedBindings($className, $rawBindings, $fallbackKeys);
         self::$classInheritedRawMappingsCache[$className] = $rawBindings;
+        self::$classInheritedFallbackKeysCache[$className] = $fallbackKeys;
 
         return self::$classInheritedBindingsCache[$className] = $resolved;
     }
@@ -873,9 +1128,21 @@ final class TemplateManager
     public static function copyInstanceBindings(object $source, object $target): void
     {
         if (self::$instanceTemplateBindings !== null && isset(self::$instanceTemplateBindings[$source])) {
-            $bindings = self::$instanceTemplateBindings[$source];
-            $bindings = self::widenClonedBindingsFromActiveCall($target, $bindings);
+            $sourceBindings = self::$instanceTemplateBindings[$source];
+            $bindings = self::widenClonedBindingsFromActiveCall($target, $sourceBindings);
             self::$instanceTemplateBindings[$target] = $bindings;
+
+            if (self::$fallbackBoundTemplates !== null && isset(self::$fallbackBoundTemplates[$source])) {
+                $copiedFallbacks = [];
+                foreach (self::$fallbackBoundTemplates[$source] as $tName => $_) {
+                    if (isset($bindings[$tName]) && $bindings[$tName] === ($sourceBindings[$tName] ?? null)) {
+                        $copiedFallbacks[$tName] = true;
+                    }
+                }
+                if ($copiedFallbacks !== []) {
+                    self::$fallbackBoundTemplates[$target] = $copiedFallbacks;
+                }
+            }
         }
 
         if (self::isGeneratorInferred($source)) {
@@ -1301,6 +1568,7 @@ final class TemplateManager
             }
 
             self::$instanceTemplateBindings[$thisObj] = $bindings;
+            self::clearFallbackBound($thisObj, $templateName);
         } else {
             if (! isset(self::$topCallFrame[$function])) {
                 self::$topCallFrame[$function] = [$templateName => $inferredType];
@@ -1316,8 +1584,14 @@ final class TemplateManager
      * Binds generic template types to an object instance or validates variance against an existing binding.
      * With $refineOnly, an existing binding is never replaced by a less specific one (downward propagation).
      */
-    public static function bindInstanceFromNode(object $instance, GenericTypeNode $typeNode, string $context = '', bool $forceBind = false, bool $refineOnly = false): ?ErrorMessage
-    {
+    public static function bindInstanceFromNode(
+        object $instance,
+        GenericTypeNode $typeNode,
+        string $context = '',
+        bool $forceBind = false,
+        bool $refineOnly = false,
+        bool $allowBoundSpecialization = false
+    ): ?ErrorMessage {
         self::$compiledNodeBindPlanCache ??= new WeakMap();
         $plan = self::$compiledNodeBindPlanCache[$typeNode] ?? null;
 
@@ -1369,6 +1643,7 @@ final class TemplateManager
             && $plan['allStaticValid']
             && ! $forceBind
             && ! $refineOnly
+            && (self::$fallbackBoundTemplates === null || ! isset(self::$fallbackBoundTemplates[$instance]))
         ) {
             $allFastMatched = true;
 
@@ -1474,7 +1749,8 @@ final class TemplateManager
                     $candidateBindings,
                     $refineOnly,
                     $planItem !== null && $planItem['symbolValid'],
-                    $planItem !== null && $planItem['boundSatisfied']
+                    $planItem !== null && $planItem['boundSatisfied'],
+                    $allowBoundSpecialization
                 );
                 if ($err !== null) {
                     return $err;
@@ -1685,6 +1961,7 @@ final class TemplateManager
         foreach ($classTemplates as $tName => $templateTag) {
             if (! isset($bindings[$tName]) && $templateTag->default !== null && ! self::isUnspecializedDefault($templateTag)) {
                 $bindings[$tName] = $templateTag->default;
+                self::markFallbackBound($instance, $tName);
                 $changed = true;
             }
         }
@@ -1871,7 +2148,7 @@ final class TemplateManager
                 }
 
                 if ($resolvedPropType !== null) {
-                    self::bindInstanceFromNode($propVal, $resolvedPropType, forceBind: true, refineOnly: true);
+                    self::bindInstanceFromNode($propVal, $resolvedPropType, forceBind: false, refineOnly: true);
                 }
             }
 
@@ -2117,7 +2394,8 @@ final class TemplateManager
         array $candidateBindings = [],
         bool $refineOnly = false,
         bool $symbolPreVerified = false,
-        bool $boundPreVerified = false
+        bool $boundPreVerified = false,
+        bool $allowBoundSpecialization = false
     ): ?ErrorMessage {
         if (! $symbolPreVerified) {
             if ($expectedTypeNode instanceof IdentifierTypeNode) {
@@ -2188,8 +2466,16 @@ final class TemplateManager
             $existingTypeNode = $existingBindings[$templateName];
             $valid = self::checkVariance($existingTypeNode, $expectedTypeNode, $variance);
 
-            if (! $valid) {
-                if ($forceBind || ($isReturnContext && self::isGeneratorInferred($instance))) {
+            if ($valid) {
+                $isParamContext = str_contains($context, 'Argument ');
+                if (! $isWildcardOrMixed && ! $refineOnly && ! $isParamContext && self::isFallbackBound($instance, $templateName)) {
+                    $bindings = self::$instanceTemplateBindings[$instance] ?? [];
+                    $bindings[$templateName] = $expectedTypeNode;
+                    self::$instanceTemplateBindings[$instance] = $bindings;
+                    self::clearFallbackBound($instance, $templateName);
+                }
+            } else {
+                if (($forceBind && ! $refineOnly) || ($isReturnContext && self::isGeneratorInferred($instance))) {
                     $bindings = self::$instanceTemplateBindings[$instance] ?? [];
                     $bindings[$templateName] = $expectedTypeNode;
 
@@ -2197,10 +2483,15 @@ final class TemplateManager
                     foreach ($rawMappings as $tName => $rawNode) {
                         if (DocblockParser::typeReferencesTemplate($rawNode, [$templateName => true])) {
                             $bindings[$tName] = TemplateSubstitutor::substitute($rawNode, $bindings);
+                            if (! $isWildcardOrMixed && ! $refineOnly) {
+                                self::clearFallbackBound($instance, $tName);
+                            }
                         }
                     }
 
+                    self::$instanceTemplateBindings ??= new WeakMap();
                     self::$instanceTemplateBindings[$instance] = $bindings;
+                    self::clearFallbackBound($instance, $templateName);
 
                     if ($isReturnContext && self::isGeneratorInferred($instance)) {
                         self::propagateGeneratorRefinementToProperties($instance, $templateName, $expectedTypeNode);
@@ -2209,15 +2500,33 @@ final class TemplateManager
                     return null;
                 }
 
-                $isDefaultOrBound = self::isUnspecializedType($existingTypeNode)
-                    || ($templateTag->bound !== null && self::matchesBoundOrDefault($existingTypeNode, $templateTag->bound))
-                    || ($templateTag->default !== null && self::matchesBoundOrDefault($existingTypeNode, $templateTag->default));
+                $allowInheritedUnionBound = $allowBoundSpecialization
+                    && $existingTypeNode instanceof UnionTypeNode
+                    && $templateTag->bound !== null
+                    && self::matchesBoundOrDefault($existingTypeNode, $templateTag->bound);
+
+                $isFallbackOrUnspecialized = self::isUnspecializedType($existingTypeNode)
+                    || self::isFallbackBound($instance, $templateName)
+                    || $allowInheritedUnionBound;
 
                 if (self::checkVariance($expectedTypeNode, $existingTypeNode, GenericTypeNode::VARIANCE_COVARIANT)) {
-                    if ($isDefaultOrBound || ($isReturnContext && ! $strictInvariance)) {
+                    if ($isFallbackOrUnspecialized || ($isReturnContext && ! $strictInvariance)) {
                         $bindings = self::$instanceTemplateBindings[$instance] ?? [];
                         $bindings[$templateName] = $expectedTypeNode;
+
+                        $rawMappings = self::$classInheritedRawMappingsCache[$instance::class] ?? [];
+                        foreach ($rawMappings as $tName => $rawNode) {
+                            if (DocblockParser::typeReferencesTemplate($rawNode, [$templateName => true])) {
+                                $bindings[$tName] = TemplateSubstitutor::substitute($rawNode, $bindings);
+                                if (! $isWildcardOrMixed && ! $refineOnly) {
+                                    self::clearFallbackBound($instance, $tName);
+                                }
+                            }
+                        }
+
+                        self::$instanceTemplateBindings ??= new WeakMap();
                         self::$instanceTemplateBindings[$instance] = $bindings;
+                        self::clearFallbackBound($instance, $templateName);
 
                         return null;
                     }
@@ -2234,6 +2543,7 @@ final class TemplateManager
                         $bindings = self::$instanceTemplateBindings[$instance] ?? [];
                         $bindings[$templateName] = $expectedTypeNode;
                         self::$instanceTemplateBindings[$instance] = $bindings;
+                        self::clearFallbackBound($instance, $templateName);
 
                         return null;
                     }
@@ -2256,7 +2566,7 @@ final class TemplateManager
             }
         }
 
-        if ($forceBind || ! isset($existingBindings[$templateName])) {
+        if (($forceBind && ! $refineOnly) || ! isset($existingBindings[$templateName])) {
             $map = self::$instanceTemplateBindings ??= new WeakMap();
 
             $bindings = $map[$instance] ?? [];
@@ -2264,21 +2574,27 @@ final class TemplateManager
 
             if ($refineOnly && isset($existingBindings[$templateName])) {
                 $existingTypeNode = $existingBindings[$templateName];
-
-                $isPlaceholder = self::isUnspecializedArgument($boundNode, $templateTag);
                 $isRefinement = self::checkVariance($boundNode, $existingTypeNode, GenericTypeNode::VARIANCE_COVARIANT);
 
-                if ($isPlaceholder && ! $isRefinement) {
+                if (! $isRefinement) {
                     return null;
                 }
             }
 
             $bindings[$templateName] = $boundNode;
+            if ($isWildcardOrMixed) {
+                self::markFallbackBound($instance, $templateName);
+            } else {
+                self::clearFallbackBound($instance, $templateName);
+            }
 
             $rawMappings = self::$classInheritedRawMappingsCache[$instance::class] ?? [];
             foreach ($rawMappings as $tName => $rawNode) {
                 if (DocblockParser::typeReferencesTemplate($rawNode, [$templateName => true])) {
                     $bindings[$tName] = TemplateSubstitutor::substitute($rawNode, $bindings);
+                    if (! $isWildcardOrMixed && ! $refineOnly) {
+                        self::clearFallbackBound($instance, $tName);
+                    }
                 }
             }
 
@@ -2357,27 +2673,6 @@ final class TemplateManager
                     return true;
                 }
             }
-        }
-
-        return false;
-    }
-
-    /**
-     * Checks if a generic type argument carries no information: an unspecialized placeholder,
-     * or nothing beyond the template's own declared bound or default.
-     */
-    private static function isUnspecializedArgument(TypeNode $node, TemplateTagValueNode $templateTag): bool
-    {
-        if (self::isUnspecializedType($node)) {
-            return true;
-        }
-
-        if ($templateTag->bound !== null && self::matchesBoundOrDefault($node, $templateTag->bound)) {
-            return true;
-        }
-
-        if ($templateTag->default !== null && self::matchesBoundOrDefault($node, $templateTag->default)) {
-            return true;
         }
 
         return false;
@@ -2464,13 +2759,16 @@ final class TemplateManager
 
         if (! isset(self::$classInheritedBindingsCache[$actualClassName])) {
             $rawBindings = [];
-            $resolvedClassBindings = self::computeClassInheritedBindings($actualClassName, $rawBindings);
+            $fallbackKeys = [];
+            $resolvedClassBindings = self::computeClassInheritedBindings($actualClassName, $rawBindings, $fallbackKeys);
             self::$classInheritedBindingsCache[$actualClassName] = $resolvedClassBindings;
             self::$classInheritedRawMappingsCache[$actualClassName] = $rawBindings;
+            self::$classInheritedFallbackKeysCache[$actualClassName] = $fallbackKeys;
         }
 
         $cachedBindings = self::$classInheritedBindingsCache[$actualClassName];
         $rawMappings = self::$classInheritedRawMappingsCache[$actualClassName] ?? [];
+        $inheritedFallbackKeys = self::$classInheritedFallbackKeysCache[$actualClassName] ?? [];
         $existing = self::$instanceTemplateBindings[$instance] ?? [];
 
         if ($cachedBindings === [] && $rawMappings === []) {
@@ -2482,39 +2780,61 @@ final class TemplateManager
         if ($existing === []) {
             if ($cachedBindings !== []) {
                 self::$instanceTemplateBindings[$instance] = $cachedBindings;
+                foreach ($inheritedFallbackKeys as $fbName => $_) {
+                    self::markFallbackBound($instance, $fbName);
+                }
             }
 
             return;
         }
 
         $specializedBindings = [];
+        $newFallbackKeys = [];
+        $existingFallbacks = self::getFallbackBoundTemplates($instance);
         foreach ($cachedBindings as $tName => $fallbackTypeNode) {
             $rawNode = $rawMappings[$tName] ?? $fallbackTypeNode;
             if (DocblockParser::typeReferencesTemplate($rawNode, $existing)) {
                 $specializedBindings[$tName] = TemplateSubstitutor::substitute($rawNode, $existing);
+                if ($existingFallbacks !== [] && DocblockParser::typeReferencesTemplate($rawNode, $existingFallbacks)) {
+                    $newFallbackKeys[$tName] = true;
+                }
             } else {
-                $specializedBindings[$tName] = $existing[$tName] ?? $fallbackTypeNode;
+                if (isset($existing[$tName])) {
+                    $specializedBindings[$tName] = $existing[$tName];
+                } else {
+                    $specializedBindings[$tName] = $fallbackTypeNode;
+                    if (isset($inheritedFallbackKeys[$tName])) {
+                        $newFallbackKeys[$tName] = true;
+                    }
+                }
             }
         }
 
         foreach ($rawMappings as $tName => $rawNode) {
             if (! isset($specializedBindings[$tName]) && DocblockParser::typeReferencesTemplate($rawNode, $existing)) {
                 $specializedBindings[$tName] = TemplateSubstitutor::substitute($rawNode, $existing);
+                if ($existingFallbacks !== [] && DocblockParser::typeReferencesTemplate($rawNode, $existingFallbacks)) {
+                    $newFallbackKeys[$tName] = true;
+                }
             }
         }
 
         $merged = [...$existing, ...$specializedBindings];
         if ($merged !== [] && $merged !== $existing) {
             self::$instanceTemplateBindings[$instance] = $merged;
+            foreach ($newFallbackKeys as $fbName => $_) {
+                self::markFallbackBound($instance, $fbName);
+            }
         }
     }
 
     /**
      * @param array<string, TypeNode> $rawBindings
+     * @param array<string, true> $fallbackKeys
      *
      * @return array<string, TypeNode>
      */
-    private static function computeClassInheritedBindings(string $actualClassName, array &$rawBindings = []): array
+    private static function computeClassInheritedBindings(string $actualClassName, array &$rawBindings = [], array &$fallbackKeys = []): array
     {
         /** @var array<string, TypeNode> $bindings */
         $bindings = [];
@@ -2554,7 +2874,8 @@ final class TemplateManager
                                 $actualClassName,
                                 $bindings,
                                 $rawBindings,
-                                $rootDeclaredTemplates
+                                $rootDeclaredTemplates,
+                                $fallbackKeys
                             );
                         }
                     }
@@ -2572,6 +2893,7 @@ final class TemplateManager
      * @param array<string, TypeNode> $bindings
      * @param array<string, TypeNode> $rawBindings
      * @param array<string, bool> $rootDeclaredTemplates
+     * @param array<string, true> $fallbackKeys
      * @param \ReflectionClass<object> $hierClass
      */
     private static function collectInheritedGenericTagBindings(
@@ -2581,7 +2903,8 @@ final class TemplateManager
         string $actualClassName,
         array &$bindings,
         array &$rawBindings = [],
-        array $rootDeclaredTemplates = []
+        array $rootDeclaredTemplates = [],
+        array &$fallbackKeys = []
     ): void {
         $parentName = SpecialTypeResolver::resolveFqcn((string) $genericTypeNode->type, $hierClass);
         $isHierarchyMember = is_a($actualClassName, $parentName, true) || trait_exists($parentName);
@@ -2630,14 +2953,23 @@ final class TemplateManager
 
             foreach ($parentTemplateNames as $idx => $templateName) {
                 if (isset($normalizedGenericTypes[$idx])) {
+                    $usedFallback = false;
                     $typeArg = $normalizedGenericTypes[$idx];
                     if ($hierAliases !== []) {
                         $typeArg = DocblockParser::substituteAliases($typeArg, $hierAliases);
                     }
                     if ($rawBindings !== []) {
-                        $typeArg = TemplateSubstitutor::substitute($typeArg, $rawBindings);
+                        $subArg = TemplateSubstitutor::substitute($typeArg, $rawBindings);
+                        if ($subArg !== $typeArg && $fallbackKeys !== [] && DocblockParser::typeReferencesTemplate($typeArg, $fallbackKeys)) {
+                            $usedFallback = true;
+                        }
+                        $typeArg = $subArg;
                     } elseif ($bindings !== []) {
-                        $typeArg = TemplateSubstitutor::substitute($typeArg, $bindings);
+                        $subArg = TemplateSubstitutor::substitute($typeArg, $bindings);
+                        if ($subArg !== $typeArg && $fallbackKeys !== [] && DocblockParser::typeReferencesTemplate($typeArg, $fallbackKeys)) {
+                            $usedFallback = true;
+                        }
+                        $typeArg = $subArg;
                     }
                     $resolved = self::resolveTypeNodeAst($typeArg, $hierClass);
 
@@ -2682,7 +3014,10 @@ final class TemplateManager
                         }
 
                         if (\count($boundOnlyFallbacks) === \count($rootDeclaredTemplates)) {
-                            $bindings[$templateName] ??= TemplateSubstitutor::substitute($resolved, $boundOnlyFallbacks);
+                            if (! isset($bindings[$templateName])) {
+                                $bindings[$templateName] = TemplateSubstitutor::substitute($resolved, $boundOnlyFallbacks);
+                                $fallbackKeys[$templateName] = true;
+                            }
                         }
 
                         continue;
@@ -2690,9 +3025,15 @@ final class TemplateManager
 
                     if (DocblockParser::typeReferencesTemplate($resolved, $declaredTemplateNames) && $hierFallbackBindings !== []) {
                         $resolved = TemplateSubstitutor::substitute($resolved, $hierFallbackBindings);
+                        $usedFallback = true;
                     }
 
-                    $bindings[$templateName] ??= $resolved;
+                    if (! isset($bindings[$templateName])) {
+                        $bindings[$templateName] = $resolved;
+                        if ($usedFallback) {
+                            $fallbackKeys[$templateName] = true;
+                        }
+                    }
                 }
             }
         } catch (\Throwable $e) {
@@ -2720,6 +3061,341 @@ final class TemplateManager
         }
 
         return $docs;
+    }
+
+    /**
+     * Expands a `key-of<T>` or `value-of<T>` GenericTypeNode into its equivalent concrete TypeNode
+     * (e.g. literal union for array shapes/enums/constants, key/value type for generic arrays/lists).
+     */
+    public static function expandKeyOrValueOf(GenericTypeNode $node): ?TypeNode
+    {
+        self::$expandedKeyOrValueOfCache ??= new WeakMap();
+        if (isset(self::$expandedKeyOrValueOfCache[$node])) {
+            $cached = self::$expandedKeyOrValueOfCache[$node];
+
+            return $cached !== false ? $cached : null;
+        }
+
+        $base = strtolower((string) $node->type);
+        $target = $node->genericTypes[0] ?? null;
+
+        if ($target === null || ($base !== 'key-of' && $base !== 'value-of')) {
+            self::$expandedKeyOrValueOfCache[$node] = false;
+
+            return null;
+        }
+
+        $expanded = $base === 'key-of'
+            ? self::expandKeyOfTarget($target)
+            : self::expandValueOfTarget($target);
+
+        self::$expandedKeyOrValueOfCache[$node] = $expanded ?? false;
+
+        return $expanded;
+    }
+
+    private static function expandKeyOfTarget(TypeNode $target): ?TypeNode
+    {
+        while ($target instanceof NullableTypeNode) {
+            $target = $target->type;
+        }
+
+        if ($target instanceof UnionTypeNode) {
+            $parts = [];
+            foreach ($target->types as $member) {
+                $sub = self::expandKeyOfTarget($member);
+                if ($sub === null) {
+                    return null;
+                }
+                $parts[] = $sub;
+            }
+
+            return $parts !== [] ? TemplateSubstitutor::normalizeUnion($parts) : null;
+        }
+
+        if ($target instanceof ArrayShapeNode) {
+            $keys = [];
+            $autoIdx = 0;
+
+            foreach ($target->items as $item) {
+                $key = self::extractShapeKey($item, $autoIdx);
+                $keys[] = \is_int($key)
+                    ? new ConstTypeNode(new ConstExprIntegerNode((string) $key))
+                    : new ConstTypeNode(new ConstExprStringNode($key, ConstExprStringNode::SINGLE_QUOTED));
+            }
+
+            if (! $target->sealed) {
+                if ($target->unsealedType !== null && $target->unsealedType->keyType !== null) {
+                    $keys[] = $target->unsealedType->keyType;
+                } else {
+                    $keys[] = $target->kind === ArrayShapeNode::KIND_LIST
+                        ? (self::$intNode ??= new IdentifierTypeNode('int'))
+                        : new IdentifierTypeNode('array-key');
+                }
+            }
+
+            return $keys !== [] ? TemplateSubstitutor::normalizeUnion($keys) : new IdentifierTypeNode('never');
+        }
+
+        if ($target instanceof GenericTypeNode) {
+            $base = strtolower((string) $target->type);
+
+            if ($base === 'value-of') {
+                $innerExpanded = self::expandKeyOrValueOf($target);
+
+                return $innerExpanded !== null ? self::expandKeyOfTarget($innerExpanded) : null;
+            }
+
+            if ($base === 'list' || $base === 'non-empty-list' || $base === 'non-empty-array-list') {
+                return self::$intNode ??= new IdentifierTypeNode('int');
+            }
+
+            if (\in_array($base, ['array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator'], true)) {
+                return \count($target->genericTypes) >= 2
+                    ? $target->genericTypes[0]
+                    : new IdentifierTypeNode('array-key');
+            }
+
+            return null;
+        }
+
+        if ($target instanceof ArrayTypeNode) {
+            return new IdentifierTypeNode('array-key');
+        }
+
+        if ($target instanceof IdentifierTypeNode) {
+            $name = $target->name;
+            $lower = strtolower($name);
+
+            if ($lower === 'list' || $lower === 'non-empty-list') {
+                return self::$intNode ??= new IdentifierTypeNode('int');
+            }
+
+            if (\in_array($lower, ['array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator', 'mixed'], true)) {
+                return new IdentifierTypeNode('array-key');
+            }
+
+            if (str_contains($name, '::')) {
+                [$fqcn, $constName] = explode('::', $name, 2);
+
+                return self::expandConstantArrayKeys($fqcn, $constName);
+            }
+
+            if (ClassNameValidator::isValid($name) && enum_exists($name) && is_subclass_of($name, \UnitEnum::class)) {
+                $keys = [];
+                foreach ($name::cases() as $case) {
+                    $keys[] = new ConstTypeNode(new ConstExprStringNode($case->name, ConstExprStringNode::SINGLE_QUOTED));
+                }
+
+                return $keys !== [] ? TemplateSubstitutor::normalizeUnion($keys) : new IdentifierTypeNode('never');
+            }
+
+            if (\defined($name)) {
+                return self::expandConstantArrayKeys('', $name);
+            }
+
+            return null;
+        }
+
+        if ($target instanceof ConstTypeNode && $target->constExpr instanceof ConstFetchNode) {
+            return self::expandConstantArrayKeys($target->constExpr->className, $target->constExpr->name);
+        }
+
+        return null;
+    }
+
+    private static function expandValueOfTarget(TypeNode $target): ?TypeNode
+    {
+        while ($target instanceof NullableTypeNode) {
+            $target = $target->type;
+        }
+
+        if ($target instanceof UnionTypeNode) {
+            $parts = [];
+            foreach ($target->types as $member) {
+                $sub = self::expandValueOfTarget($member);
+                if ($sub === null) {
+                    return null;
+                }
+                $parts[] = $sub;
+            }
+
+            return $parts !== [] ? TemplateSubstitutor::normalizeUnion($parts) : null;
+        }
+
+        if ($target instanceof ArrayShapeNode) {
+            $values = [];
+            foreach ($target->items as $item) {
+                $values[] = $item->valueType;
+            }
+
+            if (! $target->sealed) {
+                $values[] = $target->unsealedType !== null
+                    ? $target->unsealedType->valueType
+                    : (self::$mixedNode ??= new IdentifierTypeNode('mixed'));
+            }
+
+            return $values !== [] ? TemplateSubstitutor::normalizeUnion($values) : new IdentifierTypeNode('never');
+        }
+
+        if ($target instanceof GenericTypeNode) {
+            $base = strtolower((string) $target->type);
+
+            if ($base === 'list' || $base === 'non-empty-list' || $base === 'non-empty-array-list') {
+                return $target->genericTypes[0] ?? (self::$mixedNode ??= new IdentifierTypeNode('mixed'));
+            }
+
+            if (\in_array($base, ['array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator'], true)) {
+                $count = \count($target->genericTypes);
+                if ($count >= 2) {
+                    return $target->genericTypes[1];
+                }
+                if ($count === 1) {
+                    return $target->genericTypes[0];
+                }
+
+                return self::$mixedNode ??= new IdentifierTypeNode('mixed');
+            }
+
+            return null;
+        }
+
+        if ($target instanceof ArrayTypeNode) {
+            return $target->type;
+        }
+
+        if ($target instanceof IdentifierTypeNode) {
+            $name = $target->name;
+            $lower = strtolower($name);
+
+            if (\in_array($lower, ['array', 'non-empty-array', 'list', 'non-empty-list', 'iterable', 'traversable', 'generator', 'iterator', 'mixed'], true)) {
+                return self::$mixedNode ??= new IdentifierTypeNode('mixed');
+            }
+
+            if (str_contains($name, '::')) {
+                [$fqcn, $constName] = explode('::', $name, 2);
+
+                return self::expandConstantArrayValues($fqcn, $constName);
+            }
+
+            if (ClassNameValidator::isValid($name) && enum_exists($name) && is_subclass_of($name, \BackedEnum::class)) {
+                $values = [];
+                foreach ($name::cases() as $case) {
+                    $values[] = \is_int($case->value)
+                        ? new ConstTypeNode(new ConstExprIntegerNode((string) $case->value))
+                        : new ConstTypeNode(new ConstExprStringNode($case->value, ConstExprStringNode::SINGLE_QUOTED));
+                }
+
+                return $values !== [] ? TemplateSubstitutor::normalizeUnion($values) : new IdentifierTypeNode('never');
+            }
+
+            if (\defined($name)) {
+                return self::expandConstantArrayValues('', $name);
+            }
+
+            return null;
+        }
+
+        if ($target instanceof ConstTypeNode && $target->constExpr instanceof ConstFetchNode) {
+            return self::expandConstantArrayValues($target->constExpr->className, $target->constExpr->name);
+        }
+
+        return null;
+    }
+
+    private static function expandConstantArrayKeys(string $fqcn, string $constName): ?TypeNode
+    {
+        $constValue = self::resolveRawConstantValue($fqcn, $constName);
+        if (! \is_array($constValue)) {
+            return null;
+        }
+
+        $keys = [];
+        foreach (array_keys($constValue) as $k) {
+            $keys[] = \is_int($k)
+                ? new ConstTypeNode(new ConstExprIntegerNode((string) $k))
+                : new ConstTypeNode(new ConstExprStringNode($k, ConstExprStringNode::SINGLE_QUOTED));
+        }
+
+        return $keys !== [] ? TemplateSubstitutor::normalizeUnion($keys) : new IdentifierTypeNode('never');
+    }
+
+    private static function expandConstantArrayValues(string $fqcn, string $constName): ?TypeNode
+    {
+        $constValue = self::resolveRawConstantValue($fqcn, $constName);
+        if (! \is_array($constValue)) {
+            return null;
+        }
+
+        $values = [];
+        foreach ($constValue as $v) {
+            $values[] = match (true) {
+                \is_string($v) => new ConstTypeNode(new ConstExprStringNode($v, ConstExprStringNode::SINGLE_QUOTED)),
+                \is_int($v) => new ConstTypeNode(new ConstExprIntegerNode((string) $v)),
+                \is_float($v) => new ConstTypeNode(new ConstExprFloatNode((string) $v)),
+                $v === true => new ConstTypeNode(new ConstExprTrueNode()),
+                $v === false => new ConstTypeNode(new ConstExprFalseNode()),
+                $v === null => new ConstTypeNode(new ConstExprNullNode()),
+                default => self::inferTypeFromValue($v),
+            };
+        }
+
+        return $values !== [] ? TemplateSubstitutor::normalizeUnion($values) : new IdentifierTypeNode('never');
+    }
+
+    private static function resolveRawConstantValue(string $fqcn, string $constName): mixed
+    {
+        try {
+            if ($fqcn !== '') {
+                if (ClassNameValidator::isValid($fqcn) && (class_exists($fqcn) || interface_exists($fqcn) || enum_exists($fqcn))) {
+                    /** @var class-string<object> $fqcn */
+                    $refClass = new \ReflectionClass($fqcn);
+                    if ($refClass->hasConstant($constName)) {
+                        return $refClass->getConstant($constName);
+                    }
+                }
+
+                return null;
+            }
+
+            return \defined($constName) ? \constant($constName) : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private static function extractLiteralConstValue(ConstTypeNode $node, bool &$ok): mixed
+    {
+        $expr = $node->constExpr;
+        $ok = true;
+
+        if ($expr instanceof ConstExprStringNode) {
+            return $expr->value;
+        }
+
+        if ($expr instanceof ConstExprIntegerNode) {
+            return (int) $expr->value;
+        }
+
+        if ($expr instanceof ConstExprFloatNode) {
+            return (float) $expr->value;
+        }
+
+        if ($expr instanceof ConstExprTrueNode) {
+            return true;
+        }
+
+        if ($expr instanceof ConstExprFalseNode) {
+            return false;
+        }
+
+        if ($expr instanceof ConstExprNullNode) {
+            return null;
+        }
+
+        $ok = false;
+
+        return null;
     }
 
     /**
@@ -2771,6 +3447,36 @@ final class TemplateManager
             }
 
             return false;
+        }
+
+        if ($expected instanceof GenericTypeNode) {
+            $baseExpected = strtolower((string) $expected->type);
+            if ($baseExpected === 'key-of' || $baseExpected === 'value-of') {
+                $expandedExpected = self::expandKeyOrValueOf($expected);
+                if ($expandedExpected !== null) {
+                    return self::checkVariance($existing, $expandedExpected, $variance);
+                }
+            }
+        }
+
+        if ($existing instanceof GenericTypeNode) {
+            $baseExisting = strtolower((string) $existing->type);
+            if ($baseExisting === 'key-of' || $baseExisting === 'value-of') {
+                $expandedExisting = self::expandKeyOrValueOf($existing);
+                if ($expandedExisting !== null) {
+                    return self::checkVariance($expandedExisting, $expected, $variance);
+                }
+            }
+        }
+
+        if ($existing instanceof ConstTypeNode && $expected instanceof ConstTypeNode) {
+            $ok1 = false;
+            $ok2 = false;
+            $val1 = self::extractLiteralConstValue($existing, $ok1);
+            $val2 = self::extractLiteralConstValue($expected, $ok2);
+            if ($ok1 && $ok2) {
+                return $val1 === $val2;
+            }
         }
 
         if ($variance === GenericTypeNode::VARIANCE_INVARIANT && $existing::class === $expected::class) {
@@ -3487,11 +4193,11 @@ final class TemplateManager
             }
 
             if ($typeNode instanceof GenericTypeNode) {
-                self::bindInstanceFromNode($instance, $typeNode, '', true);
+                self::bindInstanceFromNode($instance, $typeNode, '', false, false, true);
             } elseif ($typeNode instanceof UnionTypeNode || $typeNode instanceof IntersectionTypeNode) {
                 $matching = self::collectMatchingObjectGenericNodes($instance, $typeNode);
                 if (\count($matching) === 1) {
-                    self::bindInstanceFromNode($instance, $matching[0], '', true);
+                    self::bindInstanceFromNode($instance, $matching[0], '', false, false, true);
                 }
             }
         } catch (\Throwable $e) {

@@ -67,7 +67,7 @@ final class ParamOutChecker
             return null;
         }
 
-        $paramOuts = $paramOuts = $contract['paramOuts'] ?? [];
+        $paramOuts = $contract['paramOuts'] ?? [];
 
         if (! isset($paramOuts[$paramName])) {
             return null;

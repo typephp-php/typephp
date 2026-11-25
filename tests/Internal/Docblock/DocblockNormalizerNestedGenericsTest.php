@@ -7,7 +7,7 @@ namespace TypePHP\Tests\Internal\Docblock;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
 
-describe('DocblockNormalizer Nested Angle Brackets and Callables (Issue 5 Red Phase)', function () {
+describe('DocblockNormalizer Nested Angle Brackets and Callables (Issue 5)', function () {
     describe('1. Callable Generic Parameter Preservation (<T>)', function () {
         test('preserves generic template <T> when auto-completing omitted return type to : mixed', function () {
             $doc = '/** @param callable<T>(T) $fn */';

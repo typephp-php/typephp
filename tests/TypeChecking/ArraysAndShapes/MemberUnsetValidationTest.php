@@ -80,7 +80,7 @@ class MemberUnsetBoxFactory
     }
 }
 
-describe('Member Unset Validation (Red Phase)', function () {
+describe('Member Unset Validation', function () {
     beforeEach(function () {
         MemberUnsetStaticBox::reset();
         Config::reset();

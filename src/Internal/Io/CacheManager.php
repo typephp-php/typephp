@@ -25,7 +25,6 @@ final class CacheManager
     private const RUNTIME_ONLY_CONFIG_KEYS = [
         'enabled' => true,
         'auto_boot' => true,
-        'on_violation' => true,
         'report_file' => true,
         'fail_on_report' => true,
         'fail_on_zero_files' => true,
@@ -130,13 +129,17 @@ final class CacheManager
         }
 
         $config = array_diff_key(Config::get(), self::RUNTIME_ONLY_CONFIG_KEYS);
+        // Normalized via effective getters below so env overrides are reflected
+        // and config-vs-env toggles share the same cache key.
+        unset($config['on_violation'], $config['eliminate_statically_proven_checks']);
         ksort($config);
 
         return self::$transformFingerprint = hash(
             'xxh128',
             var_export($config, true)
-                // Env override, so the config array alone does not reflect the effective value.
                 . (Config::isEliminateStaticallyProvenChecksEnabled() ? '1' : '0')
+                // FunctionContractInjector::collectTrustedParamTypes() only trusts params in 'throw' mode.
+                . (Config::getOnViolation() === 'throw' ? '1' : '0')
                 . (Config::isCacheCheckMtimeEnabled() ? StubManager::getFilesFingerprint() : '')
         );
     }

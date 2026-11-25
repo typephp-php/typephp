@@ -357,10 +357,9 @@ PHP;
                 ->and($imports['Str'])->toBe('App\Helpers\StringHelper')
             ;
 
-            expect($imports)->toHaveKey('compute')
-                ->and($imports['compute'])->toBe('App\Utils\calculateTotal')
-                ->and($imports)->toHaveKey('LIMIT')
-                ->and($imports['LIMIT'])->toBe('App\Config\MAX_ITEMS')
+            expect($imports)->not()->toHaveKey('compute')
+                ->and($imports)->not()->toHaveKey('LIMIT')
+                ->and($imports)->not()->toHaveKey('Contracts')
             ;
 
             expect($imports)->not()->toHaveKey('userData')

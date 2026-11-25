@@ -138,44 +138,51 @@ final class Config
         return null;
     }
 
-    public static function isEnabled(): bool
+    private static function isDisabledByEnvOrConst(): bool
     {
         if (! self::$processEnvProbed) {
             self::probeProcessEnvOverrides();
         }
 
         if (
-            self::$hasProcessEnvOverride
-            || isset($_ENV['TYPEPHP_DISABLE'])
-            || isset($_SERVER['TYPEPHP_DISABLE'])
-            || isset($_ENV['TYPEPHP_ENABLED'])
-            || isset($_SERVER['TYPEPHP_ENABLED'])
-            || \defined('TYPEPHP_DISABLE')
+            ! self::$hasProcessEnvOverride
+            && ! isset($_ENV['TYPEPHP_DISABLE'])
+            && ! isset($_SERVER['TYPEPHP_DISABLE'])
+            && ! isset($_ENV['TYPEPHP_ENABLED'])
+            && ! isset($_SERVER['TYPEPHP_ENABLED'])
+            && ! \defined('TYPEPHP_DISABLE')
         ) {
-            $envDisable = self::resolveEnabledOverride('TYPEPHP_DISABLE', self::$processEnvDisable);
-            if ($envDisable !== null && trim($envDisable) !== '') {
-                if (filter_var($envDisable, FILTER_VALIDATE_BOOLEAN)) {
-                    return false;
-                }
-            }
+            return false;
+        }
 
-            $envEnabled = self::resolveEnabledOverride('TYPEPHP_ENABLED', self::$processEnvEnabled);
-            if ($envEnabled !== null && trim($envEnabled) !== '') {
-                if (! filter_var($envEnabled, FILTER_VALIDATE_BOOLEAN)) {
-                    return false;
-                }
+        $envDisable = self::resolveEnabledOverride('TYPEPHP_DISABLE', self::$processEnvDisable);
+        if ($envDisable !== null && trim($envDisable) !== '') {
+            if (filter_var($envDisable, FILTER_VALIDATE_BOOLEAN)) {
+                return true;
             }
+        }
 
-            if (\defined('TYPEPHP_DISABLE') && (bool) TYPEPHP_DISABLE) {
-                return false;
+        $envEnabled = self::resolveEnabledOverride('TYPEPHP_ENABLED', self::$processEnvEnabled);
+        if ($envEnabled !== null && trim($envEnabled) !== '') {
+            if (! filter_var($envEnabled, FILTER_VALIDATE_BOOLEAN)) {
+                return true;
             }
+        }
+
+        return \defined('TYPEPHP_DISABLE') && (bool) TYPEPHP_DISABLE;
+    }
+
+    public static function isEnabled(): bool
+    {
+        if (self::isDisabledByEnvOrConst()) {
+            return RuntimeTypeChecker::$isEnabled = false;
         }
 
         if (self::$cachedConfig === null) {
             self::get();
         }
 
-        return self::$enabled;
+        return RuntimeTypeChecker::$isEnabled = self::$enabled;
     }
 
     public static function isEliminateStaticallyProvenChecksEnabled(): bool
@@ -961,7 +968,7 @@ final class Config
         self::$inlineArrays = (bool) ($inline['arrays'] ?? true);
         self::$inlineObjects = (bool) ($inline['objects'] ?? true);
 
-        RuntimeTypeChecker::$isEnabled = self::$enabled;
+        RuntimeTypeChecker::$isEnabled = self::$enabled && ! self::isDisabledByEnvOrConst();
         RuntimeTypeChecker::$paramsEnabled = self::$params;
         RuntimeTypeChecker::$returnsEnabled = self::$returns;
         RuntimeTypeChecker::$paramsOutEnabled = self::$params && self::$paramsOut;

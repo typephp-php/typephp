@@ -32,54 +32,58 @@ final class DocblockNormalizer
      */
     public static function normalize(string $doc): string
     {
-        if (! str_contains($doc, '@')) {
+        $hasAt = str_contains($doc, '@');
+
+        if (! $hasAt && str_starts_with(ltrim($doc), '/**')) {
             return $doc;
         }
 
-        if (str_contains($doc, "\n")) {
-            $doc = preg_replace(
-                '/(@(?:phpstan-|psalm-)?(?:param-out|param|return|var|self-out|this-out|throws))[ \t]*\r?\n[ \t]*\*[ \t]+(?![@*\/])/m',
-                '$1 ',
-                $doc
-            ) ?? $doc;
-        }
+        if ($hasAt) {
+            if (str_contains($doc, "\n")) {
+                $doc = preg_replace(
+                    '/(@(?:phpstan-|psalm-)?(?:param-out|param|return|var|self-out|this-out|throws))[ \t]*\r?\n[ \t]*\*[ \t]+(?![@*\/])/m',
+                    '$1 ',
+                    $doc
+                ) ?? $doc;
+            }
 
-        if (substr_count($doc, '@') > 1) {
-            $doc = preg_replace_callback(
-                '/(?:\/\*\*|^\s*\*)\s*@[a-zA-Z0-9_-]+[^\r\n]*/m',
-                static function (array $matches): string {
-                    return preg_replace(
-                        '/([^\r\n*\/ \t])[ \t]+(@(?:phpstan-|psalm-|template-)?(?:param-out|param|return|var|template(?:-covariant|-contravariant)?|self-out|this-out|type|import-type|extends|implements|use|property(?:-read|-write)?|method)\b)/',
-                        "$1\n * $2",
-                        $matches[0]
-                    ) ?? $matches[0];
-                },
-                $doc
-            ) ?? $doc;
-        }
+            if (substr_count($doc, '@') > 1) {
+                $doc = preg_replace_callback(
+                    '/(?:\/\*\*|^\s*\*)\s*@[a-zA-Z0-9_-]+[^\r\n]*/m',
+                    static function (array $matches): string {
+                        return preg_replace(
+                            '/([^\r\n*\/ \t])[ \t]+(@(?:phpstan-|psalm-|template-)?(?:param-out|param|return|var|template(?:-covariant|-contravariant)?|self-out|this-out|type|import-type|extends|implements|use|property(?:-read|-write)?|method)\b)/',
+                            "$1\n * $2",
+                            $matches[0]
+                        ) ?? $matches[0];
+                    },
+                    $doc
+                ) ?? $doc;
+            }
 
-        if (str_contains($doc, 'param-out') && str_contains($doc, '&')) {
-            $doc = preg_replace(
-                '/(@(?:phpstan-|psalm-)?param-out\s+[^\r\n]+?)\s*&\s*(\$[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)(?=\s|$|\*\/)/',
-                '$1 $2',
-                $doc
-            ) ?? $doc;
-        }
+            if (str_contains($doc, 'param-out') && str_contains($doc, '&')) {
+                $doc = preg_replace(
+                    '/(@(?:phpstan-|psalm-)?param-out\s+[^\r\n]+?)\s*&\s*(\$[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)(?=\s|$|\*\/)/',
+                    '$1 $2',
+                    $doc
+                ) ?? $doc;
+            }
 
-        if (str_contains($doc, '-type') && str_contains($doc, '=')) {
-            $doc = preg_replace('/(@(?:phpstan|psalm)-type\s+[a-zA-Z0-9_\x80-\xff]+)\s*=\s*/', '$1 ', $doc) ?? $doc;
+            if (str_contains($doc, '-type') && str_contains($doc, '=')) {
+                $doc = preg_replace('/(@(?:phpstan|psalm)-type\s+[a-zA-Z0-9_\x80-\xff]+)\s*=\s*/', '$1 ', $doc) ?? $doc;
+            }
+
+            if (str_contains($doc, '@self-out') && ! str_contains($doc, '@phpstan-self-out') && ! str_contains($doc, '@psalm-self-out')) {
+                $doc = preg_replace('/@self-out\b/', '@phpstan-self-out', $doc) ?? $doc;
+            }
+
+            if (str_contains($doc, '@this-out') && ! str_contains($doc, '@phpstan-this-out') && ! str_contains($doc, '@psalm-this-out')) {
+                $doc = preg_replace('/@this-out\b/', '@phpstan-this-out', $doc) ?? $doc;
+            }
         }
 
         if (stripos($doc, 'static') !== false && stripos($doc, 'closure') !== false) {
             $doc = preg_replace('/(?:\(\s*static\s+Closure\s*\)|static\s+Closure\b)/i', 'static-closure', $doc) ?? $doc;
-        }
-
-        if (str_contains($doc, '@self-out') && ! str_contains($doc, '@phpstan-self-out') && ! str_contains($doc, '@psalm-self-out')) {
-            $doc = preg_replace('/@self-out\b/', '@phpstan-self-out', $doc) ?? $doc;
-        }
-
-        if (str_contains($doc, '@this-out') && ! str_contains($doc, '@phpstan-this-out') && ! str_contains($doc, '@psalm-this-out')) {
-            $doc = preg_replace('/@this-out\b/', '@phpstan-this-out', $doc) ?? $doc;
         }
 
         if (stripos($doc, 'callable') !== false || stripos($doc, 'closure') !== false) {
@@ -107,7 +111,7 @@ final class DocblockNormalizer
             ) ?? $doc;
         }
 
-        if (str_contains($doc, '$')) {
+        if ($hasAt && str_contains($doc, '$')) {
             $doc = preg_replace('/([ \t]*\*[ \t]*(?:\|[^\r\n]+|\@[a-zA-Z\-]+[^\r\n]+))[ \t]*\r?\n[ \t]*\*[ \t]*(\$[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)\b/', '$1 $2', $doc) ?? $doc;
         }
 

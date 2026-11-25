@@ -36,7 +36,22 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Internal\Wrapper\CallableWrapper;
 
 /**
- * Evaluates inline variable (@var) and class property validation rules.
+ * Evaluates inline variable (`@var`), class property, and single-element collection mutation
+ * validation contracts at runtime.
+ *
+ * Performance & Mechanical Sympathy Architecture:
+ * Inline property and local variable checks can fire inside tight loops. Overhead is minimized via:
+ *
+ * - Shared O(1) negative property cache (`$nullPropertyCache`) checked directly by
+ *   `RuntimeTypeChecker` and `MemberAssignChecker` so unannotated properties bail out on a single
+ *   `isset()` before entering `InlineChecker`.
+ * - Pre-classified AST parse cache (`$parsedTypeNodeCache` storing `[$typeNode, $needsContext]`),
+ *   3D file/class context caches (`$resolvedFileTypeCache`, `$resolvedClassContextCache`),
+ *   static/instance generic property caches (`$resolvedStaticPropertyTypeCache`,
+ *   `$instancePropertyTypeCache` WeakMap), and O(1) lookup tables (`SCALAR_TYPES`, `ARRAY_TYPES`)
+ *   to skip context resolution and reflection when types are self-contained.
+ * - O(1) leaf element validation (`validateCollectionElementMutation()`) in hybrid mode to avoid
+ *   full-collection copies on single-element writes.
  *
  * @internal
  */
@@ -50,9 +65,9 @@ final class InlineChecker
     private static array $parsedTypeNodeCache = [];
 
     /**
-     * In-memory 3D cache for resolved class contexts with static bounds: [$className][$methodName][$typeString] => TypeNode.
+     * In-memory 3D cache for resolved class contexts with static bounds: [$className][$methodName][$typeString] => array{0: TypeNode, 1: array{0: int, 1: array<int, true>}}.
      *
-     * @var array<string, array<string, array<string, TypeNode>>>
+     * @var array<string, array<string, array<string, array{0: TypeNode, 1: array{0: int, 1: array<int, true>}}>>>
      */
     private static array $resolvedClassContextCache = [];
 
@@ -89,7 +104,7 @@ final class InlineChecker
     /**
      * In-memory cache for resolved instance property generic types per object instance.
      *
-     * @var \WeakMap<object, array{bindings: array<string, TypeNode>, props: array<string, TypeNode>}>|null
+     * @var \WeakMap<object, array{bindings: array<string, TypeNode>, fallbackKeys: array<string, true>, props: array<string, TypeNode>, fallbacks?: array<string, array{0: int, 1: array<int, true>}>}>|null
      */
     private static ?\WeakMap $instancePropertyTypeCache = null;
 
@@ -112,6 +127,7 @@ final class InlineChecker
         self::$propertyUsesTemplatesCache = [];
         self::$classHasSelfOutCache = [];
         self::$resolvedStaticPropertyTypeCache = [];
+        self::$instancePropertyTypeCache = null;
     }
 
     /**
@@ -189,8 +205,9 @@ final class InlineChecker
                     ??= SpecialTypeResolver::resolveForFile($typeNode, $file, $callerNamespace);
             }
 
+            $fallbackMeta = [0, []];
             if ($needsContext && $caller !== null) {
-                $typeNode = self::resolveCallerContext($typeNode, $caller, $thisOrClass);
+                [$typeNode, $fallbackMeta] = self::resolveCallerContextWithFallback($typeNode, $caller, $thisOrClass);
             }
 
             if (! self::shouldValidateType($typeNode)) {
@@ -216,6 +233,11 @@ final class InlineChecker
                 }
             }
 
+            $preExistingBindings = null;
+            if (($fallbackMeta[0] === -1 || $fallbackMeta[1] !== []) && \is_object($value) && $typeNode instanceof GenericTypeNode) {
+                $preExistingBindings = TemplateManager::getConcreteInstanceBindings($value);
+            }
+
             if ($typeNode instanceof GenericTypeNode && Config::isInlineGenericsEnabled() && \is_object($value)) {
                 $err = TemplateManager::bindInstanceFromNode($value, $typeNode, $context);
                 if ($err !== null) {
@@ -226,6 +248,10 @@ final class InlineChecker
             $err = $registry->validate($value, $typeNode, $context);
             if ($err !== null) {
                 return $err;
+            }
+
+            if ($preExistingBindings !== null && \is_object($value) && $typeNode instanceof GenericTypeNode) {
+                TemplateManager::markFallbackReturnBindings($value, $typeNode, $fallbackMeta[1], $fallbackMeta[0], $preExistingBindings);
             }
 
             if ($typeNode instanceof CallableTypeNode || ($typeNode instanceof IdentifierTypeNode && strtolower($typeNode->name) === 'callable')) {
@@ -508,17 +534,23 @@ final class InlineChecker
 
         $propertyUsesTemplates = false;
         $typeNode = $rawTypeNode;
+        $fallbackMeta = [0, []];
 
         if (\is_object($objectOrClass)) {
             $propertyUsesTemplates = self::propertyUsesTemplates($rawTypeNode, $className, $propName);
             if ($propertyUsesTemplates) {
-                $typeNode = self::substitutePropertyGenerics($rawTypeNode, $objectOrClass, $className);
+                [$typeNode, $fallbackMeta] = self::substitutePropertyGenericsWithFallback($rawTypeNode, $objectOrClass, $className, $propName);
             }
         } elseif (\is_string($objectOrClass)) {
             $propertyUsesTemplates = self::propertyUsesTemplates($rawTypeNode, $className, $propName);
             if ($propertyUsesTemplates) {
                 $typeNode = self::substituteStaticPropertyGenerics($rawTypeNode, $className, $propName);
             }
+        }
+
+        $preExistingBindings = null;
+        if (($fallbackMeta[0] === -1 || $fallbackMeta[1] !== []) && \is_object($value) && $typeNode instanceof GenericTypeNode) {
+            $preExistingBindings = TemplateManager::getConcreteInstanceBindings($value);
         }
 
         try {
@@ -534,6 +566,10 @@ final class InlineChecker
                 }
 
                 return $err;
+            }
+
+            if ($preExistingBindings !== null && \is_object($value) && $typeNode instanceof GenericTypeNode) {
+                TemplateManager::markFallbackReturnBindings($value, $typeNode, $fallbackMeta[1], $fallbackMeta[0], $preExistingBindings);
             }
         } catch (\Throwable $e) {
             // Silently ignore unexpected execution exceptions
@@ -683,16 +719,24 @@ final class InlineChecker
      */
     private static function resolveCallerContext(TypeNode $typeNode, ?string $caller = null, mixed $thisOrClass = null): TypeNode
     {
+        return self::resolveCallerContextWithFallback($typeNode, $caller, $thisOrClass)[0];
+    }
+
+    /**
+     * @return array{0: TypeNode, 1: array{0: int, 1: array<int, true>}}
+     */
+    private static function resolveCallerContextWithFallback(TypeNode $typeNode, ?string $caller = null, mixed $thisOrClass = null): array
+    {
         if ($caller !== null) {
             if ($caller === '') {
-                return $typeNode;
+                return [$typeNode, [0, []]];
             }
 
             if (str_contains($caller, '::')) {
                 [$className, $methodName] = explode('::', $caller, 2);
                 $thisObj = \is_object($thisOrClass) ? $thisOrClass : null;
 
-                return self::resolveClassContext(
+                return self::resolveClassContextWithFallback(
                     $typeNode,
                     $className,
                     $methodName,
@@ -700,20 +744,24 @@ final class InlineChecker
                 );
             }
 
-            return self::resolveFunctionContext($typeNode, $caller);
+            return self::resolveFunctionContextWithFallback($typeNode, $caller);
         }
 
-        return $typeNode;
+        return [$typeNode, [0, []]];
     }
 
     /**
      * Resolves templates and aliases within standalone functions.
+     *
+     * @return array{0: TypeNode, 1: array{0: int, 1: array<int, true>}}
      */
-    private static function resolveFunctionContext(TypeNode $typeNode, string $functionName): TypeNode
+    private static function resolveFunctionContextWithFallback(TypeNode $typeNode, string $functionName): array
     {
         if (! \function_exists($functionName)) {
-            return $typeNode;
+            return [$typeNode, [0, []]];
         }
+
+        $fallbackMeta = [0, []];
 
         try {
             $refFunc = new \ReflectionFunction($functionName);
@@ -727,6 +775,7 @@ final class InlineChecker
             $activeBindings = [...$aliases, ...$boundTemplates];
 
             if (\count($activeBindings) > 0 || \count($declaredTemplates) > 0) {
+                $fallbackMeta = TemplateManager::collectUnboundGenericArgIndices($typeNode, $activeBindings, $declaredTemplates);
                 $typeNode = TemplateSubstitutor::substitute($typeNode, $activeBindings, $declaredTemplates);
                 $typeNode = SpecialTypeResolver::resolve($typeNode, $refFunc);
             }
@@ -734,18 +783,20 @@ final class InlineChecker
             // Silently continue if reflection fails
         }
 
-        return $typeNode;
+        return [$typeNode, $fallbackMeta];
     }
 
     /**
      * Resolves templates, aliases, and class context within class methods using zero-allocation nested caching.
+     *
+     * @return array{0: TypeNode, 1: array{0: int, 1: array<int, true>}}
      */
-    private static function resolveClassContext(
+    private static function resolveClassContextWithFallback(
         TypeNode $typeNode,
         string $className,
         ?string $methodName,
         ?object $thisObj
-    ): TypeNode {
+    ): array {
         if (
             ! class_exists($className, false)
             && ! interface_exists($className, false)
@@ -754,7 +805,7 @@ final class InlineChecker
             && ! interface_exists($className)
             && ! trait_exists($className)
         ) {
-            return $typeNode;
+            return [$typeNode, [0, []]];
         }
 
         $targetFunc = ($methodName !== '{closure}' && $methodName !== null && ! str_starts_with($methodName, '{closure'))
@@ -775,6 +826,8 @@ final class InlineChecker
             }
         }
 
+        $fallbackMeta = [0, []];
+
         try {
             /** @var class-string<object> $className */
             $refClass = new \ReflectionClass($className);
@@ -785,17 +838,23 @@ final class InlineChecker
             $declaredTemplates = $allTemplates;
 
             if ($classAliases === [] && $declaredTemplates === []) {
+                $result = [$typeNode, [0, []]];
                 if ($canCache && $typeString !== null) {
-                    return self::$resolvedClassContextCache[$className][$methodKey][$typeString] = $typeNode;
+                    return self::$resolvedClassContextCache[$className][$methodKey][$typeString] = $result;
                 }
 
-                return $typeNode;
+                return $result;
             }
 
             $boundTemplates = TemplateManager::getBoundTemplates($targetFunc, $thisObj, $declaredTemplates);
             $activeBindings = [...$classAliases, ...$boundTemplates];
 
             if ($activeBindings !== [] || $declaredTemplates !== []) {
+                $thisFallbackKeys = $thisObj !== null ? TemplateManager::getFallbackBoundTemplates($thisObj) : [];
+                $concreteBindings = $thisFallbackKeys !== []
+                    ? array_diff_key($activeBindings, $thisFallbackKeys)
+                    : $activeBindings;
+                $fallbackMeta = TemplateManager::collectUnboundGenericArgIndices($typeNode, $concreteBindings, $declaredTemplates);
                 $typeNode = TemplateSubstitutor::substitute($typeNode, $activeBindings, $declaredTemplates);
                 $typeNode = SpecialTypeResolver::resolve($typeNode, $refClass);
             }
@@ -803,11 +862,12 @@ final class InlineChecker
             // Silently continue if reflection fails
         }
 
+        $result = [$typeNode, $fallbackMeta];
         if ($canCache && $typeString !== null) {
-            return self::$resolvedClassContextCache[$className][$methodKey][$typeString] = $typeNode;
+            return self::$resolvedClassContextCache[$className][$methodKey][$typeString] = $result;
         }
 
-        return $typeNode;
+        return $result;
     }
 
     /**
@@ -815,13 +875,22 @@ final class InlineChecker
      */
     private static function substitutePropertyGenerics(TypeNode $typeNode, object $object, string $className, string $propName = ''): TypeNode
     {
+        return self::substitutePropertyGenericsWithFallback($typeNode, $object, $className, $propName)[0];
+    }
+
+    /**
+     * @return array{0: TypeNode, 1: array{0: int, 1: array<int, true>}}
+     */
+    private static function substitutePropertyGenericsWithFallback(TypeNode $typeNode, object $object, string $className, string $propName = ''): array
+    {
         $boundTemplates = TemplateManager::getInstanceBindingsFast($object);
+        $fallbackKeys = TemplateManager::getFallbackBoundTemplates($object);
 
         if ($propName !== '') {
             self::$instancePropertyTypeCache ??= new \WeakMap();
             $entry = self::$instancePropertyTypeCache[$object] ?? null;
-            if ($entry !== null && $entry['bindings'] === $boundTemplates && isset($entry['props'][$propName])) {
-                return $entry['props'][$propName];
+            if ($entry !== null && $entry['bindings'] === $boundTemplates && $entry['fallbackKeys'] === $fallbackKeys && isset($entry['props'][$propName])) {
+                return [$entry['props'][$propName], $entry['fallbacks'][$propName] ?? [0, []]];
             }
         }
 
@@ -833,7 +902,12 @@ final class InlineChecker
             $allTemplates = [...($contract['classTemplates'] ?? []), ...($contract['templates'] ?? [])];
         }
 
+        $fallbackMeta = [0, []];
         if ($boundTemplates !== [] || $allTemplates !== []) {
+            $concreteBindings = $fallbackKeys !== []
+                ? array_diff_key($boundTemplates, $fallbackKeys)
+                : $boundTemplates;
+            $fallbackMeta = TemplateManager::collectUnboundGenericArgIndices($typeNode, $concreteBindings, $allTemplates);
             $subNode = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $allTemplates);
 
             if ($subNode !== $typeNode && (class_exists($className, false) || interface_exists($className, false) || trait_exists($className, false) || class_exists($className))) {
@@ -852,18 +926,21 @@ final class InlineChecker
         if ($propName !== '') {
             self::$instancePropertyTypeCache ??= new \WeakMap();
             $entry = self::$instancePropertyTypeCache[$object] ?? null;
-            if ($entry === null || $entry['bindings'] !== $boundTemplates) {
+            if ($entry === null || $entry['bindings'] !== $boundTemplates || $entry['fallbackKeys'] !== $fallbackKeys) {
                 self::$instancePropertyTypeCache[$object] = [
                     'bindings' => $boundTemplates,
+                    'fallbackKeys' => $fallbackKeys,
                     'props' => [$propName => $typeNode],
+                    'fallbacks' => [$propName => $fallbackMeta],
                 ];
             } else {
                 $entry['props'][$propName] = $typeNode;
+                $entry['fallbacks'][$propName] = $fallbackMeta;
                 self::$instancePropertyTypeCache[$object] = $entry;
             }
         }
 
-        return $typeNode;
+        return [$typeNode, $fallbackMeta];
     }
 
     /**

@@ -653,4 +653,146 @@ PHP;
             expect($transformed)->toContain('class MultiAnonFactory');
         });
     });
+
+    describe('Write-Mode Cache Invalidation & $openedPath Resolution', function () {
+        test('invalidates statCache when overwriting an existing .php file via file_put_contents()', function () {
+            StreamWrapper::register();
+
+            $tempDir = sys_get_temp_dir() . '/typephp_write_stat_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $tempFile = $tempDir . '/dynamic.php';
+
+            try {
+                $initial = '<?php return 1;';
+                file_put_contents($tempFile, $initial);
+
+                $wrapper = new StreamWrapper();
+                $statBefore = $wrapper->url_stat($tempFile, 0);
+                expect($statBefore)->toBeArray()
+                    ->and($statBefore['size'])->toBe(\strlen($initial))
+                ;
+
+                $updated = '<?php return "much longer updated payload";';
+                file_put_contents($tempFile, $updated);
+
+                clearstatcache(true, $tempFile);
+                $statAfter = $wrapper->url_stat($tempFile, 0);
+                expect($statAfter)->toBeArray()
+                    ->and($statAfter['size'])->toBe(\strlen($updated))
+                ;
+            } finally {
+                @unlink($tempFile);
+                @rmdir($tempDir);
+            }
+        });
+
+        test('invalidates statCache after writing via an r+ handle even if stat occurred after fopen()', function () {
+            StreamWrapper::register();
+
+            $tempDir = sys_get_temp_dir() . '/typephp_rplus_stat_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $tempFile = $tempDir . '/rplus.php';
+
+            try {
+                $initial = '<?php return 1;';
+                file_put_contents($tempFile, $initial);
+
+                $fp = fopen($tempFile, 'r+');
+                expect($fp)->not()->toBeFalse();
+
+                expect(filesize($tempFile))->toBe(\strlen($initial));
+
+                $updated = '<?php return "extended content via r+ stream";';
+                fwrite($fp, $updated);
+                fclose($fp);
+
+                clearstatcache(true, $tempFile);
+                expect(filesize($tempFile))->toBe(\strlen($updated));
+            } finally {
+                @unlink($tempFile);
+                @rmdir($tempDir);
+            }
+        });
+
+        test('invalidates staticNegativeStatCache when creating a previously missing file under a vendor path', function () {
+            StreamWrapper::register();
+
+            $tempDir = sys_get_temp_dir() . '/typephp_vendor_neg_' . uniqid();
+            $vendorPkgDir = $tempDir . '/vendor/acme/pkg';
+            mkdir($vendorPkgDir, 0777, true);
+            $generatedFile = $vendorPkgDir . '/Generated.php';
+
+            try {
+                $wrapper = new StreamWrapper();
+                expect($wrapper->url_stat($generatedFile, 0))->toBeFalse();
+
+                file_put_contents($generatedFile, '<?php return true;');
+
+                clearstatcache(true, $generatedFile);
+                expect($wrapper->url_stat($generatedFile, 0))->toBeArray();
+            } finally {
+                @unlink($generatedFile);
+                @rmdir($vendorPkgDir);
+                @rmdir($tempDir . '/vendor/acme');
+                @rmdir($tempDir . '/vendor');
+                @rmdir($tempDir);
+            }
+        });
+
+        test('populates $openedPath and resolves files on include_path for STREAM_USE_PATH opens and includes', function () {
+            StreamWrapper::register();
+
+            $tempDir = sys_get_temp_dir() . '/typephp_incpath_' . uniqid();
+            mkdir($tempDir, 0777, true);
+            $realDir = realpath($tempDir) ?: $tempDir;
+            $fileName = 'IncludePathFixture_' . uniqid() . '.php';
+            $fullPath = $realDir . DIRECTORY_SEPARATOR . $fileName;
+
+            file_put_contents($fullPath, "<?php\n/** @param positive-int \$n */\nfunction incPathFn(int \$n): int { return \$n; }\n");
+
+            $originalIncludePath = get_include_path();
+            set_include_path($realDir . PATH_SEPARATOR . $originalIncludePath);
+
+            try {
+                $wrapper = new StreamWrapper();
+
+                $openedPath = null;
+                $opened = $wrapper->stream_open($fileName, 'r', STREAM_USE_PATH, $openedPath);
+                $wrapper->stream_close();
+
+                expect($opened)->toBeTrue()
+                    ->and($openedPath)->not()->toBeNull()
+                    ->and(str_replace('\\', '/', (string) realpath((string) $openedPath)))
+                    ->toBe(str_replace('\\', '/', (string) realpath($fullPath)))
+                ;
+
+                $canonicalDir = str_replace('\\', '/', $realDir);
+                Config::set([
+                    'include' => [$canonicalDir . '/**'],
+                    'exclude' => ['vendor/**'],
+                ]);
+
+                $openedIncludePath = null;
+                $included = $wrapper->stream_open(
+                    $fileName,
+                    'r',
+                    StreamWrapper::STREAM_OPEN_FOR_INCLUDE | STREAM_USE_PATH,
+                    $openedIncludePath
+                );
+                $content = $included ? $wrapper->stream_read(5000) : '';
+                $wrapper->stream_close();
+
+                expect($included)->toBeTrue()
+                    ->and($openedIncludePath)->not()->toBeNull()
+                    ->and(str_replace('\\', '/', (string) realpath((string) $openedIncludePath)))
+                    ->toBe(str_replace('\\', '/', (string) realpath($fullPath)))
+                    ->and($content)->toContain('RuntimeTypeChecker::setupScope')
+                ;
+            } finally {
+                set_include_path($originalIncludePath);
+                @unlink($fullPath);
+                @rmdir($tempDir);
+            }
+        });
+    });
 });

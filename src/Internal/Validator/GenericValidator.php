@@ -10,6 +10,7 @@ use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
 use PHPStan\PhpDocParser\Ast\Node as PhpDocNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\ArrayTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
@@ -660,12 +661,40 @@ final class GenericValidator implements TypeValidatorInterface
             return null;
         }
 
-        if ($targetType instanceof GenericTypeNode && strtolower((string) $targetType->type) === 'value-of') {
-            return $this->validateKeyOfNestedValueOf($value, $targetType, $context, $isSensitive);
+        if ($targetType instanceof GenericTypeNode) {
+            $innerBase = strtolower((string) $targetType->type);
+            if ($innerBase === 'value-of') {
+                return $this->validateKeyOfNestedValueOf($value, $targetType, $context, $isSensitive);
+            }
+
+            if ($innerBase === 'list' || $innerBase === 'non-empty-list' || $innerBase === 'non-empty-array-list') {
+                return $registry->validate($value, new IdentifierTypeNode('int'), $context, $isSensitive);
+            }
+
+            if (\in_array($innerBase, ['array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator'], true)) {
+                $keyType = \count($targetType->genericTypes) >= 2
+                    ? $targetType->genericTypes[0]
+                    : new IdentifierTypeNode('array-key');
+
+                return $registry->validate($value, $keyType, $context, $isSensitive);
+            }
         }
 
-        if ($targetType instanceof IdentifierTypeNode && ClassNameValidator::isValid($targetType->name) && enum_exists($targetType->name)) {
-            return $this->validateKeyOfEnum($value, $targetType->name, $context, $isSensitive);
+        if ($targetType instanceof ArrayTypeNode) {
+            return $registry->validate($value, new IdentifierTypeNode('array-key'), $context, $isSensitive);
+        }
+
+        if ($targetType instanceof IdentifierTypeNode) {
+            $lower = strtolower($targetType->name);
+            if ($lower === 'list' || $lower === 'non-empty-list') {
+                return $registry->validate($value, new IdentifierTypeNode('int'), $context, $isSensitive);
+            }
+            if (\in_array($lower, ['array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator'], true)) {
+                return $registry->validate($value, new IdentifierTypeNode('array-key'), $context, $isSensitive);
+            }
+            if (ClassNameValidator::isValid($targetType->name) && enum_exists($targetType->name)) {
+                return $this->validateKeyOfEnum($value, $targetType->name, $context, $isSensitive);
+            }
         }
 
         if ($targetType instanceof ArrayShapeNode) {
@@ -777,6 +806,27 @@ final class GenericValidator implements TypeValidatorInterface
         $targetType = $node->genericTypes[0] ?? null;
         if ($targetType === null) {
             return null;
+        }
+
+        if ($targetType instanceof GenericTypeNode) {
+            $innerBase = strtolower((string) $targetType->type);
+            if ($innerBase === 'list' || $innerBase === 'non-empty-list' || $innerBase === 'non-empty-array-list') {
+                $valType = $targetType->genericTypes[0] ?? null;
+
+                return $valType !== null ? $registry->validate($value, $valType, $context, $isSensitive) : null;
+            }
+
+            if (\in_array($innerBase, ['array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator'], true)) {
+                $valType = \count($targetType->genericTypes) >= 2
+                    ? $targetType->genericTypes[1]
+                    : ($targetType->genericTypes[0] ?? null);
+
+                return $valType !== null ? $registry->validate($value, $valType, $context, $isSensitive) : null;
+            }
+        }
+
+        if ($targetType instanceof ArrayTypeNode) {
+            return $registry->validate($value, $targetType->type, $context, $isSensitive);
         }
 
         if ($targetType instanceof IdentifierTypeNode && ClassNameValidator::isValid($targetType->name) && enum_exists($targetType->name)) {

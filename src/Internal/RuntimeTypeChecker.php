@@ -43,7 +43,36 @@ use TypePHP\Internal\Wrapper\CallableWrapper;
 use TypePHP\Internal\Wrapper\IterableWrapper;
 
 /**
- * Core runtime type checking engine facade for parameter validation, return type enforcement, and variable tracking.
+ * Core runtime type checking engine facade for parameter validation, return type enforcement,
+ * property mutation checks, and generic scope tracking.
+ *
+ * Performance & Mechanical Sympathy Architecture:
+ * This class is the primary hot path executed on every instrumented function entry, return,
+ * generator yield/send, and property/collection write. Readability and strict DRY abstractions
+ * are intentionally traded for Zend Engine / OPcache mechanical sympathy and maximum throughput:
+ *
+ * - Inline hot paths: Common primitive, class, nullable, identity-return, and 1-level property
+ *   dimension checks are intentionally inlined inside entry points (`setupScope()`, `checkReturn()`,
+ *   `checkPropertyDimAssign()`, `checkPropertyMemberAssign()`) to avoid per-check PHP call-frame
+ *   overhead (`DO_FCALL`) and temporary wrapper array allocations.
+ * - Local `private const` opcodes & bitmasks (`PARAM_CHECK_*`, `PROP_OP_*`, `PROP_BIT_*`):
+ *   Opcodes are intentionally mirrored as local class constants rather than referenced across
+ *   classes. PHP resolves local `private const` values to literal `IS_LONG` constants at compile
+ *   time, enabling O(1) `ZEND_MATCH` jump tables and compile-time bitmask folding instead of
+ *   O(n) runtime `FETCH_CLASS_CONSTANT` + `IS_IDENTICAL` chains.
+ * - Pre-compiled monomorphic execution plans: Cold reflection, PHPDoc parsing, and template
+ *   resolution run once and compile into flat lookup caches (`$simpleScopePlanCache`,
+ *   `$simpleReturnPlanCache`, `$simpleCtorTemplatePlanCache`, `$simpleClassStringTemplatePlanCache`,
+ *   `$simpleGenericIterablePlanCache`, `$genericReturnPlanCache`, `$identitySelfReturnCache`,
+ *   `$nullableReturnCache`, and trait-dispatched variants).
+ * - Static boolean fast-exit flags (`$isEnabled`, `$paramsEnabled`, `$returnsEnabled`, etc.):
+ *   Synced by `Config` to allow single-opcode bailout without method calls or superglobal lookups.
+ *
+ * Contributor note: Do not extract these hot-path `match` blocks into shared helper methods or
+ * replace local `private const` opcodes with cross-class constants without profiling against
+ * CPU-bound, generic-heavy workloads.
+ *
+ * @internal
  */
 final class RuntimeTypeChecker
 {
@@ -101,6 +130,44 @@ final class RuntimeTypeChecker
 
     private const PARAM_CHECK_INT_OR_FLOAT = 26;
 
+    private const PROP_OP_NONE = 0;
+
+    private const PROP_OP_INT = 1;
+
+    private const PROP_OP_STRING = 2;
+
+    private const PROP_OP_BOOL = 3;
+
+    private const PROP_OP_FLOAT = 4;
+
+    private const PROP_OP_POSITIVE_INT = 5;
+
+    private const PROP_OP_NON_EMPTY_STRING = 6;
+
+    private const PROP_OP_ARRAY_KEY = 7;
+
+    private const PROP_OP_ARRAY = 8;
+
+    private const PROP_OP_OBJECT = 9;
+
+    private const PROP_OP_CLASS = 10;
+
+    private const PROP_OP_MASK = 11;
+
+    private const PROP_BIT_INT = 1;
+
+    private const PROP_BIT_STRING = 2;
+
+    private const PROP_BIT_BOOL = 4;
+
+    private const PROP_BIT_FLOAT = 8;
+
+    private const PROP_BIT_OBJECT = 16;
+
+    private const PROP_BIT_NULL = 32;
+
+    private const PROP_BIT_ARRAY = 64;
+
     public static bool $isEnabled = true;
 
     public static bool $paramsEnabled = true;
@@ -118,7 +185,7 @@ final class RuntimeTypeChecker
     private static ?TypeValidatorRegistry $registry = null;
 
     /**
-     * @var array<string, array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool}>}>
+     * @var array<string, array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool, 4: ?string, 5: bool}>}>
      */
     private static array $simpleScopePlanCache = [];
 
@@ -150,7 +217,7 @@ final class RuntimeTypeChecker
     private static array $genericReturnPlanCache = [];
 
     /**
-     * @var array<string, array<string, array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool}>}>>
+     * @var array<string, array<string, array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool, 4: ?string, 5: bool}>}>>
      */
     private static array $traitScopePlanCache = [];
 
@@ -461,54 +528,54 @@ final class RuntimeTypeChecker
 
                     if (! $c[0] || $key === null) {
                         $keyOk = true;
-                        if (! $c[0] && $key !== null && $c[1] !== MemberAssignChecker::OP_NONE) {
+                        if (! $c[0] && $key !== null && $c[1] !== self::PROP_OP_NONE) {
                             $kExtra = $c[2];
                             $keyOk = match ($c[1]) {
-                                MemberAssignChecker::OP_INT => \is_int($key),
-                                MemberAssignChecker::OP_STRING => \is_string($key),
-                                MemberAssignChecker::OP_ARRAY_KEY => \is_int($key) || \is_string($key),
-                                MemberAssignChecker::OP_NON_EMPTY_STRING => \is_string($key) && $key !== '',
-                                MemberAssignChecker::OP_POSITIVE_INT => \is_int($key) && $key > 0,
-                                MemberAssignChecker::OP_MASK => \is_int($kExtra) && (
-                                    (\is_string($key) && ($kExtra & MemberAssignChecker::BIT_STRING) !== 0)
-                                    || (\is_int($key) && ($kExtra & (MemberAssignChecker::BIT_INT | MemberAssignChecker::BIT_FLOAT)) !== 0)
-                                    || (\is_object($key) && ($kExtra & MemberAssignChecker::BIT_OBJECT) !== 0)
-                                    || (\is_bool($key) && ($kExtra & MemberAssignChecker::BIT_BOOL) !== 0)
-                                    || (\is_float($key) && ($kExtra & MemberAssignChecker::BIT_FLOAT) !== 0)
-                                    || (\is_array($key) && ($kExtra & MemberAssignChecker::BIT_ARRAY) !== 0)
+                                self::PROP_OP_INT => \is_int($key),
+                                self::PROP_OP_STRING => \is_string($key),
+                                self::PROP_OP_ARRAY_KEY => \is_int($key) || \is_string($key),
+                                self::PROP_OP_NON_EMPTY_STRING => \is_string($key) && $key !== '',
+                                self::PROP_OP_POSITIVE_INT => \is_int($key) && $key > 0,
+                                self::PROP_OP_MASK => \is_int($kExtra) && (
+                                    (\is_string($key) && ($kExtra & self::PROP_BIT_STRING) !== 0)
+                                    || (\is_int($key) && ($kExtra & (self::PROP_BIT_INT | self::PROP_BIT_FLOAT)) !== 0)
+                                    || (\is_object($key) && ($kExtra & self::PROP_BIT_OBJECT) !== 0)
+                                    || (\is_bool($key) && ($kExtra & self::PROP_BIT_BOOL) !== 0)
+                                    || (\is_float($key) && ($kExtra & self::PROP_BIT_FLOAT) !== 0)
+                                    || (\is_array($key) && ($kExtra & self::PROP_BIT_ARRAY) !== 0)
                                 ),
-                                MemberAssignChecker::OP_OBJECT => \is_object($key),
-                                MemberAssignChecker::OP_CLASS => \is_object($key) && \is_string($kExtra) && ($key instanceof $kExtra),
+                                self::PROP_OP_OBJECT => \is_object($key),
+                                self::PROP_OP_CLASS => \is_object($key) && \is_string($kExtra) && ($key instanceof $kExtra),
                                 default => false,
                             };
                         }
 
                         if ($keyOk) {
                             $vOp = $c[3];
-                            if ($vOp === MemberAssignChecker::OP_NONE) {
+                            if ($vOp === self::PROP_OP_NONE) {
                                 return $value;
                             }
 
                             $vExtra = $c[4];
                             $valOk = match ($vOp) {
-                                MemberAssignChecker::OP_INT => \is_int($value),
-                                MemberAssignChecker::OP_STRING => \is_string($value),
-                                MemberAssignChecker::OP_BOOL => \is_bool($value),
-                                MemberAssignChecker::OP_FLOAT => \is_float($value) || \is_int($value),
-                                MemberAssignChecker::OP_POSITIVE_INT => \is_int($value) && $value > 0,
-                                MemberAssignChecker::OP_NON_EMPTY_STRING => \is_string($value) && $value !== '',
-                                MemberAssignChecker::OP_ARRAY_KEY => \is_int($value) || \is_string($value),
-                                MemberAssignChecker::OP_ARRAY => \is_array($value),
-                                MemberAssignChecker::OP_OBJECT => \is_object($value),
-                                MemberAssignChecker::OP_CLASS => \is_object($value) && \is_string($vExtra) && ($value instanceof $vExtra),
-                                MemberAssignChecker::OP_MASK => \is_int($vExtra) && (
-                                    (\is_string($value) && ($vExtra & MemberAssignChecker::BIT_STRING) !== 0)
-                                    || (\is_int($value) && ($vExtra & (MemberAssignChecker::BIT_INT | MemberAssignChecker::BIT_FLOAT)) !== 0)
-                                    || (\is_object($value) && ($vExtra & MemberAssignChecker::BIT_OBJECT) !== 0)
-                                    || (\is_bool($value) && ($vExtra & MemberAssignChecker::BIT_BOOL) !== 0)
-                                    || (\is_float($value) && ($vExtra & MemberAssignChecker::BIT_FLOAT) !== 0)
-                                    || ($value === null && ($vExtra & MemberAssignChecker::BIT_NULL) !== 0)
-                                    || (\is_array($value) && ($vExtra & MemberAssignChecker::BIT_ARRAY) !== 0)
+                                self::PROP_OP_INT => \is_int($value),
+                                self::PROP_OP_STRING => \is_string($value),
+                                self::PROP_OP_BOOL => \is_bool($value),
+                                self::PROP_OP_FLOAT => \is_float($value) || \is_int($value),
+                                self::PROP_OP_POSITIVE_INT => \is_int($value) && $value > 0,
+                                self::PROP_OP_NON_EMPTY_STRING => \is_string($value) && $value !== '',
+                                self::PROP_OP_ARRAY_KEY => \is_int($value) || \is_string($value),
+                                self::PROP_OP_ARRAY => \is_array($value),
+                                self::PROP_OP_OBJECT => \is_object($value),
+                                self::PROP_OP_CLASS => \is_object($value) && \is_string($vExtra) && ($value instanceof $vExtra),
+                                self::PROP_OP_MASK => \is_int($vExtra) && (
+                                    (\is_string($value) && ($vExtra & self::PROP_BIT_STRING) !== 0)
+                                    || (\is_int($value) && ($vExtra & (self::PROP_BIT_INT | self::PROP_BIT_FLOAT)) !== 0)
+                                    || (\is_object($value) && ($vExtra & self::PROP_BIT_OBJECT) !== 0)
+                                    || (\is_bool($value) && ($vExtra & self::PROP_BIT_BOOL) !== 0)
+                                    || (\is_float($value) && ($vExtra & self::PROP_BIT_FLOAT) !== 0)
+                                    || ($value === null && ($vExtra & self::PROP_BIT_NULL) !== 0)
+                                    || (\is_array($value) && ($vExtra & self::PROP_BIT_ARRAY) !== 0)
                                 ),
                                 default => false,
                             };
@@ -711,54 +778,54 @@ final class RuntimeTypeChecker
 
                     if (! $c[0] || $key === null) {
                         $keyOk = true;
-                        if (! $c[0] && $key !== null && $c[1] !== MemberAssignChecker::OP_NONE) {
+                        if (! $c[0] && $key !== null && $c[1] !== self::PROP_OP_NONE) {
                             $kExtra = $c[2];
                             $keyOk = match ($c[1]) {
-                                MemberAssignChecker::OP_INT => \is_int($key),
-                                MemberAssignChecker::OP_STRING => \is_string($key),
-                                MemberAssignChecker::OP_ARRAY_KEY => \is_int($key) || \is_string($key),
-                                MemberAssignChecker::OP_NON_EMPTY_STRING => \is_string($key) && $key !== '',
-                                MemberAssignChecker::OP_POSITIVE_INT => \is_int($key) && $key > 0,
-                                MemberAssignChecker::OP_MASK => \is_int($kExtra) && (
-                                    (\is_string($key) && ($kExtra & MemberAssignChecker::BIT_STRING) !== 0)
-                                    || (\is_int($key) && ($kExtra & (MemberAssignChecker::BIT_INT | MemberAssignChecker::BIT_FLOAT)) !== 0)
-                                    || (\is_object($key) && ($kExtra & MemberAssignChecker::BIT_OBJECT) !== 0)
-                                    || (\is_bool($key) && ($kExtra & MemberAssignChecker::BIT_BOOL) !== 0)
-                                    || (\is_float($key) && ($kExtra & MemberAssignChecker::BIT_FLOAT) !== 0)
-                                    || (\is_array($key) && ($kExtra & MemberAssignChecker::BIT_ARRAY) !== 0)
+                                self::PROP_OP_INT => \is_int($key),
+                                self::PROP_OP_STRING => \is_string($key),
+                                self::PROP_OP_ARRAY_KEY => \is_int($key) || \is_string($key),
+                                self::PROP_OP_NON_EMPTY_STRING => \is_string($key) && $key !== '',
+                                self::PROP_OP_POSITIVE_INT => \is_int($key) && $key > 0,
+                                self::PROP_OP_MASK => \is_int($kExtra) && (
+                                    (\is_string($key) && ($kExtra & self::PROP_BIT_STRING) !== 0)
+                                    || (\is_int($key) && ($kExtra & (self::PROP_BIT_INT | self::PROP_BIT_FLOAT)) !== 0)
+                                    || (\is_object($key) && ($kExtra & self::PROP_BIT_OBJECT) !== 0)
+                                    || (\is_bool($key) && ($kExtra & self::PROP_BIT_BOOL) !== 0)
+                                    || (\is_float($key) && ($kExtra & self::PROP_BIT_FLOAT) !== 0)
+                                    || (\is_array($key) && ($kExtra & self::PROP_BIT_ARRAY) !== 0)
                                 ),
-                                MemberAssignChecker::OP_OBJECT => \is_object($key),
-                                MemberAssignChecker::OP_CLASS => \is_object($key) && \is_string($kExtra) && ($key instanceof $kExtra),
+                                self::PROP_OP_OBJECT => \is_object($key),
+                                self::PROP_OP_CLASS => \is_object($key) && \is_string($kExtra) && ($key instanceof $kExtra),
                                 default => false,
                             };
                         }
 
                         if ($keyOk) {
                             $vOp = $c[3];
-                            if ($vOp === MemberAssignChecker::OP_NONE) {
+                            if ($vOp === self::PROP_OP_NONE) {
                                 return $value;
                             }
 
                             $vExtra = $c[4];
                             $valOk = match ($vOp) {
-                                MemberAssignChecker::OP_INT => \is_int($value),
-                                MemberAssignChecker::OP_STRING => \is_string($value),
-                                MemberAssignChecker::OP_BOOL => \is_bool($value),
-                                MemberAssignChecker::OP_FLOAT => \is_float($value) || \is_int($value),
-                                MemberAssignChecker::OP_POSITIVE_INT => \is_int($value) && $value > 0,
-                                MemberAssignChecker::OP_NON_EMPTY_STRING => \is_string($value) && $value !== '',
-                                MemberAssignChecker::OP_ARRAY_KEY => \is_int($value) || \is_string($value),
-                                MemberAssignChecker::OP_ARRAY => \is_array($value),
-                                MemberAssignChecker::OP_OBJECT => \is_object($value),
-                                MemberAssignChecker::OP_CLASS => \is_object($value) && \is_string($vExtra) && ($value instanceof $vExtra),
-                                MemberAssignChecker::OP_MASK => \is_int($vExtra) && (
-                                    (\is_string($value) && ($vExtra & MemberAssignChecker::BIT_STRING) !== 0)
-                                    || (\is_int($value) && ($vExtra & (MemberAssignChecker::BIT_INT | MemberAssignChecker::BIT_FLOAT)) !== 0)
-                                    || (\is_object($value) && ($vExtra & MemberAssignChecker::BIT_OBJECT) !== 0)
-                                    || (\is_bool($value) && ($vExtra & MemberAssignChecker::BIT_BOOL) !== 0)
-                                    || (\is_float($value) && ($vExtra & MemberAssignChecker::BIT_FLOAT) !== 0)
-                                    || ($value === null && ($vExtra & MemberAssignChecker::BIT_NULL) !== 0)
-                                    || (\is_array($value) && ($vExtra & MemberAssignChecker::BIT_ARRAY) !== 0)
+                                self::PROP_OP_INT => \is_int($value),
+                                self::PROP_OP_STRING => \is_string($value),
+                                self::PROP_OP_BOOL => \is_bool($value),
+                                self::PROP_OP_FLOAT => \is_float($value) || \is_int($value),
+                                self::PROP_OP_POSITIVE_INT => \is_int($value) && $value > 0,
+                                self::PROP_OP_NON_EMPTY_STRING => \is_string($value) && $value !== '',
+                                self::PROP_OP_ARRAY_KEY => \is_int($value) || \is_string($value),
+                                self::PROP_OP_ARRAY => \is_array($value),
+                                self::PROP_OP_OBJECT => \is_object($value),
+                                self::PROP_OP_CLASS => \is_object($value) && \is_string($vExtra) && ($value instanceof $vExtra),
+                                self::PROP_OP_MASK => \is_int($vExtra) && (
+                                    (\is_string($value) && ($vExtra & self::PROP_BIT_STRING) !== 0)
+                                    || (\is_int($value) && ($vExtra & (self::PROP_BIT_INT | self::PROP_BIT_FLOAT)) !== 0)
+                                    || (\is_object($value) && ($vExtra & self::PROP_BIT_OBJECT) !== 0)
+                                    || (\is_bool($value) && ($vExtra & self::PROP_BIT_BOOL) !== 0)
+                                    || (\is_float($value) && ($vExtra & self::PROP_BIT_FLOAT) !== 0)
+                                    || ($value === null && ($vExtra & self::PROP_BIT_NULL) !== 0)
+                                    || (\is_array($value) && ($vExtra & self::PROP_BIT_ARRAY) !== 0)
                                 ),
                                 default => false,
                             };
@@ -789,7 +856,12 @@ final class RuntimeTypeChecker
         TemplateManager::pushPendingInstantiation($typeString, $file);
 
         try {
-            return $factory(...$args);
+            $result = $factory(...$args);
+            if (\is_object($result)) {
+                TemplateManager::applyPendingInstantiationIfUnconsumed($result);
+            }
+
+            return $result;
         } finally {
             TemplateManager::popPendingInstantiation();
         }
@@ -1944,7 +2016,7 @@ final class RuntimeTypeChecker
     }
 
     /**
-     * @param array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool}>} $plan
+     * @param array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool, 4: ?string, 5: bool}>} $plan
      * @param array<string, mixed> $vars
      */
     private static function executeSimpleScopePlan(array $plan, array $vars): ?ErrorMessage
@@ -1953,7 +2025,6 @@ final class RuntimeTypeChecker
             return null;
         }
 
-        $registry = self::$registry ??= new TypeValidatorRegistry();
         $effectiveFunc = $plan['function'];
 
         foreach ($plan['items'] as $item) {
@@ -1962,6 +2033,9 @@ final class RuntimeTypeChecker
             if (isset($vars[$paramName])) {
                 $val = $vars[$paramName];
             } elseif (\array_key_exists($paramName, $vars)) {
+                if ($item[5]) {
+                    continue;
+                }
                 $val = null;
             } else {
                 continue;
@@ -1974,6 +2048,8 @@ final class RuntimeTypeChecker
                 self::PARAM_CHECK_STRING => \is_string($val),
                 self::PARAM_CHECK_BOOL => \is_bool($val),
                 self::PARAM_CHECK_FLOAT => \is_float($val) || \is_int($val),
+                self::PARAM_CHECK_OBJECT => \is_object($val),
+                self::PARAM_CHECK_CLASS => \is_object($val) && $item[4] !== null && ($val instanceof $item[4]),
                 self::PARAM_CHECK_ARRAY_KEY => \is_int($val) || \is_string($val),
                 self::PARAM_CHECK_ARRAY => \is_array($val),
                 self::PARAM_CHECK_LIST => \is_array($val) && ($val === [] || array_is_list($val)),
@@ -1993,6 +2069,7 @@ final class RuntimeTypeChecker
                 continue;
             }
 
+            $registry = self::$registry ??= new TypeValidatorRegistry();
             $err = $registry->validate($val, $item[2], '', $item[3]);
             if ($err !== null) {
                 $formattedErr = ErrorFactory::createError($effectiveFunc . '(): Argument $' . $paramName . $err->getMessage());
@@ -2015,7 +2092,7 @@ final class RuntimeTypeChecker
      * @param array<string, TypeNode> $types
      * @param array<string, bool> $sensitiveParams
      *
-     * @return list<array{0: string, 1: int, 2: TypeNode, 3: bool}>
+     * @return list<array{0: string, 1: int, 2: TypeNode, 3: bool, 4: ?string, 5: bool}>
      */
     private static function compileSimpleScopePlanItems(array $types, array $sensitiveParams): array
     {
@@ -2023,15 +2100,46 @@ final class RuntimeTypeChecker
         foreach ($types as $paramName => $typeNode) {
             $isSensitive = $sensitiveParams[$paramName] ?? false;
             $checkKind = self::PARAM_CHECK_FALLBACK;
+            $extra = null;
+            $allowsNull = false;
+            $inner = $typeNode;
 
-            if ($typeNode instanceof IdentifierTypeNode) {
-                $checkKind = match (strtolower($typeNode->name)) {
+            while ($inner instanceof NullableTypeNode) {
+                $allowsNull = true;
+                $inner = $inner->type;
+            }
+
+            if ($inner instanceof UnionTypeNode) {
+                $nonNullTypes = [];
+                foreach ($inner->types as $member) {
+                    if (self::isNullTypeNode($member)) {
+                        $allowsNull = true;
+                    } elseif ($member instanceof NullableTypeNode) {
+                        $allowsNull = true;
+                        $nonNullTypes[] = $member->type;
+                    } else {
+                        $nonNullTypes[] = $member;
+                    }
+                }
+
+                if ($allowsNull && \count($nonNullTypes) === 1) {
+                    $inner = $nonNullTypes[0];
+                    while ($inner instanceof NullableTypeNode) {
+                        $inner = $inner->type;
+                    }
+                }
+            }
+
+            if ($inner instanceof IdentifierTypeNode) {
+                $name = $inner->name;
+                $checkKind = match (strtolower($name)) {
                     'int', 'integer' => self::PARAM_CHECK_INT,
                     'string' => self::PARAM_CHECK_STRING,
                     'positive-int' => self::PARAM_CHECK_POSITIVE_INT,
                     'non-empty-string' => self::PARAM_CHECK_NON_EMPTY_STRING,
                     'bool', 'boolean' => self::PARAM_CHECK_BOOL,
                     'float', 'double' => self::PARAM_CHECK_FLOAT,
+                    'object' => self::PARAM_CHECK_OBJECT,
                     'array-key' => self::PARAM_CHECK_ARRAY_KEY,
                     'array' => self::PARAM_CHECK_ARRAY,
                     'list' => self::PARAM_CHECK_LIST,
@@ -2046,9 +2154,20 @@ final class RuntimeTypeChecker
                     'scalar' => self::PARAM_CHECK_SCALAR,
                     default => self::PARAM_CHECK_FALLBACK,
                 };
+
+                if ($checkKind === self::PARAM_CHECK_NULL || $checkKind === self::PARAM_CHECK_MIXED) {
+                    $allowsNull = true;
+                } elseif (
+                    $checkKind === self::PARAM_CHECK_FALLBACK
+                    && ! SpecialTypeResolver::isBuiltInTypeKeyword($name)
+                    && ClassNameValidator::isValid($name)
+                ) {
+                    $checkKind = self::PARAM_CHECK_CLASS;
+                    $extra = $name;
+                }
             }
 
-            $items[] = [$paramName, $checkKind, $typeNode, $isSensitive];
+            $items[] = [$paramName, $checkKind, $typeNode, $isSensitive, $extra, $allowsNull];
         }
 
         return $items;
@@ -2614,9 +2733,10 @@ final class RuntimeTypeChecker
         }
 
         $name = $inner->name;
+        $lower = strtolower($name);
 
         if ($isNullable) {
-            $nullableOp = match ($name) {
+            $nullableOp = match ($lower) {
                 'int', 'integer' => self::PARAM_CHECK_NULL_OR_INT,
                 'string' => self::PARAM_CHECK_NULL_OR_STRING,
                 'bool', 'boolean' => self::PARAM_CHECK_NULL_OR_BOOL,
@@ -2628,7 +2748,7 @@ final class RuntimeTypeChecker
             }
         }
 
-        $op = match ($name) {
+        $op = match ($lower) {
             'int', 'integer' => self::PARAM_CHECK_INT,
             'string' => self::PARAM_CHECK_STRING,
             'bool', 'boolean' => self::PARAM_CHECK_BOOL,

@@ -12,7 +12,7 @@ use TypePHP\Tests\Fixtures\Domain\Car;
 use TypePHP\Tests\Fixtures\Domain\Cat;
 use TypePHP\Tests\Fixtures\Domain\Dog;
 
-describe('Multi-Namespace, Enum, and Trait Metadata Seeding (Red Phase)', function () {
+describe('Multi-Namespace, Enum, and Trait Metadata Seeding', function () {
     beforeEach(function () {
         Config::reset();
         StreamWrapper::reset();

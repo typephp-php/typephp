@@ -59,7 +59,7 @@ class PrebindNullableBox
     }
 }
 
-describe('Nullable & Union Generic Constructor Pre-binding (Red Phase)', function () {
+describe('Nullable & Union Generic Constructor Pre-binding', function () {
     describe('0. Control: Direct GenericTypeNode Pre-binding', function () {
         test('prebinds T inside constructor and validates elements on entry', function () {
             /** @var PrebindNullableBox<PrebindNullableDog> $box */

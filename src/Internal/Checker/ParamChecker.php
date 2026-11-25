@@ -32,9 +32,30 @@ use TypePHP\Internal\Util\StubManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
+ * Evaluates function and method parameter contracts, generic template inference, and dynamic
+ * `@method` calls routed through `__call` / `__callStatic`.
+ *
+ * Performance & Mechanical Sympathy Architecture:
+ * Executed on parameter-validated calls that do not hit `RuntimeTypeChecker`'s compiled
+ * monomorphic fast-path plans. To maximize throughput on generic and polymorphic workloads:
+ *
+ * - Inline scalar/collection `match` fast path inside `validateSimpleParams()` bypasses
+ *   `TypeValidatorRegistry` dispatch for common primitive and refinement identifiers.
+ * - Bitmask-gated pre-inference (`$preInferMaskCache`) skips closure, array, shape, and generic
+ *   object inference passes when the function signature cannot benefit from them, and
+ *   single-pass array inference self-verifies plain `array<...>`/`iterable<...>` arguments
+ *   (`$selfVerifiedParams`) to avoid scanning elements twice.
+ * - Primitive bitmask bound plans (`$templateBoundPlanCache`) and multi-dimensional caches
+ *   (`$noParamContractCache`, `$effectiveFunctionCache`, `$baseTypeCache`,
+ *   `$substitutedParamCache`, `$callableNodesCache`, `$traversablePlanCache`, `$functionKindCache`)
+ *   avoid repeated reflection, AST substitution, and string key allocations.
+ *
+ * Contributor note: Keep the inline primitive `match` in `validateSimpleParams()` and bitmask
+ * guards intact when adding new parameter features.
+ *
  * @phpstan-import-type FunctionContract from DocblockParser
  *
- * @internal Evaluates function and method parameter contract validations (including dynamic @method calls via __call / __callStatic).
+ * @internal
  */
 final class ParamChecker
 {
@@ -166,6 +187,11 @@ final class ParamChecker
      */
     private static array $substitutedParamCache = [];
 
+    /**
+     * @var array<string, array<string, array{0: int, 1: array<int, true>}>>
+     */
+    private static array $substitutedParamFallbackCache = [];
+
     private static ?IdentifierTypeNode $arrayKeyNode = null;
 
     private static ?UnionTypeNode $intOrStringUnionNode = null;
@@ -185,6 +211,7 @@ final class ParamChecker
     {
         self::$preInferMaskCache = [];
         self::$substitutedParamCache = [];
+        self::$substitutedParamFallbackCache = [];
         self::$effectiveFunctionCache = [];
         self::$noParamContractCache = [];
         self::$functionKindCache = [];
@@ -351,17 +378,39 @@ final class ParamChecker
 
     private static function refineInferredTypeFromBound(mixed $val, TypeNode $bound, TypeNode $defaultInferred): TypeNode
     {
+        if ($bound instanceof NullableTypeNode) {
+            if ($val === null) {
+                return new IdentifierTypeNode('null');
+            }
+
+            return self::refineInferredTypeFromBound($val, $bound->type, $defaultInferred);
+        }
+
+        if ($bound instanceof GenericTypeNode) {
+            $base = strtolower((string) $bound->type);
+            if ($base === 'key-of' || $base === 'value-of') {
+                $expanded = TemplateManager::expandKeyOrValueOf($bound);
+                if ($expanded !== null) {
+                    return self::refineInferredTypeFromBound($val, $expanded, $defaultInferred);
+                }
+            }
+        }
+
         if ($bound instanceof \PHPStan\PhpDocParser\Ast\Type\ConstTypeNode) {
             $expectedVal = match (true) {
                 $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode => $bound->constExpr->value,
                 $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode => (int) $bound->constExpr->value,
+                $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFloatNode => (float) $bound->constExpr->value,
                 $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprTrueNode => true,
                 $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFalseNode => false,
                 $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprNullNode => null,
                 default => null,
             };
 
-            if ($expectedVal !== null && $val === $expectedVal) {
+            if (
+                ($bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprNullNode && $val === null)
+                || ($expectedVal !== null && $val === $expectedVal)
+            ) {
                 return $bound;
             }
         }
@@ -2121,11 +2170,15 @@ final class ParamChecker
                     if (! TemplateManager::isBound($effectiveFunction, $targetObj, $tName)) {
                         $targetTemplateName = $targetTemplateNames[$idx] ?? null;
                         $inferredCandidate = null;
+                        $sourceTemplateName = null;
 
                         if ($targetTemplateName !== null && isset($boundOnInstance[$targetTemplateName])) {
                             $inferredCandidate = $boundOnInstance[$targetTemplateName];
+                            $sourceTemplateName = $targetTemplateName;
                         } elseif (isset($instanceBoundTypes[$idx])) {
                             $inferredCandidate = $instanceBoundTypes[$idx];
+                            $boundKeys = array_keys($boundOnInstance);
+                            $sourceTemplateName = $boundKeys[$idx] ?? null;
                         }
 
                         if ($inferredCandidate !== null) {
@@ -2139,6 +2192,9 @@ final class ParamChecker
 
                             if ($satisfiesBound) {
                                 TemplateManager::bindTemplate($effectiveFunction, $targetObj, $tName, $inferredCandidate);
+                                if ($targetObj !== null && $sourceTemplateName !== null && TemplateManager::isFallbackBound($value, $sourceTemplateName)) {
+                                    TemplateManager::markFallbackBound($targetObj, $tName);
+                                }
                             }
                         }
                     }
@@ -2463,6 +2519,9 @@ final class ParamChecker
         $isBareTemplate = self::getTemplateName($typeNode, $templates) !== null;
         $shouldSkipTemplateSub = $isBareTemplate || $isClassStringT;
 
+        $thisFallbackKeys = $thisObj !== null ? TemplateManager::getFallbackBoundTemplates($thisObj) : [];
+
+        $fallbackMeta = [0, []];
         if (! $shouldSkipTemplateSub && (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0)) {
             $boundCount = \count($boundTemplates);
             $sig = null;
@@ -2485,12 +2544,19 @@ final class ParamChecker
 
                 if (str_contains($sig, 'static') || str_contains($sig, '$this')) {
                     $sig = null;
+                } elseif ($thisFallbackKeys !== []) {
+                    $sig .= '!fb:' . implode(',', array_keys($thisFallbackKeys));
                 }
             }
 
             if ($sig !== null && isset(self::$substitutedParamCache[$cacheKey][$sig])) {
                 $typeNode = self::$substitutedParamCache[$cacheKey][$sig];
+                $fallbackMeta = self::$substitutedParamFallbackCache[$cacheKey][$sig] ?? [0, []];
             } else {
+                $concreteBound = $thisFallbackKeys !== []
+                    ? array_diff_key($boundTemplates, $thisFallbackKeys)
+                    : $boundTemplates;
+                $fallbackMeta = TemplateManager::collectUnboundGenericArgIndices($typeNode, $concreteBound, $declaredTemplates);
                 $subType = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
                 if ($subType !== $typeNode) {
                     $typeNode = SpecialTypeResolver::resolve($subType, $effectiveFunction, $thisObj);
@@ -2498,6 +2564,7 @@ final class ParamChecker
 
                 if ($sig !== null && $cacheKey !== null) {
                     self::$substitutedParamCache[$cacheKey][$sig] = $typeNode;
+                    self::$substitutedParamFallbackCache[$cacheKey][$sig] = $fallbackMeta;
                 }
             }
         }
@@ -2514,7 +2581,21 @@ final class ParamChecker
             return self::resolveTemplateParam($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $registry, $classTemplates, $thisOrClass);
         }
 
-        return $registry->validate($val, $typeNode, $effectiveFunction . '(): Argument $' . $paramName, $isSensitive);
+        $preExistingBindings = null;
+        if (($fallbackMeta[0] === -1 || $fallbackMeta[1] !== []) && \is_object($val) && $typeNode instanceof GenericTypeNode) {
+            $preExistingBindings = TemplateManager::getConcreteInstanceBindings($val);
+        }
+
+        $err = $registry->validate($val, $typeNode, $effectiveFunction . '(): Argument $' . $paramName, $isSensitive);
+        if ($err !== null) {
+            return $err;
+        }
+
+        if ($preExistingBindings !== null && \is_object($val) && $typeNode instanceof GenericTypeNode) {
+            TemplateManager::markFallbackReturnBindings($val, $typeNode, $fallbackMeta[1], $fallbackMeta[0], $preExistingBindings);
+        }
+
+        return null;
     }
 
     /**
@@ -2947,8 +3028,19 @@ final class ParamChecker
 
     private static function typeContainsConst(TypeNode $node): bool
     {
+        if ($node instanceof NullableTypeNode) {
+            return self::typeContainsConst($node->type);
+        }
+
         if ($node instanceof \PHPStan\PhpDocParser\Ast\Type\ConstTypeNode) {
             return true;
+        }
+
+        if ($node instanceof GenericTypeNode) {
+            $base = strtolower((string) $node->type);
+            if ($base === 'key-of' || $base === 'value-of') {
+                return true;
+            }
         }
 
         if ($node instanceof UnionTypeNode) {

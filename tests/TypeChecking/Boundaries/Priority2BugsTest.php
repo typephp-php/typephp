@@ -56,7 +56,7 @@ class Priority2OuterBoxFixture
     }
 }
 
-describe('Priority 2 Bugs: Cache Isolation, AST Printer & Class Constants (Red Phase)', function () {
+describe('Priority 2 Bugs: Cache Isolation, AST Printer & Class Constants', function () {
     beforeEach(function () {
         Config::reset();
     });

@@ -2,8 +2,12 @@
 
 declare(strict_types=1);
 
+use PhpParser\Node\Scalar\LNumber;
+use TypePHP\Internal\Ast\TypeDeducer;
+use TypePHP\Internal\Diagnostic\ErrorMessage;
 use TypePHP\Internal\Docblock\DocblockExtractor;
 use TypePHP\Internal\Docblock\DocblockNormalizer;
+use TypePHP\Internal\RuntimeTypeChecker;
 
 describe('DocblockNormalizer', function () {
     test('returns docblock string unchanged when no special keywords or curly braces are present', function () {
@@ -609,6 +613,104 @@ DOC;
             $expected = "/**\n * @param (stdClass&object{\n *   id: positive-int,\n *   name: non-empty-string\n * }) \$data\n */";
 
             expect(DocblockNormalizer::normalize($doc))->toBe($expected);
+        });
+    });
+
+    describe('Bare Type String Normalization (Without @ Tags)', function () {
+        test('normalizes bare custom class shapes into intersection shapes', function () {
+            expect(DocblockNormalizer::normalize('stdClass{id: int, name: string}'))
+                ->toBe('(stdClass&object{id: int, name: string})')
+            ;
+
+            expect(DocblockNormalizer::normalize('list<stdClass{id: positive-int, author: User{name: string}}>'))
+                ->toBe('list<(stdClass&object{id: positive-int, author: (User&object{name: string})})>')
+            ;
+        });
+
+        test('normalizes bare class constant keys in array shapes', function () {
+            expect(DocblockNormalizer::normalize('array{self::KEY_ID: int, Config::OPTIONAL?: bool}'))
+                ->toBe('array{"self::KEY_ID": int, "Config::OPTIONAL"?: bool}')
+            ;
+        });
+
+        test('normalizes bare unparenthesized nested and curried callables', function () {
+            expect(DocblockNormalizer::normalize('callable(int): callable(string): bool'))
+                ->toBe('callable(int): (callable(string): bool)')
+            ;
+
+            expect(DocblockNormalizer::normalize('callable(int): callable(string): callable(float): int'))
+                ->toBe('callable(int): (callable(string): (callable(float): int))')
+            ;
+        });
+
+        test('normalizes bare callables with omitted return types', function () {
+            expect(DocblockNormalizer::normalize('callable(int $x)'))
+                ->toBe('callable(int $x): mixed')
+            ;
+
+            expect(DocblockNormalizer::normalize('Closure()'))
+                ->toBe('Closure(): mixed')
+            ;
+        });
+
+        test('normalizes bare static Closure syntax', function () {
+            expect(DocblockNormalizer::normalize('(static Closure)(int): int'))
+                ->toBe('static-closure(int): int')
+            ;
+
+            expect(DocblockNormalizer::normalize('static Closure(int): int'))
+                ->toBe('static-closure(int): int')
+            ;
+        });
+
+        test('normalizes bare unqualified int-mask-of wildcards', function () {
+            expect(DocblockNormalizer::normalize('int-mask-of<E_*>'))
+                ->toBe('int-mask-of<"E_*">')
+            ;
+        });
+
+        test('normalizes bare variadic tuple spread syntax', function () {
+            expect(DocblockNormalizer::normalize('array{string, int, ...float[]}'))
+                ->toBe('array{string, int, ...<float>}')
+            ;
+
+            expect(DocblockNormalizer::normalize('array{string, ...list<positive-int>}'))
+                ->toBe('array{string, ...<positive-int>}')
+            ;
+        });
+
+        test('leaves plain bare types and tagless prose docblocks unchanged', function () {
+            expect(DocblockNormalizer::normalize('array<string, positive-int>'))
+                ->toBe('array<string, positive-int>')
+            ;
+
+            $proseDoc = '/** Builds a Foo{bar} or callable(int) helper. */';
+            expect(DocblockNormalizer::normalize($proseDoc))
+                ->toBe($proseDoc)
+            ;
+        });
+
+        test('reproduces runtime failures on bare type strings in RuntimeTypeChecker and TypeDeducer', function () {
+            $badObj = (object) ['id' => -5];
+            $shapeErr = RuntimeTypeChecker::checkVariable($badObj, 'stdClass{id: positive-int}', 'data', __FILE__);
+            expect($shapeErr)->toBeInstanceOf(ErrorMessage::class);
+
+            $maskErr = RuntimeTypeChecker::checkConstant('TEST_MASK', 1 << 25, 'int-mask-of<E_*>');
+            expect($maskErr)->toBeInstanceOf(ErrorMessage::class);
+
+            $curried = RuntimeTypeChecker::checkVariable(
+                static fn (int $a): Closure => static fn (string $b): string => 'not-a-bool',
+                'callable(int): callable(string): bool',
+                'fn',
+                __FILE__
+            );
+            expect($curried)->toBeInstanceOf(Closure::class);
+            $inner = $curried(1);
+            expect(fn () => $inner('hello'))->toThrow(TypeError::class);
+
+            expect(TypeDeducer::deduceDimType('array{string, ...float[]}', new LNumber(3)))
+                ->toBe('float')
+            ;
         });
     });
 });

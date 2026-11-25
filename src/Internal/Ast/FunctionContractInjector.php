@@ -22,12 +22,15 @@ use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
+use PHPStan\PhpDocParser\Parser\TokenIterator;
 use TypePHP\Internal\Ast\Elimination\EliminationSafetyPolicy;
 use TypePHP\Internal\Ast\Elimination\Evaluator\GeneratorEvaluator;
 use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
 use TypePHP\Internal\Checker\ConditionalChecker;
 use TypePHP\Internal\Docblock\DocblockExtractor;
+use TypePHP\Internal\Docblock\DocblockNormalizer;
 use TypePHP\Internal\Docblock\DocblockParser;
+use TypePHP\Internal\Generics\TemplateManager;
 use TypePHP\Internal\Resolver\SpecialTypeResolver;
 use TypePHP\Internal\Util\Config;
 use TypePHP\Internal\Util\StubManager;
@@ -260,7 +263,8 @@ final class FunctionContractInjector
                     $hasParam,
                     $trustedParamTypes,
                     $useDynamicMethodKey,
-                    $currentNamespace
+                    $currentNamespace,
+                    $effectiveAliases
                 )
                 : self::wrapNonGeneratorReturns(
                     $node->stmts,
@@ -278,7 +282,8 @@ final class FunctionContractInjector
                     $trustedParamTypes,
                     $useDynamicMethodKey,
                     ! $isMagicGet && ! $isMagicCall,
-                    $currentNamespace
+                    $currentNamespace,
+                    $effectiveAliases
                 );
         }
 
@@ -444,7 +449,11 @@ final class FunctionContractInjector
             return [];
         }
 
-        if (Config::getOnViolation() !== 'throw' || ! Config::isParamsEnabled()) {
+        if (
+            ! Config::isEliminateStaticallyProvenChecksEnabled()
+            || Config::getOnViolation() !== 'throw'
+            || ! Config::isParamsEnabled()
+        ) {
             return [];
         }
 
@@ -620,6 +629,22 @@ final class FunctionContractInjector
                         }
                     }
                 } elseif ($node instanceof Node\Expr\CallLike) {
+                    if (
+                        $node instanceof Node\Expr\FuncCall
+                        && $node->name instanceof Node\Name
+                        && str_starts_with(ltrim($node->name->toString(), '\\'), 'TypePHP\\Internal\\RuntimeTypeChecker::')
+                    ) {
+                        return null;
+                    }
+
+                    if (
+                        $node instanceof Node\Expr\StaticCall
+                        && $node->class instanceof Node\Name
+                        && ltrim($node->class->toString(), '\\') === 'TypePHP\\Internal\\RuntimeTypeChecker'
+                    ) {
+                        return null;
+                    }
+
                     if (
                         $node instanceof Node\Expr\FuncCall
                         && $node->name instanceof Node\Name
@@ -1669,10 +1694,78 @@ final class FunctionContractInjector
     }
 
     /**
+     * Determines whether a Return_ node already wrapped by ContractVisitor::handleReturn()
+     * safely subsumes the enclosing function/generator return contract.
+     *
+     * @param array<string, TypeNode> $effectiveAliases
+     */
+    public static function inlineVarSubsumesReturn(
+        Node\Stmt\Return_ $returnNode,
+        ?TypeNode $targetReturnType,
+        bool $isEliminationSafe,
+        array $effectiveAliases = [],
+        string $currentFile = '',
+        ?string $currentNamespace = null
+    ): bool {
+        if ($returnNode->getAttribute('typephp_var_wrapped') !== true) {
+            return false;
+        }
+
+        $varTypeString = $returnNode->getAttribute('typephp_var_type');
+        if (! \is_string($varTypeString) || $varTypeString === '') {
+            return true;
+        }
+
+        if (
+            ! $isEliminationSafe
+            || $targetReturnType === null
+            || ! Config::isInlineScalarsEnabled()
+            || ! Config::isInlineArraysEnabled()
+            || ! Config::isInlineObjectsEnabled()
+            || ! Config::isInlineGenericsEnabled()
+            || ! Config::isInlineCallablesEnabled()
+        ) {
+            return false;
+        }
+
+        try {
+            [$typeParser, $lexer] = DocblockExtractor::getTypeParserComponents();
+            $tokens = new TokenIterator($lexer->tokenize(DocblockNormalizer::normalize($varTypeString)));
+            $varTypeNode = $typeParser->parse($tokens);
+
+            if ($effectiveAliases !== []) {
+                $varTypeNode = DocblockParser::substituteAliases($varTypeNode, $effectiveAliases);
+            }
+
+            if ($currentFile !== '') {
+                $varTypeNode = SpecialTypeResolver::resolveForFile($varTypeNode, $currentFile, $currentNamespace, false);
+                $targetReturnType = SpecialTypeResolver::resolveForFile($targetReturnType, $currentFile, $currentNamespace, false);
+            }
+
+            if ($varTypeNode instanceof NullableTypeNode) {
+                $varTypeNode = new UnionTypeNode([$varTypeNode->type, new IdentifierTypeNode('null')]);
+            }
+
+            if ($targetReturnType instanceof NullableTypeNode) {
+                $targetReturnType = new UnionTypeNode([$targetReturnType->type, new IdentifierTypeNode('null')]);
+            }
+
+            return TemplateManager::checkVariance(
+                $varTypeNode,
+                $targetReturnType,
+                GenericTypeNode::VARIANCE_COVARIANT
+            );
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
      * @param array<Node\Stmt> $stmts
      * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
      * @param array<string> $byRefParams
      * @param array<string, TypeNode> $trustedParamTypes
+     * @param array<string, TypeNode> $effectiveAliases
      *
      * @return array<Node\Stmt>
      */
@@ -1690,7 +1783,8 @@ final class FunctionContractInjector
         bool $hasScope = false,
         array $trustedParamTypes = [],
         bool $useDynamicMethodKey = false,
-        ?string $currentNamespace = null
+        ?string $currentNamespace = null,
+        array $effectiveAliases = []
     ): array {
         $canEliminate = $functionNode !== null
             && ! $hasMethodTemplates
@@ -1720,13 +1814,15 @@ final class FunctionContractInjector
             $hasSelfOut,
             $trustedParamTypes,
             $useDynamicMethodKey,
-            $currentNamespace
+            $currentNamespace,
+            $effectiveAliases
         ) extends NodeVisitorAbstract {
             /**
              * @param array{key: ?TypeNode, value: ?TypeNode, send: ?TypeNode, return: ?TypeNode}|null $genContract
              * @param array{key: ?TypeNode, value: ?TypeNode, send: ?TypeNode, return: ?TypeNode}|null $explicitGenContract
              * @param array<string> $byRefParams
              * @param array<string, TypeNode> $trustedParamTypes
+             * @param array<string, TypeNode> $effectiveAliases
              */
             public function __construct(
                 private Node\Expr $thisArg,
@@ -1738,7 +1834,8 @@ final class FunctionContractInjector
                 private bool $hasSelfOut,
                 private array $trustedParamTypes,
                 private bool $useDynamicMethodKey,
-                private ?string $currentNamespace
+                private ?string $currentNamespace,
+                private array $effectiveAliases
             ) {
             }
 
@@ -1847,7 +1944,7 @@ final class FunctionContractInjector
                 }
 
                 if ($n instanceof Node\Stmt\Return_) {
-                    if ($n->getAttribute('typephp_var_wrapped') === true || $n->getAttribute('typephp_generator_return_wrapped') === true) {
+                    if ($n->getAttribute('typephp_generator_return_wrapped') === true) {
                         return null;
                     }
                     $n->setAttribute('typephp_generator_return_wrapped', true);
@@ -1863,6 +1960,17 @@ final class FunctionContractInjector
 
                     if ($paramOutStmts !== []) {
                         $exitStmts = [...$exitStmts, ...$paramOutStmts];
+                    }
+
+                    if (FunctionContractInjector::inlineVarSubsumesReturn(
+                        $n,
+                        $this->genContract['return'] ?? null,
+                        $this->genContract !== null,
+                        $this->effectiveAliases,
+                        $this->currentFile,
+                        $this->currentNamespace
+                    )) {
+                        return $exitStmts !== [] ? [...$exitStmts, $n] : null;
                     }
 
                     $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
@@ -1967,6 +2075,7 @@ final class FunctionContractInjector
      * @param array<string> $byRefParams
      * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
      * @param array<string, TypeNode> $trustedParamTypes
+     * @param array<string, TypeNode> $effectiveAliases
      *
      * @return array<Node\Stmt>
      */
@@ -1986,7 +2095,8 @@ final class FunctionContractInjector
         array $trustedParamTypes = [],
         bool $useDynamicMethodKey = false,
         bool $canGuardReturnCache = true,
-        ?string $currentNamespace = null
+        ?string $currentNamespace = null,
+        array $effectiveAliases = []
     ): array {
         self::tagPrecedingAssignments($stmts);
 
@@ -2006,12 +2116,14 @@ final class FunctionContractInjector
             $trustedParamTypes,
             $useDynamicMethodKey,
             $canGuardReturnCache,
-            $currentNamespace
+            $currentNamespace,
+            $effectiveAliases
         ) extends NodeVisitorAbstract {
             /**
              * @param array<string> $byRefParams
              * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
              * @param array<string, TypeNode> $trustedParamTypes
+             * @param array<string, TypeNode> $effectiveAliases
              */
             public function __construct(
                 private Node\Expr $thisArg,
@@ -2028,7 +2140,8 @@ final class FunctionContractInjector
                 private array $trustedParamTypes,
                 private bool $useDynamicMethodKey,
                 private bool $canGuardReturnCache,
-                private ?string $currentNamespace
+                private ?string $currentNamespace,
+                private array $effectiveAliases
             ) {
             }
 
@@ -2058,10 +2171,6 @@ final class FunctionContractInjector
                 }
 
                 if ($n instanceof Node\Stmt\Return_) {
-                    if ($n->getAttribute('typephp_var_wrapped') === true) {
-                        return null;
-                    }
-
                     $exitStmts = [];
                     if ($this->hasSelfOut) {
                         $exitStmts[] = FunctionContractInjector::buildSelfOutCheckStmt($this->thisArg, $this->needsReturnVars, $this->useDynamicMethodKey);
@@ -2079,17 +2188,30 @@ final class FunctionContractInjector
                         return $exitStmts !== [] ? [...$exitStmts, $n] : null;
                     }
 
+                    $isReturnElimSafe = ! $this->isByRefReturn
+                        && ! $this->isNativeVoid
+                        && $this->functionNode !== null
+                        && $this->returnTypeNode !== null
+                        && EliminationSafetyPolicy::isReturnEliminationSafe($this->functionNode, $this->classContext, $this->returnTypeNode);
+
+                    if (FunctionContractInjector::inlineVarSubsumesReturn(
+                        $n,
+                        $this->returnTypeNode,
+                        $isReturnElimSafe,
+                        $this->effectiveAliases,
+                        $this->currentFile,
+                        $this->currentNamespace
+                    )) {
+                        return $exitStmts !== [] ? [...$exitStmts, $n] : null;
+                    }
+
                     $exprToWrap = $n->expr ?? new Node\Expr\ConstFetch(new Node\Name('null'));
 
                     $assignedExpr = $n->getAttribute('typephp_preceding_assign_expr');
                     $candidateExpr = ($assignedExpr instanceof Node\Expr) ? $assignedExpr : $exprToWrap;
 
                     if (
-                        ! $this->isByRefReturn
-                        && ! $this->isNativeVoid
-                        && $this->functionNode !== null
-                        && $this->returnTypeNode !== null
-                        && EliminationSafetyPolicy::isReturnEliminationSafe($this->functionNode, $this->classContext, $this->returnTypeNode)
+                        $isReturnElimSafe
                         && StaticTypeEvaluator::satisfies($candidateExpr, $this->returnTypeNode, $this->currentFile, $this->trustedParamTypes, $this->currentNamespace)
                     ) {
                         return $exitStmts !== [] ? [...$exitStmts, $n] : null;
