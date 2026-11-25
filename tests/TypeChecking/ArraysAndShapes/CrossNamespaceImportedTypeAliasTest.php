@@ -60,7 +60,7 @@ describe('Cross-Namespace @phpstan-import-type Resolution (Bug Report TDD)', fun
         });
     });
 
-    describe('2. Related Edge Cases (Expected Red Phase on v0.14.1)', function () {
+    describe('2. Related Edge Cases', function () {
         test('resolves parent alias imports when referenced by a child class @phpstan-type in another namespace', function () {
             $child = new PaintChildTypes();
 

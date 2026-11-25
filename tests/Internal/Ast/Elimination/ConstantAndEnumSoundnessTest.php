@@ -47,7 +47,7 @@ enum SoundnessEnumWithConst: string
     case Active = 'active';
 }
 
-describe('ConstantAndEnumEvaluator Soundness (Red Phase)', function () {
+describe('ConstantAndEnumEvaluator Soundness', function () {
     describe('1. Cross-Class Constant & Wildcard Isolation', function () {
         test('does not eliminate ClassConstFetch when expression class differs from ConstTypeNode class', function () {
             $fetch = new ClassConstFetch(new Name('User'), new Identifier('STATUS_PAID'));

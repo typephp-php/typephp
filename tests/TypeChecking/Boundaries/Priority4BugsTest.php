@@ -8,7 +8,7 @@ use TypePHP\Exception\TypeError;
 use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\Util\Config;
 
-describe('Priority 4 Bugs: Sibling Scope Isolation & Docblock Prose Heuristics (Red Phase)', function () {
+describe('Priority 4 Bugs: Sibling Scope Isolation & Docblock Prose Heuristics', function () {
     beforeEach(function () {
         Config::reset();
     });

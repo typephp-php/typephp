@@ -71,7 +71,7 @@ class Priority1StaticByRefHolder
     }
 }
 
-describe('Priority 1 Bugs: Type Safety & Call Boundary Soundness (Red Phase)', function () {
+describe('Priority 1 Bugs: Type Safety & Call Boundary Soundness', function () {
     beforeEach(function () {
         Config::reset();
         TypePHP::clearViolations();

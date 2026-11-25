@@ -66,7 +66,7 @@ function resolveShapeWithKeyAndConditionalConst(bool $isAdmin, mixed $roleVal, s
     ];
 }
 
-describe('DocblockNormalizer Class Constants in Conditional Types (Red Phase)', function () {
+describe('DocblockNormalizer Class Constants in Conditional Types', function () {
     describe('1. DocblockNormalizer Unit Assertions', function () {
         test('does not quote class constant in conditional true branch', function () {
             $doc = '/** @return ($isAdmin is true ? Role::ADMIN : Role::USER) */';

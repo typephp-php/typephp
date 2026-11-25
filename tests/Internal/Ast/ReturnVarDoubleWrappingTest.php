@@ -8,7 +8,7 @@ use TypePHP\Exception\TypeError;
 use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\Util\Config;
 
-describe('Inline @var on return vs FunctionContractInjector (Red Phase)', function () {
+describe('Inline @var on return vs FunctionContractInjector', function () {
     beforeEach(function () {
         Config::reset();
         StreamWrapper::reset();

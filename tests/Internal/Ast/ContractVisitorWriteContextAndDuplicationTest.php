@@ -7,7 +7,7 @@ namespace TypePHP\Tests\Internal\Ast;
 use TypePHP\Exception\TypeError;
 use TypePHP\Internal\Io\StreamWrapper;
 
-describe('ContractVisitor Write-Context & Target Duplication (Red Phase)', function () {
+describe('ContractVisitor Write-Context & Target Duplication', function () {
     describe('1. Foreach & By-Ref ArrayItem Write Context with StaticPropertyFetch', function () {
         test('does not wrap foreach valueVar, keyVar, destructured target, or array-dim static property in checkStaticProperty', function () {
             $source = <<<'PHP'

@@ -43,7 +43,7 @@ class Priority3NullableReturnFixture
     }
 }
 
-describe('Priority 3 Bugs: Cross-Namespace Static Elimination, Aliased Callables & Opcode Fast-Paths (Red Phase)', function () {
+describe('Priority 3 Bugs: Cross-Namespace Static Elimination, Aliased Callables & Opcode Fast-Paths', function () {
     beforeEach(function () {
         Config::reset();
     });

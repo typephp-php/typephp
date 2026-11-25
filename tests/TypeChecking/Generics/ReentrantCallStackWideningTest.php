@@ -93,7 +93,7 @@ class InterveningService
     }
 }
 
-describe('Re-entrant Call Stack Order in TemplateManager (Issue 4 Red Phase)', function () {
+describe('Re-entrant Call Stack Order in TemplateManager (Issue 4)', function () {
     beforeEach(function () {
         Config::reset();
         TemplateManager::reset();

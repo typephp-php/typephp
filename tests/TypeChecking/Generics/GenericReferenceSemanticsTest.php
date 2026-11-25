@@ -114,7 +114,7 @@ function refUpdateValidWithoutParamDoc(RefBox $box): void
     $ref = new RefUser('Bob Updated');
 }
 
-describe('Generic & Typed Reference Semantics (Red Phase)', function () {
+describe('Generic & Typed Reference Semantics', function () {
     describe('1. Local Reference Alias to Generic Object Property ($ref = &$box->item)', function () {
         test('rejects invalid mutation through $ref with concrete bound type (RefUser, not raw T) when @param doc is present', function () {
             /** @var RefBox<RefUser> $userBox */

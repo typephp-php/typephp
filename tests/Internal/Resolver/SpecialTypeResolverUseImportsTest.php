@@ -11,7 +11,7 @@ class UseImportCollisionTarget
 {
 }
 
-describe('SpecialTypeResolver & StreamWrapper Non-Class Use Import Isolation (Red Phase)', function () {
+describe('SpecialTypeResolver & StreamWrapper Non-Class Use Import Isolation', function () {
     beforeEach(function () {
         SpecialTypeResolver::reset();
         StreamWrapper::reset();

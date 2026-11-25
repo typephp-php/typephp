@@ -20,7 +20,7 @@ use TypePHP\Exception\TypeError;
 use TypePHP\Internal\Ast\Elimination\StaticTypeEvaluator;
 use TypePHP\Internal\Io\StreamWrapper;
 
-describe('ArrayLiteralEvaluator Spread (...$x) Soundness (Red Phase)', function () {
+describe('ArrayLiteralEvaluator Spread (...$x) Soundness', function () {
     describe('1. Bare Identifiers (list, non-empty-array, non-empty-list)', function () {
         test('does not eliminate spread expressions against list, non-empty-array, or non-empty-list', function () {
             $spreadExpr = new Array_([

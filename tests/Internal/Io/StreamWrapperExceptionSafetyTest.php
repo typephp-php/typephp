@@ -9,7 +9,7 @@ use TypePHP\Exception\TypeError;
 use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\Util\Config;
 
-describe('StreamWrapper Exception Safety (Red Phase)', function () {
+describe('StreamWrapper Exception Safety', function () {
     beforeEach(function () {
         Config::reset();
         StreamWrapper::reset();

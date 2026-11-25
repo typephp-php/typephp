@@ -7,7 +7,7 @@ namespace TypePHP\Tests\Unit;
 use TypePHP\Internal\Io\StreamWrapper;
 use TypePHP\Internal\Util\Config;
 
-describe('Unannotated Native Return Type Injection on Non-Final Standalone Classes (Red Phase)', function () {
+describe('Unannotated Native Return Type Injection on Non-Final Standalone Classes', function () {
     beforeEach(function () {
         Config::reset();
     });
