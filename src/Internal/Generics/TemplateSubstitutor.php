@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Generics;
 
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeNode;
@@ -13,12 +15,14 @@ use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeForParameterNode;
 use PHPStan\PhpDocParser\Ast\Type\ConditionalTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\ConstTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IntersectionTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\NullableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeItemNode;
 use PHPStan\PhpDocParser\Ast\Type\ObjectShapeNode;
+use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use PHPStan\PhpDocParser\Ast\Type\UnionTypeNode;
 
@@ -212,6 +216,10 @@ final class TemplateSubstitutor
 
         if ($node instanceof ObjectShapeNode) {
             return self::substituteObjectShape($node, $boundTemplates, $declaredTemplates, $visited);
+        }
+
+        if ($node instanceof OffsetAccessTypeNode) {
+            return self::substituteOffsetAccess($node, $boundTemplates, $declaredTemplates, $visited);
         }
 
         return $node;
@@ -419,5 +427,73 @@ final class TemplateSubstitutor
         }
 
         return new ObjectShapeNode($newItems);
+    }
+
+    /**
+     * @param array<string, TypeNode> $boundTemplates
+     * @param array<string, TemplateTagValueNode> $declaredTemplates
+     * @param array<string, true> $visited
+     */
+    private static function substituteOffsetAccess(
+        OffsetAccessTypeNode $node,
+        array $boundTemplates,
+        array $declaredTemplates,
+        array $visited
+    ): TypeNode {
+        $baseType = self::substituteNode($node->type, $boundTemplates, $declaredTemplates, $visited);
+        $offsetType = self::substituteNode($node->offset, $boundTemplates, $declaredTemplates, $visited);
+
+        if ($baseType instanceof ArrayShapeNode) {
+            $offsetKey = null;
+            if ($offsetType instanceof ConstTypeNode) {
+                if ($offsetType->constExpr instanceof ConstExprStringNode) {
+                    $offsetKey = $offsetType->constExpr->value;
+                } elseif ($offsetType->constExpr instanceof ConstExprIntegerNode) {
+                    $offsetKey = (int) $offsetType->constExpr->value;
+                }
+            } elseif ($offsetType instanceof IdentifierTypeNode) {
+                $offsetKey = $offsetType->name;
+            }
+
+            if ($offsetKey !== null) {
+                $autoIdx = 0;
+                foreach ($baseType->items as $item) {
+                    $itemKey = match (true) {
+                        $item->keyName instanceof ConstExprStringNode => $item->keyName->value,
+                        $item->keyName instanceof ConstExprIntegerNode => (int) $item->keyName->value,
+                        $item->keyName instanceof IdentifierTypeNode => $item->keyName->name,
+                        default => $autoIdx,
+                    };
+
+                    if (\is_int($itemKey)) {
+                        $autoIdx = max($autoIdx, $itemKey + 1);
+                    }
+
+                    if ($itemKey === $offsetKey) {
+                        return $item->valueType;
+                    }
+                }
+
+                if ($baseType->unsealedType !== null) {
+                    return $baseType->unsealedType->valueType;
+                }
+            }
+        } elseif ($baseType instanceof GenericTypeNode) {
+            $baseName = strtolower((string) $baseType->type);
+            if (\in_array($baseName, ['list', 'non-empty-list', 'non-empty-array-list'], true)) {
+                return $baseType->genericTypes[0] ?? new IdentifierTypeNode('mixed');
+            }
+            if (\in_array($baseName, ['array', 'non-empty-array', 'iterable'], true)) {
+                return $baseType->genericTypes[1] ?? $baseType->genericTypes[0] ?? new IdentifierTypeNode('mixed');
+            }
+        } elseif ($baseType instanceof ArrayTypeNode) {
+            return $baseType->type;
+        }
+
+        if ($baseType === $node->type && $offsetType === $node->offset) {
+            return $node;
+        }
+
+        return new OffsetAccessTypeNode($baseType, $offsetType);
     }
 }

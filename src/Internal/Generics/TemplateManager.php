@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace TypePHP\Internal\Generics;
 
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFalseNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFloatNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprNullNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode;
+use PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprTrueNode;
 use PHPStan\PhpDocParser\Ast\ConstExpr\ConstFetchNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\ArrayShapeItemNode;
@@ -58,6 +62,13 @@ final class TemplateManager
      * @var WeakMap<object, array<string, true>>|null
      */
     private static ?WeakMap $fallbackBoundTemplates = null;
+
+    /**
+     * Memoized expansions of key-of<...> and value-of<...> GenericTypeNodes.
+     *
+     * @var WeakMap<GenericTypeNode, TypeNode|false>|null
+     */
+    private static ?WeakMap $expandedKeyOrValueOfCache = null;
 
     /**
      * Call stack frames storing template bindings per function or method call.
@@ -689,6 +700,7 @@ final class TemplateManager
         self::$compiledBindPlanBySigCache = [];
         self::$propagatedPropTypeCache = [];
         self::$fallbackBoundTemplates = null;
+        self::$expandedKeyOrValueOfCache = null;
     }
 
     /**
@@ -3028,6 +3040,327 @@ final class TemplateManager
     }
 
     /**
+     * Expands a `key-of<T>` or `value-of<T>` GenericTypeNode into its equivalent concrete TypeNode
+     * (e.g. literal union for array shapes/enums/constants, key/value type for generic arrays/lists).
+     */
+    public static function expandKeyOrValueOf(GenericTypeNode $node): ?TypeNode
+    {
+        self::$expandedKeyOrValueOfCache ??= new WeakMap();
+        if (isset(self::$expandedKeyOrValueOfCache[$node])) {
+            $cached = self::$expandedKeyOrValueOfCache[$node];
+
+            return $cached !== false ? $cached : null;
+        }
+
+        $base = strtolower((string) $node->type);
+        $target = $node->genericTypes[0] ?? null;
+
+        if ($target === null || ($base !== 'key-of' && $base !== 'value-of')) {
+            self::$expandedKeyOrValueOfCache[$node] = false;
+
+            return null;
+        }
+
+        $expanded = $base === 'key-of'
+            ? self::expandKeyOfTarget($target)
+            : self::expandValueOfTarget($target);
+
+        self::$expandedKeyOrValueOfCache[$node] = $expanded ?? false;
+
+        return $expanded;
+    }
+
+    private static function expandKeyOfTarget(TypeNode $target): ?TypeNode
+    {
+        while ($target instanceof NullableTypeNode) {
+            $target = $target->type;
+        }
+
+        if ($target instanceof UnionTypeNode) {
+            $parts = [];
+            foreach ($target->types as $member) {
+                $sub = self::expandKeyOfTarget($member);
+                if ($sub === null) {
+                    return null;
+                }
+                $parts[] = $sub;
+            }
+
+            return $parts !== [] ? TemplateSubstitutor::normalizeUnion($parts) : null;
+        }
+
+        if ($target instanceof ArrayShapeNode) {
+            $keys = [];
+            $autoIdx = 0;
+
+            foreach ($target->items as $item) {
+                $key = self::extractShapeKey($item, $autoIdx);
+                $keys[] = \is_int($key)
+                    ? new ConstTypeNode(new ConstExprIntegerNode((string) $key))
+                    : new ConstTypeNode(new ConstExprStringNode($key, ConstExprStringNode::SINGLE_QUOTED));
+            }
+
+            if (! $target->sealed) {
+                if ($target->unsealedType !== null && $target->unsealedType->keyType !== null) {
+                    $keys[] = $target->unsealedType->keyType;
+                } else {
+                    $keys[] = $target->kind === ArrayShapeNode::KIND_LIST
+                        ? (self::$intNode ??= new IdentifierTypeNode('int'))
+                        : new IdentifierTypeNode('array-key');
+                }
+            }
+
+            return $keys !== [] ? TemplateSubstitutor::normalizeUnion($keys) : new IdentifierTypeNode('never');
+        }
+
+        if ($target instanceof GenericTypeNode) {
+            $base = strtolower((string) $target->type);
+
+            if ($base === 'value-of') {
+                $innerExpanded = self::expandKeyOrValueOf($target);
+
+                return $innerExpanded !== null ? self::expandKeyOfTarget($innerExpanded) : null;
+            }
+
+            if ($base === 'list' || $base === 'non-empty-list' || $base === 'non-empty-array-list') {
+                return self::$intNode ??= new IdentifierTypeNode('int');
+            }
+
+            if (\in_array($base, ['array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator'], true)) {
+                return \count($target->genericTypes) >= 2
+                    ? $target->genericTypes[0]
+                    : new IdentifierTypeNode('array-key');
+            }
+
+            return null;
+        }
+
+        if ($target instanceof ArrayTypeNode) {
+            return new IdentifierTypeNode('array-key');
+        }
+
+        if ($target instanceof IdentifierTypeNode) {
+            $name = $target->name;
+            $lower = strtolower($name);
+
+            if ($lower === 'list' || $lower === 'non-empty-list') {
+                return self::$intNode ??= new IdentifierTypeNode('int');
+            }
+
+            if (\in_array($lower, ['array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator', 'mixed'], true)) {
+                return new IdentifierTypeNode('array-key');
+            }
+
+            if (str_contains($name, '::')) {
+                [$fqcn, $constName] = explode('::', $name, 2);
+
+                return self::expandConstantArrayKeys($fqcn, $constName);
+            }
+
+            if (ClassNameValidator::isValid($name) && enum_exists($name) && is_subclass_of($name, \UnitEnum::class)) {
+                $keys = [];
+                foreach ($name::cases() as $case) {
+                    $keys[] = new ConstTypeNode(new ConstExprStringNode($case->name, ConstExprStringNode::SINGLE_QUOTED));
+                }
+
+                return $keys !== [] ? TemplateSubstitutor::normalizeUnion($keys) : new IdentifierTypeNode('never');
+            }
+
+            if (\defined($name)) {
+                return self::expandConstantArrayKeys('', $name);
+            }
+
+            return null;
+        }
+
+        if ($target instanceof ConstTypeNode && $target->constExpr instanceof ConstFetchNode) {
+            return self::expandConstantArrayKeys($target->constExpr->className, $target->constExpr->name);
+        }
+
+        return null;
+    }
+
+    private static function expandValueOfTarget(TypeNode $target): ?TypeNode
+    {
+        while ($target instanceof NullableTypeNode) {
+            $target = $target->type;
+        }
+
+        if ($target instanceof UnionTypeNode) {
+            $parts = [];
+            foreach ($target->types as $member) {
+                $sub = self::expandValueOfTarget($member);
+                if ($sub === null) {
+                    return null;
+                }
+                $parts[] = $sub;
+            }
+
+            return $parts !== [] ? TemplateSubstitutor::normalizeUnion($parts) : null;
+        }
+
+        if ($target instanceof ArrayShapeNode) {
+            $values = [];
+            foreach ($target->items as $item) {
+                $values[] = $item->valueType;
+            }
+
+            if (! $target->sealed) {
+                $values[] = $target->unsealedType !== null
+                    ? $target->unsealedType->valueType
+                    : (self::$mixedNode ??= new IdentifierTypeNode('mixed'));
+            }
+
+            return $values !== [] ? TemplateSubstitutor::normalizeUnion($values) : new IdentifierTypeNode('never');
+        }
+
+        if ($target instanceof GenericTypeNode) {
+            $base = strtolower((string) $target->type);
+
+            if ($base === 'list' || $base === 'non-empty-list' || $base === 'non-empty-array-list') {
+                return $target->genericTypes[0] ?? (self::$mixedNode ??= new IdentifierTypeNode('mixed'));
+            }
+
+            if (\in_array($base, ['array', 'non-empty-array', 'iterable', 'traversable', 'generator', 'iterator'], true)) {
+                $count = \count($target->genericTypes);
+                if ($count >= 2) {
+                    return $target->genericTypes[1];
+                }
+                if ($count === 1) {
+                    return $target->genericTypes[0];
+                }
+
+                return self::$mixedNode ??= new IdentifierTypeNode('mixed');
+            }
+
+            return null;
+        }
+
+        if ($target instanceof ArrayTypeNode) {
+            return $target->type;
+        }
+
+        if ($target instanceof IdentifierTypeNode) {
+            $name = $target->name;
+            $lower = strtolower($name);
+
+            if (\in_array($lower, ['array', 'non-empty-array', 'list', 'non-empty-list', 'iterable', 'traversable', 'generator', 'iterator', 'mixed'], true)) {
+                return self::$mixedNode ??= new IdentifierTypeNode('mixed');
+            }
+
+            if (str_contains($name, '::')) {
+                [$fqcn, $constName] = explode('::', $name, 2);
+
+                return self::expandConstantArrayValues($fqcn, $constName);
+            }
+
+            if (ClassNameValidator::isValid($name) && enum_exists($name) && is_subclass_of($name, \BackedEnum::class)) {
+                $values = [];
+                foreach ($name::cases() as $case) {
+                    $values[] = \is_int($case->value)
+                        ? new ConstTypeNode(new ConstExprIntegerNode((string) $case->value))
+                        : new ConstTypeNode(new ConstExprStringNode($case->value, ConstExprStringNode::SINGLE_QUOTED));
+                }
+
+                return $values !== [] ? TemplateSubstitutor::normalizeUnion($values) : new IdentifierTypeNode('never');
+            }
+
+            if (\defined($name)) {
+                return self::expandConstantArrayValues('', $name);
+            }
+
+            return null;
+        }
+
+        if ($target instanceof ConstTypeNode && $target->constExpr instanceof ConstFetchNode) {
+            return self::expandConstantArrayValues($target->constExpr->className, $target->constExpr->name);
+        }
+
+        return null;
+    }
+
+    private static function expandConstantArrayKeys(string $fqcn, string $constName): ?TypeNode
+    {
+        $constValue = self::resolveRawConstantValue($fqcn, $constName);
+        if (! \is_array($constValue)) {
+            return null;
+        }
+
+        $keys = [];
+        foreach (array_keys($constValue) as $k) {
+            $keys[] = \is_int($k)
+                ? new ConstTypeNode(new ConstExprIntegerNode((string) $k))
+                : new ConstTypeNode(new ConstExprStringNode($k, ConstExprStringNode::SINGLE_QUOTED));
+        }
+
+        return $keys !== [] ? TemplateSubstitutor::normalizeUnion($keys) : new IdentifierTypeNode('never');
+    }
+
+    private static function expandConstantArrayValues(string $fqcn, string $constName): ?TypeNode
+    {
+        $constValue = self::resolveRawConstantValue($fqcn, $constName);
+        if (! \is_array($constValue)) {
+            return null;
+        }
+
+        $values = [];
+        foreach ($constValue as $v) {
+            $values[] = match (true) {
+                \is_string($v) => new ConstTypeNode(new ConstExprStringNode($v, ConstExprStringNode::SINGLE_QUOTED)),
+                \is_int($v) => new ConstTypeNode(new ConstExprIntegerNode((string) $v)),
+                \is_float($v) => new ConstTypeNode(new ConstExprFloatNode((string) $v)),
+                $v === true => new ConstTypeNode(new ConstExprTrueNode()),
+                $v === false => new ConstTypeNode(new ConstExprFalseNode()),
+                $v === null => new ConstTypeNode(new ConstExprNullNode()),
+                default => self::inferTypeFromValue($v),
+            };
+        }
+
+        return $values !== [] ? TemplateSubstitutor::normalizeUnion($values) : new IdentifierTypeNode('never');
+    }
+
+    private static function resolveRawConstantValue(string $fqcn, string $constName): mixed
+    {
+        try {
+            if ($fqcn !== '') {
+                if (ClassNameValidator::isValid($fqcn) && (class_exists($fqcn) || interface_exists($fqcn) || enum_exists($fqcn))) {
+                    /** @var class-string<object> $fqcn */
+                    $refClass = new \ReflectionClass($fqcn);
+                    if ($refClass->hasConstant($constName)) {
+                        return $refClass->getConstant($constName);
+                    }
+                }
+
+                return null;
+            }
+
+            return \defined($constName) ? \constant($constName) : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private static function extractLiteralConstValue(ConstTypeNode $node, bool &$ok): mixed
+    {
+        $expr = $node->constExpr;
+        $ok = true;
+
+        return match (true) {
+            $expr instanceof ConstExprStringNode => $expr->value,
+            $expr instanceof ConstExprIntegerNode => (int) $expr->value,
+            $expr instanceof ConstExprFloatNode => (float) $expr->value,
+            $expr instanceof ConstExprTrueNode => true,
+            $expr instanceof ConstExprFalseNode => false,
+            $expr instanceof ConstExprNullNode => null,
+            default => (static function () use (&$ok): null {
+                $ok = false;
+
+                return null;
+            })(),
+        };
+    }
+
+    /**
      * Recursively checks if an existing type node satisfies an expected type node under a given variance modifier.
      */
     public static function checkVariance(TypeNode $existing, TypeNode $expected, string $variance): bool
@@ -3076,6 +3409,36 @@ final class TemplateManager
             }
 
             return false;
+        }
+
+        if ($expected instanceof GenericTypeNode) {
+            $baseExpected = strtolower((string) $expected->type);
+            if ($baseExpected === 'key-of' || $baseExpected === 'value-of') {
+                $expandedExpected = self::expandKeyOrValueOf($expected);
+                if ($expandedExpected !== null) {
+                    return self::checkVariance($existing, $expandedExpected, $variance);
+                }
+            }
+        }
+
+        if ($existing instanceof GenericTypeNode) {
+            $baseExisting = strtolower((string) $existing->type);
+            if ($baseExisting === 'key-of' || $baseExisting === 'value-of') {
+                $expandedExisting = self::expandKeyOrValueOf($existing);
+                if ($expandedExisting !== null) {
+                    return self::checkVariance($expandedExisting, $expected, $variance);
+                }
+            }
+        }
+
+        if ($existing instanceof ConstTypeNode && $expected instanceof ConstTypeNode) {
+            $ok1 = false;
+            $ok2 = false;
+            $val1 = self::extractLiteralConstValue($existing, $ok1);
+            $val2 = self::extractLiteralConstValue($expected, $ok2);
+            if ($ok1 && $ok2) {
+                return $val1 === $val2;
+            }
         }
 
         if ($variance === GenericTypeNode::VARIANCE_INVARIANT && $existing::class === $expected::class) {

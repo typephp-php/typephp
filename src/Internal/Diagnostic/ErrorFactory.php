@@ -20,6 +20,7 @@ final class ErrorFactory
     private const CALL_SITE_KEYWORDS = [
         'argument $',
         'argument #',
+        '(): generic type argument ',
         'callback ',
         'iterator $',
         'return iterator',

@@ -8,6 +8,7 @@ use PHPStan\PhpDocParser\Ast\PhpDoc\TemplateTagValueNode;
 use PHPStan\PhpDocParser\Ast\Type\CallableTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\GenericTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode;
+use PHPStan\PhpDocParser\Ast\Type\OffsetAccessTypeNode;
 use PHPStan\PhpDocParser\Ast\Type\TypeNode;
 use Traversable;
 use TypePHP\Internal\Diagnostic\ErrorFactory;
@@ -511,7 +512,7 @@ final class ReturnChecker
                         : $boundTemplates;
                     $fallbackMeta = self::collectUnboundReturnArgIndices($resolvedType, $concreteBound, $templates);
                     $subType = TemplateSubstitutor::substitute($resolvedType, $boundTemplates, $templates);
-                    $resolvedType = $isDynamicReturn
+                    $resolvedType = ($isDynamicReturn || $subType instanceof OffsetAccessTypeNode)
                         ? SpecialTypeResolver::resolve($subType, $function, $thisObj)
                         : $subType;
                 }

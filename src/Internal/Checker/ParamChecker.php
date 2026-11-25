@@ -357,17 +357,39 @@ final class ParamChecker
 
     private static function refineInferredTypeFromBound(mixed $val, TypeNode $bound, TypeNode $defaultInferred): TypeNode
     {
+        if ($bound instanceof NullableTypeNode) {
+            if ($val === null) {
+                return new IdentifierTypeNode('null');
+            }
+
+            return self::refineInferredTypeFromBound($val, $bound->type, $defaultInferred);
+        }
+
+        if ($bound instanceof GenericTypeNode) {
+            $base = strtolower((string) $bound->type);
+            if ($base === 'key-of' || $base === 'value-of') {
+                $expanded = TemplateManager::expandKeyOrValueOf($bound);
+                if ($expanded !== null) {
+                    return self::refineInferredTypeFromBound($val, $expanded, $defaultInferred);
+                }
+            }
+        }
+
         if ($bound instanceof \PHPStan\PhpDocParser\Ast\Type\ConstTypeNode) {
             $expectedVal = match (true) {
                 $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprStringNode => $bound->constExpr->value,
                 $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprIntegerNode => (int) $bound->constExpr->value,
+                $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFloatNode => (float) $bound->constExpr->value,
                 $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprTrueNode => true,
                 $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprFalseNode => false,
                 $bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprNullNode => null,
                 default => null,
             };
 
-            if ($expectedVal !== null && $val === $expectedVal) {
+            if (
+                ($bound->constExpr instanceof \PHPStan\PhpDocParser\Ast\ConstExpr\ConstExprNullNode && $val === null)
+                || ($expectedVal !== null && $val === $expectedVal)
+            ) {
                 return $bound;
             }
         }
@@ -2985,8 +3007,19 @@ final class ParamChecker
 
     private static function typeContainsConst(TypeNode $node): bool
     {
+        if ($node instanceof NullableTypeNode) {
+            return self::typeContainsConst($node->type);
+        }
+
         if ($node instanceof \PHPStan\PhpDocParser\Ast\Type\ConstTypeNode) {
             return true;
+        }
+
+        if ($node instanceof GenericTypeNode) {
+            $base = strtolower((string) $node->type);
+            if ($base === 'key-of' || $base === 'value-of') {
+                return true;
+            }
         }
 
         if ($node instanceof UnionTypeNode) {
