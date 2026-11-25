@@ -709,7 +709,8 @@ DOC;
             expect(fn () => $inner('hello'))->toThrow(TypeError::class);
 
             expect(TypeDeducer::deduceDimType('array{string, ...float[]}', new LNumber(3)))
-                ->toBe('float');
+                ->toBe('float')
+            ;
         });
     });
 });
