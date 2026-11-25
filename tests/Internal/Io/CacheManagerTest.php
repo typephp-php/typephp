@@ -65,7 +65,17 @@ describe('CacheManager Unit Tests', function () {
             Config::set(['respect_ignore_tags' => true, 'on_violation' => 'throw']);
             $key = CacheManager::getCacheKey($file);
 
-            Config::set(['on_violation' => 'report', 'report_file' => '/tmp/report.json']);
+            Config::set(['report_file' => '/tmp/report.json', 'redact_values' => true, 'fail_on_report' => true]);
+            expect(CacheManager::getCacheKey($file))->toBe($key);
+
+            Config::set(['on_violation' => 'report']);
+            $reportKey = CacheManager::getCacheKey($file);
+            expect($reportKey)->not()->toBe($key);
+
+            Config::set(['on_violation' => 'warn']);
+            expect(CacheManager::getCacheKey($file))->toBe($reportKey);
+
+            Config::set(['on_violation' => 'throw']);
             expect(CacheManager::getCacheKey($file))->toBe($key);
 
             Config::set(['respect_ignore_tags' => false]);

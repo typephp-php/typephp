@@ -49,6 +49,14 @@ final class StreamWrapper implements StreamWrapperInterface
 
     private bool $eof = false;
 
+    private ?string $openedRawPath = null;
+
+    private ?string $openedNormalizedPath = null;
+
+    private ?string $openedResolvedPath = null;
+
+    private bool $wasWritten = false;
+
     private static bool $isRegistered = false;
 
     private static bool $cacheEnabled = true;
@@ -380,16 +388,18 @@ final class StreamWrapper implements StreamWrapperInterface
         $isInclude = ($options & self::STREAM_OPEN_FOR_INCLUDE) !== 0;
 
         if (! $isInclude || ($mode !== 'r' && $mode !== 'rb' && $mode !== 'rt') || ! Config::isEnabled()) {
-            return $this->openDirectHandle($path, $mode, $options);
+            return $this->openDirectHandle($path, $mode, $options, $openedPath);
         }
 
-        if (isset(self::$bypassedPathCache[$path])) {
-            return $this->openDirectHandle($path, $mode, $options);
+        $useIncludePath = ($options & STREAM_USE_PATH) !== 0;
+
+        if (! $useIncludePath && isset(self::$bypassedPathCache[$path])) {
+            return $this->openDirectHandle($path, $mode, $options, $openedPath);
         }
 
         $isPhp = str_ends_with($path, '.php') || str_ends_with(strtolower($path), '.php');
         if (! $isPhp) {
-            return $this->openDirectHandle($path, $mode, $options);
+            return $this->openDirectHandle($path, $mode, $options, $openedPath);
         }
 
         if (
@@ -401,29 +411,47 @@ final class StreamWrapper implements StreamWrapperInterface
             || str_contains($path, '/cache/views/')
             || str_contains($path, '/framework/views/')
         ) {
-            self::$bypassedPathCache[$path] = true;
+            if (! $useIncludePath) {
+                self::$bypassedPathCache[$path] = true;
+            }
 
-            return $this->openDirectHandle($path, $mode, $options);
+            return $this->openDirectHandle($path, $mode, $options, $openedPath);
         }
 
         $normalizedRaw = str_replace('\\', '/', $path);
         if (! PathMatcher::mayPathBeIncluded($normalizedRaw)) {
-            return $this->openDirectHandle($path, $mode, $options);
+            return $this->openDirectHandle($path, $mode, $options, $openedPath);
         }
 
         self::unregister();
 
-        if (isset(self::$realpathCache[$path])) {
+        if (! $useIncludePath && isset(self::$realpathCache[$path])) {
             $resolvedPath = self::$realpathCache[$path];
         } else {
-            $resolvedPath = self::silent(static fn () => realpath($path));
-            if ($resolvedPath !== false) {
+            $resolvedPath = self::silent(static function () use ($path, $useIncludePath): string|false {
+                $real = realpath($path);
+                if ($real !== false) {
+                    return $real;
+                }
+
+                if ($useIncludePath) {
+                    $resolved = stream_resolve_include_path($path);
+                    if ($resolved !== false) {
+                        $realResolved = realpath($resolved);
+
+                        return $realResolved !== false ? $realResolved : $resolved;
+                    }
+                }
+
+                return false;
+            });
+            if (! $useIncludePath && $resolvedPath !== false) {
                 self::$realpathCache[$path] = $resolvedPath;
             }
         }
 
         if ($resolvedPath === false || ! self::isApplicationFile($path, $resolvedPath)) {
-            if ($resolvedPath !== false) {
+            if (! $useIncludePath && $resolvedPath !== false) {
                 self::$bypassedPathCache[$path] = true;
             }
 
@@ -431,11 +459,21 @@ final class StreamWrapper implements StreamWrapperInterface
             /** @var resource|false $handle */
             $handle = self::silent(
                 fn () => ($this->context !== null)
-                    ? fopen($target, $mode, false, $this->context)
-                    : fopen($target, $mode)
+                    ? fopen($target, $mode, $useIncludePath, $this->context)
+                    : fopen($target, $mode, $useIncludePath)
             );
             $this->handle = $handle !== false ? $handle : null;
             $this->eof = false;
+            if ($this->handle !== null) {
+                if ($resolvedPath !== false) {
+                    $openedPath = $resolvedPath;
+                } else {
+                    $meta = stream_get_meta_data($this->handle);
+                    if (isset($meta['uri']) && $meta['uri'] !== '') {
+                        $openedPath = $meta['uri'];
+                    }
+                }
+            }
             self::register();
 
             if ($this->handle === null && ! self::isPharCall()) {
@@ -449,8 +487,11 @@ final class StreamWrapper implements StreamWrapperInterface
             ? $this->openCachedStream($resolvedPath, $mode)
             : $this->openMemoryStream($resolvedPath);
 
-        if ($success && self::shouldTrackTelemetry()) {
-            self::$instrumentedFiles[$resolvedPath] = true;
+        if ($success) {
+            $openedPath = $resolvedPath;
+            if (self::shouldTrackTelemetry()) {
+                self::$instrumentedFiles[$resolvedPath] = true;
+            }
         }
 
         self::register();
@@ -478,10 +519,11 @@ final class StreamWrapper implements StreamWrapperInterface
     /**
      * Opens an underlying filesystem handle directly with error reporting options and context support.
      */
-    private function openDirectHandle(string $targetFile, string $mode, int $options): bool
+    private function openDirectHandle(string $targetFile, string $mode, int $options, ?string &$openedPath = null): bool
     {
         $isInclude = ($options & self::STREAM_OPEN_FOR_INCLUDE) !== 0;
         $useIncludePath = ($options & STREAM_USE_PATH) !== 0;
+        $isWriteMode = strpbrk($mode, 'waxc+') !== false;
 
         self::unregister();
         /** @var resource|false $handle */
@@ -492,6 +534,24 @@ final class StreamWrapper implements StreamWrapperInterface
         );
         $this->handle = $handle !== false ? $handle : null;
         $this->eof = false;
+
+        if ($this->handle !== null) {
+            if ($useIncludePath || $isInclude) {
+                $meta = stream_get_meta_data($this->handle);
+                if (isset($meta['uri']) && $meta['uri'] !== '') {
+                    $openedPath = $meta['uri'];
+                }
+            }
+
+            if ($isWriteMode) {
+                $this->openedRawPath = $targetFile;
+                $this->openedNormalizedPath = str_replace('\\', '/', $targetFile);
+                $resolvedWrite = self::silent(static fn () => realpath($targetFile));
+                $this->openedResolvedPath = ($resolvedWrite !== false && $resolvedWrite !== $targetFile) ? $resolvedWrite : null;
+                $this->wasWritten = true;
+                $this->invalidateOpenedWritePaths();
+            }
+        }
         self::register();
 
         if ($this->handle === null && ! self::isPharCall()) {
@@ -528,6 +588,11 @@ final class StreamWrapper implements StreamWrapperInterface
         }
 
         $res = fwrite($this->handle, $data);
+
+        if ($res !== false && $this->openedRawPath !== null) {
+            $this->wasWritten = true;
+            $this->invalidateOpenedWritePaths();
+        }
 
         return $res !== false ? $res : 0;
     }
@@ -572,7 +637,14 @@ final class StreamWrapper implements StreamWrapperInterface
             return false;
         }
 
-        return ftruncate($this->handle, $new_size);
+        $res = ftruncate($this->handle, $new_size);
+
+        if ($res && $this->openedRawPath !== null) {
+            $this->wasWritten = true;
+            $this->invalidateOpenedWritePaths();
+        }
+
+        return $res;
     }
 
     public function stream_eof(): bool
@@ -632,6 +704,38 @@ final class StreamWrapper implements StreamWrapperInterface
             $this->handle = null;
             $this->eof = false;
         }
+
+        if ($this->wasWritten) {
+            $this->invalidateOpenedWritePaths();
+        }
+
+        $this->openedRawPath = null;
+        $this->openedNormalizedPath = null;
+        $this->openedResolvedPath = null;
+        $this->wasWritten = false;
+    }
+
+    private function invalidateOpenedWritePaths(): void
+    {
+        if ($this->openedRawPath !== null) {
+            self::invalidatePathCache($this->openedRawPath, $this->openedNormalizedPath);
+        }
+
+        if ($this->openedResolvedPath !== null) {
+            self::invalidatePathCache($this->openedResolvedPath);
+        }
+    }
+
+    private static function invalidatePathCache(string $path, ?string $normalized = null): void
+    {
+        $norm = $normalized ?? str_replace('\\', '/', $path);
+        unset(
+            self::$statCache[$norm . ':stat'],
+            self::$statCache[$norm . ':lstat'],
+            self::$staticNegativeStatCache[$norm],
+            self::$realpathCache[$path],
+            self::$bypassedPathCache[$path]
+        );
     }
 
     /**

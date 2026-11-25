@@ -118,7 +118,7 @@ final class RuntimeTypeChecker
     private static ?TypeValidatorRegistry $registry = null;
 
     /**
-     * @var array<string, array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool}>}>
+     * @var array<string, array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool, 4: ?string, 5: bool}>}>
      */
     private static array $simpleScopePlanCache = [];
 
@@ -150,7 +150,7 @@ final class RuntimeTypeChecker
     private static array $genericReturnPlanCache = [];
 
     /**
-     * @var array<string, array<string, array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool}>}>>
+     * @var array<string, array<string, array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool, 4: ?string, 5: bool}>}>>
      */
     private static array $traitScopePlanCache = [];
 
@@ -789,7 +789,12 @@ final class RuntimeTypeChecker
         TemplateManager::pushPendingInstantiation($typeString, $file);
 
         try {
-            return $factory(...$args);
+            $result = $factory(...$args);
+            if (\is_object($result)) {
+                TemplateManager::applyPendingInstantiationIfUnconsumed($result);
+            }
+
+            return $result;
         } finally {
             TemplateManager::popPendingInstantiation();
         }
@@ -1944,7 +1949,7 @@ final class RuntimeTypeChecker
     }
 
     /**
-     * @param array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool}>} $plan
+     * @param array{class: ?string, requireObject: bool, function: string, items: list<array{0: string, 1: int, 2: TypeNode, 3: bool, 4: ?string, 5: bool}>} $plan
      * @param array<string, mixed> $vars
      */
     private static function executeSimpleScopePlan(array $plan, array $vars): ?ErrorMessage
@@ -1953,7 +1958,6 @@ final class RuntimeTypeChecker
             return null;
         }
 
-        $registry = self::$registry ??= new TypeValidatorRegistry();
         $effectiveFunc = $plan['function'];
 
         foreach ($plan['items'] as $item) {
@@ -1962,6 +1966,9 @@ final class RuntimeTypeChecker
             if (isset($vars[$paramName])) {
                 $val = $vars[$paramName];
             } elseif (\array_key_exists($paramName, $vars)) {
+                if ($item[5]) {
+                    continue;
+                }
                 $val = null;
             } else {
                 continue;
@@ -1974,6 +1981,8 @@ final class RuntimeTypeChecker
                 self::PARAM_CHECK_STRING => \is_string($val),
                 self::PARAM_CHECK_BOOL => \is_bool($val),
                 self::PARAM_CHECK_FLOAT => \is_float($val) || \is_int($val),
+                self::PARAM_CHECK_OBJECT => \is_object($val),
+                self::PARAM_CHECK_CLASS => \is_object($val) && $item[4] !== null && ($val instanceof $item[4]),
                 self::PARAM_CHECK_ARRAY_KEY => \is_int($val) || \is_string($val),
                 self::PARAM_CHECK_ARRAY => \is_array($val),
                 self::PARAM_CHECK_LIST => \is_array($val) && ($val === [] || array_is_list($val)),
@@ -1993,6 +2002,7 @@ final class RuntimeTypeChecker
                 continue;
             }
 
+            $registry = self::$registry ??= new TypeValidatorRegistry();
             $err = $registry->validate($val, $item[2], '', $item[3]);
             if ($err !== null) {
                 $formattedErr = ErrorFactory::createError($effectiveFunc . '(): Argument $' . $paramName . $err->getMessage());
@@ -2015,7 +2025,7 @@ final class RuntimeTypeChecker
      * @param array<string, TypeNode> $types
      * @param array<string, bool> $sensitiveParams
      *
-     * @return list<array{0: string, 1: int, 2: TypeNode, 3: bool}>
+     * @return list<array{0: string, 1: int, 2: TypeNode, 3: bool, 4: ?string, 5: bool}>
      */
     private static function compileSimpleScopePlanItems(array $types, array $sensitiveParams): array
     {
@@ -2023,15 +2033,46 @@ final class RuntimeTypeChecker
         foreach ($types as $paramName => $typeNode) {
             $isSensitive = $sensitiveParams[$paramName] ?? false;
             $checkKind = self::PARAM_CHECK_FALLBACK;
+            $extra = null;
+            $allowsNull = false;
+            $inner = $typeNode;
 
-            if ($typeNode instanceof IdentifierTypeNode) {
-                $checkKind = match (strtolower($typeNode->name)) {
+            while ($inner instanceof NullableTypeNode) {
+                $allowsNull = true;
+                $inner = $inner->type;
+            }
+
+            if ($inner instanceof UnionTypeNode) {
+                $nonNullTypes = [];
+                foreach ($inner->types as $member) {
+                    if (self::isNullTypeNode($member)) {
+                        $allowsNull = true;
+                    } elseif ($member instanceof NullableTypeNode) {
+                        $allowsNull = true;
+                        $nonNullTypes[] = $member->type;
+                    } else {
+                        $nonNullTypes[] = $member;
+                    }
+                }
+
+                if ($allowsNull && \count($nonNullTypes) === 1) {
+                    $inner = $nonNullTypes[0];
+                    while ($inner instanceof NullableTypeNode) {
+                        $inner = $inner->type;
+                    }
+                }
+            }
+
+            if ($inner instanceof IdentifierTypeNode) {
+                $name = $inner->name;
+                $checkKind = match (strtolower($name)) {
                     'int', 'integer' => self::PARAM_CHECK_INT,
                     'string' => self::PARAM_CHECK_STRING,
                     'positive-int' => self::PARAM_CHECK_POSITIVE_INT,
                     'non-empty-string' => self::PARAM_CHECK_NON_EMPTY_STRING,
                     'bool', 'boolean' => self::PARAM_CHECK_BOOL,
                     'float', 'double' => self::PARAM_CHECK_FLOAT,
+                    'object' => self::PARAM_CHECK_OBJECT,
                     'array-key' => self::PARAM_CHECK_ARRAY_KEY,
                     'array' => self::PARAM_CHECK_ARRAY,
                     'list' => self::PARAM_CHECK_LIST,
@@ -2046,9 +2087,20 @@ final class RuntimeTypeChecker
                     'scalar' => self::PARAM_CHECK_SCALAR,
                     default => self::PARAM_CHECK_FALLBACK,
                 };
+
+                if ($checkKind === self::PARAM_CHECK_NULL || $checkKind === self::PARAM_CHECK_MIXED) {
+                    $allowsNull = true;
+                } elseif (
+                    $checkKind === self::PARAM_CHECK_FALLBACK
+                    && ! SpecialTypeResolver::isBuiltInTypeKeyword($name)
+                    && ClassNameValidator::isValid($name)
+                ) {
+                    $checkKind = self::PARAM_CHECK_CLASS;
+                    $extra = $name;
+                }
             }
 
-            $items[] = [$paramName, $checkKind, $typeNode, $isSensitive];
+            $items[] = [$paramName, $checkKind, $typeNode, $isSensitive, $extra, $allowsNull];
         }
 
         return $items;

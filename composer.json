@@ -60,6 +60,11 @@
         ]
     },
     "scripts": {
+        "qa": [
+            "./vendor/bin/pint --parallel",
+            "./vendor/bin/phpstan analyze",
+            "./vendor/bin/pest --compact"
+        ],
         "format": [
             "./vendor/bin/pint"
         ],

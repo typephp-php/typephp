@@ -166,6 +166,11 @@ final class ParamChecker
      */
     private static array $substitutedParamCache = [];
 
+    /**
+     * @var array<string, array<string, array{0: int, 1: array<int, true>}>>
+     */
+    private static array $substitutedParamFallbackCache = [];
+
     private static ?IdentifierTypeNode $arrayKeyNode = null;
 
     private static ?UnionTypeNode $intOrStringUnionNode = null;
@@ -185,6 +190,7 @@ final class ParamChecker
     {
         self::$preInferMaskCache = [];
         self::$substitutedParamCache = [];
+        self::$substitutedParamFallbackCache = [];
         self::$effectiveFunctionCache = [];
         self::$noParamContractCache = [];
         self::$functionKindCache = [];
@@ -2121,11 +2127,15 @@ final class ParamChecker
                     if (! TemplateManager::isBound($effectiveFunction, $targetObj, $tName)) {
                         $targetTemplateName = $targetTemplateNames[$idx] ?? null;
                         $inferredCandidate = null;
+                        $sourceTemplateName = null;
 
                         if ($targetTemplateName !== null && isset($boundOnInstance[$targetTemplateName])) {
                             $inferredCandidate = $boundOnInstance[$targetTemplateName];
+                            $sourceTemplateName = $targetTemplateName;
                         } elseif (isset($instanceBoundTypes[$idx])) {
                             $inferredCandidate = $instanceBoundTypes[$idx];
+                            $boundKeys = array_keys($boundOnInstance);
+                            $sourceTemplateName = $boundKeys[$idx] ?? null;
                         }
 
                         if ($inferredCandidate !== null) {
@@ -2139,6 +2149,9 @@ final class ParamChecker
 
                             if ($satisfiesBound) {
                                 TemplateManager::bindTemplate($effectiveFunction, $targetObj, $tName, $inferredCandidate);
+                                if ($targetObj !== null && $sourceTemplateName !== null && TemplateManager::isFallbackBound($value, $sourceTemplateName)) {
+                                    TemplateManager::markFallbackBound($targetObj, $tName);
+                                }
                             }
                         }
                     }
@@ -2463,6 +2476,9 @@ final class ParamChecker
         $isBareTemplate = self::getTemplateName($typeNode, $templates) !== null;
         $shouldSkipTemplateSub = $isBareTemplate || $isClassStringT;
 
+        $thisFallbackKeys = $thisObj !== null ? TemplateManager::getFallbackBoundTemplates($thisObj) : [];
+
+        $fallbackMeta = [0, []];
         if (! $shouldSkipTemplateSub && (\count($boundTemplates) > 0 || \count($declaredTemplates) > 0)) {
             $boundCount = \count($boundTemplates);
             $sig = null;
@@ -2485,12 +2501,19 @@ final class ParamChecker
 
                 if (str_contains($sig, 'static') || str_contains($sig, '$this')) {
                     $sig = null;
+                } elseif ($thisFallbackKeys !== []) {
+                    $sig .= '!fb:' . implode(',', array_keys($thisFallbackKeys));
                 }
             }
 
             if ($sig !== null && isset(self::$substitutedParamCache[$cacheKey][$sig])) {
                 $typeNode = self::$substitutedParamCache[$cacheKey][$sig];
+                $fallbackMeta = self::$substitutedParamFallbackCache[$cacheKey][$sig] ?? [0, []];
             } else {
+                $concreteBound = $thisFallbackKeys !== []
+                    ? array_diff_key($boundTemplates, $thisFallbackKeys)
+                    : $boundTemplates;
+                $fallbackMeta = TemplateManager::collectUnboundGenericArgIndices($typeNode, $concreteBound, $declaredTemplates);
                 $subType = TemplateSubstitutor::substitute($typeNode, $boundTemplates, $declaredTemplates);
                 if ($subType !== $typeNode) {
                     $typeNode = SpecialTypeResolver::resolve($subType, $effectiveFunction, $thisObj);
@@ -2498,6 +2521,7 @@ final class ParamChecker
 
                 if ($sig !== null && $cacheKey !== null) {
                     self::$substitutedParamCache[$cacheKey][$sig] = $typeNode;
+                    self::$substitutedParamFallbackCache[$cacheKey][$sig] = $fallbackMeta;
                 }
             }
         }
@@ -2514,7 +2538,21 @@ final class ParamChecker
             return self::resolveTemplateParam($typeNode, $val, $paramName, $effectiveFunction, $thisObj, $templates, $registry, $classTemplates, $thisOrClass);
         }
 
-        return $registry->validate($val, $typeNode, $effectiveFunction . '(): Argument $' . $paramName, $isSensitive);
+        $preExistingBindings = null;
+        if (($fallbackMeta[0] === -1 || $fallbackMeta[1] !== []) && \is_object($val) && $typeNode instanceof GenericTypeNode) {
+            $preExistingBindings = TemplateManager::$instanceTemplateBindings[$val] ?? [];
+        }
+
+        $err = $registry->validate($val, $typeNode, $effectiveFunction . '(): Argument $' . $paramName, $isSensitive);
+        if ($err !== null) {
+            return $err;
+        }
+
+        if ($preExistingBindings !== null && \is_object($val) && $typeNode instanceof GenericTypeNode) {
+            TemplateManager::markFallbackReturnBindings($val, $typeNode, $fallbackMeta[1], $fallbackMeta[0], $preExistingBindings);
+        }
+
+        return null;
     }
 
     /**

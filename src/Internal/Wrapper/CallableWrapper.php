@@ -970,6 +970,10 @@ final class CallableWrapper
                             continue;
                         }
 
+                        if (IgnoreManager::isCallerIgnored()) {
+                            break;
+                        }
+
                         $handled = ViolationCollector::handle($err, 'callback', null);
                         if ($handled instanceof ErrorMessage) {
                             throw ErrorFactory::prepareException(new TypePHPTypeError($err->getMessage()));
@@ -1040,6 +1044,10 @@ final class CallableWrapper
                     if ($err !== null) {
                         if ($callable !== null && CallerBoundaryResolver::shouldBypassCallback($callable, $prefix)) {
                             continue;
+                        }
+
+                        if (IgnoreManager::isCallerIgnored()) {
+                            break;
                         }
 
                         $handled = ViolationCollector::handle($err, 'callback', null);

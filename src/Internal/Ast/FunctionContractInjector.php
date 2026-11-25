@@ -444,7 +444,11 @@ final class FunctionContractInjector
             return [];
         }
 
-        if (Config::getOnViolation() !== 'throw' || ! Config::isParamsEnabled()) {
+        if (
+            ! Config::isEliminateStaticallyProvenChecksEnabled()
+            || Config::getOnViolation() !== 'throw'
+            || ! Config::isParamsEnabled()
+        ) {
             return [];
         }
 

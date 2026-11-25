@@ -61,11 +61,13 @@ final class EliminationSafetyPolicy
      *    and scalar generics (int<min, max>, int-mask) which carry no object state.
      * 3. Authorizes standalone functions, closures, and arrow functions (zero inheritance risk).
      * 4. For class methods:
-     *    - Authorizes private methods, final methods, and methods on final classes.
-     *    - Authorizes classes with no inheritance (`hasRealInheritance === false`).
-     * 5. Defers all other methods to runtime to prevent bypassing unanalyzed parent contracts.
+     *    - Authorizes private methods.
+     *    - Rejects trait methods (`isTrait === true`) since traits may be composed into inheriting classes.
+     *    - Authorizes classes with no real inheritance (`hasRealInheritance === false`).
+     * 5. Defers all other methods (including final methods/classes with inheritance) to runtime
+     *    to prevent bypassing unanalyzed parent or interface contracts.
      *
-     * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
+     * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool, isTrait?: bool}|null $classContext
      */
     public static function isReturnEliminationSafe(
         ClassMethod|Function_|Closure|ArrowFunction $functionNode,
@@ -106,7 +108,7 @@ final class EliminationSafetyPolicy
     /**
      * Determines whether generator yield, send, and return checks can be safely eliminated under LSP rules.
      *
-     * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool}|null $classContext
+     * @param array{name?: ?string, hasInheritance?: bool, hasRealInheritance?: bool, hasPropertyWithDoc?: bool, isReadonly?: bool, isFinal?: bool, hasTemplates?: bool, isTrait?: bool}|null $classContext
      */
     public static function isGeneratorEliminationSafe(
         ClassMethod|Function_|Closure|ArrowFunction $functionNode,

@@ -72,6 +72,21 @@ final class ReturnChecker
     public static array $substitutedConditionalReturnCache = [];
 
     /**
+     * @var array<string, array{0: int, 1: array<int, true>}>
+     */
+    public static array $unboundReturnFallbackCache = [];
+
+    /**
+     * @var array<string, array<string, array{0: int, 1: array<int, true>}>>
+     */
+    public static array $substitutedReturnFallbackCache = [];
+
+    /**
+     * @var array<string, array<string, array<string, array{0: int, 1: array<int, true>}>>>
+     */
+    public static array $substitutedCondReturnFallbackCache = [];
+
+    /**
      * Resets internal caches. Useful for test isolation.
      */
     public static function reset(): void
@@ -81,6 +96,9 @@ final class ReturnChecker
         self::$resolvedStaticReturnCache = [];
         self::$unboundReturnCache = [];
         self::$substitutedReturnCache = [];
+        self::$unboundReturnFallbackCache = [];
+        self::$substitutedReturnFallbackCache = [];
+        self::$substitutedCondReturnFallbackCache = [];
     }
 
     /**
@@ -417,6 +435,8 @@ final class ReturnChecker
         $sig = null;
         $cacheFunc = null;
         $boundCount = \count($boundTemplates);
+        $fallbackMeta = [0, []];
+        $thisFallbackKeys = $thisObj !== null ? TemplateManager::getFallbackBoundTemplates($thisObj) : [];
 
         if ($boundCount <= 5 && ($thisObj !== null || ! $isDynamicReturn)) {
             $cacheFunc = ($isDynamicReturn && $thisObj !== null) ? ($function . '@' . $thisObj::class) : $function;
@@ -436,8 +456,14 @@ final class ReturnChecker
 
             if (str_contains($sig, 'static') || str_contains($sig, '$this')) {
                 $sig = null;
-            } elseif (! $hasConditionals && isset(self::$substitutedReturnCache[$cacheFunc][$sig])) {
-                $resolvedType = self::$substitutedReturnCache[$cacheFunc][$sig];
+            } else {
+                if ($thisFallbackKeys !== []) {
+                    $sig .= '!fb:' . implode(',', array_keys($thisFallbackKeys));
+                }
+                if (! $hasConditionals && isset(self::$substitutedReturnCache[$cacheFunc][$sig])) {
+                    $resolvedType = self::$substitutedReturnCache[$cacheFunc][$sig];
+                    $fallbackMeta = self::$substitutedReturnFallbackCache[$cacheFunc][$sig] ?? [0, []];
+                }
             }
         }
 
@@ -460,18 +486,30 @@ final class ReturnChecker
                 $condBranchKey = (string) $resolvedType;
                 if (isset(self::$substitutedConditionalReturnCache[$cacheFunc][$condBranchKey][$sig])) {
                     $resolvedType = self::$substitutedConditionalReturnCache[$cacheFunc][$condBranchKey][$sig];
+                    $fallbackMeta = self::$substitutedCondReturnFallbackCache[$cacheFunc][$condBranchKey][$sig] ?? [0, []];
                     $condCacheHit = true;
                 }
             }
 
             if (! $condCacheHit) {
                 if ($boundCount === 0 && \count($templates) > 0 && ! $hasConditionals && $thisObj === null) {
-                    $resolvedType = self::$unboundReturnCache[$function] ??= SpecialTypeResolver::resolve(
-                        TemplateSubstitutor::substitute($returnTypeNode, [], $templates),
-                        $function,
-                        null
-                    );
+                    if (isset(self::$unboundReturnCache[$function])) {
+                        $resolvedType = self::$unboundReturnCache[$function];
+                        $fallbackMeta = self::$unboundReturnFallbackCache[$function] ?? [0, []];
+                    } else {
+                        $fallbackMeta = self::collectUnboundReturnArgIndices($resolvedType, [], $templates);
+                        self::$unboundReturnFallbackCache[$function] = $fallbackMeta;
+                        $resolvedType = self::$unboundReturnCache[$function] = SpecialTypeResolver::resolve(
+                            TemplateSubstitutor::substitute($resolvedType, [], $templates),
+                            $function,
+                            null
+                        );
+                    }
                 } elseif ($boundCount > 0 || \count($templates) > 0) {
+                    $concreteBound = $thisFallbackKeys !== []
+                        ? array_diff_key($boundTemplates, $thisFallbackKeys)
+                        : $boundTemplates;
+                    $fallbackMeta = self::collectUnboundReturnArgIndices($resolvedType, $concreteBound, $templates);
                     $subType = TemplateSubstitutor::substitute($resolvedType, $boundTemplates, $templates);
                     $resolvedType = $isDynamicReturn
                         ? SpecialTypeResolver::resolve($subType, $function, $thisObj)
@@ -485,8 +523,10 @@ final class ReturnChecker
                 if ($sig !== null && $cacheFunc !== null) {
                     if ($hasConditionals && $condBranchKey !== null) {
                         self::$substitutedConditionalReturnCache[$cacheFunc][$condBranchKey][$sig] = $resolvedType;
+                        self::$substitutedCondReturnFallbackCache[$cacheFunc][$condBranchKey][$sig] = $fallbackMeta;
                     } elseif (! $hasConditionals) {
                         self::$substitutedReturnCache[$cacheFunc][$sig] = $resolvedType;
+                        self::$substitutedReturnFallbackCache[$cacheFunc][$sig] = $fallbackMeta;
                     }
                 }
             }
@@ -499,9 +539,18 @@ final class ReturnChecker
             }
         }
 
+        $preExistingBindings = null;
+        if (($fallbackMeta[0] === -1 || $fallbackMeta[1] !== []) && \is_object($value) && $resolvedType instanceof GenericTypeNode) {
+            $preExistingBindings = TemplateManager::$instanceTemplateBindings[$value] ?? [];
+        }
+
         $err = $registry->validate($value, $resolvedType, 'Return value');
         if ($err !== null) {
             return ErrorFactory::createError($function . '(): ' . $err->getMessage());
+        }
+
+        if ($preExistingBindings !== null && \is_object($value) && $resolvedType instanceof GenericTypeNode) {
+            TemplateManager::markFallbackReturnBindings($value, $resolvedType, $fallbackMeta[1], $fallbackMeta[0], $preExistingBindings);
         }
 
         if ($resolvedType instanceof CallableTypeNode && CallableWrapper::isCallable($value)) {
@@ -522,5 +571,19 @@ final class ReturnChecker
         }
 
         return $value;
+    }
+
+    /**
+     * @param array<string, TypeNode> $boundTemplates
+     * @param array<string, TemplateTagValueNode> $declaredTemplates
+     *
+     * @return array{0: int, 1: array<int, true>}
+     */
+    private static function collectUnboundReturnArgIndices(
+        TypeNode $preSubNode,
+        array $boundTemplates,
+        array $declaredTemplates
+    ): array {
+        return TemplateManager::collectUnboundGenericArgIndices($preSubNode, $boundTemplates, $declaredTemplates);
     }
 }
