@@ -541,7 +541,7 @@ final class ReturnChecker
 
         $preExistingBindings = null;
         if (($fallbackMeta[0] === -1 || $fallbackMeta[1] !== []) && \is_object($value) && $resolvedType instanceof GenericTypeNode) {
-            $preExistingBindings = TemplateManager::$instanceTemplateBindings[$value] ?? [];
+            $preExistingBindings = TemplateManager::getConcreteInstanceBindings($value);
         }
 
         $err = $registry->validate($value, $resolvedType, 'Return value');

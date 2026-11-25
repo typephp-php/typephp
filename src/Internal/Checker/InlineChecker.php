@@ -220,7 +220,7 @@ final class InlineChecker
 
             $preExistingBindings = null;
             if (($fallbackMeta[0] === -1 || $fallbackMeta[1] !== []) && \is_object($value) && $typeNode instanceof GenericTypeNode) {
-                $preExistingBindings = TemplateManager::$instanceTemplateBindings[$value] ?? [];
+                $preExistingBindings = TemplateManager::getConcreteInstanceBindings($value);
             }
 
             if ($typeNode instanceof GenericTypeNode && Config::isInlineGenericsEnabled() && \is_object($value)) {
@@ -535,7 +535,7 @@ final class InlineChecker
 
         $preExistingBindings = null;
         if (($fallbackMeta[0] === -1 || $fallbackMeta[1] !== []) && \is_object($value) && $typeNode instanceof GenericTypeNode) {
-            $preExistingBindings = TemplateManager::$instanceTemplateBindings[$value] ?? [];
+            $preExistingBindings = TemplateManager::getConcreteInstanceBindings($value);
         }
 
         try {

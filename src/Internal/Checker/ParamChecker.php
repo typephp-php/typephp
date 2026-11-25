@@ -2540,7 +2540,7 @@ final class ParamChecker
 
         $preExistingBindings = null;
         if (($fallbackMeta[0] === -1 || $fallbackMeta[1] !== []) && \is_object($val) && $typeNode instanceof GenericTypeNode) {
-            $preExistingBindings = TemplateManager::$instanceTemplateBindings[$val] ?? [];
+            $preExistingBindings = TemplateManager::getConcreteInstanceBindings($val);
         }
 
         $err = $registry->validate($val, $typeNode, $effectiveFunction . '(): Argument $' . $paramName, $isSensitive);
