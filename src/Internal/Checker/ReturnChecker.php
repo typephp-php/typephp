@@ -21,9 +21,25 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Internal\Wrapper\CallableWrapper;
 
 /**
+ * Evaluates function and method return contracts, including dynamic `@method` returns
+ * (`__call` / `__callStatic`) and dynamic `@property` reads (`__get`).
+ *
+ * Performance & Mechanical Sympathy Architecture:
+ * Serves the fallback path for generic, aliased, conditional, dynamic (`$this`/`static`),
+ * and magic return contracts not handled by `RuntimeTypeChecker::$simpleReturnPlanCache`:
+ *
+ * - Fast-exit checks handle `$this` identity, `static` instanceof, and unconstrained
+ *   (`mixed`/`array`) returns before allocating template binding arrays or running substitution.
+ * - Direct `$topCallFrame` and `TemplateManager::getInstanceBindingsFast()` lookups avoid full
+ *   binding merges when a method uses only class-level or only method-level templates.
+ * - Multi-tier AST resolution caches (`$noReturnContractCache`, `$resolvedStaticReturnCache`,
+ *   `$unboundReturnCache`, `$substitutedReturnCache`, `$substitutedConditionalReturnCache`)
+ *   memoize substituted return types by compact template signatures to avoid repeated
+ *   `TemplateSubstitutor` and `SpecialTypeResolver` traversals.
+ *
  * @phpstan-import-type FunctionContract from DocblockParser
  *
- * @internal Evaluates function and method return contract validations (including dynamic @method calls via __call / __callStatic and dynamic @property reads via __get).
+ * @internal
  */
 final class ReturnChecker
 {

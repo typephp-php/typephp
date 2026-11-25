@@ -32,7 +32,29 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use WeakMap;
 
 /**
- * @internal Evaluates array key/dimension and object shape property member assignments.
+ * Evaluates array dimension, collection element, and object shape property member assignments
+ * and `unset()` mutations atomically before writing.
+ *
+ * Performance & Mechanical Sympathy Architecture:
+ * Collection and property-dimension writes (`$this->items[] = $v`, `$this->map[$k] = $v`) are
+ * among the hottest mutation paths in collection-heavy workloads. This class avoids copy-on-write
+ * full-array validation (`StructureMutator::mutateCopy()`) whenever possible via:
+ *
+ * - Packed per-instance fast contracts (`$fastObjectContractCache` WeakMap) shared directly with
+ *   `RuntimeTypeChecker::checkPropertyDimAssign()` and `checkPropertyMemberAssign()` for O(1)
+ *   1-level writes without array allocation.
+ * - Inline `match` blocks over integer opcodes and primitive bitmasks (`OP_*`, `BIT_*`), compiled
+ *   by PHP into O(1) `ZEND_MATCH` jump tables and compile-time folded bitmasks across both
+ *   1-level and 2-level nested property-dimension writes.
+ * - Multi-tier memoization (`$propertyMutationPlanCache`, `$substitutedElementContractCache`,
+ *   `$instanceContractCache`, `$innerElementContractCache`, `$arrayAccessPlanCache`,
+ *   `$refPropertyCache`) so reflection and template substitution run once per class/binding shape.
+ *
+ * Contributor note: `OP_*` and `BIT_*` values are mirrored as local `private const`s in
+ * `RuntimeTypeChecker::PROP_OP_*` / `PROP_BIT_*` to preserve compile-time `ZEND_MATCH` jump
+ * tables across both files — keep them strictly synchronized if modified.
+ *
+ * @internal
  */
 final class MemberAssignChecker
 {

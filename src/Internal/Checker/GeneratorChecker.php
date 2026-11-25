@@ -22,7 +22,25 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use WeakMap;
 
 /**
- * @internal Evaluates generator yield, send (TSend), and return (TReturn) type validations.
+ * Evaluates generator `yield` (TKey/TValue), `$gen->send()` (TSend), and `return` (TReturn)
+ * type validations at runtime.
+ *
+ * Performance & Mechanical Sympathy Architecture:
+ * `checkYield()` executes on every yielded element in a generator loop. To keep per-yield
+ * overhead near-native:
+ *
+ * - Local `private const` opcodes and primitive bitmasks (`OP_*`, `BIT_*`) are intentionally
+ *   kept class-local and matched inline inside `checkYield()` so PHP compiles an O(1)
+ *   `ZEND_MATCH` jump table and bypasses `TypeValidatorRegistry` dispatch for common types.
+ * - Compiled yield/send/return tuples are cached directly on the active `ScopeCleaner::$resolvedYieldTypes`
+ *   handle (zero-lookup on subsequent yields in the same generator), backed by static,
+ *   template-signature, and `WeakMap` per-instance caches (`$noContractCache`,
+ *   `$generatorPlanCache`, `$staticYieldTypeCache`, `$genericYieldTypeCache`, `$instanceYieldCache`).
+ *
+ * Contributor note: Do not replace local `private const` opcodes with cross-class constants or
+ * extract the inline `match` dispatch into a helper without benchmarking tight generator loops.
+ *
+ * @internal
  */
 final class GeneratorChecker
 {

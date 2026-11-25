@@ -36,7 +36,22 @@ use TypePHP\Internal\Validator\TypeValidatorRegistry;
 use TypePHP\Internal\Wrapper\CallableWrapper;
 
 /**
- * Evaluates inline variable (@var) and class property validation rules.
+ * Evaluates inline variable (`@var`), class property, and single-element collection mutation
+ * validation contracts at runtime.
+ *
+ * Performance & Mechanical Sympathy Architecture:
+ * Inline property and local variable checks can fire inside tight loops. Overhead is minimized via:
+ *
+ * - Shared O(1) negative property cache (`$nullPropertyCache`) checked directly by
+ *   `RuntimeTypeChecker` and `MemberAssignChecker` so unannotated properties bail out on a single
+ *   `isset()` before entering `InlineChecker`.
+ * - Pre-classified AST parse cache (`$parsedTypeNodeCache` storing `[$typeNode, $needsContext]`),
+ *   3D file/class context caches (`$resolvedFileTypeCache`, `$resolvedClassContextCache`),
+ *   static/instance generic property caches (`$resolvedStaticPropertyTypeCache`,
+ *   `$instancePropertyTypeCache` WeakMap), and O(1) lookup tables (`SCALAR_TYPES`, `ARRAY_TYPES`)
+ *   to skip context resolution and reflection when types are self-contained.
+ * - O(1) leaf element validation (`validateCollectionElementMutation()`) in hybrid mode to avoid
+ *   full-collection copies on single-element writes.
  *
  * @internal
  */

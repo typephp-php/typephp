@@ -43,7 +43,36 @@ use TypePHP\Internal\Wrapper\CallableWrapper;
 use TypePHP\Internal\Wrapper\IterableWrapper;
 
 /**
- * Core runtime type checking engine facade for parameter validation, return type enforcement, and variable tracking.
+ * Core runtime type checking engine facade for parameter validation, return type enforcement,
+ * property mutation checks, and generic scope tracking.
+ *
+ * Performance & Mechanical Sympathy Architecture:
+ * This class is the primary hot path executed on every instrumented function entry, return,
+ * generator yield/send, and property/collection write. Readability and strict DRY abstractions
+ * are intentionally traded for Zend Engine / OPcache mechanical sympathy and maximum throughput:
+ *
+ * - Inline hot paths: Common primitive, class, nullable, identity-return, and 1-level property
+ *   dimension checks are intentionally inlined inside entry points (`setupScope()`, `checkReturn()`,
+ *   `checkPropertyDimAssign()`, `checkPropertyMemberAssign()`) to avoid per-check PHP call-frame
+ *   overhead (`DO_FCALL`) and temporary wrapper array allocations.
+ * - Local `private const` opcodes & bitmasks (`PARAM_CHECK_*`, `PROP_OP_*`, `PROP_BIT_*`):
+ *   Opcodes are intentionally mirrored as local class constants rather than referenced across
+ *   classes. PHP resolves local `private const` values to literal `IS_LONG` constants at compile
+ *   time, enabling O(1) `ZEND_MATCH` jump tables and compile-time bitmask folding instead of
+ *   O(n) runtime `FETCH_CLASS_CONSTANT` + `IS_IDENTICAL` chains.
+ * - Pre-compiled monomorphic execution plans: Cold reflection, PHPDoc parsing, and template
+ *   resolution run once and compile into flat lookup caches (`$simpleScopePlanCache`,
+ *   `$simpleReturnPlanCache`, `$simpleCtorTemplatePlanCache`, `$simpleClassStringTemplatePlanCache`,
+ *   `$simpleGenericIterablePlanCache`, `$genericReturnPlanCache`, `$identitySelfReturnCache`,
+ *   `$nullableReturnCache`, and trait-dispatched variants).
+ * - Static boolean fast-exit flags (`$isEnabled`, `$paramsEnabled`, `$returnsEnabled`, etc.):
+ *   Synced by `Config` to allow single-opcode bailout without method calls or superglobal lookups.
+ *
+ * Contributor note: Do not extract these hot-path `match` blocks into shared helper methods or
+ * replace local `private const` opcodes with cross-class constants without profiling against
+ * CPU-bound, generic-heavy workloads.
+ * 
+ * @internal
  */
 final class RuntimeTypeChecker
 {

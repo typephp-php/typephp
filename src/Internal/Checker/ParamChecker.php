@@ -32,9 +32,30 @@ use TypePHP\Internal\Util\StubManager;
 use TypePHP\Internal\Validator\TypeValidatorRegistry;
 
 /**
+ * Evaluates function and method parameter contracts, generic template inference, and dynamic
+ * `@method` calls routed through `__call` / `__callStatic`.
+ *
+ * Performance & Mechanical Sympathy Architecture:
+ * Executed on parameter-validated calls that do not hit `RuntimeTypeChecker`'s compiled
+ * monomorphic fast-path plans. To maximize throughput on generic and polymorphic workloads:
+ *
+ * - Inline scalar/collection `match` fast path inside `validateSimpleParams()` bypasses
+ *   `TypeValidatorRegistry` dispatch for common primitive and refinement identifiers.
+ * - Bitmask-gated pre-inference (`$preInferMaskCache`) skips closure, array, shape, and generic
+ *   object inference passes when the function signature cannot benefit from them, and
+ *   single-pass array inference self-verifies plain `array<...>`/`iterable<...>` arguments
+ *   (`$selfVerifiedParams`) to avoid scanning elements twice.
+ * - Primitive bitmask bound plans (`$templateBoundPlanCache`) and multi-dimensional caches
+ *   (`$noParamContractCache`, `$effectiveFunctionCache`, `$baseTypeCache`,
+ *   `$substitutedParamCache`, `$callableNodesCache`, `$traversablePlanCache`, `$functionKindCache`)
+ *   avoid repeated reflection, AST substitution, and string key allocations.
+ *
+ * Contributor note: Keep the inline primitive `match` in `validateSimpleParams()` and bitmask
+ * guards intact when adding new parameter features.
+ *
  * @phpstan-import-type FunctionContract from DocblockParser
  *
- * @internal Evaluates function and method parameter contract validations (including dynamic @method calls via __call / __callStatic).
+ * @internal
  */
 final class ParamChecker
 {

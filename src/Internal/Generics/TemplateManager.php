@@ -42,7 +42,31 @@ use TypePHP\Internal\Util\StubManager;
 use WeakMap;
 
 /**
- * Manages generic template bindings for object instances (via WeakMap) and static/method call stack frames.
+ * Manages reified generic template bindings for object instances (via WeakMap)
+ * and active function/method call stack frames, along with variance and inheritance resolution.
+ *
+ * Performance & Mechanical Sympathy Architecture:
+ * Generic binding and variance checks run frequently across constructor, parameter, property,
+ * and return boundaries. This class minimizes allocations and reflection overhead via:
+ *
+ * - GC-safe `WeakMap` instance storage (`$instanceTemplateBindings`, `$fallbackBoundTemplates`)
+ *   paired with flat O(1) top call frames (`$topCallFrame`, `$topCallThis`) that avoid nested
+ *   stack operations on non-recursive calls.
+ * - Pre-compiled binding plans (`$compiledNodeBindPlanCache`, `$compiledRelativeNodeBindPlanCache`,
+ *   `$compiledBindPlanBySigCache`, `$compiledUnionMembersCache`) and `WeakMap`-memoized
+ *   `key-of`/`value-of` expansions (`$expandedKeyOrValueOfCache`) so repeated checks verify
+ *   existing bindings via inline identity/name fast paths without re-running reflection or
+ *   re-checking static upper bounds.
+ * - Pre-computed O(1) subtype hash matrices (`SCALAR_SUBTYPES`, `COLLECTION_SUBTYPES`,
+ *   `INT_SUPERTYPES`, `STRING_SUPERTYPES`) and cached singleton primitive AST nodes
+ *   (`$intNode`, `$stringNode`, `$floatNode`, `$boolNode`, `$classNodeCache`) to avoid
+ *   per-call `TypeNode` allocations.
+ * - Negative and hierarchy memoization (`$noInheritedBindingsClasses`, `$realTypeSymbolCache`,
+ *   `$subclassCache`, `$propagationPlanCache`, `$propagatedBindingsCache`) to keep repeated
+ *   object/class lookups allocation-free.
+ *
+ * Contributor note: Preserve singleton AST node reuse and flat fast paths in `bindInstanceFromNode()`,
+ * `checkVariance()`, and `getInstanceBindingsFast()` to avoid regressions in generic-heavy codebases.
  *
  * @internal
  */
