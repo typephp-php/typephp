@@ -33,6 +33,12 @@ final class ObjectShapeValidator implements TypeValidatorInterface
      */
     private static array $propertyCache = [];
 
+    public static function reset(): void
+    {
+        self::$refClassCache = [];
+        self::$propertyCache = [];
+    }
+
     public function validate(
         mixed $value,
         TypeNode $node,

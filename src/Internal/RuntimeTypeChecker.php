@@ -2666,9 +2666,10 @@ final class RuntimeTypeChecker
         }
 
         $name = $inner->name;
+        $lower = strtolower($name);
 
         if ($isNullable) {
-            $nullableOp = match ($name) {
+            $nullableOp = match ($lower) {
                 'int', 'integer' => self::PARAM_CHECK_NULL_OR_INT,
                 'string' => self::PARAM_CHECK_NULL_OR_STRING,
                 'bool', 'boolean' => self::PARAM_CHECK_NULL_OR_BOOL,
@@ -2680,7 +2681,7 @@ final class RuntimeTypeChecker
             }
         }
 
-        $op = match ($name) {
+        $op = match ($lower) {
             'int', 'integer' => self::PARAM_CHECK_INT,
             'string' => self::PARAM_CHECK_STRING,
             'bool', 'boolean' => self::PARAM_CHECK_BOOL,
