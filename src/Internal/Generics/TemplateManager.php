@@ -3369,19 +3369,33 @@ final class TemplateManager
         $expr = $node->constExpr;
         $ok = true;
 
-        return match (true) {
-            $expr instanceof ConstExprStringNode => $expr->value,
-            $expr instanceof ConstExprIntegerNode => (int) $expr->value,
-            $expr instanceof ConstExprFloatNode => (float) $expr->value,
-            $expr instanceof ConstExprTrueNode => true,
-            $expr instanceof ConstExprFalseNode => false,
-            $expr instanceof ConstExprNullNode => null,
-            default => (static function () use (&$ok): null {
-                $ok = false;
+        if ($expr instanceof ConstExprStringNode) {
+            return $expr->value;
+        }
 
-                return null;
-            })(),
-        };
+        if ($expr instanceof ConstExprIntegerNode) {
+            return (int) $expr->value;
+        }
+
+        if ($expr instanceof ConstExprFloatNode) {
+            return (float) $expr->value;
+        }
+
+        if ($expr instanceof ConstExprTrueNode) {
+            return true;
+        }
+
+        if ($expr instanceof ConstExprFalseNode) {
+            return false;
+        }
+
+        if ($expr instanceof ConstExprNullNode) {
+            return null;
+        }
+
+        $ok = false;
+
+        return null;
     }
 
     /**
