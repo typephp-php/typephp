@@ -1247,11 +1247,11 @@ final class StreamWrapper implements StreamWrapperInterface
                 $prefix = $stmt->prefix->toString();
 
                 foreach ($stmt->uses as $use) {
-                    if (
-                        $use->type !== \PhpParser\Node\Stmt\Use_::TYPE_NORMAL
-                        && $use->type !== \PhpParser\Node\Stmt\Use_::TYPE_UNKNOWN
-                        && $stmt->type !== \PhpParser\Node\Stmt\Use_::TYPE_NORMAL
-                    ) {
+                    $effectiveType = $use->type !== \PhpParser\Node\Stmt\Use_::TYPE_UNKNOWN
+                        ? $use->type
+                        : $stmt->type;
+
+                    if ($effectiveType !== \PhpParser\Node\Stmt\Use_::TYPE_NORMAL) {
                         continue;
                     }
 

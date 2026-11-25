@@ -1654,11 +1654,11 @@ final class ContractVisitor extends NodeVisitorAbstract
             } elseif ($stmt instanceof Node\Stmt\GroupUse) {
                 $prefix = $stmt->prefix->toString();
                 foreach ($stmt->uses as $use) {
-                    if (
-                        $use->type !== Node\Stmt\Use_::TYPE_NORMAL
-                        && $use->type !== Node\Stmt\Use_::TYPE_UNKNOWN
-                        && $stmt->type !== Node\Stmt\Use_::TYPE_NORMAL
-                    ) {
+                    $effectiveType = $use->type !== Node\Stmt\Use_::TYPE_UNKNOWN
+                        ? $use->type
+                        : $stmt->type;
+
+                    if ($effectiveType !== Node\Stmt\Use_::TYPE_NORMAL) {
                         continue;
                     }
                     $imports[$use->getAlias()->toString()] = $prefix . '\\' . $use->name->toString();

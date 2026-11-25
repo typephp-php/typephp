@@ -1745,6 +1745,8 @@ final class SpecialTypeResolver
                     }
 
                     $useStatement = '';
+                    $isGroupUse = false;
+
                     for ($j = $i + 1; $j < $count; $j++) {
                         if ($tokens[$j]->text === ';') {
                             $i = $j;
@@ -1752,6 +1754,7 @@ final class SpecialTypeResolver
                             break;
                         }
                         if ($tokens[$j]->text === '{') {
+                            $isGroupUse = true;
                             $prefix = trim($useStatement);
                             $groupContent = '';
                             for ($g = $j + 1; $g < $count; $g++) {
@@ -1760,40 +1763,56 @@ final class SpecialTypeResolver
 
                                     break;
                                 }
-                                $groupContent .= $tokens[$g]->text;
-                            }
-                            foreach (explode(',', $groupContent) as $part) {
-                                $part = trim($part);
-                                if ($part === '') {
-                                    continue;
+                                if ($tokens[$g]->id !== T_COMMENT && $tokens[$g]->id !== T_DOC_COMMENT) {
+                                    $groupContent .= $tokens[$g]->text;
                                 }
-                                if (preg_match('/^([a-zA-Z0-9_\\\\]+)(?:\s+as\s+([a-zA-Z0-9_]+))?$/i', $part, $m) === 1) {
-                                    $fqcn = ltrim(rtrim($prefix, '\\') . '\\' . trim($m[1]), '\\');
-                                    $alias = $m[2] ?? basename(str_replace('\\', '/', $fqcn));
-                                    $imports[$alias] = $fqcn;
-                                    $allImports[$alias] = $fqcn;
+                            }
+
+                            if (preg_match('/^(?:function|const)\s+/i', $prefix) !== 1) {
+                                foreach (explode(',', $groupContent) as $part) {
+                                    $part = trim($part);
+                                    if ($part === '' || preg_match('/^(?:function|const)\s+/i', $part) === 1) {
+                                        continue;
+                                    }
+                                    if (preg_match('/^([a-zA-Z0-9_\\\\]+)(?:\s+as\s+([a-zA-Z0-9_]+))?$/i', $part, $m) === 1) {
+                                        $fqcn = ltrim(rtrim($prefix, '\\') . '\\' . trim($m[1]), '\\');
+                                        $alias = $m[2] ?? basename(str_replace('\\', '/', $fqcn));
+                                        $imports[$alias] = $fqcn;
+                                        $allImports[$alias] = $fqcn;
+                                    }
                                 }
                             }
 
                             break;
                         }
-                        $useStatement .= $tokens[$j]->text;
+                        if ($tokens[$j]->id !== T_COMMENT && $tokens[$j]->id !== T_DOC_COMMENT) {
+                            $useStatement .= $tokens[$j]->text;
+                        }
                     }
 
-                    if (str_contains($useStatement, ',')) {
-                        foreach (explode(',', $useStatement) as $part) {
+                    if ($isGroupUse) {
+                        continue;
+                    }
+
+                    $trimmedUse = trim($useStatement);
+                    if ($trimmedUse === '' || preg_match('/^(?:function|const)\s+/i', $trimmedUse) === 1) {
+                        continue;
+                    }
+
+                    if (str_contains($trimmedUse, ',')) {
+                        foreach (explode(',', $trimmedUse) as $part) {
                             $part = trim($part);
-                            if ($part === '') {
+                            if ($part === '' || preg_match('/^(?:function|const)\s+/i', $part) === 1) {
                                 continue;
                             }
-                            if (preg_match('/^(?:function\s+|const\s+)?([a-zA-Z0-9_\\\\]+)(?:\s+as\s+([a-zA-Z0-9_]+))?$/i', $part, $m) === 1) {
+                            if (preg_match('/^([a-zA-Z0-9_\\\\]+)(?:\s+as\s+([a-zA-Z0-9_]+))?$/i', $part, $m) === 1) {
                                 $fqcn = ltrim(trim($m[1]), '\\');
                                 $alias = $m[2] ?? basename(str_replace('\\', '/', $fqcn));
                                 $imports[$alias] = $fqcn;
                                 $allImports[$alias] = $fqcn;
                             }
                         }
-                    } elseif (preg_match('/^(?:function\s+|const\s+)?([a-zA-Z0-9_\\\\]+)(?:\s+as\s+([a-zA-Z0-9_]+))?$/i', trim($useStatement), $m) === 1) {
+                    } elseif (preg_match('/^([a-zA-Z0-9_\\\\]+)(?:\s+as\s+([a-zA-Z0-9_]+))?$/i', $trimmedUse, $m) === 1) {
                         $fqcn = ltrim(trim($m[1]), '\\');
                         $alias = $m[2] ?? basename(str_replace('\\', '/', $fqcn));
                         $imports[$alias] = $fqcn;
