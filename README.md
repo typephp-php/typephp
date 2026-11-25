@@ -313,7 +313,7 @@ TypePHP stands on the shoulders of giants. It simply would not exist without the
 * **[Blackfire](https://www.blackfire.io/)**:
   A huge thank you to **Blackfire** for generously providing a **free 1-year open-source subscription** for TypePHP. Blackfire's deterministic call-graph and memory profiling made it possible to hunt down hot-path bottlenecks and achieve up to an **11× speedup** on generics-heavy workloads.
 * **[`php-spx`](https://github.com/NoiseByNorthwest/php-spx)**:
-  Many thanks to the `php-spx` PHP profiling extension—its lightweight flamegraphs, flat execution profiles, and built-in web UI were instrumental in pinpointing tight-loop overhead and tuning TypePHP's runtime engine.
+  Many thanks to the `php-spx` PHP profiling extension and its lightweight flamegraphs, flat execution profiles, and built-in web UI were instrumental in pinpointing tight-loop overhead and tuning TypePHP's runtime engine.
 
 ---
 

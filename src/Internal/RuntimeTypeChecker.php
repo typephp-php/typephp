@@ -71,7 +71,7 @@ use TypePHP\Internal\Wrapper\IterableWrapper;
  * Contributor note: Do not extract these hot-path `match` blocks into shared helper methods or
  * replace local `private const` opcodes with cross-class constants without profiling against
  * CPU-bound, generic-heavy workloads.
- * 
+ *
  * @internal
  */
 final class RuntimeTypeChecker
