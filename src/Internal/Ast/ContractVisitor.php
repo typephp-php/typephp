@@ -287,13 +287,6 @@ final class ContractVisitor extends NodeVisitorAbstract
             $this->processClassPropertyDefaults($node);
         }
 
-        if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
-            $classContext = $this->classStack !== [] ? end($this->classStack) : null;
-            FunctionContractInjector::inject($node, $classContext, $this->currentFile, $this->currentNamespace);
-
-            return null;
-        }
-
         if ($node instanceof Node\Stmt\Property) {
             PropertyHookInjector::process($node);
 
@@ -356,6 +349,11 @@ final class ContractVisitor extends NodeVisitorAbstract
      */
     public function leaveNode(Node $node): Node|array|null
     {
+        if ($node instanceof Node\Stmt\Function_ || $node instanceof Node\Stmt\ClassMethod) {
+            $classContext = $this->classStack !== [] ? end($this->classStack) : null;
+            FunctionContractInjector::inject($node, $classContext, $this->currentFile, $this->currentNamespace);
+        }
+
         $this->trackDeclarationExit($node);
 
         if ($node instanceof Node\Stmt\Unset_) {
@@ -1749,6 +1747,7 @@ final class ContractVisitor extends NodeVisitorAbstract
                 $node->getStartLine()
             );
             $node->setAttribute('typephp_var_wrapped', true);
+            $node->setAttribute('typephp_var_type', $typeString);
         }
     }
 
