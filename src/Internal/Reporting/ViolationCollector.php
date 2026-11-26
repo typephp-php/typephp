@@ -42,6 +42,14 @@ final class ViolationCollector
     private static bool $shutdownRegistered = false;
 
     /**
+     * Tracks how many occurrences of each violation hash this process has already merged
+     * into a given report file path, preventing double-counting on repeated exportReport() calls.
+     *
+     * @var array<string, array<string, int>>
+     */
+    private static array $exportedCountsByTarget = [];
+
+    /**
      * Resets in-memory state. Useful for test isolation.
      */
     public static function reset(): void
@@ -49,6 +57,7 @@ final class ViolationCollector
         self::$violations = [];
         self::$warnedHashes = [];
         self::$propertyLineCache = [];
+        self::$exportedCountsByTarget = [];
         self::$shutdownRegistered = false;
     }
 
@@ -167,6 +176,7 @@ final class ViolationCollector
         self::$violations = [];
         self::$warnedHashes = [];
         self::$propertyLineCache = [];
+        self::$exportedCountsByTarget = [];
     }
 
     /**
@@ -275,7 +285,8 @@ final class ViolationCollector
     }
 
     /**
-     * Merges in-memory violations with any worker shards and atomically exports the master report JSON.
+     * Merges in-memory violations, any existing report on disk, and worker shards
+     * under an exclusive file lock, then writes the consolidated master report JSON.
      */
     public static function exportReport(?string $filePath = null): ?string
     {
@@ -287,20 +298,167 @@ final class ViolationCollector
         $reportDir = \dirname($targetFile);
         $shardDir = $reportDir . '/.typephp-shards';
 
-        $allViolations = self::consolidateShards(self::$violations, $shardDir);
-
         if (! is_dir($reportDir)) {
             @mkdir($reportDir, 0777, true);
         }
 
-        $document = self::buildReportDocument($allViolations);
-        $json = json_encode($document, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+        $normalizedTarget = str_replace('\\', '/', $targetFile);
+        $fp = @fopen($targetFile, 'c+b');
 
-        if ($json === false || @file_put_contents($targetFile, $json) === false) {
-            return null;
+        if ($fp === false) {
+            $allViolations = self::consolidateShards(self::$violations, $shardDir);
+            $document = self::buildReportDocument($allViolations);
+            $json = json_encode($document, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+
+            if ($json === false || @file_put_contents($targetFile, $json) === false) {
+                return null;
+            }
+
+            return $targetFile;
+        }
+
+        $locked = @flock($fp, LOCK_EX);
+
+        try {
+            $existingViolations = [];
+            $existingInstrumentedCount = 0;
+
+            rewind($fp);
+            $existingRaw = stream_get_contents($fp);
+            if (\is_string($existingRaw) && trim($existingRaw) !== '') {
+                [$existingViolations, $existingInstrumentedCount] = self::parseExistingReport($existingRaw);
+            }
+
+            $hadShards = is_dir($shardDir);
+            $hasNewDeltas = false;
+            $merged = $existingViolations;
+            $exportedForTarget = self::$exportedCountsByTarget[$normalizedTarget] ?? [];
+
+            foreach (self::$violations as $hash => $record) {
+                $alreadyExported = $exportedForTarget[$hash] ?? 0;
+                $delta = $record->count - $alreadyExported;
+
+                if ($delta > 0) {
+                    $hasNewDeltas = true;
+                    if (isset($merged[$hash])) {
+                        $merged[$hash] = $merged[$hash]->withIncrementedCount($delta);
+                    } else {
+                        $merged[$hash] = $delta === $record->count
+                            ? $record
+                            : new ViolationRecord(
+                                file: $record->file,
+                                line: $record->line,
+                                function: $record->function,
+                                kind: $record->kind,
+                                target: $record->target,
+                                expected: $record->expected,
+                                given: $record->given,
+                                message: $record->message,
+                                count: $delta,
+                                caller: $record->caller,
+                                declaredIn: $record->declaredIn
+                            );
+                    }
+                    $exportedForTarget[$hash] = $record->count;
+                } elseif (! isset($merged[$hash])) {
+                    $hasNewDeltas = true;
+                    $merged[$hash] = $record;
+                    $exportedForTarget[$hash] = $record->count;
+                }
+            }
+
+            self::$exportedCountsByTarget[$normalizedTarget] = $exportedForTarget;
+
+            $allViolations = self::consolidateShards($merged, $shardDir);
+            $instrumentedCount = max($existingInstrumentedCount, StreamWrapper::getInstrumentedCount());
+
+            if (
+                \is_string($existingRaw)
+                && trim($existingRaw) !== ''
+                && ! $hasNewDeltas
+                && ! $hadShards
+                && $instrumentedCount === $existingInstrumentedCount
+            ) {
+                return $targetFile;
+            }
+
+            $document = self::buildReportDocument($allViolations, $instrumentedCount);
+            $json = json_encode($document, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+
+            if ($json === false) {
+                return null;
+            }
+
+            rewind($fp);
+            ftruncate($fp, 0);
+            $written = fwrite($fp, $json);
+            fflush($fp);
+
+            if ($written === false) {
+                return null;
+            }
+        } finally {
+            if ($locked) {
+                @flock($fp, LOCK_UN);
+            }
+            fclose($fp);
         }
 
         return $targetFile;
+    }
+
+    /**
+     * Parses an existing master report JSON payload into deduplicated records and its instrumented file count.
+     *
+     * @return array{0: array<string, ViolationRecord>, 1: int}
+     */
+    private static function parseExistingReport(string $raw): array
+    {
+        /** @var array<string, mixed>|null $decoded */
+        $decoded = json_decode($raw, true);
+        if (! \is_array($decoded)) {
+            return [[], 0];
+        }
+
+        /** @var array<string, ViolationRecord> $violations */
+        $violations = [];
+        if (isset($decoded['violations']) && \is_array($decoded['violations'])) {
+            foreach ($decoded['violations'] as $item) {
+                if (! \is_array($item)) {
+                    continue;
+                }
+
+                /** @var array<string, mixed> $item */
+                $record = ViolationRecord::fromArray($item);
+                if ($record === null) {
+                    continue;
+                }
+
+                $hash = $record->getHash();
+                $violations[$hash] = isset($violations[$hash])
+                    ? $violations[$hash]->withIncrementedCount($record->count)
+                    : $record;
+            }
+        }
+
+        $instrumentedCount = 0;
+        if (
+            isset($decoded['summary'])
+            && \is_array($decoded['summary'])
+            && isset($decoded['summary']['files_instrumented'])
+            && \is_int($decoded['summary']['files_instrumented'])
+        ) {
+            $instrumentedCount = max(0, $decoded['summary']['files_instrumented']);
+        } elseif (
+            isset($decoded['context'])
+            && \is_array($decoded['context'])
+            && isset($decoded['context']['files_instrumented'])
+            && \is_int($decoded['context']['files_instrumented'])
+        ) {
+            $instrumentedCount = max(0, $decoded['context']['files_instrumented']);
+        }
+
+        return [$violations, $instrumentedCount];
     }
 
     /**
@@ -392,7 +550,7 @@ final class ViolationCollector
      *     violations: list<ViolationRecord>
      * }
      */
-    private static function buildReportDocument(array $violations): array
+    private static function buildReportDocument(array $violations, ?int $instrumentedCount = null): array
     {
         $violationsList = array_values($violations);
         $filesAffected = [];
@@ -400,7 +558,7 @@ final class ViolationCollector
             $filesAffected[$v->file] = true;
         }
 
-        $instrumentedCount = StreamWrapper::getInstrumentedCount();
+        $instrumentedCount ??= StreamWrapper::getInstrumentedCount();
         $configFile = Config::getResolvedConfigFile();
         $projectRoot = Config::getProjectRoot();
 
