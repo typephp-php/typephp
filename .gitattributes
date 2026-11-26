@@ -13,3 +13,6 @@
 /codecov.yml          export-ignore
 /rector.php           export-ignore
 /typephp.php           export-ignore
+/README.md           export-ignore
+/CONTRIBUTING.md     export-ignore
+/SECURITY.md         export-ignore

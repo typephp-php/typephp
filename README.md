@@ -17,7 +17,7 @@
 
 ---
 
-TypePHP is a Fast transparent, pure-PHP runtime type checker. You don't have to refactor a single line of your codebase, set up complex build toolchains, or compile C-extensions. Simply run your existing code, and TypePHP will enforce your extended PHPDoc contracts (generics, array shapes, `key-of`/`value-of` extractions, and scalar refinements) dynamically at runtime.
+TypePHP is a fast, transparent pure-PHP runtime type checker. You don't have to refactor a single line of your codebase, set up complex build toolchains, or compile C-extensions. Simply run your existing code, and TypePHP will enforce your extended PHPDoc contracts (generics, array shapes, `key-of`/`value-of` extractions, and scalar refinements) dynamically at runtime.
 
 Run in **Strict Mode** to throw immediate `TypeError` exceptions, or switch to **Audit Report Mode** to collect all runtime type violations across your test suites and legacy codebases into structured JSON reports without interrupting execution.
 
@@ -262,23 +262,34 @@ Supports parallel test runners (**ParaTest**, **Pest Parallel**) with automatic 
 
 ## Performance: Unbearably Fast Runtime Enforcement
 
-Runtime type checking in pure PHP shouldn't force you to choose between strictness and speed. TypePHP combines **compile-time AST elimination**, **AST-inlined fast-path guards**, **precompiled opcode plans**, **bitmask template inference**, and **optional O(1) hybrid array sampling** and delivering blazing-fast execution even on the heaviest generic codebases.
+Runtime type checking in pure PHP shouldn't force you to choose between strictness and speed. TypePHP combines **compile-time AST elimination**, **AST-inlined fast-path guards**, **precompiled opcode plans**, **bitmask template inference**, and **optional O(1) hybrid array sampling** to deliver blazing-fast execution on both everyday web applications and heavy generic libraries.
 
-### Real-World Stress Benchmark ([`noctud/collection`](https://github.com/noctud/collection))
+### Real-World Laravel Application (Typical I/O-Bound Workload)
 
-Tested against `noctud/collection` (**6,928 tests, 12,510 assertions**) this a worst-case, pure-CPU benchmark packed with `@template` inference, variance rules, `WeakMap` reified generics, conditional return types, fluent `self<T>` chains, iterables, and closures:
+Tested on a real-world Laravel application (**430 tests, 2,652 assertions**, **216 instrumented application files** running via `php artisan test --compact` with warm cache):
+
+| Mode | Duration | Overhead |
+| --- | --- | --- |
+| **TypePHP Disabled (`TYPEPHP_DISABLE=true`)** | `54.46s` | — |
+| **TypePHP Enabled** | `55.12s` | **`+0.66s` (~1.2%)** |
+
+In typical web frameworks (**Laravel**, **Symfony**, **Shopware**) where database queries, HTTP routing, container bootstrapping, and I/O dominate execution time, TypePHP's runtime overhead is **negligible (~1%)**—practically indistinguishable from normal run-to-run variance.
+
+### Pure-CPU Stress Benchmark ([`noctud/collection`](https://github.com/noctud/collection))
+
+Tested against `noctud/collection` (**6,928 tests, 12,510 assertions**) this is a worst-case, pure-CPU benchmark with zero I/O, packed with `@template` inference, variance rules, `WeakMap` reified generics, conditional return types, fluent `self<T>` chains, typed iterables, and typed closures:
 
 | Mode | Native PHP (`TYPEPHP_DISABLE=true`) | Early TypePHP | TypePHP Now | Wall-Time Speedup | Overhead Eliminated |
 | --- | --- | --- | --- | --- | --- |
-| **Sequential (`phpunit`)** | `00:06.554` (`82 MB`) | `02:41.013` (`108 MB`) | `00:29.440` (`128 MB`) | **5.47× faster** | **−85.2%** (`154.5s` → `22.9s`) |
+| **Sequential (`phpunit`)** | `00:06.554` (`82 MB`) | `02:41.013` (`108 MB`) | `00:23.463` (`130 MB`) | **6.86× faster** | **−89.1%** (`154.5s` → `16.9s`) |
 | **Parallel (`paratest -p4`)** | `00:02.001` (`62 MB`) | `01:26.168` (`62 MB`) | `00:07.780` (`62 MB`) | **11.08× faster** | **−93.1%** (`84.2s` → `5.8s`) |
 
-Running full runtime generics and PHPDoc contract enforcement across nearly 7,000 collection tests completes in **under 8 seconds** in parallel and adding less than **6 seconds** over raw native PHP.
+Even in this extreme pure-CPU generics stress test, running full runtime reified generics and PHPDoc contract enforcement across nearly 7,000 collection tests completes in **under 8 seconds** in parallel, adding less than **6 seconds** over raw native PHP.
 
 ### How TypePHP Stays Fast
-* **Compile-Time Static Elimination:** Provably satisfied contracts (literals, trusted unmutated parameters, constants, exact non-generic instantiations) are eliminated during AST transformation and costing **0 ns** at runtime.
+* **Compile-Time Static Elimination:** Provably satisfied contracts (literals, trusted unmutated parameters, constants, exact non-generic instantiations) are eliminated during AST transformation, costing **0 ns** at runtime.
 * **AST-Inlined Guards & Disk Caching:** Transformed files are cached to disk (and OPcache-ready) with inline `isset()` short-circuits so unconstrained or non-contracted methods skip runtime calls entirely.
-* **Precompiled Opcode Plans & Flat Call Frames:** Parameter, return, `class-string<T>`, and generic iterable checks execute against precompiled integer opcodes, bitmasks, and flat O(1) frame arrays rather than re-interpreting DocBlock ASTs.
+* **Precompiled Opcode Plans & Flat Call Frames:** Parameter, return, `class-string<T>`, and generic iterable checks execute against precompiled local integer opcodes (`ZEND_MATCH` jump tables), bitmasks, and flat O(1) frame arrays rather than re-interpreting DocBlock ASTs.
 * **Configurable Array Strategy (`full` vs `hybrid`):** Use `'array_validation' => 'full'` for 100% exhaustive O(n) scans, or switch to `'hybrid'` for Beartype-inspired O(1) boundary + random sampling on massive arrays (`> 128` items).
 
 ---
