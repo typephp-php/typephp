@@ -1634,6 +1634,26 @@ final class TemplateManager
             self::resolveInheritedTemplates($instance, $className);
         }
 
+        if (! $forceBind && ! $allowBoundSpecialization && ! $refineOnly) {
+            $defaults = self::$classTemplateDefaultsCache[$actualClass] ?? self::classTemplateDefaults($actualClass);
+            if ($defaults !== []) {
+                self::$instanceTemplateBindings ??= new WeakMap();
+                $currentInstBindings = self::$instanceTemplateBindings[$instance] ?? [];
+                $defaultsApplied = false;
+
+                foreach ($defaults as $defName => $defType) {
+                    if (! isset($currentInstBindings[$defName])) {
+                        $currentInstBindings[$defName] = $defType;
+                        $defaultsApplied = true;
+                    }
+                }
+
+                if ($defaultsApplied) {
+                    self::$instanceTemplateBindings[$instance] = $currentInstBindings;
+                }
+            }
+        }
+
         $existingBindings = self::$instanceTemplateBindings !== null
             ? (self::$instanceTemplateBindings[$instance] ?? null)
             : null;
