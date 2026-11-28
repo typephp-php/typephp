@@ -1285,7 +1285,7 @@ final class ContractVisitor extends NodeVisitorAbstract
         }
 
         foreach ($aliases as $aName => $aType) {
-            $aliases[$aName] = DocblockParser::substituteAliases($aType, $aliases);
+            $aliases[$aName] = DocblockParser::substituteAliases($aType, $aliases, [$aName => true]);
         }
 
         if ($typeName !== null && $aliases !== []) {
@@ -1567,7 +1567,7 @@ final class ContractVisitor extends NodeVisitorAbstract
             }
 
             foreach ($aliases as $aName => $aType) {
-                $substituted = DocblockParser::substituteAliases($aType, $aliases);
+                $substituted = DocblockParser::substituteAliases($aType, $aliases, [$aName => true]);
                 $aliases[$aName] = $filePath !== ''
                     ? SpecialTypeResolver::resolveForFile($substituted, $filePath, $namespace, false)
                     : $substituted;

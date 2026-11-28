@@ -1895,28 +1895,45 @@ final class DocblockParser
 
     /**
      * Recursively substitutes all type aliases inside a TypeNode AST and simplifies unions/intersections containing `mixed`.
+     * Threads $visited across recursive calls to break self-referential and mutually recursive cycles.
+     *
+     * @param array<string, TypeNode> $aliases
+     * @param array<string, true> $visited
+     */
+    public static function substituteAliases(TypeNode $node, array $aliases, array $visited = []): TypeNode
+    {
+        if ($aliases === []) {
+            return $node;
+        }
+
+        $hasRecursivePlaceholder = false;
+        $result = self::substituteAliasesInternal($node, $aliases, $visited, $hasRecursivePlaceholder);
+
+        if ($hasRecursivePlaceholder && $visited === []) {
+            return self::bindRecursiveAliases($result, $aliases);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Links any recursive alias placeholders (`typephp_recursive_alias_name`) inside an AST
+     * to their resolved target TypeNodes from `$aliases`.
      *
      * @param array<string, TypeNode> $aliases
      */
-    public static function substituteAliases(TypeNode $node, array $aliases): TypeNode
+    public static function bindRecursiveAliases(TypeNode $node, array $aliases): TypeNode
     {
         if ($aliases === []) {
             return $node;
         }
 
         if ($node instanceof IdentifierTypeNode) {
-            $visited = [];
-            while (isset($aliases[$node->name])) {
-                if (isset($visited[$node->name])) {
-                    break;
-                }
-                $visited[$node->name] = true;
-                $target = $aliases[$node->name];
-
-                if ($target instanceof IdentifierTypeNode) {
-                    $node = $target;
-                } else {
-                    return self::substituteAliases($target, $aliases);
+            $aliasName = $node->getAttribute('typephp_recursive_alias_name');
+            if (\is_string($aliasName) && isset($aliases[$aliasName])) {
+                $target = $aliases[$aliasName];
+                if ($target !== $node) {
+                    $node->setAttribute('typephp_recursive_alias', $target);
                 }
             }
 
@@ -1924,10 +1941,143 @@ final class DocblockParser
         }
 
         if ($node instanceof CallableTypeNode) {
+            foreach ($node->parameters as $param) {
+                self::bindRecursiveAliases($param->type, $aliases);
+            }
+            self::bindRecursiveAliases($node->returnType, $aliases);
+
+            return $node;
+        }
+
+        if ($node instanceof OffsetAccessTypeNode) {
+            self::bindRecursiveAliases($node->type, $aliases);
+            self::bindRecursiveAliases($node->offset, $aliases);
+
+            return $node;
+        }
+
+        if ($node instanceof ArrayTypeNode || $node instanceof NullableTypeNode) {
+            self::bindRecursiveAliases($node->type, $aliases);
+
+            return $node;
+        }
+
+        if ($node instanceof GenericTypeNode) {
+            self::bindRecursiveAliases($node->type, $aliases);
+            foreach ($node->genericTypes as $gt) {
+                self::bindRecursiveAliases($gt, $aliases);
+            }
+
+            return $node;
+        }
+
+        if ($node instanceof UnionTypeNode || $node instanceof IntersectionTypeNode) {
+            foreach ($node->types as $t) {
+                self::bindRecursiveAliases($t, $aliases);
+            }
+
+            return $node;
+        }
+
+        if ($node instanceof ArrayShapeNode) {
+            foreach ($node->items as $item) {
+                self::bindRecursiveAliases($item->valueType, $aliases);
+            }
+            if ($node->unsealedType !== null) {
+                if ($node->unsealedType->keyType !== null) {
+                    self::bindRecursiveAliases($node->unsealedType->keyType, $aliases);
+                }
+                self::bindRecursiveAliases($node->unsealedType->valueType, $aliases);
+            }
+
+            return $node;
+        }
+
+        if ($node instanceof ObjectShapeNode) {
+            foreach ($node->items as $item) {
+                self::bindRecursiveAliases($item->valueType, $aliases);
+            }
+
+            return $node;
+        }
+
+        if ($node instanceof ConditionalTypeNode) {
+            self::bindRecursiveAliases($node->subjectType, $aliases);
+            self::bindRecursiveAliases($node->targetType, $aliases);
+            self::bindRecursiveAliases($node->if, $aliases);
+            self::bindRecursiveAliases($node->else, $aliases);
+
+            return $node;
+        }
+
+        if ($node instanceof ConditionalTypeForParameterNode) {
+            self::bindRecursiveAliases($node->targetType, $aliases);
+            self::bindRecursiveAliases($node->if, $aliases);
+            self::bindRecursiveAliases($node->else, $aliases);
+
+            return $node;
+        }
+
+        return $node;
+    }
+
+    /**
+     * @param array<string, TypeNode> $aliases
+     * @param array<string, true> $visited
+     */
+    private static function substituteAliasesInternal(
+        TypeNode $node,
+        array $aliases,
+        array $visited,
+        bool &$hasRecursivePlaceholder
+    ): TypeNode {
+        if ($node instanceof IdentifierTypeNode) {
+            if (! isset($aliases[$node->name])) {
+                return $node;
+            }
+
+            if (isset($visited[$node->name])) {
+                if ($node->getAttribute('typephp_recursive_alias') instanceof TypeNode) {
+                    return $node;
+                }
+
+                $hasRecursivePlaceholder = true;
+
+                return self::createRecursiveAliasPlaceholder($node->name);
+            }
+
+            $currentVisited = $visited;
+            $current = $node;
+
+            while (isset($aliases[$current->name])) {
+                if (isset($currentVisited[$current->name])) {
+                    if ($current->getAttribute('typephp_recursive_alias') instanceof TypeNode) {
+                        return $current;
+                    }
+
+                    $hasRecursivePlaceholder = true;
+
+                    return self::createRecursiveAliasPlaceholder($current->name);
+                }
+
+                $currentVisited[$current->name] = true;
+                $target = $aliases[$current->name];
+
+                if ($target instanceof IdentifierTypeNode) {
+                    $current = $target;
+                } else {
+                    return self::substituteAliasesInternal($target, $aliases, $currentVisited, $hasRecursivePlaceholder);
+                }
+            }
+
+            return $current;
+        }
+
+        if ($node instanceof CallableTypeNode) {
             $parameters = [];
             foreach ($node->parameters as $param) {
                 $parameters[] = new CallableTypeParameterNode(
-                    self::substituteAliases($param->type, $aliases),
+                    self::substituteAliasesInternal($param->type, $aliases, $visited, $hasRecursivePlaceholder),
                     $param->isReference,
                     $param->isVariadic,
                     $param->parameterName,
@@ -1935,7 +2085,7 @@ final class DocblockParser
                 );
             }
 
-            $returnType = self::substituteAliases($node->returnType, $aliases);
+            $returnType = self::substituteAliasesInternal($node->returnType, $aliases, $visited, $hasRecursivePlaceholder);
 
             return new CallableTypeNode(
                 $node->identifier,
@@ -1947,20 +2097,20 @@ final class DocblockParser
 
         if ($node instanceof OffsetAccessTypeNode) {
             return new OffsetAccessTypeNode(
-                self::substituteAliases($node->type, $aliases),
-                self::substituteAliases($node->offset, $aliases)
+                self::substituteAliasesInternal($node->type, $aliases, $visited, $hasRecursivePlaceholder),
+                self::substituteAliasesInternal($node->offset, $aliases, $visited, $hasRecursivePlaceholder)
             );
         }
 
         if ($node instanceof ArrayTypeNode) {
-            return new ArrayTypeNode(self::substituteAliases($node->type, $aliases));
+            return new ArrayTypeNode(self::substituteAliasesInternal($node->type, $aliases, $visited, $hasRecursivePlaceholder));
         }
 
         if ($node instanceof GenericTypeNode) {
-            $genericType = self::substituteAliases($node->type, $aliases);
+            $genericType = self::substituteAliasesInternal($node->type, $aliases, $visited, $hasRecursivePlaceholder);
             $genericTypes = [];
             foreach ($node->genericTypes as $gt) {
-                $genericTypes[] = self::substituteAliases($gt, $aliases);
+                $genericTypes[] = self::substituteAliasesInternal($gt, $aliases, $visited, $hasRecursivePlaceholder);
             }
 
             return new GenericTypeNode(
@@ -1971,13 +2121,13 @@ final class DocblockParser
         }
 
         if ($node instanceof NullableTypeNode) {
-            return new NullableTypeNode(self::substituteAliases($node->type, $aliases));
+            return new NullableTypeNode(self::substituteAliasesInternal($node->type, $aliases, $visited, $hasRecursivePlaceholder));
         }
 
         if ($node instanceof UnionTypeNode) {
             $types = [];
             foreach ($node->types as $t) {
-                $types[] = self::substituteAliases($t, $aliases);
+                $types[] = self::substituteAliasesInternal($t, $aliases, $visited, $hasRecursivePlaceholder);
             }
 
             foreach ($types as $t) {
@@ -1992,7 +2142,7 @@ final class DocblockParser
         if ($node instanceof IntersectionTypeNode) {
             $types = [];
             foreach ($node->types as $t) {
-                $types[] = self::substituteAliases($t, $aliases);
+                $types[] = self::substituteAliasesInternal($t, $aliases, $visited, $hasRecursivePlaceholder);
             }
 
             $filtered = array_values(array_filter($types, function ($t) {
@@ -2016,16 +2166,16 @@ final class DocblockParser
                 $newItems[] = new ArrayShapeItemNode(
                     $item->keyName,
                     $item->optional,
-                    self::substituteAliases($item->valueType, $aliases)
+                    self::substituteAliasesInternal($item->valueType, $aliases, $visited, $hasRecursivePlaceholder)
                 );
             }
 
             $newUnsealed = null;
             if ($node->unsealedType !== null) {
                 $unsealedKey = $node->unsealedType->keyType !== null
-                    ? self::substituteAliases($node->unsealedType->keyType, $aliases)
+                    ? self::substituteAliasesInternal($node->unsealedType->keyType, $aliases, $visited, $hasRecursivePlaceholder)
                     : null;
-                $unsealedVal = self::substituteAliases($node->unsealedType->valueType, $aliases);
+                $unsealedVal = self::substituteAliasesInternal($node->unsealedType->valueType, $aliases, $visited, $hasRecursivePlaceholder);
                 $newUnsealed = new ArrayShapeUnsealedTypeNode($unsealedVal, $unsealedKey);
             }
 
@@ -2042,13 +2192,42 @@ final class DocblockParser
                 $newItems[] = new ObjectShapeItemNode(
                     $item->keyName,
                     $item->optional,
-                    self::substituteAliases($item->valueType, $aliases)
+                    self::substituteAliasesInternal($item->valueType, $aliases, $visited, $hasRecursivePlaceholder)
                 );
             }
 
             return new ObjectShapeNode($newItems);
         }
 
+        if ($node instanceof ConditionalTypeNode) {
+            return new ConditionalTypeNode(
+                self::substituteAliasesInternal($node->subjectType, $aliases, $visited, $hasRecursivePlaceholder),
+                self::substituteAliasesInternal($node->targetType, $aliases, $visited, $hasRecursivePlaceholder),
+                self::substituteAliasesInternal($node->if, $aliases, $visited, $hasRecursivePlaceholder),
+                self::substituteAliasesInternal($node->else, $aliases, $visited, $hasRecursivePlaceholder),
+                $node->negated
+            );
+        }
+
+        if ($node instanceof ConditionalTypeForParameterNode) {
+            return new ConditionalTypeForParameterNode(
+                $node->parameterName,
+                self::substituteAliasesInternal($node->targetType, $aliases, $visited, $hasRecursivePlaceholder),
+                self::substituteAliasesInternal($node->if, $aliases, $visited, $hasRecursivePlaceholder),
+                self::substituteAliasesInternal($node->else, $aliases, $visited, $hasRecursivePlaceholder),
+                $node->negated
+            );
+        }
+
         return $node;
+    }
+
+    private static function createRecursiveAliasPlaceholder(string $name): IdentifierTypeNode
+    {
+        $placeholder = new IdentifierTypeNode($name);
+        $placeholder->setAttribute('typephp_recursive_alias_name', $name);
+        $placeholder->setAttribute('typephp_resolved', true);
+
+        return $placeholder;
     }
 }

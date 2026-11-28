@@ -596,7 +596,7 @@ final class DocblockExtractor
 
         $docScopeAliases = [...$currentDocImports, ...$currentDocAliases];
         foreach ($currentDocAliases as $name => $type) {
-            $currentDocAliases[$name] = DocblockParser::substituteAliases($type, $docScopeAliases);
+            $currentDocAliases[$name] = DocblockParser::substituteAliases($type, $docScopeAliases, [$name => true]);
         }
 
         foreach ($currentDocAliases as $name => $type) {
@@ -610,7 +610,18 @@ final class DocblockExtractor
         }
 
         foreach ($aliases as $name => $type) {
-            $aliases[$name] = DocblockParser::substituteAliases($type, $aliases);
+            $substituted = DocblockParser::substituteAliases($type, $aliases, [$name => true]);
+            if (
+                $substituted instanceof \PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode
+                && $substituted->getAttribute('typephp_recursive_alias_name') !== null
+            ) {
+                $substituted = new \PHPStan\PhpDocParser\Ast\Type\IdentifierTypeNode('mixed');
+            }
+            $aliases[$name] = $substituted;
+        }
+
+        foreach ($aliases as $name => $type) {
+            $aliases[$name] = DocblockParser::bindRecursiveAliases($type, $aliases);
         }
     }
 

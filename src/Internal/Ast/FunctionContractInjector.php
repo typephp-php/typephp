@@ -1456,7 +1456,18 @@ final class FunctionContractInjector
         }
 
         foreach ($aliases as $name => $type) {
-            $aliases[$name] = DocblockParser::substituteAliases($type, $aliases);
+            $substituted = DocblockParser::substituteAliases($type, $aliases, [$name => true]);
+            if (
+                $substituted instanceof IdentifierTypeNode
+                && $substituted->getAttribute('typephp_recursive_alias_name') !== null
+            ) {
+                $substituted = new IdentifierTypeNode('mixed');
+            }
+            $aliases[$name] = $substituted;
+        }
+
+        foreach ($aliases as $name => $type) {
+            $aliases[$name] = DocblockParser::bindRecursiveAliases($type, $aliases);
         }
 
         return $aliases;

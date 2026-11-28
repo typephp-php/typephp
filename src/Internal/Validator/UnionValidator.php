@@ -166,11 +166,45 @@ final class UnionValidator implements TypeValidatorInterface
             return ErrorFactory::createError($context . ' must be of type ' . $unionNode . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
         }
 
-        if (\count($deepErrors) > 0) {
-            return $deepErrors[0];
+        if ($deepErrors !== []) {
+            if (\count($deepErrors) === 1) {
+                return $deepErrors[0];
+            }
+
+            $bestError = $deepErrors[0];
+            $bestDepth = self::extractErrorPathDepth($bestError->getMessage(), $context);
+
+            $deepCount = \count($deepErrors);
+            for ($i = 1; $i < $deepCount; $i++) {
+                $candidate = $deepErrors[$i];
+                $depth = self::extractErrorPathDepth($candidate->getMessage(), $context);
+                if ($depth > $bestDepth) {
+                    $bestDepth = $depth;
+                    $bestError = $candidate;
+                }
+            }
+
+            return $bestError;
         }
 
         return ErrorFactory::createError($context . ' must be of type ' . $unionNode . ', ' . TypeFormatter::formatGivenValue($value, $isSensitive) . ' given');
+    }
+
+    /**
+     * Counts the number of nested member/dimension path segments immediately following $context
+     * so union error reporting selects the branch that matched deepest into the value.
+     */
+    private static function extractErrorPathDepth(string $message, string $context): int
+    {
+        $suffix = $context !== '' && str_starts_with($message, $context)
+            ? substr($message, \strlen($context))
+            : $message;
+
+        if (preg_match('/^(?:\[[^\]]*\]|->[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)+/', $suffix, $m) !== 1) {
+            return 0;
+        }
+
+        return (int) preg_match_all('/\[[^\]]*\]|->[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*/', $m[0]);
     }
 
     /**
@@ -336,7 +370,7 @@ final class UnionValidator implements TypeValidatorInterface
 
                         break;
                     default:
-                        if (! SpecialTypeResolver::isBuiltInTypeKeyword($name) && ClassNameValidator::isValid($name) && (class_exists($name, false) || interface_exists($name, false))) {
+                        if ($type->getAttribute('typephp_recursive_alias') === null && ! SpecialTypeResolver::isBuiltInTypeKeyword($name) && ClassNameValidator::isValid($name) && (class_exists($name, false) || interface_exists($name, false))) {
                             $classes[] = $name;
                         }
 

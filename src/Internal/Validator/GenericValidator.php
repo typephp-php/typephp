@@ -376,7 +376,7 @@ final class GenericValidator implements TypeValidatorInterface
                 default => 0,
             };
 
-            if ($valFast === 0 && ClassNameValidator::isValid($vName) && (class_exists($vName, false) || interface_exists($vName, false))) {
+            if ($valFast === 0 && $valNode->getAttribute('typephp_recursive_alias') === null && ClassNameValidator::isValid($vName) && (class_exists($vName, false) || interface_exists($vName, false))) {
                 $valFast = 8;
                 $valExtra = $vName;
             }
@@ -401,7 +401,7 @@ final class GenericValidator implements TypeValidatorInterface
                         $valFast = 11;
                     } elseif ($oLower === 'bool' || $oLower === 'boolean') {
                         $valFast = 13;
-                    } elseif (ClassNameValidator::isValid($other->name) && (class_exists($other->name, false) || interface_exists($other->name, false))) {
+                    } elseif ($other->getAttribute('typephp_recursive_alias') === null && ClassNameValidator::isValid($other->name) && (class_exists($other->name, false) || interface_exists($other->name, false))) {
                         $valFast = 14;
                         $valExtra = $other->name;
                     }

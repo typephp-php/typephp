@@ -320,7 +320,7 @@ final class ArrayShapeValidator implements TypeValidatorInterface
                 'true' => [self::CHECK_TRUE, null, false],
                 'false' => [self::CHECK_FALSE, null, false],
                 'scalar' => [self::CHECK_SCALAR, null, false],
-                default => (ClassNameValidator::isValid($name) && (class_exists($name, false) || interface_exists($name, false)))
+                default => ($typeNode->getAttribute('typephp_recursive_alias') === null && ClassNameValidator::isValid($name) && (class_exists($name, false) || interface_exists($name, false)))
                     ? [self::CHECK_CLASS, $name, false]
                     : [self::CHECK_FALLBACK, null, false],
             };

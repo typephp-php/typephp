@@ -187,7 +187,7 @@ final class CollectionElementValidator
                 return null;
             }
 
-            if (class_exists($elemName, false) || interface_exists($elemName, false)) {
+            if ($elementTypeNode->getAttribute('typephp_recursive_alias') === null && (class_exists($elemName, false) || interface_exists($elemName, false))) {
                 if ($count > Config::HYBRID_SAMPLE_THRESHOLD && RuntimeTypeChecker::$arrayValidationHybrid) {
                     return self::validateHybrid($items, $elementTypeNode, $context, $registry, $count, $isList, $isSensitive);
                 }

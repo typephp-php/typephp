@@ -43,6 +43,14 @@ final class TypeValidatorRegistry
 
     private CallableValidator $callableValidator;
 
+    private const MAX_RECURSIVE_ALIAS_DEPTH = 128;
+
+    private const MAX_RECURSIVE_DEPTH_HITS = 32;
+
+    private int $recursiveAliasDepth = 0;
+
+    private int $recursiveDepthHits = 0;
+
     public static function reset(): void
     {
         GenericValidator::reset();
@@ -97,11 +105,16 @@ final class TypeValidatorRegistry
                 'class-string' => \is_string($value) && ClassNameValidator::isValidClassString($value),
                 'iterable' => is_iterable($value),
                 'numeric', 'number' => \is_int($value) || \is_float($value) || (\is_string($value) && is_numeric($value)),
-                default => \is_object($value) && ($value instanceof $name),
+                default => \is_object($value) && ($value instanceof $name) && $node->getAttribute('typephp_recursive_alias') === null,
             };
 
             if ($ok) {
                 return null;
+            }
+
+            $recursiveTarget = $node->getAttribute('typephp_recursive_alias');
+            if ($recursiveTarget instanceof TypeNode) {
+                return $this->validateRecursiveAlias($value, $recursiveTarget, $context, $isSensitive);
             }
 
             return $this->identifierValidator->validate($value, $node, $context, $this, $isSensitive);
@@ -144,5 +157,25 @@ final class TypeValidatorRegistry
         }
 
         return null;
+    }
+
+    private function validateRecursiveAlias(mixed $value, TypeNode $target, string $context, bool $isSensitive): ?ErrorMessage
+    {
+        if ($this->recursiveAliasDepth >= self::MAX_RECURSIVE_ALIAS_DEPTH || $this->recursiveDepthHits >= self::MAX_RECURSIVE_DEPTH_HITS) {
+            $this->recursiveDepthHits++;
+
+            return null;
+        }
+
+        $this->recursiveAliasDepth++;
+
+        try {
+            return $this->validate($value, $target, $context, $isSensitive);
+        } finally {
+            $this->recursiveAliasDepth--;
+            if ($this->recursiveAliasDepth === 0) {
+                $this->recursiveDepthHits = 0;
+            }
+        }
     }
 }

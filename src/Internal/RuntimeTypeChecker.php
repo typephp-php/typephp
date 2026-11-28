@@ -2185,6 +2185,7 @@ final class RuntimeTypeChecker
                     $allowsNull = true;
                 } elseif (
                     $checkKind === self::PARAM_CHECK_FALLBACK
+                    && $inner->getAttribute('typephp_recursive_alias') === null
                     && ! SpecialTypeResolver::isBuiltInTypeKeyword($name)
                     && ClassNameValidator::isValid($name)
                 ) {
@@ -2802,7 +2803,8 @@ final class RuntimeTypeChecker
         }
 
         if (
-            ! SpecialTypeResolver::isBuiltInTypeKeyword($name)
+            $inner->getAttribute('typephp_recursive_alias') === null
+            && ! SpecialTypeResolver::isBuiltInTypeKeyword($name)
             && ClassNameValidator::isValid($name)
             && (class_exists($name, false) || interface_exists($name, false))
         ) {
