@@ -16,7 +16,7 @@ final class CacheManager
     /**
      * Cache version prefix string. Bump this whenever AST printer/transformation rules change.
      */
-    public const VERSION_PREFIX = 'v0.14.2_';
+    public const VERSION_PREFIX = 'v0.14.4_';
 
     /**
      * Config keys that only steer runtime behaviour and never change the transformed source.

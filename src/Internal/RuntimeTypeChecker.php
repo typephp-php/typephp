@@ -180,6 +180,8 @@ final class RuntimeTypeChecker
 
     public static bool $inlinePropertiesEnabled = true;
 
+    public static bool $vendorBoundaryOnly = true;
+
     public static bool $arrayValidationHybrid = false;
 
     private static ?TypeValidatorRegistry $registry = null;
@@ -600,7 +602,11 @@ final class RuntimeTypeChecker
 
         if ($res instanceof ErrorMessage) {
             $className = \is_object($objectOrClass) ? $objectOrClass::class : (\is_string($objectOrClass) ? $objectOrClass : '');
-            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName)) {
+            if (
+                IgnoreManager::isCallerIgnored()
+                || (self::$vendorBoundaryOnly && CallerBoundaryResolver::isVendorFile($file))
+                || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName)
+            ) {
                 return $value;
             }
 
@@ -643,7 +649,11 @@ final class RuntimeTypeChecker
         );
 
         if ($res instanceof ErrorMessage) {
-            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($caller ?? '')) {
+            if (
+                IgnoreManager::isCallerIgnored()
+                || (self::$vendorBoundaryOnly && CallerBoundaryResolver::isVendorFile($file))
+                || CallerBoundaryResolver::shouldBypass($caller ?? '')
+            ) {
                 return $value;
             }
 
@@ -685,7 +695,11 @@ final class RuntimeTypeChecker
         );
 
         if ($res instanceof ErrorMessage) {
-            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($caller ?? '')) {
+            if (
+                IgnoreManager::isCallerIgnored()
+                || (self::$vendorBoundaryOnly && CallerBoundaryResolver::isVendorFile($file))
+                || CallerBoundaryResolver::shouldBypass($caller ?? '')
+            ) {
                 return null;
             }
 
@@ -729,7 +743,11 @@ final class RuntimeTypeChecker
         );
 
         if ($res instanceof ErrorMessage) {
-            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName)) {
+            if (
+                IgnoreManager::isCallerIgnored()
+                || (self::$vendorBoundaryOnly && CallerBoundaryResolver::isVendorFile($file))
+                || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName)
+            ) {
                 return null;
             }
 
@@ -961,7 +979,11 @@ final class RuntimeTypeChecker
         );
 
         if ($res instanceof ErrorMessage) {
-            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($caller !== null ? $caller : '')) {
+            if (
+                IgnoreManager::isCallerIgnored()
+                || (self::$vendorBoundaryOnly && CallerBoundaryResolver::isVendorFile($file))
+                || CallerBoundaryResolver::shouldBypass($caller !== null ? $caller : '')
+            ) {
                 return $value;
             }
 
@@ -988,7 +1010,11 @@ final class RuntimeTypeChecker
         $res = InlineChecker::checkProperty($value, $objectOrClass, $propName, $file, self::getRegistry());
 
         if ($res instanceof ErrorMessage) {
-            if (IgnoreManager::isCallerIgnored() || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName)) {
+            if (
+                IgnoreManager::isCallerIgnored()
+                || (self::$vendorBoundaryOnly && CallerBoundaryResolver::isVendorFile($file))
+                || CallerBoundaryResolver::shouldBypass($className . '::$' . $propName)
+            ) {
                 return $value;
             }
 

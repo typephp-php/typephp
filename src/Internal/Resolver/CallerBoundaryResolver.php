@@ -34,11 +34,29 @@ final class CallerBoundaryResolver
      */
     public static array $nonBypassCalleeCache = [];
 
+    /**
+     * @var array<string, bool> rawFilePath => isVendorFile
+     */
+    private static array $vendorFileCache = [];
+
     public static function reset(): void
     {
         self::$calleeVendorCache = [];
         self::$callerVendorCache = [];
         self::$nonBypassCalleeCache = [];
+        self::$vendorFileCache = [];
+    }
+
+    /**
+     * Checks if a source file path is located inside a vendor directory (memoized).
+     */
+    public static function isVendorFile(string $file): bool
+    {
+        if ($file === '') {
+            return false;
+        }
+
+        return self::$vendorFileCache[$file] ??= PathMatcher::isVendorPath(PathMatcher::normalizePath($file));
     }
 
     /**
@@ -98,11 +116,20 @@ final class CallerBoundaryResolver
 
         try {
             if (str_contains($function, '::')) {
-                [$class] = explode('::', $function, 2);
+                [$class, $member] = explode('::', $function, 2);
                 if (class_exists($class) || interface_exists($class) || trait_exists($class)) {
                     /** @var class-string<object> $class */
                     $ref = new ReflectionClass($class);
-                    $fileName = $ref->getFileName();
+                    if (str_starts_with($member, '$')) {
+                        $propName = substr($member, 1);
+                        $fileName = $ref->hasProperty($propName)
+                            ? $ref->getProperty($propName)->getDeclaringClass()->getFileName()
+                            : $ref->getFileName();
+                    } elseif ($member !== '' && $ref->hasMethod($member)) {
+                        $fileName = $ref->getMethod($member)->getFileName();
+                    } else {
+                        $fileName = $ref->getFileName();
+                    }
                 }
             } elseif (\function_exists($function)) {
                 $ref = new ReflectionFunction($function);
