@@ -2636,6 +2636,10 @@ final class ParamChecker
                 $typeNode = new ArrayTypeNode($typeNode);
             }
 
+            if ($index > 0 && $templates !== []) {
+                $boundTemplates = TemplateManager::getBoundTemplates($function, $thisObj, $templates);
+            }
+
             $err = self::validateSingleParam(
                 $paramName,
                 $typeNode,
@@ -2647,8 +2651,9 @@ final class ParamChecker
                 $boundTemplates,
                 $declaredTemplates,
                 $registry,
-                [],
-                $args
+                $templates,
+                $args,
+                $thisObj
             );
 
             if ($err !== null) {

@@ -435,7 +435,9 @@ final class ReturnChecker
             return $value;
         }
 
-        $hasClassTemplates = ($contract['classTemplates'] ?? []) !== [];
+        $hasClassTemplates = $contract !== []
+            ? ($contract['classTemplates'] ?? []) !== []
+            : $hasGenerics;
         $hasMethodTemplates = ($contract['templates'] ?? []) !== [];
 
         if ($thisObj !== null && ! $hasMethodTemplates) {
