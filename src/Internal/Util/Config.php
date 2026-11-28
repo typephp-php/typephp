@@ -889,6 +889,7 @@ final class Config
         RuntimeTypeChecker::$paramsOutEnabled = true;
         RuntimeTypeChecker::$selfOutEnabled = true;
         RuntimeTypeChecker::$inlinePropertiesEnabled = true;
+        RuntimeTypeChecker::$vendorBoundaryOnly = true;
         RuntimeTypeChecker::$arrayValidationHybrid = false;
 
         DocblockParser::reset();
@@ -974,6 +975,7 @@ final class Config
         RuntimeTypeChecker::$paramsOutEnabled = self::$params && self::$paramsOut;
         RuntimeTypeChecker::$selfOutEnabled = self::$selfOut;
         RuntimeTypeChecker::$inlinePropertiesEnabled = self::$inlineProperties;
+        RuntimeTypeChecker::$vendorBoundaryOnly = self::$vendorBoundaryOnly;
         RuntimeTypeChecker::$arrayValidationHybrid = (self::$arrayValidation === 'hybrid');
     }
 

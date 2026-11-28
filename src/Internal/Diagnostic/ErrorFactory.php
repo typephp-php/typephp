@@ -111,11 +111,16 @@ final class ErrorFactory
 
             $filtered[] = $frame;
 
-            if ($isCallSite && $targetFile === null && isset($frame['file'], $frame['line']) && \is_string($frame['file']) && \is_int($frame['line'])) {
+            if (
+                $isCallSite
+                && $targetFile === null
+                && $targetLine === null
+                && isset($frame['file'], $frame['line'])
+                && \is_string($frame['file'])
+                && \is_int($frame['line'])
+            ) {
                 $targetFile = $frame['file'];
-                if ($targetLine === null) {
-                    $targetLine = $frame['line'];
-                }
+                $targetLine = $frame['line'];
             }
         }
 

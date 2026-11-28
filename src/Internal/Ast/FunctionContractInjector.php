@@ -283,7 +283,8 @@ final class FunctionContractInjector
                     $useDynamicMethodKey,
                     ! $isMagicGet && ! $isMagicCall,
                     $currentNamespace,
-                    $effectiveAliases
+                    $effectiveAliases,
+                    $isMagicGet
                 );
         }
 
@@ -2096,7 +2097,8 @@ final class FunctionContractInjector
         bool $useDynamicMethodKey = false,
         bool $canGuardReturnCache = true,
         ?string $currentNamespace = null,
-        array $effectiveAliases = []
+        array $effectiveAliases = [],
+        bool $isMagicGet = false
     ): array {
         self::tagPrecedingAssignments($stmts);
 
@@ -2117,7 +2119,8 @@ final class FunctionContractInjector
             $useDynamicMethodKey,
             $canGuardReturnCache,
             $currentNamespace,
-            $effectiveAliases
+            $effectiveAliases,
+            $isMagicGet
         ) extends NodeVisitorAbstract {
             /**
              * @param array<string> $byRefParams
@@ -2141,7 +2144,8 @@ final class FunctionContractInjector
                 private bool $useDynamicMethodKey,
                 private bool $canGuardReturnCache,
                 private ?string $currentNamespace,
-                private array $effectiveAliases
+                private array $effectiveAliases,
+                private bool $isMagicGet
             ) {
             }
 
@@ -2241,7 +2245,10 @@ final class FunctionContractInjector
                         );
                     } else {
                         $checkCall = FunctionContractInjector::buildReturnCheckCall($exprToWrap, $this->thisArg, $this->needsReturnVars);
-                        $n->expr = FunctionContractInjector::buildTernaryReturnExpr($checkCall, $n->getStartLine());
+                        $n->expr = FunctionContractInjector::buildTernaryReturnExpr(
+                            $checkCall,
+                            $this->isMagicGet ? null : $n->getStartLine()
+                        );
                     }
 
                     return $exitStmts !== [] ? [...$exitStmts, $n] : null;
@@ -2285,7 +2292,7 @@ final class FunctionContractInjector
                     $byRefGuardStmts = self::buildByRefReturnGuard($checkCall, $retStmt, $fallbackLine);
                     $newStmts = [...$newStmts, ...$exitStmts, ...$byRefGuardStmts];
                 } else {
-                    $fallbackLine = $lastStmt instanceof Node\Stmt ? $lastStmt->getStartLine() : null;
+                    $fallbackLine = (! $isMagicGet && $lastStmt instanceof Node\Stmt) ? $lastStmt->getStartLine() : null;
                     $ternaryExpr = $canGuardReturnCache
                         ? self::buildGuardedTernaryReturnExpr(
                             new Node\Expr\ConstFetch(new Node\Name('null')),
